@@ -416,27 +416,14 @@ Examples:
                     <p><strong>Task ID:</strong> ${data.task_id}</p>
                     <p><strong>Execution Time:</strong> ${data.execution_time_seconds.toFixed(2)}s</p>
                 </div>
-                
-                <h3 style="margin: 20px 0 10px;">Analysis</h3>
-                <div class="output-box">${JSON.stringify(data.analysis, null, 2)}</div>
             `;
             
-            // Show specialist results if any
-            if (data.specialist_results && data.specialist_results.length > 0) {
-                html += `<h3 style="margin: 20px 0 10px;">Specialist Outputs</h3>`;
-                html += `<div class="specialist-grid">`;
-                
-                data.specialist_results.forEach(result => {
-                    html += `
-                        <div class="specialist-card">
-                            <h4>${result.specialist.toUpperCase()}</h4>
-                            <div class="output-box">${result.output.substring(0, 200)}...</div>
-                            <div class="time">⏱️ ${result.execution_time.toFixed(2)}s</div>
-                        </div>
-                    `;
-                });
-                
-                html += `</div>`;
+            // Show actual output FIRST and prominently
+            if (data.actual_output) {
+                html += `
+                    <h3 style="margin: 20px 0 10px;">📄 Output</h3>
+                    <div class="output-box" style="background: white; border: 2px solid #667eea; font-family: inherit; font-size: 15px; line-height: 1.6; max-height: none;">${escapeHtml(data.actual_output)}</div>
+                `;
             }
             
             // Show consensus if enabled
@@ -446,7 +433,7 @@ Examples:
                 const scorePercent = (agreementScore * 100).toFixed(0);
                 
                 html += `
-                    <h3 style="margin: 20px 0 10px;">Consensus Validation</h3>
+                    <h3 style="margin: 20px 0 10px;">✓ Consensus Validation</h3>
                     <div class="consensus-score ${scoreClass}">
                         <p><strong>Agreement Score:</strong></p>
                         <div class="score-bar ${scoreClass}" style="width: ${scorePercent}%">
@@ -461,7 +448,41 @@ Examples:
                 `;
             }
             
+            // Show routing analysis (collapsed by default)
+            html += `
+                <details style="margin: 20px 0;">
+                    <summary style="cursor: pointer; font-weight: 600; color: #667eea;">🔍 View Routing Analysis</summary>
+                    <div class="output-box" style="margin-top: 10px;">${JSON.stringify(data.analysis, null, 2)}</div>
+                </details>
+            `;
+            
+            // Show specialist results if any (besides the orchestrator)
+            if (data.specialist_results && data.specialist_results.length > 1) {
+                html += `<h3 style="margin: 20px 0 10px;">Specialist Outputs</h3>`;
+                html += `<div class="specialist-grid">`;
+                
+                data.specialist_results.forEach(result => {
+                    if (result.specialist !== data.orchestrator) {
+                        html += `
+                            <div class="specialist-card">
+                                <h4>${result.specialist.toUpperCase()}</h4>
+                                <div class="output-box">${escapeHtml(result.output.substring(0, 200))}...</div>
+                                <div class="time">⏱️ ${result.execution_time.toFixed(2)}s</div>
+                            </div>
+                        `;
+                    }
+                });
+                
+                html += `</div>`;
+            }
+            
             resultContent.innerHTML = html;
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
         
         async function loadStats() {
