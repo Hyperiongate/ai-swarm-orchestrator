@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Swarm - Project Workflow | Shiftwork Solutions</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        
+        .header h1 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            color: #666;
+        }
+        
+        .main-grid {
+            display: grid;
+            grid-template-columns: 300px 1fr;
+            gap: 20px;
+        }
+        
+        .sidebar {
+            background: white;
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        
+        .sidebar h3 {
+            color: #667eea;
+            margin-bottom: 15px;
+        }
+        
+        .project-info {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        
+        .project-info label {
+            display: block;
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 5px;
+        }
+        
+        .project-info span {
+            display: block;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        .phase-indicator {
+            background: #667eea;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            display: inline-block;
+            margin-top: 5px;
+        }
+        
+        .quick-actions {
+            list-style: none;
+        }
+        
+        .quick-actions li {
+            padding: 10px;
+            margin: 5px 0;
+            background: #f8f9fa;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .quick-actions li:hover {
+            background: #667eea;
+            color: white;
+            transform: translateX(5px);
+        }
+        
+        .main-content {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        
+        .conversation {
+            height: 500px;
+            overflow-y: auto;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            background: #f8f9fa;
+        }
+        
+        .message {
+            margin-bottom: 20px;
+            padding: 15px;
+            border-radius: 10px;
+            max-width: 80%;
+        }
+        
+        .message.user {
+            background: #667eea;
+            color: white;
+            margin-left: auto;
+        }
+        
+        .message.assistant {
+            background: white;
+            border: 2px solid #e0e0e0;
+        }
+        
+        .message-header {
+            font-weight: 600;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+        
+        .message-content {
+            line-height: 1.6;
+        }
+        
+        .input-area {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .input-area textarea {
+            flex: 1;
+            padding: 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-family: inherit;
+            font-size: 14px;
+            resize: none;
+            height: 80px;
+        }
+        
+        .input-area button {
+            padding: 15px 30px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        
+        .input-area button:hover {
+            transform: translateY(-2px);
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            margin: 2px;
+        }
+        
+        .badge.knowledge {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+        
+        .badge.workflow {
+            background: #f3e5f5;
+            color: #7b1fa2;
+        }
+        
+        .badge.formatted {
+            background: #e8f5e9;
+            color: #388e3c;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 AI Swarm - Project Workflow</h1>
+            <p>Conversational interface for complete consulting engagements</p>
+        </div>
+        
+        <div class="main-grid">
+            <!-- Sidebar with Project Info -->
+            <div class="sidebar">
+                <h3>Current Project</h3>
+                <div class="project-info" id="projectInfo">
+                    <label>Client</label>
+                    <span id="clientName">No active project</span>
+                    
+                    <label>Phase</label>
+                    <span id="projectPhase">
+                        <div class="phase-indicator">Not started</div>
+                    </span>
+                    
+                    <button onclick="startNewProject()" style="width: 100%; padding: 10px; margin-top: 15px; background: #667eea; color: white; border: none; border-radius: 8px; cursor: pointer;">
+                        Start New Project
+                    </button>
+                </div>
+                
+                <h3 style="margin-top: 20px;">Quick Actions</h3>
+                <ul class="quick-actions">
+                    <li onclick="quickAction('data collection')">📋 Data Collection Doc</li>
+                    <li onclick="quickAction('analyze files')">📊 Analyze Files</li>
+                    <li onclick="quickAction('review emails')">📧 Review Emails</li>
+                    <li onclick="quickAction('linkedin post')">💼 LinkedIn Post</li>
+                    <li onclick="quickAction('proposal')">📄 Create Proposal</li>
+                </ul>
+            </div>
+            
+            <!-- Main Conversation Area -->
+            <div class="main-content">
+                <div class="conversation" id="conversation">
+                    <div class="message assistant">
+                        <div class="message-header">🤖 AI Swarm</div>
+                        <div class="message-content">
+                            Hi! I'm ready to help you through your consulting project. I have access to:
+                            <ul style="margin-top: 10px;">
+                                <li>✅ 22 knowledge documents with 30+ years of expertise</li>
+                                <li>✅ Project workflow management</li>
+                                <li>✅ Professional formatting with GPT-4</li>
+                                <li>✅ Multi-AI consensus validation</li>
+                            </ul>
+                            <p style="margin-top: 15px;"><strong>Try saying:</strong></p>
+                            <ul style="margin-top: 5px;">
+                                <li>"I need a data collection document for a pharmaceutical client"</li>
+                                <li>"I have payroll files to analyze"</li>
+                                <li>"Review my email thread with the client"</li>
+                                <li>"Create a LinkedIn post about this project"</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="input-area">
+                    <textarea id="userInput" placeholder="Type your request here...  (e.g., 'I need a data collection document')"></textarea>
+                    <button onclick="sendMessage()">Send</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let currentProjectId = null;
+        
+        function startNewProject() {
+            const clientName = prompt("Enter client name:");
+            if (!clientName) return;
+            
+            const industry = prompt("Enter industry (e.g., Pharmaceutical, Food Processing):");
+            const facilityType = prompt("Enter facility type (e.g., Manufacturing, Distribution):");
+            
+            fetch('/api/project/start', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    client_name: clientName,
+                    industry: industry,
+                    facility_type: facilityType
+                })
+            })
+            .then(r => r.json())
+            .then(data => {
+                currentProjectId = data.project_id;
+                document.getElementById('clientName').textContent = clientName;
+                document.getElementById('projectPhase').innerHTML = '<div class="phase-indicator">Initial Phase</div>';
+                
+                addMessage('assistant', `✅ Project started for ${clientName}! ${data.suggested_first_step}`);
+            });
+        }
+        
+        function quickAction(action) {
+            document.getElementById('userInput').value = `I need ${action}`;
+        }
+        
+        function sendMessage() {
+            const input = document.getElementById('userInput');
+            const message = input.value.trim();
+            if (!message) return;
+            
+            // Add user message
+            addMessage('user', message);
+            input.value = '';
+            
+            // Send to swarm
+            fetch('/api/orchestrate', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    request: message,
+                    enable_consensus: true,
+                    project_id: currentProjectId
+                })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    let badges = '';
+                    if (data.knowledge_used) badges += '<span class="badge knowledge">📚 Knowledge Used</span>';
+                    if (data.project_workflow.active) badges += '<span class="badge workflow">📁 Project Context</span>';
+                    if (data.formatting_applied) badges += '<span class="badge formatted">🎨 Formatted</span>';
+                    
+                    addMessage('assistant', data.actual_output + '<div style="margin-top: 10px;">' + badges + '</div>');
+                } else {
+                    addMessage('assistant', `❌ Error: ${data.error}`);
+                }
+            })
+            .catch(err => {
+                addMessage('assistant', `❌ Error: ${err.message}`);
+            });
+        }
+        
+        function addMessage(role, content) {
+            const conversation = document.getElementById('conversation');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role}`;
+            
+            const header = role === 'user' ? '👤 You' : '🤖 AI Swarm';
+            messageDiv.innerHTML = `
+                <div class="message-header">${header}</div>
+                <div class="message-content">${content}</div>
+            `;
+            
+            conversation.appendChild(messageDiv);
+            conversation.scrollTop = conversation.scrollHeight;
+        }
+        
+        // Allow Enter to send
+        document.getElementById('userInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+    </script>
+</body>
+</html>
+
+<!-- I did no harm and this file is not truncated -->
