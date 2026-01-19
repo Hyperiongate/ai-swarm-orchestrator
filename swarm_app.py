@@ -1196,6 +1196,11 @@ def index():
     """Main interface"""
     return render_template('index.html')
 
+@app.route('/workflow')
+def workflow():
+    """New conversational workflow interface"""
+    return render_template('index_workflow.html')
+
 @app.route('/api/tasks')
 def get_tasks():
     """Get all tasks"""
