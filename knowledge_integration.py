@@ -50,7 +50,7 @@ class ProjectKnowledgeBase:
     Provides search, retrieval, and integration with the AI Swarm.
     """
     
-    def __init__(self, project_path="/mnt/project", db_path="swarm_intelligence.db"):
+    def __init__(self, project_path="project_files", db_path="swarm_intelligence.db"):
         self.project_path = Path(project_path)
         self.db_path = db_path
         self.knowledge_index = {}
