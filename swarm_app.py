@@ -139,6 +139,24 @@ def init_db():
         )
     ''')
     
+    # User feedback - capture user ratings and learning data
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS user_feedback (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER,
+            submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            overall_rating INTEGER CHECK(overall_rating >= 1 AND overall_rating <= 5),
+            quality_rating INTEGER CHECK(quality_rating >= 1 AND quality_rating <= 5),
+            accuracy_rating INTEGER CHECK(accuracy_rating >= 1 AND accuracy_rating <= 5),
+            usefulness_rating INTEGER CHECK(usefulness_rating >= 1 AND usefulness_rating <= 5),
+            consensus_was_accurate BOOLEAN,
+            improvement_categories TEXT,
+            user_comment TEXT,
+            output_used BOOLEAN,
+            FOREIGN KEY (task_id) REFERENCES tasks(id)
+        )
+    ''')
+    
     db.commit()
     db.close()
 
@@ -653,6 +671,182 @@ def health():
             'gemini': 'configured' if GOOGLE_API_KEY else 'missing'
         }
     })
+
+@app.route('/api/feedback', methods=['POST'])
+def submit_feedback():
+    """
+    Submit user feedback on task output
+    This is how the system learns what "good" looks like
+    """
+    data = request.json
+    task_id = data.get('task_id')
+    
+    if not task_id:
+        return jsonify({'error': 'task_id required'}), 400
+    
+    # Extract ratings
+    overall_rating = data.get('overall_rating')
+    quality_rating = data.get('quality_rating')
+    accuracy_rating = data.get('accuracy_rating')
+    usefulness_rating = data.get('usefulness_rating')
+    
+    # Extract feedback details
+    improvement_categories = data.get('improvement_categories', [])
+    user_comment = data.get('user_comment', '')
+    output_used = data.get('output_used', False)
+    
+    # Validate ratings
+    if not all([overall_rating, quality_rating, accuracy_rating, usefulness_rating]):
+        return jsonify({'error': 'All ratings required'}), 400
+    
+    if not all(1 <= r <= 5 for r in [overall_rating, quality_rating, accuracy_rating, usefulness_rating]):
+        return jsonify({'error': 'Ratings must be 1-5'}), 400
+    
+    db = get_db()
+    
+    try:
+        # Get task details
+        task = db.execute('SELECT * FROM tasks WHERE id = ?', (task_id,)).fetchone()
+        if not task:
+            return jsonify({'error': 'Task not found'}), 404
+        
+        # Get consensus score if exists
+        consensus = db.execute('SELECT agreement_score FROM consensus_validations WHERE task_id = ?', (task_id,)).fetchone()
+        consensus_score = consensus['agreement_score'] if consensus else None
+        
+        # Determine if consensus was accurate
+        consensus_was_accurate = None
+        if consensus_score is not None:
+            # High consensus (>0.7) should mean good output (rating >3)
+            # Low consensus (<0.7) should mean poor output (rating <=3)
+            avg_rating = (quality_rating + accuracy_rating + usefulness_rating) / 3
+            if consensus_score >= 0.7 and avg_rating >= 3.5:
+                consensus_was_accurate = True  # High consensus, good output
+            elif consensus_score < 0.7 and avg_rating < 3.5:
+                consensus_was_accurate = True  # Low consensus, poor output
+            else:
+                consensus_was_accurate = False  # Consensus was wrong
+        
+        # Store feedback
+        db.execute('''
+            INSERT INTO user_feedback 
+            (task_id, overall_rating, quality_rating, accuracy_rating, usefulness_rating,
+             consensus_was_accurate, improvement_categories, user_comment, output_used)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (task_id, overall_rating, quality_rating, accuracy_rating, usefulness_rating,
+              consensus_was_accurate, json.dumps(improvement_categories), user_comment, output_used))
+        
+        # Update learning records
+        orchestrator = task['assigned_orchestrator']
+        task_type = task['task_type']
+        avg_rating = (quality_rating + accuracy_rating + usefulness_rating) / 3
+        
+        # Update orchestrator performance pattern
+        pattern_key = f"{orchestrator}_{task_type}"
+        existing_pattern = db.execute(
+            'SELECT * FROM learning_records WHERE pattern_type = ?', (pattern_key,)
+        ).fetchone()
+        
+        if existing_pattern:
+            # Update existing pattern
+            old_success = existing_pattern['success_rate']
+            old_times = existing_pattern['times_applied']
+            new_success = (old_success * old_times + (avg_rating / 5.0)) / (old_times + 1)
+            
+            db.execute('''
+                UPDATE learning_records 
+                SET success_rate = ?, times_applied = ?, pattern_data = ?
+                WHERE pattern_type = ?
+            ''', (new_success, old_times + 1, json.dumps({
+                'last_rating': avg_rating,
+                'last_consensus': consensus_score,
+                'improvement_areas': improvement_categories
+            }), pattern_key))
+        else:
+            # Create new pattern
+            db.execute('''
+                INSERT INTO learning_records (pattern_type, success_rate, times_applied, pattern_data)
+                VALUES (?, ?, ?, ?)
+            ''', (pattern_key, avg_rating / 5.0, 1, json.dumps({
+                'orchestrator': orchestrator,
+                'task_type': task_type,
+                'last_rating': avg_rating,
+                'last_consensus': consensus_score
+            })))
+        
+        db.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Feedback recorded - system is learning!',
+            'consensus_was_accurate': consensus_was_accurate,
+            'learning_updated': True
+        })
+        
+    except Exception as e:
+        db.rollback()
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+    finally:
+        db.close()
+
+@app.route('/api/learning/stats')
+def learning_stats():
+    """Get learning system statistics"""
+    db = get_db()
+    
+    # Get feedback stats
+    total_feedback = db.execute('SELECT COUNT(*) as count FROM user_feedback').fetchone()['count']
+    avg_overall = db.execute('SELECT AVG(overall_rating) as avg FROM user_feedback').fetchone()['avg']
+    
+    # Get consensus accuracy
+    consensus_accuracy = db.execute('''
+        SELECT 
+            COUNT(*) as total,
+            SUM(CASE WHEN consensus_was_accurate = 1 THEN 1 ELSE 0 END) as accurate
+        FROM user_feedback 
+        WHERE consensus_was_accurate IS NOT NULL
+    ''').fetchone()
+    
+    # Get orchestrator performance
+    orchestrator_performance = db.execute('''
+        SELECT 
+            t.assigned_orchestrator as orchestrator,
+            AVG(f.overall_rating) as avg_rating,
+            COUNT(*) as tasks_rated
+        FROM user_feedback f
+        JOIN tasks t ON f.task_id = t.id
+        GROUP BY t.assigned_orchestrator
+    ''').fetchall()
+    
+    # Get common improvement areas
+    all_improvements = db.execute('SELECT improvement_categories FROM user_feedback').fetchall()
+    improvement_counts = {}
+    for row in all_improvements:
+        if row['improvement_categories']:
+            categories = json.loads(row['improvement_categories'])
+            for cat in categories:
+                improvement_counts[cat] = improvement_counts.get(cat, 0) + 1
+    
+    db.close()
+    
+    return jsonify({
+        'total_feedback_submissions': total_feedback,
+        'average_overall_rating': round(avg_overall, 2) if avg_overall else 0,
+        'consensus_accuracy_rate': round(
+            (consensus_accuracy['accurate'] / consensus_accuracy['total'] * 100) 
+            if consensus_accuracy['total'] > 0 else 0, 1
+        ),
+        'orchestrator_performance': [dict(row) for row in orchestrator_performance],
+        'common_improvement_areas': improvement_counts
+    })
+
+@app.route('/health')
+def health_legacy():
+    """Legacy health check - redirect to main health endpoint"""
+    return health()
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
