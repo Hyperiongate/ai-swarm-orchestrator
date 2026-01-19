@@ -174,7 +174,7 @@ init_db()
 def call_claude_sonnet(prompt, max_tokens=4000):
     """
     Call Claude Sonnet (Primary Orchestrator)
-    FIXED: Extended timeout to 180 seconds for complex requests
+    FIXED: Extended timeout with proper tuple format (connect, read)
     """
     try:
         response = requests.post(
@@ -189,7 +189,7 @@ def call_claude_sonnet(prompt, max_tokens=4000):
                 "max_tokens": max_tokens,
                 "messages": [{"role": "user", "content": prompt}]
             },
-            timeout=180  # FIXED: Was 60, now 180 seconds
+            timeout=(10, 180)  # CRITICAL FIX: (connect_timeout, read_timeout)
         )
         response.raise_for_status()
         return response.json()['content'][0]['text']
@@ -199,7 +199,7 @@ def call_claude_sonnet(prompt, max_tokens=4000):
 def call_claude_opus(prompt, max_tokens=4000):
     """
     Call Claude Opus (Strategic Supervisor)
-    FIXED: Extended timeout to 180 seconds for complex strategic analysis
+    FIXED: Extended timeout with proper tuple format (connect, read)
     """
     try:
         response = requests.post(
@@ -214,7 +214,7 @@ def call_claude_opus(prompt, max_tokens=4000):
                 "max_tokens": max_tokens,
                 "messages": [{"role": "user", "content": prompt}]
             },
-            timeout=180  # FIXED: Was 90, now 180 seconds
+            timeout=(10, 180)  # CRITICAL FIX: (connect_timeout, read_timeout)
         )
         response.raise_for_status()
         return response.json()['content'][0]['text']
@@ -255,7 +255,7 @@ def call_gemini(prompt, max_tokens=4000):
         response = requests.post(
             url,
             json={"contents": [{"parts": [{"text": prompt}]}]},
-            timeout=180  # Extended timeout for consistency
+            timeout=(10, 180)  # CRITICAL FIX: (connect_timeout, read_timeout)
         )
         response.raise_for_status()
         return response.json()['candidates'][0]['content']['parts'][0]['text']
