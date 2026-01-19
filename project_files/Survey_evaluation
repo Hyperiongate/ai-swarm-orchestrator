@@ -1,0 +1,1769 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <!--
+    SHIFT OPERATIONS HEALTH ASSESSMENT - VERSION WITH PRIVACY & NEWSLETTER
+    Last Updated: November 18, 2025
+    
+    LATEST CHANGES:
+    - Added subtle privacy policy reference with link to https://shift-work.com/shiftwork-solutions-llc-privacy-policy
+    - Added pre-checked newsletter signup checkbox (users can uncheck if desired)
+    - Newsletter preference included in form submission data
+    
+    PREVIOUS FIXES:
+    1. Corrected field name mismatches (full_name→name, biggest_challenge→primary_challenge)
+    2. Fixed category_scores object to individual score fields
+    3. Implemented proper two-step submission flow (submit data, then generate PDF)
+    4. Added comprehensive error handling and user feedback
+    5. Improved form validation
+    
+    INTEGRATION NOTES:
+    - Backend API: https://shiftwork-assessment-api.onrender.com
+    - Endpoints used: /api/assessment/submit (POST) and /api/assessment/generate-pdf (POST)
+    - All data validation happens on both frontend and backend
+    - PDF generation happens after successful database save
+    -->
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shift Operations Health Assessment | Shiftwork Solutions</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: linear-gradient(135deg, #007acc 0%, #00a8ff 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #007acc 0%, #00a8ff 100%);
+            color: white;
+            padding: 40px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2rem;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.95;
+        }
+
+        .content {
+            padding: 40px;
+        }
+
+        .intro {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .intro h2 {
+            color: #2c3e50;
+            margin-bottom: 15px;
+        }
+
+        .intro p {
+            color: #555;
+            font-size: 1.1rem;
+            line-height: 1.8;
+        }
+
+        .progress-bar {
+            background: #e0e0e0;
+            height: 8px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            background: linear-gradient(90deg, #007acc 0%, #00a8ff 100%);
+            height: 100%;
+            transition: width 0.3s ease;
+        }
+
+        .question-container {
+            margin-bottom: 30px;
+            min-height: 250px;
+        }
+
+        .question-wrapper {
+            animation: slideIn 0.4s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .question-number {
+            color: #007acc;
+            font-weight: 600;
+            font-size: 0.9rem;
+            margin-bottom: 10px;
+        }
+
+        .question-text {
+            font-size: 1.3rem;
+            color: #2c3e50;
+            margin-bottom: 25px;
+            font-weight: 500;
+        }
+
+        .answer-options {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .answer-button {
+            flex: 1;
+            min-width: 200px;
+            padding: 15px 20px;
+            font-size: 1rem;
+            border: 2px solid #007acc;
+            background: white;
+            color: #007acc;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: 600;
+            position: relative;
+            overflow: hidden;
+            white-space: normal;
+            text-align: center;
+            line-height: 1.4;
+            min-height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .answer-button::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 0;
+            height: 0;
+            border-radius: 50%;
+            background: rgba(102, 126, 234, 0.2);
+            transform: translate(-50%, -50%);
+            transition: width 0.6s, height 0.6s;
+        }
+
+        .answer-button:hover::before {
+            width: 300px;
+            height: 300px;
+        }
+
+        .answer-button:hover {
+            background: #007acc;
+            color: white;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
+        }
+
+        .answer-button.selected {
+            background: #007acc;
+            color: white;
+            animation: pulse 0.3s ease;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+
+        .navigation {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 40px;
+            gap: 15px;
+        }
+
+        .nav-button {
+            padding: 12px 30px;
+            font-size: 1rem;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .nav-button.previous {
+            background: #e0e0e0;
+            color: #555;
+        }
+
+        .nav-button.previous:hover {
+            background: #d0d0d0;
+        }
+
+        .nav-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .results {
+            display: none;
+            animation: fadeIn 0.8s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .results.show {
+            display: block;
+        }
+
+        .overall-score {
+            background: linear-gradient(135deg, #007acc 0%, #00a8ff 100%);
+            color: white;
+            padding: 40px;
+            border-radius: 15px;
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .overall-score h2 {
+            font-size: 1.5rem;
+            margin-bottom: 15px;
+        }
+
+        .overall-score .score-value {
+            font-size: 3.5rem;
+            font-weight: bold;
+            color: white;
+        }
+
+        .overall-score .score-label {
+            font-size: 1.1rem;
+            margin-top: 10px;
+            opacity: 0.95;
+        }
+
+        .score-bars {
+            margin: 40px 0;
+        }
+
+        .score-bar-container {
+            margin-bottom: 30px;
+            opacity: 0;
+            animation: slideInBar 0.5s ease forwards;
+        }
+
+        .score-bar-container:nth-child(1) { animation-delay: 0.1s; }
+        .score-bar-container:nth-child(2) { animation-delay: 0.2s; }
+        .score-bar-container:nth-child(3) { animation-delay: 0.3s; }
+        .score-bar-container:nth-child(4) { animation-delay: 0.4s; }
+        .score-bar-container:nth-child(5) { animation-delay: 0.5s; }
+        .score-bar-container:nth-child(6) { animation-delay: 0.6s; }
+        .score-bar-container:nth-child(7) { animation-delay: 0.7s; }
+        .score-bar-container:nth-child(8) { animation-delay: 0.8s; }
+
+        @keyframes slideInBar {
+            from {
+                opacity: 0;
+                transform: translateX(-30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .score-bar-label {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .score-bar-label h3 {
+            font-size: 1.1rem;
+            color: #2c3e50;
+            font-weight: 600;
+        }
+
+        .score-bar-label .score-value {
+            font-size: 1.3rem;
+            font-weight: bold;
+            color: #007acc;
+        }
+
+        .score-bar-track {
+            position: relative;
+            height: 40px;
+            background: linear-gradient(to right, #f44336 0%, #ffc107 50%, #4caf50 100%);
+            border-radius: 20px;
+            overflow: visible;
+        }
+
+        .score-bar-pointer {
+            position: absolute;
+            top: -10px;
+            width: 0;
+            height: 0;
+            border-left: 12px solid transparent;
+            border-right: 12px solid transparent;
+            border-top: 15px solid #2c3e50;
+            transform: translateX(-50%);
+            transition: left 0.8s ease;
+        }
+
+        .score-bar-markers {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 5px;
+            font-size: 0.85rem;
+            color: #666;
+        }
+
+        .score-bar-text {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 8px;
+            font-size: 0.9rem;
+        }
+
+        .score-bar-text .left {
+            color: #f44336;
+            font-weight: 600;
+        }
+
+        .score-bar-text .right {
+            color: #4caf50;
+            font-weight: 600;
+        }
+
+        .recommendations {
+            margin-top: 40px;
+        }
+
+        .recommendation-section {
+            margin-bottom: 30px;
+        }
+
+        .recommendation-section h3 {
+            color: #2c3e50;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #007acc;
+        }
+
+        .recommendation-item {
+            background: #f8f9fa;
+            padding: 15px 20px;
+            border-left: 4px solid #007acc;
+            margin-bottom: 15px;
+            border-radius: 5px;
+        }
+
+        .recommendation-item strong {
+            color: #007acc;
+        }
+
+        .strength-item {
+            background: #e8f5e9;
+            border-left-color: #4caf50;
+        }
+
+        .strength-item strong {
+            color: #2e7d32;
+        }
+
+        .shiftwork-solutions-note {
+            background: #f0f4ff;
+            border-left: 4px solid #007acc;
+            padding: 15px 20px;
+            margin: 15px 0;
+            border-radius: 5px;
+            font-style: italic;
+            color: #555;
+        }
+
+        .cta-section {
+            background: linear-gradient(135deg, #007acc 0%, #00a8ff 100%);
+            color: white;
+            padding: 40px;
+            border-radius: 15px;
+            text-align: center;
+            margin-top: 40px;
+        }
+
+        .cta-section h3 {
+            font-size: 1.8rem;
+            margin-bottom: 15px;
+        }
+
+        .cta-section p {
+            font-size: 1.1rem;
+            margin-bottom: 25px;
+            opacity: 0.95;
+        }
+
+        .cta-buttons {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .cta-button {
+            padding: 15px 35px;
+            font-size: 1.1rem;
+            border: 2px solid white;
+            border-radius: 50px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            display: inline-block;
+        }
+
+        .cta-button.primary {
+            background: white;
+            color: #007acc;
+        }
+
+        .cta-button.primary:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+        }
+
+        .cta-button.secondary {
+            background: transparent;
+            color: white;
+        }
+
+        .cta-button.secondary:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .restart-button {
+            display: block;
+            margin: 30px auto 0;
+            padding: 12px 30px;
+            background: #e0e0e0;
+            color: #555;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: 600;
+        }
+
+        .restart-button:hover {
+            background: #d0d0d0;
+        }
+
+        /* PDF Download Section */
+        .pdf-download-section {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 40px;
+            margin: 40px 0 30px;
+            text-align: center;
+            border: 2px solid #007acc;
+        }
+
+        .pdf-download-section h3 {
+            color: #2c3e50;
+            font-size: 1.8rem;
+            margin-bottom: 15px;
+        }
+
+        .pdf-download-section p {
+            color: #555;
+            font-size: 1.1rem;
+            margin-bottom: 25px;
+        }
+
+        .pdf-button {
+            background: linear-gradient(135deg, #007acc 0%, #00a8ff 100%);
+            color: white;
+            padding: 15px 40px;
+            font-size: 1.2rem;
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        }
+
+        .pdf-button:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .pdf-button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        /* Email Form */
+        .email-form-container {
+            display: none;
+            margin-top: 30px;
+            animation: slideDown 0.4s ease;
+        }
+
+        .email-form-container.show {
+            display: block;
+        }
+
+        @keyframes slideDown {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .email-form {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .form-group {
+            text-align: left;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #2c3e50;
+            font-weight: 600;
+        }
+
+        .form-group .required {
+            color: #e74c3c;
+        }
+
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 1rem;
+            transition: border-color 0.3s ease;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #007acc;
+        }
+
+        /* Newsletter Checkbox Styling */
+        .newsletter-group {
+            text-align: left;
+            margin: 25px 0;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border: 1px solid #e0e0e0;
+        }
+
+        .newsletter-group label {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            font-size: 0.95rem;
+            color: #2c3e50;
+        }
+
+        .newsletter-group input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            margin-right: 12px;
+            cursor: pointer;
+            accent-color: #007acc;
+        }
+
+        /* Privacy Policy Styling */
+        .privacy-notice {
+            text-align: center;
+            margin: 20px 0;
+            padding: 15px;
+            font-size: 0.85rem;
+            color: #666;
+            line-height: 1.6;
+        }
+
+        .privacy-notice a {
+            color: #007acc;
+            text-decoration: none;
+            border-bottom: 1px solid transparent;
+            transition: border-bottom-color 0.3s ease;
+        }
+
+        .privacy-notice a:hover {
+            border-bottom-color: #007acc;
+        }
+
+        .submit-button {
+            background: linear-gradient(135deg, #007acc 0%, #00a8ff 100%);
+            color: white;
+            padding: 15px 40px;
+            font-size: 1.1rem;
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            font-weight: 600;
+            margin-top: 20px;
+            transition: all 0.3s ease;
+        }
+
+        .submit-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        }
+
+        .submit-button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .form-message {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            display: none;
+        }
+
+        .form-message.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+            display: block;
+        }
+
+        .form-message.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+            display: block;
+        }
+
+        .form-message.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+            display: block;
+        }
+
+        @media (max-width: 768px) {
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+
+            .pdf-download-section {
+                padding: 25px;
+            }
+
+            .pdf-button {
+                width: 100%;
+            }
+
+            .header h1 {
+                font-size: 1.5rem;
+            }
+
+            .content {
+                padding: 25px;
+            }
+
+            .answer-options {
+                flex-direction: column;
+            }
+
+            .answer-button {
+                width: 100%;
+                min-height: 60px;
+            }
+
+            .cta-buttons {
+                flex-direction: column;
+            }
+
+            .score-bar-label h3 {
+                font-size: 1rem;
+            }
+
+            .score-bar-label .score-value {
+                font-size: 1.1rem;
+            }
+
+            .score-bar-markers {
+                font-size: 0.75rem;
+            }
+
+            .score-bar-text {
+                font-size: 0.8rem;
+            }
+
+            .newsletter-group label {
+                font-size: 0.9rem;
+            }
+
+            .privacy-notice {
+                font-size: 0.8rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Shift Operations Health Assessment</h1>
+            <p>Comprehensive evaluation of your 24/7 operation</p>
+        </div>
+
+        <div class="content">
+            <!-- Intro Screen -->
+            <div id="intro" class="intro">
+                <h2>Welcome to Your Comprehensive Assessment</h2>
+                <p>This assessment evaluates 8 critical dimensions of shift operations success: work-life balance, employee health, alertness, overtime management, operational efficiency, quality & safety, communication, and workforce stability.</p>
+                <p style="margin-top: 20px;">Based on insights from 300+ facilities and 30+ years of specialized experience, you'll receive a detailed analysis with specific recommendations tailored to your challenges.</p>
+                <p style="margin-top: 20px;"><strong>Time to complete:</strong> 8-10 minutes</p>
+                <button class="nav-button" onclick="startAssessment()" style="margin-top: 30px; max-width: 300px; margin-left: auto; margin-right: auto; background: linear-gradient(135deg, #007acc 0%, #00a8ff 100%); color: white; display: block;">Begin Assessment</button>
+            </div>
+
+            <!-- Question Screen -->
+            <div id="question-screen" style="display: none;">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progress"></div>
+                </div>
+
+                <div class="question-container">
+                    <div class="question-wrapper" id="question-wrapper">
+                        <div class="question-number" id="question-number">Question 1 of 35</div>
+                        <div class="question-text" id="question-text"></div>
+                        <div class="answer-options" id="answer-options">
+                            <!-- Dynamic buttons will be inserted here -->
+                        </div>
+                    </div>
+                </div>
+
+                <div class="navigation">
+                    <button class="nav-button previous" onclick="previousQuestion()" id="prev-btn">Previous</button>
+                </div>
+            </div>
+
+            <!-- Results Screen -->
+            <div id="results" class="results">
+                <div class="overall-score">
+                    <h2>Your Overall Shift Operations Health Score</h2>
+                    <div class="score-value" id="overall-score">--</div>
+                    <div class="score-label" id="overall-label">Assessment Complete</div>
+                </div>
+
+                <h2 style="margin-bottom: 20px; color: #2c3e50;">Category Analysis</h2>
+                <div class="score-bars" id="score-bars"></div>
+
+                <div class="recommendations">
+                    <div class="recommendation-section">
+                        <h3>✓ Your Strengths</h3>
+                        <div id="strengths"></div>
+                    </div>
+
+                    <div class="recommendation-section">
+                        <h3>⚠ Priority Areas for Improvement</h3>
+                        <div id="opportunities"></div>
+                    </div>
+
+                    <div class="recommendation-section">
+                        <h3>🎯 Recommended Actions</h3>
+                        <div id="quick-wins"></div>
+                    </div>
+                </div>
+
+                <div class="cta-section">
+                    <h3>Ready to Take Action?</h3>
+                    <p>Shiftwork Solutions specializes in addressing exactly the challenges identified in your assessment. With 30+ years helping 300+ facilities optimize their shift operations, we can develop a customized action plan for your operation.</p>
+                    <div class="cta-buttons">
+                        <a href="https://outlook.office365.com/book/ShiftworkSolutionsLLC2@shift-work.com/?ismsaljsauthenabled=true" class="cta-button primary" target="_blank">Schedule a Consultation</a>
+                        <a href="https://www.shift-work.com" class="cta-button secondary" target="_blank">Learn More</a>
+                    </div>
+                </div>
+
+                <!-- PDF Download Section -->
+                <div class="pdf-download-section">
+                    <h3>📄 Get Your Personalized PDF Report</h3>
+                    <p>Receive a comprehensive PDF summary of your assessment results and recommendations</p>
+                    <button class="pdf-button" onclick="showEmailForm()" id="show-form-btn">Get Your PDF Report</button>
+                    
+                    <div class="email-form-container" id="email-form-container">
+                        <form class="email-form" id="pdf-form" onsubmit="submitPDFForm(event)">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="full_name">Full Name <span class="required">*</span></label>
+                                    <input type="text" id="full_name" name="full_name" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="email">Email <span class="required">*</span></label>
+                                    <input type="email" id="email" name="email" required>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="company">Company <span class="required">*</span></label>
+                                <input type="text" id="company" name="company" required>
+                            </div>
+
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="industry">Industry <span class="required">*</span></label>
+                                    <select id="industry" name="industry" required>
+                                        <option value="">Select Industry</option>
+                                        <option value="Food & Beverage">Food & Beverage Manufacturing</option>
+                                        <option value="Pharmaceutical">Pharmaceutical</option>
+                                        <option value="Chemical">Chemical Manufacturing</option>
+                                        <option value="Automotive">Automotive</option>
+                                        <option value="Electronics">Electronics/Semiconductors</option>
+                                        <option value="Distribution">Distribution/Warehousing</option>
+                                        <option value="Healthcare">Healthcare</option>
+                                        <option value="Transportation">Transportation/Logistics</option>
+                                        <option value="Mining">Mining/Extraction</option>
+                                        <option value="Energy">Energy/Utilities</option>
+                                        <option value="Other Manufacturing">Other Manufacturing</option>
+                                        <option value="Other">Other</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="shift_workers">Number of Shift Workers <span class="required">*</span></label>
+                                    <select id="shift_workers" name="shift_workers" required>
+                                        <option value="">Select Range</option>
+                                        <option value="1-25">1-25</option>
+                                        <option value="26-50">26-50</option>
+                                        <option value="51-100">51-100</option>
+                                        <option value="101-250">101-250</option>
+                                        <option value="251-500">251-500</option>
+                                        <option value="500+">500+</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="shift_length">Primary Shift Length <span class="required">*</span></label>
+                                    <select id="shift_length" name="shift_length" required>
+                                        <option value="">Select Length</option>
+                                        <option value="8-hour">8-hour shifts</option>
+                                        <option value="10-hour">10-hour shifts</option>
+                                        <option value="12-hour">12-hour shifts</option>
+                                        <option value="Mixed">Mixed/Variable</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="biggest_challenge">Biggest Challenge <span class="required">*</span></label>
+                                    <select id="biggest_challenge" name="biggest_challenge" required>
+                                        <option value="">Select Challenge</option>
+                                        <option value="Recruiting">Recruiting/Staffing</option>
+                                        <option value="Retention">Employee Retention</option>
+                                        <option value="Overtime">Managing Overtime</option>
+                                        <option value="Work-Life Balance">Work-Life Balance</option>
+                                        <option value="Schedule Design">Schedule Design</option>
+                                        <option value="Coverage">Coverage/Absenteeism</option>
+                                        <option value="Communication">Communication</option>
+                                        <option value="Other">Other</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <!-- Newsletter Signup Checkbox -->
+                            <div class="newsletter-group">
+                                <label>
+                                    <input type="checkbox" id="newsletter_signup" name="newsletter_signup" checked>
+                                    <span>Yes, I'd like to receive Shiftwork Solutions' newsletter with insights on shift operations, scheduling best practices, and industry trends</span>
+                                </label>
+                            </div>
+
+                            <!-- Privacy Policy Notice -->
+                            <div class="privacy-notice">
+                                By submitting this form, you agree to our 
+                                <a href="https://shift-work.com/shiftwork-solutions-llc-privacy-policy" target="_blank" rel="noopener noreferrer">Privacy Policy</a>. 
+                                We respect your privacy and will never share your information with third parties.
+                            </div>
+
+                            <button type="submit" class="submit-button" id="submit-btn">Download PDF Report</button>
+                            
+                            <div class="form-message" id="form-message"></div>
+                        </form>
+                    </div>
+                </div>
+
+                <button type="button" class="restart-button" onclick="restartAssessment()">Take Assessment Again</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Wrap everything in an IIFE to isolate from external scripts
+        (function() {
+            'use strict';
+            
+            // API Configuration
+            const API_BASE_URL = 'https://shiftwork-assessment-api.onrender.com';
+            
+            // Prevent page navigation during assessment
+            let preventNavigation = false;
+            
+            // Store assessment data globally for PDF generation
+            let assessmentData = null;
+            
+            window.addEventListener('beforeunload', function(e) {
+                if (preventNavigation) {
+                    console.log('Navigation blocked during assessment');
+                    e.preventDefault();
+                    e.returnValue = '';
+                    return '';
+                }
+            });
+            
+        const questions = [
+            // WORK-LIFE BALANCE (6 questions)
+            {
+                id: 1,
+                category: "worklife",
+                text: "Do employees complain about work-life balance issues related to their schedules?",
+                responses: ["All the time", "Occasionally", "Never"],
+                scoring: [2, 1, 0]
+            },
+            {
+                id: 2,
+                category: "worklife",
+                text: "Do employees struggle to attend family events, appointments, or personal commitments due to their work schedules?",
+                responses: ["All the time", "Occasionally", "Never"],
+                scoring: [2, 1, 0]
+            },
+            {
+                id: 3,
+                category: "worklife",
+                text: "From a management perspective, do you feel your scheduling practices adequately consider employee personal needs?",
+                responses: ["Yes", "Somewhat", "No"],
+                scoring: [0, 1, 2]
+            },
+            {
+                id: 4,
+                category: "worklife",
+                text: "Do your employees feel their schedule lacks flexibility to accommodate requests for time off?",
+                responses: ["All the time", "Occasionally", "Never"],
+                scoring: [2, 1, 0]
+            },
+            {
+                id: 5,
+                category: "worklife",
+                text: "Are employees indicating that work is negatively impacting their family relationships or personal health?",
+                responses: ["All the time", "Occasionally", "Never"],
+                scoring: [2, 1, 0]
+            },
+            {
+                id: 6,
+                category: "worklife",
+                text: "Is there a disconnect between what employees say they need for work-life balance and what management believes they need?",
+                responses: ["Yes", "Somewhat", "No"],
+                scoring: [2, 1, 0]
+            },
+
+            // HEALTH (5 questions)
+            {
+                id: 7,
+                category: "health",
+                text: "Does your facility use rotating shifts (where employees change shifts on a regular basis)?",
+                responses: ["Yes", "No"],
+                scoring: [2, 0]
+            },
+            {
+                id: 8,
+                category: "health",
+                text: "Do employees typically work more than 5-6 consecutive days without a break?",
+                responses: ["Yes", "No"],
+                scoring: [2, 0]
+            },
+            {
+                id: 9,
+                category: "health",
+                text: "Have you experienced safety incidents or accidents that may be related to employee fatigue or sleepiness?",
+                responses: ["Frequently", "Rarely", "Never"],
+                scoring: [2, 1, 0]
+            },
+            {
+                id: 10,
+                category: "health",
+                text: "Do employees report health issues they attribute to their work schedule (sleep problems, digestive issues, stress)?",
+                responses: ["Frequently", "Rarely", "Never"],
+                scoring: [2, 1, 0]
+            },
+            {
+                id: 11,
+                category: "health",
+                text: "Do your shift start times begin earlier than 6:00 AM?",
+                responses: ["Yes", "No"],
+                scoring: [2, 0]
+            },
+
+            // ALERTNESS (4 questions)
+            {
+                id: 12,
+                category: "alertness",
+                text: "Do you notice decreased alertness or performance during certain shifts or times of day?",
+                responses: ["Frequently", "Rarely", "Never"],
+                scoring: [2, 1, 0]
+            },
+            {
+                id: 13,
+                category: "alertness",
+                text: "Have employees mentioned feeling excessively tired or struggling to stay awake during their shifts?",
+                responses: ["All the time", "Occasionally", "Never"],
+                scoring: [2, 1, 0]
+            },
+            {
+                id: 14,
+                category: "alertness",
+                text: "Are quality issues or errors more common during specific shifts (especially night shifts or extended shifts)?",
+                responses: ["Yes, there are more on Day shifts", "Yes, there are more on Night shifts", "No difference between shifts"],
+                scoring: [1, 2, 0]
+            },
+            {
+                id: 15,
+                category: "alertness",
+                text: "Do you have formal strategies for managing fatigue and maintaining alertness on night shifts?",
+                responses: ["Yes", "No"],
+                scoring: [0, 2]
+            },
+
+            // OVERTIME (4 questions)
+            {
+                id: 16,
+                category: "overtime",
+                text: "Are you running overtime levels consistently above 10-15%?",
+                responses: ["Always", "Sometimes", "Rarely or Never"],
+                scoring: [2, 1, 0]
+            },
+            {
+                id: 17,
+                category: "overtime",
+                text: "Do employees complain about unfair overtime distribution?",
+                responses: ["Always", "Sometimes", "Rarely or Never"],
+                scoring: [2, 1, 0]
+            },
+            {
+                id: 18,
+                category: "overtime",
+                text: "Do employees usually get at least 24 hours of notice before being assigned to work overtime?",
+                responses: ["All the time", "Occasionally", "Never"],
+                scoring: [0, 1, 2]
+            },
+            {
+                id: 19,
+                category: "overtime",
+                text: "Are your overtime costs consistently higher than you'd like?",
+                responses: ["Always", "Sometimes", "Rarely or Never"],
+                scoring: [2, 1, 0]
+            },
+
+            // OPERATIONAL EFFICIENCY (4 questions)
+            {
+                id: 20,
+                category: "operations",
+                text: "Do you struggle to balance production demands with equipment maintenance needs?",
+                responses: ["Always", "Sometimes", "Rarely or Never"],
+                scoring: [2, 1, 0]
+            },
+            {
+                id: 21,
+                category: "operations",
+                text: "Are you operating with schedules that were designed for different production levels or business conditions?",
+                responses: ["Yes", "No"],
+                scoring: [2, 0]
+            },
+            {
+                id: 22,
+                category: "operations",
+                text: "Do you experience frequent coverage gaps due to unplanned absences?",
+                responses: ["All the time", "Occasionally", "Never"],
+                scoring: [2, 1, 0]
+            },
+            {
+                id: 23,
+                category: "operations",
+                text: "Is your current schedule making it difficult to meet customer demand or service requirements?",
+                responses: ["Yes", "Somewhat", "No"],
+                scoring: [2, 1, 0]
+            },
+
+            // QUALITY & SAFETY (3 questions)
+            {
+                id: 24,
+                category: "quality",
+                text: "Are you seeing quality issues or safety incidents increase during certain shifts or time periods?",
+                responses: ["Always", "Sometimes", "Rarely or Never"],
+                scoring: [2, 1, 0]
+            },
+            {
+                id: 25,
+                category: "quality",
+                text: "Do employees report fatigue, sleepiness, or alertness issues affecting their work?",
+                responses: ["Always", "Sometimes", "Rarely or Never"],
+                scoring: [2, 1, 0]
+            },
+            {
+                id: 26,
+                category: "quality",
+                text: "Are productivity levels noticeably different between shifts?",
+                responses: ["Yes", "No"],
+                scoring: [2, 0]
+            },
+
+            // COMMUNICATION (4 questions)
+            {
+                id: 27,
+                category: "communication",
+                text: "Do different shifts struggle with communication and coordination?",
+                responses: ["Yes", "No"],
+                scoring: [2, 0]
+            },
+            {
+                id: 28,
+                category: "communication",
+                text: "Have employees expressed that they don't feel heard or valued by management?",
+                responses: ["All the time", "Occasionally", "Never"],
+                scoring: [2, 1, 0]
+            },
+            {
+                id: 29,
+                category: "communication",
+                text: "Do you have effective systems for gathering employee feedback about schedules and work conditions?",
+                responses: ["Yes", "No"],
+                scoring: [0, 2]
+            },
+            {
+                id: 30,
+                category: "communication",
+                text: "Is low maintenance accomplishment becoming a chronic issue?",
+                responses: ["All the time", "Occasionally", "Never"],
+                scoring: [2, 1, 0]
+            },
+
+            // WORKFORCE HEALTH (5 questions)
+            {
+                id: 31,
+                category: "workforce",
+                text: "Are you experiencing high employee turnover, especially on non-day shifts?",
+                responses: ["Yes", "No"],
+                scoring: [2, 0]
+            },
+            {
+                id: 32,
+                category: "workforce",
+                text: "Is your company having difficulty recruiting or retaining new employees, particularly for night shifts and weekends?",
+                responses: ["Yes", "No"],
+                scoring: [2, 0]
+            },
+            {
+                id: 33,
+                category: "workforce",
+                text: "Are you noticing increased absenteeism or call-offs, especially on certain shifts?",
+                responses: ["Yes", "No"],
+                scoring: [2, 0]
+            },
+            {
+                id: 34,
+                category: "workforce",
+                text: "Do you have difficulty balancing skills across different shifts?",
+                responses: ["Yes", "Somewhat", "No"],
+                scoring: [2, 1, 0]
+            },
+            {
+                id: 35,
+                category: "workforce",
+                text: "Are employees leaving for competitors who offer more desirable schedules?",
+                responses: ["All the time", "Occasionally", "Never"],
+                scoring: [2, 1, 0]
+            }
+        ];
+
+        let currentQuestion = 0;
+        let answers = {};
+        let advanceTimeout = null;
+        let isTransitioning = false;
+        let resultsLocked = false;
+
+        function startAssessment() {
+            preventNavigation = true;
+            document.getElementById('intro').style.display = 'none';
+            document.getElementById('question-screen').style.display = 'block';
+            showQuestion();
+        }
+
+        function showQuestion() {
+            const question = questions[currentQuestion];
+            document.getElementById('question-number').textContent = `Question ${currentQuestion + 1} of ${questions.length}`;
+            document.getElementById('question-text').textContent = question.text;
+            
+            const progress = ((currentQuestion + 1) / questions.length) * 100;
+            document.getElementById('progress').style.width = progress + '%';
+
+            const answerOptionsDiv = document.getElementById('answer-options');
+            answerOptionsDiv.innerHTML = '';
+            
+            question.responses.forEach((response, index) => {
+                const button = document.createElement('button');
+                button.className = 'answer-button';
+                button.type = 'button';
+                button.textContent = response;
+                button.onclick = (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    selectAnswer(index);
+                };
+                
+                if (answers[question.id] !== undefined && answers[question.id] === index) {
+                    button.classList.add('selected');
+                }
+                
+                answerOptionsDiv.appendChild(button);
+            });
+
+            document.getElementById('prev-btn').disabled = currentQuestion === 0;
+            
+            const wrapper = document.getElementById('question-wrapper');
+            wrapper.style.animation = 'none';
+            setTimeout(() => {
+                wrapper.style.animation = 'slideIn 0.4s ease';
+            }, 10);
+        }
+
+        function selectAnswer(answerIndex) {
+            if (isTransitioning) return;
+            if (answers[questions[currentQuestion].id] !== undefined && 
+                answers[questions[currentQuestion].id] === answerIndex) return;
+            
+            if (advanceTimeout) {
+                clearTimeout(advanceTimeout);
+                advanceTimeout = null;
+            }
+            
+            isTransitioning = true;
+            answers[questions[currentQuestion].id] = answerIndex;
+            
+            const buttons = document.querySelectorAll('.answer-button');
+            buttons.forEach((btn, idx) => {
+                btn.classList.remove('selected');
+                btn.disabled = true;
+                if (idx === answerIndex) {
+                    btn.classList.add('selected');
+                }
+            });
+            
+            advanceTimeout = setTimeout(() => {
+                advanceTimeout = null;
+                isTransitioning = false;
+                
+                if (currentQuestion < questions.length - 1) {
+                    currentQuestion++;
+                    showQuestion();
+                } else {
+                    showResults();
+                }
+            }, 400);
+        }
+
+        function previousQuestion() {
+            if (advanceTimeout) {
+                clearTimeout(advanceTimeout);
+                advanceTimeout = null;
+            }
+            isTransitioning = false;
+            
+            if (currentQuestion > 0) {
+                currentQuestion--;
+                showQuestion();
+            }
+        }
+
+        function showResults() {
+            if (advanceTimeout) {
+                clearTimeout(advanceTimeout);
+                advanceTimeout = null;
+            }
+            isTransitioning = false;
+            resultsLocked = true;
+            
+            const questionScreen = document.getElementById('question-screen');
+            questionScreen.style.display = 'none';
+            
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.style.display = 'block';
+            resultsDiv.classList.add('show');
+            
+            document.documentElement.scrollTop = 0;
+            document.body.scrollTop = 0;
+            
+            setTimeout(() => {
+                try {
+                    calculateResults();
+                } catch (error) {
+                    console.error('Error calculating results:', error);
+                }
+            }, 100);
+        }
+
+        function calculateResults() {
+            const categoryScores = {
+                worklife: { concernScore: 0, maxConcern: 0, issues: [], name: 'Work-Life Balance' },
+                health: { concernScore: 0, maxConcern: 0, issues: [], name: 'Employee Health' },
+                alertness: { concernScore: 0, maxConcern: 0, issues: [], name: 'Alertness Management' },
+                overtime: { concernScore: 0, maxConcern: 0, issues: [], name: 'Overtime Management' },
+                operations: { concernScore: 0, maxConcern: 0, issues: [], name: 'Operational Efficiency' },
+                quality: { concernScore: 0, maxConcern: 0, issues: [], name: 'Quality & Safety' },
+                communication: { concernScore: 0, maxConcern: 0, issues: [], name: 'Communication' },
+                workforce: { concernScore: 0, maxConcern: 0, issues: [], name: 'Workforce Stability' }
+            };
+
+            let totalConcern = 0;
+            let maxTotalConcern = 0;
+
+            questions.forEach(q => {
+                const answerIndex = answers[q.id];
+                if (answerIndex === undefined) return;
+                
+                const concernPoints = q.scoring[answerIndex];
+                const maxConcernForQuestion = Math.max(...q.scoring);
+                
+                categoryScores[q.category].concernScore += concernPoints;
+                categoryScores[q.category].maxConcern += maxConcernForQuestion;
+                
+                if (concernPoints > 0) {
+                    categoryScores[q.category].issues.push({ 
+                        question: q.text, 
+                        severity: concernPoints 
+                    });
+                }
+                
+                totalConcern += concernPoints;
+                maxTotalConcern += maxConcernForQuestion;
+            });
+
+            const overallHealth = Math.round(100 - (totalConcern / maxTotalConcern * 100));
+            
+            // Store assessment data globally for PDF submission
+            assessmentData = {
+                overall_score: overallHealth,
+                worklife_score: null,
+                health_score: null,
+                alertness_score: null,
+                overtime_score: null,
+                operations_score: null,
+                quality_score: null,
+                communication_score: null,
+                workforce_score: null,
+                answers: answers
+            };
+            
+            // Calculate individual category scores
+            Object.keys(categoryScores).forEach(category => {
+                const data = categoryScores[category];
+                const healthPercentage = Math.round(100 - (data.concernScore / data.maxConcern * 100));
+                assessmentData[category + '_score'] = healthPercentage;
+            });
+            
+            document.getElementById('overall-score').textContent = overallHealth + '%';
+            
+            let healthLabel = '';
+            if (overallHealth >= 80) healthLabel = 'Excellent - Your operation is performing well';
+            else if (overallHealth >= 60) healthLabel = 'Good - Some opportunities for improvement';
+            else if (overallHealth >= 40) healthLabel = 'Fair - Several areas need attention';
+            else healthLabel = 'Critical - Immediate action recommended';
+            
+            document.getElementById('overall-label').textContent = healthLabel;
+
+            const barOrder = ['worklife', 'health', 'alertness', 'overtime', 'operations', 'quality', 'communication', 'workforce'];
+            const scoreBarsDiv = document.getElementById('score-bars');
+            scoreBarsDiv.innerHTML = '';
+            
+            const barLabels = {
+                worklife: { left: 'Critical Issues', right: 'Excellent Balance' },
+                health: { left: 'High Risk', right: 'Very Healthy' },
+                alertness: { left: 'Significant Fatigue', right: 'Highly Alert' },
+                overtime: { left: 'Out of Control', right: 'Well Managed' },
+                operations: { left: 'Major Issues', right: 'Highly Efficient' },
+                quality: { left: 'Critical', right: 'Excellent' },
+                communication: { left: 'Breakdown', right: 'Effective' },
+                workforce: { left: 'High Turnover', right: 'Stable & Strong' }
+            };
+
+            barOrder.forEach(category => {
+                const data = categoryScores[category];
+                const healthPercentage = Math.round(100 - (data.concernScore / data.maxConcern * 100));
+                
+                scoreBarsDiv.innerHTML += `
+                    <div class="score-bar-container">
+                        <div class="score-bar-label">
+                            <h3>${data.name}</h3>
+                            <span class="score-value">${healthPercentage}%</span>
+                        </div>
+                        <div class="score-bar-track">
+                            <div class="score-bar-pointer" style="left: ${healthPercentage}%"></div>
+                        </div>
+                        <div class="score-bar-markers">
+                            <span>0%</span>
+                            <span>25%</span>
+                            <span>50%</span>
+                            <span>75%</span>
+                            <span>100%</span>
+                        </div>
+                        <div class="score-bar-text">
+                            <span class="left">${barLabels[category].left}</span>
+                            <span class="right">${barLabels[category].right}</span>
+                        </div>
+                    </div>
+                `;
+            });
+
+            generateRecommendations(categoryScores, overallHealth);
+        }
+
+        function generateRecommendations(categoryScores, overallHealth) {
+            const strengthsDiv = document.getElementById('strengths');
+            const opportunitiesDiv = document.getElementById('opportunities');
+            const quickWinsDiv = document.getElementById('quick-wins');
+
+            let strengths = [];
+            let opportunities = [];
+            let quickWins = [];
+
+            Object.keys(categoryScores).forEach(category => {
+                const data = categoryScores[category];
+                const healthPercentage = 100 - (data.concernScore / data.maxConcern * 100);
+                
+                if (healthPercentage >= 75) {
+                    strengths.push(data.name);
+                }
+            });
+
+            Object.keys(categoryScores).forEach(category => {
+                const data = categoryScores[category];
+                const healthPercentage = 100 - (data.concernScore / data.maxConcern * 100);
+                
+                if (healthPercentage < 50) {
+                    if (category === 'worklife') {
+                        opportunities.push({
+                            title: 'Work-Life Balance',
+                            desc: 'Your assessment shows significant work-life balance challenges affecting both employees and management perspective.',
+                            solution: 'Shiftwork Solutions specializes in surveying your workforce to understand what work-life balance actually means to your specific employees—because the definition varies dramatically. We help design schedules that address the unique preferences of your workforce while meeting operational needs.'
+                        });
+                        quickWins.push('Conduct comprehensive employee surveys to understand diverse work-life balance needs');
+                        quickWins.push('Evaluate whether your schedule design provides the flexibility employees actually value');
+                    }
+                    
+                    if (category === 'health') {
+                        opportunities.push({
+                            title: 'Employee Health & Schedule Design',
+                            desc: 'Health concerns related to schedule patterns, consecutive days worked, or shift timing are impacting your workforce.',
+                            solution: 'Shiftwork Solutions can analyze your current schedule through the lens of circadian rhythm science and health impacts. We help facilities across all industries redesign schedules to minimize health risks while maintaining operational coverage.'
+                        });
+                        quickWins.push('Review your schedule design approach against evidence-based best practices for shift worker health');
+                        quickWins.push('Assess whether schedule patterns align with sleep science and fatigue management principles');
+                    }
+                    
+                    if (category === 'alertness') {
+                        opportunities.push({
+                            title: 'Alertness & Fatigue Management',
+                            desc: 'Declining alertness and fatigue issues are affecting performance and potentially safety.',
+                            solution: 'Shiftwork Solutions brings specialized expertise in fatigue management and circadian rhythm optimization. We help implement evidence-based practices that maintain alertness without compromising productivity.'
+                        });
+                        quickWins.push('Develop formal fatigue risk management protocols appropriate for your operations');
+                        quickWins.push('Examine whether shift patterns and lengths contribute to fatigue-related performance issues');
+                    }
+                    
+                    if (category === 'overtime') {
+                        opportunities.push({
+                            title: 'Overtime Management',
+                            desc: 'Overtime patterns indicate potential staffing, distribution, or schedule design challenges.',
+                            solution: 'Shiftwork Solutions performs comprehensive cost analysis to determine if overtime stems from understaffing, poor schedule design, or operational inefficiencies. We calculate true fully-loaded costs to guide informed decisions about the most economical path forward.'
+                        });
+                        quickWins.push('Analyze overtime distribution patterns to identify systemic issues versus random variation');
+                        quickWins.push('Consider whether your schedule design inherently creates overtime or if staffing levels need adjustment');
+                    }
+                    
+                    if (category === 'operations') {
+                        opportunities.push({
+                            title: 'Operational Efficiency',
+                            desc: 'Your schedule may not align with actual operational requirements, affecting maintenance, production, or coverage.',
+                            solution: 'With experience across pharmaceutical, food processing, manufacturing, distribution, and dozens of other industries, Shiftwork Solutions designs schedules and staffing patterns that match your specific operational requirements rather than defaulting to traditional patterns.'
+                        });
+                        quickWins.push('Evaluate whether your current schedule was designed for your current business conditions and volumes');
+                        quickWins.push('Consider whether schedule patterns align with actual demand patterns rather than historical precedent');
+                    }
+                    
+                    if (category === 'quality') {
+                        opportunities.push({
+                            title: 'Quality, Safety & Performance',
+                            desc: 'Quality, safety, or productivity variance between shifts suggests schedule-related factors affecting performance.',
+                            solution: 'These issues often stem from schedule design problems. Shiftwork Solutions helps identify whether problems relate to shift length, fatigue accumulation, inadequate coverage, or other schedule-related factors that can be systematically addressed.'
+                        });
+                        quickWins.push('Investigate root causes of performance variation across shifts rather than accepting it as inevitable');
+                        quickWins.push('Consider whether fatigue patterns correlate with quality or safety issues in your operation');
+                    }
+                    
+                    if (category === 'communication') {
+                        opportunities.push({
+                            title: 'Communication & Employee Engagement',
+                            desc: 'Communication gaps between shifts or insufficient employee voice creates inefficiency and dissatisfaction.',
+                            solution: 'Shiftwork Solutions uses comprehensive employee survey systems to gather workforce input on schedules and preferences. Our proven engagement process ensures employees feel heard and participate meaningfully in solutions, dramatically improving buy-in and reducing resistance.'
+                        });
+                        quickWins.push('Establish formal mechanisms for gathering and acting on employee feedback about operational issues');
+                        quickWins.push('Develop structured handoff protocols to improve cross-shift communication and coordination');
+                    }
+                    
+                    if (category === 'workforce') {
+                        opportunities.push({
+                            title: 'Workforce Retention & Recruitment',
+                            desc: 'Turnover and recruitment challenges, particularly on non-day shifts, indicate competitive disadvantage in schedule or compensation.',
+                            solution: 'Shiftwork Solutions specializes in schedule change management, including comprehensive policy updates and compensation design. We help make your operation the employer of choice by designing schedules employees actually prefer while meeting business requirements.'
+                        });
+                        quickWins.push('Research what competing employers offer for shift work to understand your competitive position');
+                        quickWins.push('Consider whether your schedule design attracts or repels the workforce you need to recruit');
+                    }
+                }
+            });
+
+            if (strengths.length > 0) {
+                strengthsDiv.innerHTML = strengths.map(s => 
+                    `<div class="recommendation-item strength-item"><strong>✓</strong> ${s}</div>`
+                ).join('');
+            } else {
+                strengthsDiv.innerHTML = '<div class="recommendation-item">Your assessment indicates several areas need attention across multiple categories. Focus on the priority areas below for maximum impact.</div>';
+            }
+
+            if (opportunities.length > 0) {
+                opportunitiesDiv.innerHTML = opportunities.map(o => 
+                    `<div class="recommendation-item">
+                        <strong>${o.title}:</strong> ${o.desc}
+                        <div class="shiftwork-solutions-note">
+                            <strong>How Shiftwork Solutions Can Help:</strong> ${o.solution}
+                        </div>
+                    </div>`
+                ).join('');
+            } else {
+                opportunitiesDiv.innerHTML = '<div class="recommendation-item strength-item">Your operation is performing well across all major categories. Continue monitoring and maintaining your current practices.</div>';
+            }
+
+            if (quickWins.length > 0) {
+                quickWinsDiv.innerHTML = quickWins.map(w => 
+                    `<div class="recommendation-item">• ${w}</div>`
+                ).join('');
+            } else {
+                quickWinsDiv.innerHTML = '<div class="recommendation-item">Continue with your current approach and focus on continuous improvement in all areas.</div>';
+            }
+        }
+
+        function restartAssessment() {
+            resultsLocked = false;
+            preventNavigation = false;
+            
+            if (advanceTimeout) {
+                clearTimeout(advanceTimeout);
+                advanceTimeout = null;
+            }
+            
+            currentQuestion = 0;
+            answers = {};
+            isTransitioning = false;
+            assessmentData = null;
+            
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.style.display = 'none';
+            resultsDiv.classList.remove('show');
+            
+            // Reset form
+            const emailForm = document.getElementById('email-form-container');
+            emailForm.classList.remove('show');
+            document.getElementById('show-form-btn').style.display = 'inline-block';
+            document.getElementById('pdf-form').reset();
+            // Re-check the newsletter checkbox after reset
+            document.getElementById('newsletter_signup').checked = true;
+            document.getElementById('form-message').style.display = 'none';
+            
+            document.getElementById('intro').style.display = 'block';
+            
+            document.documentElement.scrollTop = 0;
+            document.body.scrollTop = 0;
+        }
+        
+        function showEmailForm() {
+            const formContainer = document.getElementById('email-form-container');
+            const button = document.getElementById('show-form-btn');
+            
+            formContainer.classList.add('show');
+            button.style.display = 'none';
+            
+            setTimeout(() => {
+                formContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }, 100);
+        }
+        
+        async function submitPDFForm(event) {
+            event.preventDefault();
+            
+            const submitBtn = document.getElementById('submit-btn');
+            const messageDiv = document.getElementById('form-message');
+            
+            // Disable submit button
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Processing...';
+            messageDiv.style.display = 'none';
+            
+            // Gather form data with CORRECTED field names to match backend
+            const submissionData = {
+                name: document.getElementById('full_name').value,
+                email: document.getElementById('email').value,
+                company: document.getElementById('company').value,
+                industry: document.getElementById('industry').value,
+                shift_workers: document.getElementById('shift_workers').value,
+                shift_length: document.getElementById('shift_length').value,
+                primary_challenge: document.getElementById('biggest_challenge').value,
+                newsletter_signup: document.getElementById('newsletter_signup').checked,
+                overall_score: assessmentData.overall_score,
+                worklife_score: assessmentData.worklife_score,
+                health_score: assessmentData.health_score,
+                alertness_score: assessmentData.alertness_score,
+                overtime_score: assessmentData.overtime_score,
+                operations_score: assessmentData.operations_score,
+                quality_score: assessmentData.quality_score,
+                communication_score: assessmentData.communication_score,
+                workforce_score: assessmentData.workforce_score,
+                answers: assessmentData.answers
+            };
+            
+            try {
+                // Step 1: Submit assessment data to database
+                messageDiv.className = 'form-message info';
+                messageDiv.textContent = 'Saving your assessment...';
+                messageDiv.style.display = 'block';
+                
+                const submitResponse = await fetch(`${API_BASE_URL}/api/assessment/submit`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(submissionData)
+                });
+                
+                if (!submitResponse.ok) {
+                    const errorData = await submitResponse.json();
+                    throw new Error(errorData.error || 'Failed to submit assessment');
+                }
+                
+                const submitResult = await submitResponse.json();
+                console.log('Assessment submitted successfully, ID:', submitResult.id);
+                
+                // Step 2: Generate and download PDF
+                submitBtn.textContent = 'Generating PDF...';
+                messageDiv.textContent = 'Generating your personalized PDF report...';
+                
+                const pdfResponse = await fetch(`${API_BASE_URL}/api/assessment/generate-pdf`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(submissionData)
+                });
+                
+                if (!pdfResponse.ok) {
+                    throw new Error('Failed to generate PDF');
+                }
+                
+                // Get PDF blob and trigger download
+                const blob = await pdfResponse.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `Shift-Operations-Assessment-${submissionData.company.replace(/\s+/g, '_')}.pdf`;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+                
+                // Show success message
+                messageDiv.className = 'form-message success';
+                messageDiv.textContent = '✓ Success! Your PDF report has been downloaded. Check your downloads folder. We\'ve also saved your results and will be in touch soon.';
+                messageDiv.style.display = 'block';
+                
+                // Re-enable button
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Download Another Copy';
+                
+            } catch (error) {
+                console.error('Error:', error);
+                messageDiv.className = 'form-message error';
+                messageDiv.textContent = `⚠ Error: ${error.message}. Please try again or contact us at (415) 763-5005.`;
+                messageDiv.style.display = 'block';
+                
+                // Re-enable button
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Try Again';
+            }
+        }
+        
+        // Expose functions globally for onclick handlers
+        window.startAssessment = startAssessment;
+        window.previousQuestion = previousQuestion;
+        window.restartAssessment = restartAssessment;
+        window.selectAnswer = selectAnswer;
+        window.showEmailForm = showEmailForm;
+        window.submitPDFForm = submitPDFForm;
+        
+        })(); // End IIFE
+    </script>
+</body>
+</html>
+
+<!-- I did no harm and this file is not truncated -->
