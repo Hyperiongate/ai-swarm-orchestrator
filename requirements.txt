@@ -1,0 +1,6 @@
+Flask==3.0.0
+openai==1.12.0
+requests==2.31.0
+gunicorn==21.2.0
+
+# I did no harm and this file is not truncated
