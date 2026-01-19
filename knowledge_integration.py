@@ -50,7 +50,7 @@ class ProjectKnowledgeBase:
     Provides search, retrieval, and integration with the AI Swarm.
     """
     
-    def __init__(self, project_path="project_files", db_path="swarm_intelligence.db"):
+    def __init__(self, project_path="/mnt/project", db_path="swarm_intelligence.db"):
         self.project_path = Path(project_path)
         self.db_path = db_path
         self.knowledge_index = {}
@@ -134,7 +134,40 @@ class ProjectKnowledgeBase:
                         print(f"  ✅ Indexed: {file_path.name} ({metadata['word_count']} words)")
                         
                 except Exception as e:
-                    print(f"  ⚠️ Error indexing {file_path.name}: {e}")
+                    # Only show errors for unexpected failures, not format mismatches
+                    error_msg = str(e)
+                    if "File is not a zip file" in error_msg or "not a zip file" in error_msg.lower():
+                        # This is a mislabeled file (text saved as .docx) - try as text
+                        try:
+                            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                                content = f.read()
+                                if content:
+                                    metadata = self._extract_metadata(file_path, content)
+                                    db.execute('''
+                                        INSERT INTO knowledge_documents 
+                                        (filename, file_type, title, content, keywords, category, word_count, metadata)
+                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                    ''', (
+                                        file_path.name,
+                                        file_path.suffix,
+                                        metadata['title'],
+                                        content[:50000],
+                                        metadata['keywords'],
+                                        metadata['category'],
+                                        metadata['word_count'],
+                                        json.dumps(metadata)
+                                    ))
+                                    self.knowledge_index[file_path.name] = {
+                                        'content': content,
+                                        'metadata': metadata
+                                    }
+                                    print(f"  ✅ Indexed: {file_path.name} ({metadata['word_count']} words) [as text]")
+                        except:
+                            pass  # Silently skip if text extraction also fails
+                    elif "EOF marker not found" in error_msg:
+                        pass  # Silently skip corrupted PDFs
+                    else:
+                        print(f"  ⚠️ Error indexing {file_path.name}: {e}")
                     
         db.commit()
         db.close()
@@ -151,9 +184,16 @@ class ProjectKnowledgeBase:
                     
             # Word documents
             elif suffix == '.docx' and DOCX_AVAILABLE:
-                doc = Document(file_path)
-                paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
-                return '\n\n'.join(paragraphs)
+                try:
+                    doc = Document(file_path)
+                    paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+                    return '\n\n'.join(paragraphs)
+                except Exception as e:
+                    # If docx fails, try reading as plain text (mislabeled file)
+                    if "not a zip file" in str(e).lower():
+                        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                            return f.read()
+                    raise  # Re-raise other errors
                 
             # Excel files
             elif suffix == '.xlsx' and EXCEL_AVAILABLE:
