@@ -44,6 +44,9 @@ import time
 # Import our knowledge integration module
 from knowledge_integration import get_knowledge_base
 
+# Import formatting enhancement module
+from formatting_enhancement import format_with_gpt4, detect_output_type, needs_formatting
+
 app = Flask(__name__)
 
 # ============================================================================
@@ -183,11 +186,33 @@ init_db()
 
 # Initialize project knowledge base on startup
 print("🔍 Initializing Project Knowledge Base...")
+knowledge_base = None
 try:
-    knowledge_base = get_knowledge_base()
-    print(f"✅ Knowledge Base Ready: {len(knowledge_base.knowledge_index)} documents indexed")
+    # Check if path exists first
+    import os
+    from pathlib import Path
+    
+    project_paths = ["/mnt/project", "project_files", "./project_files"]
+    found_path = None
+    
+    for path in project_paths:
+        if Path(path).exists():
+            found_path = path
+            file_count = len(list(Path(path).iterdir())) if Path(path).is_dir() else 0
+            print(f"  📁 Found directory: {path} ({file_count} files)")
+            break
+    
+    if not found_path:
+        print(f"  ⚠️ No project files found. Checked: {project_paths}")
+        print(f"  ℹ️  Knowledge base features disabled until files are added")
+    else:
+        knowledge_base = get_knowledge_base()
+        print(f"  ✅ Knowledge Base Ready: {len(knowledge_base.knowledge_index)} documents indexed")
+        
 except Exception as e:
-    print(f"⚠️ Warning: Knowledge Base initialization failed: {e}")
+    print(f"  ⚠️ Warning: Knowledge Base initialization failed: {e}")
+    import traceback
+    print(f"  📋 Full error: {traceback.format_exc()}")
     knowledge_base = None
 
 # ============================================================================
@@ -695,6 +720,35 @@ def orchestrate():
             )
             db.commit()
         
+        # Step 5: Professional Formatting Pass (NEW!)
+        formatting_applied = False
+        original_output = actual_output
+        
+        if actual_output and OPENAI_API_KEY:  # Only if GPT-4 is available
+            # Check if formatting would help
+            needs_format, format_issues = needs_formatting(actual_output)
+            
+            if needs_format:
+                print(f"  🎨 Applying formatting pass (issues: {format_issues})")
+                
+                # Detect document type
+                doc_type = detect_output_type(user_request, actual_output)
+                
+                # Format with GPT-4
+                try:
+                    formatted_output = format_with_gpt4(actual_output, doc_type, call_gpt4)
+                    
+                    # Only use formatted version if it's actually different and not an error
+                    if formatted_output and not formatted_output.startswith('[Formatting pass failed'):
+                        actual_output = formatted_output
+                        formatting_applied = True
+                        print(f"  ✅ Formatting applied (type: {doc_type})")
+                    else:
+                        print(f"  ⚠️ Formatting skipped (failed or no change)")
+                        
+                except Exception as e:
+                    print(f"  ⚠️ Formatting error: {e}")
+        
         total_time = time.time() - overall_start
         
         # Update task status WITH KNOWLEDGE TRACKING
@@ -716,7 +770,8 @@ def orchestrate():
             'consensus': consensus_result,
             'execution_time_seconds': total_time,
             'knowledge_used': knowledge_used,
-            'knowledge_sources': knowledge_sources
+            'knowledge_sources': knowledge_sources,
+            'formatting_applied': formatting_applied
         })
         
     except Exception as e:
@@ -1061,6 +1116,70 @@ def health():
             'documents_indexed': kb_doc_count
         }
     })
+
+@app.route('/api/debug/knowledge')
+def debug_knowledge():
+    """Debug endpoint to diagnose knowledge base issues"""
+    import os
+    from pathlib import Path
+    
+    debug_info = {
+        'knowledge_base_object': knowledge_base is not None,
+        'paths_checked': [],
+        'libraries': {
+            'python-docx': 'unknown',
+            'openpyxl': 'unknown', 
+            'PyPDF2': 'unknown'
+        },
+        'current_directory': os.getcwd(),
+        'files_in_current_dir': []
+    }
+    
+    # Check paths
+    for path in ["/mnt/project", "project_files", "./project_files"]:
+        path_obj = Path(path)
+        debug_info['paths_checked'].append({
+            'path': path,
+            'exists': path_obj.exists(),
+            'is_dir': path_obj.is_dir() if path_obj.exists() else False,
+            'files': list(path_obj.iterdir()) if path_obj.exists() and path_obj.is_dir() else []
+        })
+    
+    # Check libraries
+    try:
+        import docx
+        debug_info['libraries']['python-docx'] = 'installed'
+    except:
+        debug_info['libraries']['python-docx'] = 'MISSING'
+    
+    try:
+        import openpyxl
+        debug_info['libraries']['openpyxl'] = 'installed'
+    except:
+        debug_info['libraries']['openpyxl'] = 'MISSING'
+    
+    try:
+        import PyPDF2
+        debug_info['libraries']['PyPDF2'] = 'installed'
+    except:
+        debug_info['libraries']['PyPDF2'] = 'MISSING'
+    
+    # List files in current directory
+    try:
+        debug_info['files_in_current_dir'] = os.listdir('.')
+    except:
+        pass
+    
+    # Knowledge base details
+    if knowledge_base:
+        debug_info['knowledge_base_details'] = {
+            'project_path': str(knowledge_base.project_path),
+            'project_path_exists': knowledge_base.project_path.exists(),
+            'documents_indexed': len(knowledge_base.knowledge_index),
+            'index_keys': list(knowledge_base.knowledge_index.keys())
+        }
+    
+    return jsonify(debug_info)
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
