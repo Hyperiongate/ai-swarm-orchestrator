@@ -1,22 +1,31 @@
 """
-AI SWARM ORCHESTRATOR - Main Application
+AI SWARM ORCHESTRATOR - Main Application with Project Knowledge Integration
 Created: January 18, 2026
 Last Updated: January 19, 2026
 
 CHANGES IN THIS VERSION:
-- Fixed Anthropic API timeout issues (extended to 180 seconds)
-- Added proper timeout configuration for long-running AI operations
+- January 19, 2026: INTEGRATED ENTIRE PROJECT KNOWLEDGE BASE
+  * All Shiftwork Solutions documents now accessible to swarm
+  * Automatic context injection from 30+ years of expertise
+  * Smart search across Implementation Manuals, templates, guides
+  * Real-time knowledge retrieval during task execution
+  * New /api/knowledge endpoints for knowledge base management
+
+- January 19, 2026: Fixed Anthropic API timeout issues (extended to 180 seconds)
+- January 19, 2026: Added proper timeout configuration for long-running AI operations
 
 PURPOSE:
 Intelligent AI orchestration system that routes tasks to specialist AIs,
-validates through consensus, and learns from outcomes.
+validates through consensus, learns from outcomes, and leverages your
+complete Shiftwork Solutions knowledge base.
 
 ARCHITECTURE:
-- Sonnet (Primary Orchestrator): Fast routing for 90% of tasks
-- Opus (Strategic Supervisor): Deep analysis for 10% complex tasks  
+- Sonnet (Primary Orchestrator): Fast routing for 90% of tasks + PROJECT KNOWLEDGE ACCESS
+- Opus (Strategic Supervisor): Deep analysis for 10% complex tasks + PROJECT KNOWLEDGE ACCESS
 - Specialist AIs: GPT-4 (design), DeepSeek (code), Gemini (multimodal)
 - Consensus Engine: Multi-AI validation
 - Learning Layer: Improves over time
+- Knowledge Base: 20+ documents from /mnt/project automatically indexed and searchable
 
 AUTHOR: Jim @ Shiftwork Solutions LLC
 REPOSITORY: ai-swarm-orchestrator
@@ -31,6 +40,9 @@ from openai import OpenAI
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
+
+# Import our knowledge integration module
+from knowledge_integration import get_knowledge_base
 
 app = Flask(__name__)
 
@@ -86,7 +98,9 @@ def init_db():
             assigned_orchestrator TEXT,
             status TEXT DEFAULT 'pending',
             result TEXT,
-            execution_time_seconds REAL
+            execution_time_seconds REAL,
+            knowledge_used BOOLEAN DEFAULT 0,
+            knowledge_sources TEXT
         )
     ''')
     
@@ -164,162 +178,209 @@ def init_db():
     db.commit()
     db.close()
 
-# Initialize on startup
+# Initialize database on startup
 init_db()
 
+# Initialize project knowledge base on startup
+print("🔍 Initializing Project Knowledge Base...")
+try:
+    knowledge_base = get_knowledge_base()
+    print(f"✅ Knowledge Base Ready: {len(knowledge_base.knowledge_index)} documents indexed")
+except Exception as e:
+    print(f"⚠️ Warning: Knowledge Base initialization failed: {e}")
+    knowledge_base = None
+
 # ============================================================================
-# AI CLIENT FUNCTIONS (FIXED TIMEOUTS - January 19, 2026)
+# AI CLIENT FUNCTIONS (FIXED TIMEOUTS)
 # ============================================================================
 
 def call_claude_sonnet(prompt, max_tokens=4000):
-    """
-    Call Claude Sonnet (Primary Orchestrator)
-    FIXED: Extended timeout with proper tuple format (connect, read)
-    """
+    """Call Claude Sonnet (Primary Orchestrator) with 180-second timeout"""
+    if not ANTHROPIC_API_KEY:
+        return "ERROR: Anthropic API key not configured"
+    
     try:
         response = requests.post(
-            "https://api.anthropic.com/v1/messages",
+            'https://api.anthropic.com/v1/messages',
             headers={
-                "x-api-key": ANTHROPIC_API_KEY,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json"
+                'x-api-key': ANTHROPIC_API_KEY,
+                'anthropic-version': '2023-06-01',
+                'content-type': 'application/json'
             },
             json={
-                "model": "claude-sonnet-4-20250514",
-                "max_tokens": max_tokens,
-                "messages": [{"role": "user", "content": prompt}]
+                'model': 'claude-sonnet-4-20250514',
+                'max_tokens': max_tokens,
+                'messages': [{'role': 'user', 'content': prompt}]
             },
-            timeout=(10, 180)  # CRITICAL FIX: (connect_timeout, read_timeout)
+            timeout=180  # 3 minutes - CRITICAL for long operations
         )
-        response.raise_for_status()
-        return response.json()['content'][0]['text']
+        
+        if response.status_code == 200:
+            return response.json()['content'][0]['text']
+        else:
+            return f"ERROR: Sonnet API returned {response.status_code}: {response.text}"
+            
+    except requests.exceptions.Timeout:
+        return "ERROR: Sonnet API timeout after 180 seconds"
     except Exception as e:
-        return f"ERROR: Claude Sonnet call failed - {str(e)}"
+        return f"ERROR: Sonnet API call failed: {str(e)}"
 
 def call_claude_opus(prompt, max_tokens=4000):
-    """
-    Call Claude Opus (Strategic Supervisor)
-    FIXED: Extended timeout with proper tuple format (connect, read)
-    """
+    """Call Claude Opus (Strategic Supervisor) with 180-second timeout"""
+    if not ANTHROPIC_API_KEY:
+        return "ERROR: Anthropic API key not configured"
+    
     try:
         response = requests.post(
-            "https://api.anthropic.com/v1/messages",
+            'https://api.anthropic.com/v1/messages',
             headers={
-                "x-api-key": ANTHROPIC_API_KEY,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json"
+                'x-api-key': ANTHROPIC_API_KEY,
+                'anthropic-version': '2023-06-01',
+                'content-type': 'application/json'
             },
             json={
-                "model": "claude-opus-4-20250514",
-                "max_tokens": max_tokens,
-                "messages": [{"role": "user", "content": prompt}]
+                'model': 'claude-opus-4-20250514',
+                'max_tokens': max_tokens,
+                'messages': [{'role': 'user', 'content': prompt}]
             },
-            timeout=(10, 180)  # CRITICAL FIX: (connect_timeout, read_timeout)
+            timeout=180  # 3 minutes
         )
-        response.raise_for_status()
-        return response.json()['content'][0]['text']
+        
+        if response.status_code == 200:
+            return response.json()['content'][0]['text']
+        else:
+            return f"ERROR: Opus API returned {response.status_code}: {response.text}"
+            
+    except requests.exceptions.Timeout:
+        return "ERROR: Opus API timeout after 180 seconds"
     except Exception as e:
-        return f"ERROR: Claude Opus call failed - {str(e)}"
+        return f"ERROR: Opus API call failed: {str(e)}"
 
 def call_gpt4(prompt, max_tokens=4000):
     """Call GPT-4 (Design & Content Specialist)"""
+    if not openai_client:
+        return "ERROR: OpenAI API not configured"
+    
     try:
         response = openai_client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-4-turbo-preview",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=max_tokens,
-            temperature=0.7,
-            timeout=180  # Extended timeout for consistency
+            timeout=120
         )
         return response.choices[0].message.content
     except Exception as e:
-        return f"ERROR: GPT-4 call failed - {str(e)}"
+        return f"ERROR: GPT-4 call failed: {str(e)}"
 
 def call_deepseek(prompt, max_tokens=4000):
     """Call DeepSeek (Code Specialist)"""
+    if not deepseek_client:
+        return "ERROR: DeepSeek API not configured"
+    
     try:
         response = deepseek_client.chat.completions.create(
             model="deepseek-chat",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=max_tokens,
-            timeout=180  # Extended timeout for consistency
+            timeout=120
         )
         return response.choices[0].message.content
     except Exception as e:
-        return f"ERROR: DeepSeek call failed - {str(e)}"
+        return f"ERROR: DeepSeek call failed: {str(e)}"
 
 def call_gemini(prompt, max_tokens=4000):
-    """Call Gemini (Multimodal Specialist)"""
+    """Call Google Gemini (Multimodal Specialist)"""
+    if not GOOGLE_API_KEY:
+        return "ERROR: Google API not configured"
+    
     try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key={GOOGLE_API_KEY}"
         response = requests.post(
-            url,
-            json={"contents": [{"parts": [{"text": prompt}]}]},
-            timeout=(10, 180)  # CRITICAL FIX: (connect_timeout, read_timeout)
+            f'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={GOOGLE_API_KEY}',
+            json={
+                'contents': [{'parts': [{'text': prompt}]}],
+                'generationConfig': {'maxOutputTokens': max_tokens}
+            },
+            timeout=120
         )
-        response.raise_for_status()
-        return response.json()['candidates'][0]['content']['parts'][0]['text']
+        
+        if response.status_code == 200:
+            return response.json()['candidates'][0]['content']['parts'][0]['text']
+        else:
+            return f"ERROR: Gemini API returned {response.status_code}"
+            
     except Exception as e:
-        return f"ERROR: Gemini call failed - {str(e)}"
+        return f"ERROR: Gemini call failed: {str(e)}"
 
 # ============================================================================
-# ORCHESTRATION LOGIC
+# ORCHESTRATION LOGIC WITH PROJECT KNOWLEDGE INTEGRATION
 # ============================================================================
+
+def get_learning_context():
+    """Retrieve learning patterns to inform orchestration decisions"""
+    db = get_db()
+    
+    # Get recent patterns
+    patterns = db.execute('''
+        SELECT pattern_type, success_rate, times_applied, pattern_data
+        FROM learning_records
+        WHERE times_applied >= 2
+        ORDER BY success_rate DESC
+        LIMIT 10
+    ''').fetchall()
+    
+    db.close()
+    
+    if not patterns:
+        return ""
+        
+    context = "\n\n=== LEARNING FROM PAST TASKS ===\n"
+    context += "Your system has learned these patterns:\n\n"
+    
+    for p in patterns:
+        pattern_data = json.loads(p['pattern_data'])
+        context += f"- {p['pattern_type']}: {p['success_rate']*100:.0f}% success rate ({p['times_applied']} times)\n"
+        if 'improvement_areas' in pattern_data and pattern_data['improvement_areas']:
+            context += f"  Common issues: {', '.join(pattern_data['improvement_areas'])}\n"
+    
+    return context
 
 def analyze_task_with_sonnet(user_request):
     """
-    Sonnet analyzes incoming request and decides:
-    1. Can I handle this? (confidence score)
-    2. If yes: What specialists do I need?
-    3. If no: Escalate to Opus
+    Sonnet analyzes the task WITH PROJECT KNOWLEDGE
+    Returns decision: orchestrator, specialists, escalation
     """
     
-    # Get learning context from past feedback
-    db = get_db()
-    learning_context = ""
-    try:
-        # Get recent high-performing patterns
-        high_performers = db.execute('''
-            SELECT pattern_type, pattern_data, success_rate 
-            FROM learning_records 
-            WHERE success_rate > 0.7 
-            ORDER BY times_applied DESC 
-            LIMIT 5
-        ''').fetchall()
-        
-        if high_performers:
-            learning_context = "\n\nLEARNING FROM PAST PERFORMANCE:\n"
-            for record in high_performers:
-                pattern_data = json.loads(record['pattern_data']) if record['pattern_data'] else {}
-                learning_context += f"- {record['pattern_type']}: Success rate {record['success_rate']:.1%}\n"
-                if 'improvement_areas' in pattern_data:
-                    learning_context += f"  Common issues to avoid: {pattern_data['improvement_areas']}\n"
-    except:
-        pass
-    finally:
-        db.close()
+    # Get learning context
+    learning_context = get_learning_context()
     
-    analysis_prompt = f"""You are the primary orchestrator in an AI swarm system. Analyze this user request and provide a JSON response.
-
-IMPORTANT BUSINESS CONTEXT:
-This system is owned by Shiftwork Solutions LLC, a consulting firm specializing in EMPLOYEE SHIFT SCHEDULING for 24/7 operations. When the user mentions "scheduling" or "shift work," they are referring to:
-- Employee work schedules (not production schedules)
-- Shift rotations (day/night/swing shifts)  
-- Workforce planning for continuous operations
-- 12-hour vs 8-hour shift patterns
-- Work-life balance for shift workers
-- Overtime management for hourly employees
-
-NOT about: production scheduling, machine scheduling, maintenance scheduling, or manufacturing schedules.
+    # GET RELEVANT KNOWLEDGE FROM PROJECT BASE
+    knowledge_context = ""
+    knowledge_sources = []
+    
+    if knowledge_base:
+        try:
+            knowledge_context = knowledge_base.get_context_for_task(user_request, max_context=3000)
+            if knowledge_context:
+                # Extract sources for tracking
+                search_results = knowledge_base.search(user_request, max_results=3)
+                knowledge_sources = [r['filename'] for r in search_results]
+        except Exception as e:
+            print(f"⚠️ Knowledge retrieval error: {e}")
+    
+    analysis_prompt = f"""You are the primary orchestrator in an AI swarm system for Shiftwork Solutions LLC.
 
 {learning_context}
 
+{knowledge_context}
+
 USER REQUEST: {user_request}
 
-Analyze:
-1. Task type (strategy, code, design, content, analysis, multimodal, complex)
+Analyze this request with the benefit of Shiftwork Solutions' 30+ years of expertise above.
+
+Determine:
+1. Task type (strategy, schedule_design, implementation, survey, content, code, analysis, complex)
 2. Your confidence in handling this (0.0-1.0)
-3. Required specialists (gpt4, deepseek, gemini, mistral, or "none")
+3. Required specialists (gpt4, deepseek, gemini, or "none")
 4. Should this be escalated to Opus? (true/false)
 5. Reasoning
 
@@ -329,7 +390,8 @@ Respond ONLY with valid JSON:
     "confidence": 0.0-1.0,
     "specialists_needed": ["ai_name", ...],
     "escalate_to_opus": boolean,
-    "reasoning": "string"
+    "reasoning": "string",
+    "knowledge_applied": boolean
 }}"""
 
     start_time = time.time()
@@ -338,7 +400,6 @@ Respond ONLY with valid JSON:
     
     # Parse JSON response
     try:
-        # Extract JSON if wrapped in markdown
         if "```json" in response:
             response = response.split("```json")[1].split("```")[0].strip()
         elif "```" in response:
@@ -346,9 +407,9 @@ Respond ONLY with valid JSON:
             
         analysis = json.loads(response)
         analysis['execution_time'] = execution_time
+        analysis['knowledge_sources'] = knowledge_sources
         return analysis
     except:
-        # Fallback if JSON parsing fails
         return {
             "task_type": "unknown",
             "confidence": 0.5,
@@ -356,27 +417,42 @@ Respond ONLY with valid JSON:
             "escalate_to_opus": True,
             "reasoning": "Failed to parse Sonnet response, escalating to Opus",
             "raw_response": response,
-            "execution_time": execution_time
+            "execution_time": execution_time,
+            "knowledge_sources": knowledge_sources,
+            "knowledge_applied": bool(knowledge_context)
         }
 
 def handle_with_opus(user_request, sonnet_analysis):
     """
-    Opus handles complex/novel situations
+    Opus handles complex/novel situations WITH PROJECT KNOWLEDGE
     Returns strategic plan with specialist assignments
     """
     
-    opus_prompt = f"""You are the strategic supervisor in an AI swarm system. Sonnet (primary orchestrator) has escalated this request to you.
+    # GET RELEVANT KNOWLEDGE FROM PROJECT BASE
+    knowledge_context = ""
+    if knowledge_base:
+        try:
+            knowledge_context = knowledge_base.get_context_for_task(user_request, max_context=4000)
+        except Exception as e:
+            print(f"⚠️ Knowledge retrieval error: {e}")
+    
+    opus_prompt = f"""You are the strategic supervisor in an AI swarm system for Shiftwork Solutions LLC.
+
+{knowledge_context}
+
+Sonnet (primary orchestrator) has escalated this request to you.
 
 USER REQUEST: {user_request}
 
 SONNET'S ANALYSIS:
 {json.dumps(sonnet_analysis, indent=2)}
 
-Provide a strategic response with:
+With access to Shiftwork Solutions' expertise above, provide a strategic response with:
 1. Deep analysis of the request
 2. Specialist assignments (which AIs should do what)
 3. Expected workflow
 4. Any new patterns Sonnet should learn
+5. How to apply the company's methodology
 
 Respond in JSON format:
 {{
@@ -385,7 +461,8 @@ Respond in JSON format:
         {{"ai": "name", "task": "description", "reason": "why this AI"}}
     ],
     "workflow": ["step1", "step2", ...],
-    "learning_for_sonnet": "what pattern should Sonnet learn from this"
+    "learning_for_sonnet": "what pattern should Sonnet learn from this",
+    "methodology_applied": "which Shiftwork Solutions principles apply"
 }}"""
 
     start_time = time.time()
@@ -400,6 +477,7 @@ Respond in JSON format:
             
         opus_plan = json.loads(response)
         opus_plan['execution_time'] = execution_time
+        opus_plan['knowledge_applied'] = bool(knowledge_context)
         return opus_plan
     except:
         return {
@@ -408,7 +486,8 @@ Respond in JSON format:
             "workflow": ["Manual handling required"],
             "learning_for_sonnet": "Complex case - needs human review",
             "raw_response": response,
-            "execution_time": execution_time
+            "execution_time": execution_time,
+            "knowledge_applied": bool(knowledge_context)
         }
 
 def execute_specialist_task(specialist_ai, task_description):
@@ -440,21 +519,17 @@ def execute_specialist_task(specialist_ai, task_description):
 def validate_with_consensus(task_result, validators=None):
     """
     Multiple AIs review the output
-    Return agreement score and any disagreements
+    Returns agreement score and any disagreements
     Auto-detects available validators
     """
     
-    # Auto-detect available validators if not specified
     if validators is None:
         validators = []
-        # Always have Sonnet
         validators.append("sonnet")
-        # Add GPT-4 if available
         if OPENAI_API_KEY:
             validators.append("gpt4")
-        # If only one validator, just use that one (no consensus needed)
         if len(validators) == 1:
-            validators = ["sonnet"]  # Single validator mode
+            validators = ["sonnet"]
     
     validation_prompt = f"""Review this AI-generated output and rate its quality on these criteria (0-10 each):
 1. Accuracy
@@ -477,7 +552,6 @@ Respond with JSON:
 
     validation_results = []
     
-    # Run validators in parallel for speed
     with ThreadPoolExecutor(max_workers=len(validators)) as executor:
         futures = {}
         for validator in validators:
@@ -491,7 +565,6 @@ Respond with JSON:
             try:
                 result = future.result()
                 
-                # Parse JSON
                 if "```json" in result:
                     result = result.split("```json")[1].split("```")[0].strip()
                 elif "```" in result:
@@ -507,14 +580,11 @@ Respond with JSON:
                     "overall_score": 5
                 })
     
-    # Calculate consensus
     scores = [v.get('overall_score', 5) for v in validation_results]
     
     if len(scores) == 1:
-        # Single validator - no consensus possible
         agreement_score = 1.0
     else:
-        # Multiple validators - measure agreement
         agreement_score = 1.0 - (max(scores) - min(scores)) / 10.0
     
     return {
@@ -531,9 +601,7 @@ Respond with JSON:
 
 @app.route('/api/orchestrate', methods=['POST'])
 def orchestrate():
-    """
-    Main endpoint - receives user request, orchestrates AI swarm
-    """
+    """Main endpoint - receives user request, orchestrates AI swarm WITH PROJECT KNOWLEDGE"""
     data = request.json
     user_request = data.get('request')
     enable_consensus = data.get('enable_consensus', True)
@@ -541,7 +609,6 @@ def orchestrate():
     if not user_request:
         return jsonify({'error': 'Request text required'}), 400
     
-    # Log the task
     db = get_db()
     cursor = db.execute(
         'INSERT INTO tasks (user_request, status) VALUES (?, ?)',
@@ -551,10 +618,14 @@ def orchestrate():
     db.commit()
     
     overall_start = time.time()
+    knowledge_used = False
+    knowledge_sources = []
     
     try:
-        # Step 1: Sonnet analyzes
+        # Step 1: Sonnet analyzes WITH PROJECT KNOWLEDGE
         sonnet_analysis = analyze_task_with_sonnet(user_request)
+        knowledge_used = sonnet_analysis.get('knowledge_applied', False)
+        knowledge_sources = sonnet_analysis.get('knowledge_sources', [])
         
         # Step 2: Escalate to Opus if needed
         if sonnet_analysis.get('escalate_to_opus'):
@@ -567,6 +638,8 @@ def orchestrate():
             opus_plan = handle_with_opus(user_request, sonnet_analysis)
             orchestrator = "opus"
             plan = opus_plan
+            if opus_plan.get('knowledge_applied'):
+                knowledge_used = True
         else:
             orchestrator = "sonnet"
             plan = sonnet_analysis
@@ -577,13 +650,11 @@ def orchestrate():
         actual_output = None
         
         if specialists_needed and specialists_needed != ["none"]:
-            # Use specialists
             for specialist in specialists_needed:
                 specialist_task = f"User request: {user_request}\n\nYour role as {specialist}: Complete the task using your specialty."
                 result = execute_specialist_task(specialist, specialist_task)
                 specialist_results.append(result)
                 
-                # Log specialist assignment
                 db.execute(
                     '''INSERT INTO specialist_assignments 
                        (task_id, specialist_name, specialist_role, output, execution_time_seconds, success)
@@ -593,7 +664,6 @@ def orchestrate():
                 )
                 db.commit()
                 
-                # Use first specialist's output as primary
                 if not actual_output:
                     actual_output = result.get('output')
         else:
@@ -603,7 +673,6 @@ def orchestrate():
             else:
                 actual_output = call_claude_sonnet(f"Complete this request:\n\n{user_request}")
             
-            # Store as a "specialist" result for consistency
             specialist_results.append({
                 "specialist": orchestrator,
                 "output": actual_output,
@@ -626,17 +695,17 @@ def orchestrate():
             )
             db.commit()
         
-        # Calculate total time
         total_time = time.time() - overall_start
         
-        # Update task status
+        # Update task status WITH KNOWLEDGE TRACKING
         db.execute(
-            'UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
-            ('completed', orchestrator, total_time, task_id)
+            '''UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ?,
+               knowledge_used = ?, knowledge_sources = ? WHERE id = ?''',
+            ('completed', orchestrator, total_time, knowledge_used, 
+             json.dumps(knowledge_sources), task_id)
         )
         db.commit()
         
-        # Return response
         return jsonify({
             'success': True,
             'task_id': task_id,
@@ -645,7 +714,9 @@ def orchestrate():
             'actual_output': actual_output,
             'specialist_results': specialist_results,
             'consensus': consensus_result,
-            'execution_time_seconds': total_time
+            'execution_time_seconds': total_time,
+            'knowledge_used': knowledge_used,
+            'knowledge_sources': knowledge_sources
         })
         
     except Exception as e:
@@ -664,7 +735,248 @@ def orchestrate():
         db.close()
 
 # ============================================================================
-# FRONTEND & MONITORING ROUTES
+# PROJECT KNOWLEDGE API ENDPOINTS (NEW)
+# ============================================================================
+
+@app.route('/api/knowledge/search', methods=['POST'])
+def knowledge_search():
+    """Search the project knowledge base"""
+    if not knowledge_base:
+        return jsonify({'error': 'Knowledge base not initialized'}), 503
+    
+    data = request.json
+    query = data.get('query', '')
+    max_results = data.get('max_results', 5)
+    
+    if not query:
+        return jsonify({'error': 'Query required'}), 400
+    
+    try:
+        results = knowledge_base.search(query, max_results=max_results)
+        return jsonify({
+            'success': True,
+            'query': query,
+            'results': results,
+            'total_found': len(results)
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/knowledge/document/<filename>')
+def get_knowledge_document(filename):
+    """Retrieve a specific document from the knowledge base"""
+    if not knowledge_base:
+        return jsonify({'error': 'Knowledge base not initialized'}), 503
+    
+    try:
+        doc = knowledge_base.get_document(filename)
+        if doc:
+            return jsonify({
+                'success': True,
+                'filename': filename,
+                'content': doc['content'][:10000],  # First 10k chars
+                'metadata': doc['metadata'],
+                'full_content_length': len(doc['content'])
+            })
+        else:
+            return jsonify({'error': 'Document not found'}), 404
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/knowledge/stats')
+def knowledge_stats():
+    """Get knowledge base statistics"""
+    if not knowledge_base:
+        return jsonify({'error': 'Knowledge base not initialized'}), 503
+    
+    try:
+        stats = knowledge_base.get_stats()
+        return jsonify({
+            'success': True,
+            'stats': stats
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/knowledge/documents')
+def list_knowledge_documents():
+    """List all documents in the knowledge base"""
+    if not knowledge_base:
+        return jsonify({'error': 'Knowledge base not initialized'}), 503
+    
+    try:
+        docs = knowledge_base.get_all_documents()
+        return jsonify({
+            'success': True,
+            'documents': docs,
+            'total_count': len(docs)
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ============================================================================
+# FEEDBACK & LEARNING ENDPOINTS
+# ============================================================================
+
+@app.route('/api/feedback', methods=['POST'])
+def submit_feedback():
+    """Submit feedback on task results"""
+    data = request.json
+    task_id = data.get('task_id')
+    overall_rating = data.get('overall_rating')
+    quality_rating = data.get('quality_rating')
+    accuracy_rating = data.get('accuracy_rating')
+    usefulness_rating = data.get('usefulness_rating')
+    improvement_categories = data.get('improvement_categories', [])
+    user_comment = data.get('user_comment', '')
+    output_used = data.get('output_used', False)
+    
+    if not task_id or not overall_rating:
+        return jsonify({'error': 'task_id and overall_rating required'}), 400
+    
+    db = get_db()
+    
+    try:
+        task = db.execute('SELECT * FROM tasks WHERE id = ?', (task_id,)).fetchone()
+        if not task:
+            return jsonify({'error': 'Task not found'}), 404
+        
+        consensus = db.execute('SELECT agreement_score FROM consensus_validations WHERE task_id = ?', (task_id,)).fetchone()
+        consensus_score = consensus['agreement_score'] if consensus else None
+        
+        consensus_was_accurate = None
+        if consensus_score is not None:
+            avg_rating = (quality_rating + accuracy_rating + usefulness_rating) / 3
+            if consensus_score >= 0.7 and avg_rating >= 3.5:
+                consensus_was_accurate = True
+            elif consensus_score < 0.7 and avg_rating < 3.5:
+                consensus_was_accurate = True
+            else:
+                consensus_was_accurate = False
+        
+        db.execute('''
+            INSERT INTO user_feedback 
+            (task_id, overall_rating, quality_rating, accuracy_rating, usefulness_rating,
+             consensus_was_accurate, improvement_categories, user_comment, output_used)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (task_id, overall_rating, quality_rating, accuracy_rating, usefulness_rating,
+              consensus_was_accurate, json.dumps(improvement_categories), user_comment, output_used))
+        
+        orchestrator = task['assigned_orchestrator']
+        task_type = task['task_type']
+        avg_rating = (quality_rating + accuracy_rating + usefulness_rating) / 3
+        
+        pattern_key = f"{orchestrator}_{task_type}"
+        existing_pattern = db.execute(
+            'SELECT * FROM learning_records WHERE pattern_type = ?', (pattern_key,)
+        ).fetchone()
+        
+        if existing_pattern:
+            old_success = existing_pattern['success_rate']
+            old_times = existing_pattern['times_applied']
+            new_success = (old_success * old_times + (avg_rating / 5.0)) / (old_times + 1)
+            
+            db.execute('''
+                UPDATE learning_records 
+                SET success_rate = ?, times_applied = ?, pattern_data = ?
+                WHERE pattern_type = ?
+            ''', (new_success, old_times + 1, json.dumps({
+                'last_rating': avg_rating,
+                'last_consensus': consensus_score,
+                'improvement_areas': improvement_categories
+            }), pattern_key))
+        else:
+            db.execute('''
+                INSERT INTO learning_records (pattern_type, success_rate, times_applied, pattern_data)
+                VALUES (?, ?, ?, ?)
+            ''', (pattern_key, avg_rating / 5.0, 1, json.dumps({
+                'orchestrator': orchestrator,
+                'task_type': task_type,
+                'last_rating': avg_rating,
+                'last_consensus': consensus_score
+            })))
+        
+        db.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Feedback recorded - system is learning!',
+            'consensus_was_accurate': consensus_was_accurate,
+            'learning_updated': True
+        })
+        
+    except Exception as e:
+        db.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        db.close()
+
+@app.route('/api/learning/stats')
+def learning_stats():
+    """Get learning system statistics"""
+    db = get_db()
+    
+    total_feedback = db.execute('SELECT COUNT(*) as count FROM user_feedback').fetchone()['count']
+    avg_overall = db.execute('SELECT AVG(overall_rating) as avg FROM user_feedback').fetchone()['avg']
+    
+    consensus_accuracy = db.execute('''
+        SELECT 
+            COUNT(*) as total,
+            SUM(CASE WHEN consensus_was_accurate = 1 THEN 1 ELSE 0 END) as accurate
+        FROM user_feedback 
+        WHERE consensus_was_accurate IS NOT NULL
+    ''').fetchone()
+    
+    orchestrator_performance = db.execute('''
+        SELECT 
+            t.assigned_orchestrator as orchestrator,
+            AVG(f.overall_rating) as avg_rating,
+            COUNT(*) as tasks_rated
+        FROM user_feedback f
+        JOIN tasks t ON f.task_id = t.id
+        GROUP BY t.assigned_orchestrator
+    ''').fetchall()
+    
+    all_improvements = db.execute('SELECT improvement_categories FROM user_feedback').fetchall()
+    improvement_counts = {}
+    for row in all_improvements:
+        if row['improvement_categories']:
+            categories = json.loads(row['improvement_categories'])
+            for cat in categories:
+                improvement_counts[cat] = improvement_counts.get(cat, 0) + 1
+    
+    # NEW: Knowledge usage stats
+    knowledge_usage = db.execute('''
+        SELECT 
+            COUNT(*) as total_tasks,
+            SUM(CASE WHEN knowledge_used = 1 THEN 1 ELSE 0 END) as tasks_with_knowledge
+        FROM tasks
+        WHERE status = 'completed'
+    ''').fetchone()
+    
+    db.close()
+    
+    return jsonify({
+        'total_feedback_submissions': total_feedback,
+        'average_overall_rating': round(avg_overall, 2) if avg_overall else 0,
+        'consensus_accuracy_rate': round(
+            (consensus_accuracy['accurate'] / consensus_accuracy['total'] * 100) 
+            if consensus_accuracy['total'] > 0 else 0, 1
+        ),
+        'orchestrator_performance': [dict(row) for row in orchestrator_performance],
+        'common_improvement_areas': improvement_counts,
+        'knowledge_usage': {
+            'total_tasks': knowledge_usage['total_tasks'],
+            'tasks_using_knowledge': knowledge_usage['tasks_with_knowledge'],
+            'usage_percentage': round(
+                (knowledge_usage['tasks_with_knowledge'] / knowledge_usage['total_tasks'] * 100)
+                if knowledge_usage['total_tasks'] > 0 else 0, 1
+            )
+        }
+    })
+
+# ============================================================================
+# MONITORING & STATUS ENDPOINTS
 # ============================================================================
 
 @app.route('/')
@@ -730,6 +1042,9 @@ def get_stats():
 @app.route('/health')
 def health():
     """Health check"""
+    kb_status = 'initialized' if knowledge_base and len(knowledge_base.knowledge_index) > 0 else 'not_initialized'
+    kb_doc_count = len(knowledge_base.knowledge_index) if knowledge_base else 0
+    
     return jsonify({
         'status': 'healthy',
         'orchestrators': {
@@ -740,204 +1055,11 @@ def health():
             'gpt4': 'configured' if OPENAI_API_KEY else 'missing',
             'deepseek': 'configured' if DEEPSEEK_API_KEY else 'missing',
             'gemini': 'configured' if GOOGLE_API_KEY else 'missing'
+        },
+        'knowledge_base': {
+            'status': kb_status,
+            'documents_indexed': kb_doc_count
         }
-    })
-
-@app.route('/api/slow-test')
-def slow_test():
-    """
-    Test endpoint to diagnose timeout issues
-    This endpoint deliberately sleeps for 45 seconds to test if Render
-    has a platform-level 30-second timeout that overrides our settings.
-    
-    Expected behavior:
-    - If this completes after 45s: Render timeout is NOT the issue
-    - If this fails at 30s: Render has a hard 30s limit we can't override
-    """
-    import time
-    start = time.time()
-    
-    # Sleep for 45 seconds
-    time.sleep(45)
-    
-    elapsed = time.time() - start
-    
-    return jsonify({
-        'message': 'Success! Request completed after long delay',
-        'elapsed_seconds': round(elapsed, 2),
-        'expected_seconds': 45,
-        'diagnosis': 'If you see this, Render is NOT blocking long requests'
-    })
-
-@app.route('/api/feedback', methods=['POST'])
-def submit_feedback():
-    """
-    Submit user feedback on task output
-    This is how the system learns what "good" looks like
-    """
-    data = request.json
-    task_id = data.get('task_id')
-    
-    if not task_id:
-        return jsonify({'error': 'task_id required'}), 400
-    
-    # Extract ratings
-    overall_rating = data.get('overall_rating')
-    quality_rating = data.get('quality_rating')
-    accuracy_rating = data.get('accuracy_rating')
-    usefulness_rating = data.get('usefulness_rating')
-    
-    # Extract feedback details
-    improvement_categories = data.get('improvement_categories', [])
-    user_comment = data.get('user_comment', '')
-    output_used = data.get('output_used', False)
-    
-    # Validate ratings
-    if not all([overall_rating, quality_rating, accuracy_rating, usefulness_rating]):
-        return jsonify({'error': 'All ratings required'}), 400
-    
-    if not all(1 <= r <= 5 for r in [overall_rating, quality_rating, accuracy_rating, usefulness_rating]):
-        return jsonify({'error': 'Ratings must be 1-5'}), 400
-    
-    db = get_db()
-    
-    try:
-        # Get task details
-        task = db.execute('SELECT * FROM tasks WHERE id = ?', (task_id,)).fetchone()
-        if not task:
-            return jsonify({'error': 'Task not found'}), 404
-        
-        # Get consensus score if exists
-        consensus = db.execute('SELECT agreement_score FROM consensus_validations WHERE task_id = ?', (task_id,)).fetchone()
-        consensus_score = consensus['agreement_score'] if consensus else None
-        
-        # Determine if consensus was accurate
-        consensus_was_accurate = None
-        if consensus_score is not None:
-            # High consensus (>0.7) should mean good output (rating >3)
-            # Low consensus (<0.7) should mean poor output (rating <=3)
-            avg_rating = (quality_rating + accuracy_rating + usefulness_rating) / 3
-            if consensus_score >= 0.7 and avg_rating >= 3.5:
-                consensus_was_accurate = True  # High consensus, good output
-            elif consensus_score < 0.7 and avg_rating < 3.5:
-                consensus_was_accurate = True  # Low consensus, poor output
-            else:
-                consensus_was_accurate = False  # Consensus was wrong
-        
-        # Store feedback
-        db.execute('''
-            INSERT INTO user_feedback 
-            (task_id, overall_rating, quality_rating, accuracy_rating, usefulness_rating,
-             consensus_was_accurate, improvement_categories, user_comment, output_used)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (task_id, overall_rating, quality_rating, accuracy_rating, usefulness_rating,
-              consensus_was_accurate, json.dumps(improvement_categories), user_comment, output_used))
-        
-        # Update learning records
-        orchestrator = task['assigned_orchestrator']
-        task_type = task['task_type']
-        avg_rating = (quality_rating + accuracy_rating + usefulness_rating) / 3
-        
-        # Update orchestrator performance pattern
-        pattern_key = f"{orchestrator}_{task_type}"
-        existing_pattern = db.execute(
-            'SELECT * FROM learning_records WHERE pattern_type = ?', (pattern_key,)
-        ).fetchone()
-        
-        if existing_pattern:
-            # Update existing pattern
-            old_success = existing_pattern['success_rate']
-            old_times = existing_pattern['times_applied']
-            new_success = (old_success * old_times + (avg_rating / 5.0)) / (old_times + 1)
-            
-            db.execute('''
-                UPDATE learning_records 
-                SET success_rate = ?, times_applied = ?, pattern_data = ?
-                WHERE pattern_type = ?
-            ''', (new_success, old_times + 1, json.dumps({
-                'last_rating': avg_rating,
-                'last_consensus': consensus_score,
-                'improvement_areas': improvement_categories
-            }), pattern_key))
-        else:
-            # Create new pattern
-            db.execute('''
-                INSERT INTO learning_records (pattern_type, success_rate, times_applied, pattern_data)
-                VALUES (?, ?, ?, ?)
-            ''', (pattern_key, avg_rating / 5.0, 1, json.dumps({
-                'orchestrator': orchestrator,
-                'task_type': task_type,
-                'last_rating': avg_rating,
-                'last_consensus': consensus_score
-            })))
-        
-        db.commit()
-        
-        return jsonify({
-            'success': True,
-            'message': 'Feedback recorded - system is learning!',
-            'consensus_was_accurate': consensus_was_accurate,
-            'learning_updated': True
-        })
-        
-    except Exception as e:
-        db.rollback()
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-    finally:
-        db.close()
-
-@app.route('/api/learning/stats')
-def learning_stats():
-    """Get learning system statistics"""
-    db = get_db()
-    
-    # Get feedback stats
-    total_feedback = db.execute('SELECT COUNT(*) as count FROM user_feedback').fetchone()['count']
-    avg_overall = db.execute('SELECT AVG(overall_rating) as avg FROM user_feedback').fetchone()['avg']
-    
-    # Get consensus accuracy
-    consensus_accuracy = db.execute('''
-        SELECT 
-            COUNT(*) as total,
-            SUM(CASE WHEN consensus_was_accurate = 1 THEN 1 ELSE 0 END) as accurate
-        FROM user_feedback 
-        WHERE consensus_was_accurate IS NOT NULL
-    ''').fetchone()
-    
-    # Get orchestrator performance
-    orchestrator_performance = db.execute('''
-        SELECT 
-            t.assigned_orchestrator as orchestrator,
-            AVG(f.overall_rating) as avg_rating,
-            COUNT(*) as tasks_rated
-        FROM user_feedback f
-        JOIN tasks t ON f.task_id = t.id
-        GROUP BY t.assigned_orchestrator
-    ''').fetchall()
-    
-    # Get common improvement areas
-    all_improvements = db.execute('SELECT improvement_categories FROM user_feedback').fetchall()
-    improvement_counts = {}
-    for row in all_improvements:
-        if row['improvement_categories']:
-            categories = json.loads(row['improvement_categories'])
-            for cat in categories:
-                improvement_counts[cat] = improvement_counts.get(cat, 0) + 1
-    
-    db.close()
-    
-    return jsonify({
-        'total_feedback_submissions': total_feedback,
-        'average_overall_rating': round(avg_overall, 2) if avg_overall else 0,
-        'consensus_accuracy_rate': round(
-            (consensus_accuracy['accurate'] / consensus_accuracy['total'] * 100) 
-            if consensus_accuracy['total'] > 0 else 0, 1
-        ),
-        'orchestrator_performance': [dict(row) for row in orchestrator_performance],
-        'common_improvement_areas': improvement_counts
     })
 
 if __name__ == '__main__':
