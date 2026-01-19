@@ -271,6 +271,138 @@
             overflow-y: auto;
             margin: 15px 0;
         }
+        
+        .feedback-section {
+            background: #f0f4ff;
+            padding: 25px;
+            border-radius: 15px;
+            margin: 30px 0;
+            border: 2px solid #667eea;
+        }
+        
+        .feedback-section h3 {
+            color: #667eea;
+            margin-bottom: 20px;
+        }
+        
+        .rating-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 15px 0;
+            padding: 10px;
+            background: white;
+            border-radius: 8px;
+        }
+        
+        .rating-label {
+            font-weight: 600;
+            color: #333;
+            flex: 1;
+        }
+        
+        .star-rating {
+            display: flex;
+            gap: 8px;
+            flex: 1;
+            justify-content: flex-end;
+        }
+        
+        .star {
+            font-size: 28px;
+            cursor: pointer;
+            color: #ddd;
+            transition: color 0.2s;
+            user-select: none;
+        }
+        
+        .star.active,
+        .star:hover {
+            color: #ffc107;
+        }
+        
+        .improvement-checks {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin: 15px 0;
+        }
+        
+        .improvement-check {
+            background: white;
+            padding: 12px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .improvement-check:hover {
+            background: #e3f2fd;
+        }
+        
+        .improvement-check input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+        }
+        
+        .feedback-comment {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-family: inherit;
+            font-size: 14px;
+            margin: 15px 0;
+            min-height: 80px;
+            resize: vertical;
+        }
+        
+        .feedback-actions {
+            display: flex;
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .btn-feedback {
+            flex: 1;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .btn-feedback.primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn-feedback.secondary {
+            background: white;
+            color: #667eea;
+            border: 2px solid #667eea;
+        }
+        
+        .btn-feedback:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+        
+        .feedback-success {
+            background: #4caf50;
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            text-align: center;
+            font-weight: 600;
+        }
     </style>
 </head>
 <body>
@@ -427,8 +559,10 @@ Examples:
             }
             
             // Show consensus if enabled
+            let consensusScore = null;
             if (data.consensus) {
                 const agreementScore = data.consensus.agreement_score;
+                consensusScore = agreementScore;
                 const scoreClass = agreementScore >= 0.7 ? '' : 'low';
                 const scorePercent = (agreementScore * 100).toFixed(0);
                 
@@ -447,6 +581,85 @@ Examples:
                     </div>
                 `;
             }
+            
+            // FEEDBACK FORM
+            html += `
+                <div class="feedback-section" id="feedbackSection">
+                    <h3>📊 Rate This Output (Help the System Learn)</h3>
+                    
+                    <div class="rating-row">
+                        <span class="rating-label">Overall Quality:</span>
+                        <div class="star-rating" data-rating-type="overall">
+                            ${[1,2,3,4,5].map(i => `<span class="star" data-value="${i}">★</span>`).join('')}
+                        </div>
+                    </div>
+                    
+                    <div class="rating-row">
+                        <span class="rating-label">Accuracy:</span>
+                        <div class="star-rating" data-rating-type="accuracy">
+                            ${[1,2,3,4,5].map(i => `<span class="star" data-value="${i}">★</span>`).join('')}
+                        </div>
+                    </div>
+                    
+                    <div class="rating-row">
+                        <span class="rating-label">Usefulness:</span>
+                        <div class="star-rating" data-rating-type="usefulness">
+                            ${[1,2,3,4,5].map(i => `<span class="star" data-value="${i}">★</span>`).join('')}
+                        </div>
+                    </div>
+                    
+                    <div class="rating-row">
+                        <span class="rating-label">Clarity:</span>
+                        <div class="star-rating" data-rating-type="quality">
+                            ${[1,2,3,4,5].map(i => `<span class="star" data-value="${i}">★</span>`).join('')}
+                        </div>
+                    </div>
+                    
+                    <h4 style="margin: 20px 0 10px;">What needs improvement? (optional)</h4>
+                    <div class="improvement-checks">
+                        <label class="improvement-check">
+                            <input type="checkbox" value="more_specific" name="improvements">
+                            <span>More specific</span>
+                        </label>
+                        <label class="improvement-check">
+                            <input type="checkbox" value="wrong_tone" name="improvements">
+                            <span>Wrong tone</span>
+                        </label>
+                        <label class="improvement-check">
+                            <input type="checkbox" value="missing_points" name="improvements">
+                            <span>Missing key points</span>
+                        </label>
+                        <label class="improvement-check">
+                            <input type="checkbox" value="too_long" name="improvements">
+                            <span>Too long/short</span>
+                        </label>
+                        <label class="improvement-check">
+                            <input type="checkbox" value="factual_errors" name="improvements">
+                            <span>Factual errors</span>
+                        </label>
+                        <label class="improvement-check">
+                            <input type="checkbox" value="poor_formatting" name="improvements">
+                            <span>Poor formatting</span>
+                        </label>
+                    </div>
+                    
+                    <h4 style="margin: 20px 0 10px;">Additional comments (optional)</h4>
+                    <textarea class="feedback-comment" id="feedbackComment" placeholder="Any other feedback to help the system improve..."></textarea>
+                    
+                    <div class="feedback-actions">
+                        <button class="btn-feedback primary" onclick="submitFeedback(${data.task_id}, true, ${consensusScore})">
+                            ✓ Submit Feedback & Used Output
+                        </button>
+                        <button class="btn-feedback secondary" onclick="submitFeedback(${data.task_id}, false, ${consensusScore})">
+                            Submit Feedback (Didn't Use)
+                        </button>
+                    </div>
+                    
+                    <div id="feedbackSuccess" style="display: none;" class="feedback-success">
+                        ✓ Feedback submitted! System is learning from your input.
+                    </div>
+                </div>
+            `;
             
             // Show routing analysis (collapsed by default)
             html += `
@@ -477,12 +690,129 @@ Examples:
             }
             
             resultContent.innerHTML = html;
+            
+            // Initialize star rating functionality
+            initializeStarRatings();
         }
         
         function escapeHtml(text) {
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+        
+        // Star rating system
+        const ratings = {
+            overall: 0,
+            quality: 0,
+            accuracy: 0,
+            usefulness: 0
+        };
+        
+        function initializeStarRatings() {
+            document.querySelectorAll('.star-rating').forEach(ratingContainer => {
+                const ratingType = ratingContainer.getAttribute('data-rating-type');
+                const stars = ratingContainer.querySelectorAll('.star');
+                
+                stars.forEach(star => {
+                    star.addEventListener('click', () => {
+                        const value = parseInt(star.getAttribute('data-value'));
+                        ratings[ratingType] = value;
+                        
+                        // Update visual state
+                        stars.forEach(s => {
+                            const starValue = parseInt(s.getAttribute('data-value'));
+                            if (starValue <= value) {
+                                s.classList.add('active');
+                            } else {
+                                s.classList.remove('active');
+                            }
+                        });
+                    });
+                    
+                    // Hover effect
+                    star.addEventListener('mouseenter', () => {
+                        const value = parseInt(star.getAttribute('data-value'));
+                        stars.forEach(s => {
+                            const starValue = parseInt(s.getAttribute('data-value'));
+                            if (starValue <= value) {
+                                s.style.color = '#ffc107';
+                            } else {
+                                s.style.color = '#ddd';
+                            }
+                        });
+                    });
+                });
+                
+                // Reset on mouse leave
+                ratingContainer.addEventListener('mouseleave', () => {
+                    const currentRating = ratings[ratingType];
+                    stars.forEach(s => {
+                        const starValue = parseInt(s.getAttribute('data-value'));
+                        if (starValue <= currentRating) {
+                            s.style.color = '#ffc107';
+                        } else {
+                            s.style.color = '#ddd';
+                        }
+                    });
+                });
+            });
+        }
+        
+        async function submitFeedback(taskId, outputUsed, consensusScore) {
+            // Validate all ratings are provided
+            if (!ratings.overall || !ratings.quality || !ratings.accuracy || !ratings.usefulness) {
+                alert('Please provide all ratings before submitting');
+                return;
+            }
+            
+            // Gather improvement categories
+            const improvements = [];
+            document.querySelectorAll('input[name="improvements"]:checked').forEach(checkbox => {
+                improvements.push(checkbox.value);
+            });
+            
+            // Get comment
+            const comment = document.getElementById('feedbackComment').value;
+            
+            // Submit feedback
+            try {
+                const response = await fetch('/api/feedback', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        task_id: taskId,
+                        overall_rating: ratings.overall,
+                        quality_rating: ratings.quality,
+                        accuracy_rating: ratings.accuracy,
+                        usefulness_rating: ratings.usefulness,
+                        improvement_categories: improvements,
+                        user_comment: comment,
+                        output_used: outputUsed
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Show success message
+                    document.getElementById('feedbackSuccess').style.display = 'block';
+                    document.getElementById('feedbackSection').style.opacity = '0.6';
+                    document.getElementById('feedbackSection').style.pointerEvents = 'none';
+                    
+                    // Scroll to success message
+                    document.getElementById('feedbackSuccess').scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    
+                    // Reload stats
+                    loadStats();
+                } else {
+                    alert('Error submitting feedback: ' + data.error);
+                }
+            } catch (error) {
+                alert('Error submitting feedback: ' + error.message);
+            }
         }
         
         async function loadStats() {
