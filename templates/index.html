@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Swarm Orchestrator | Shiftwork Solutions</title>
+    <title>AI Swarm - Unified Interface | Shiftwork Solutions</title>
     <style>
         * {
             margin: 0;
@@ -12,247 +12,315 @@
         }
         
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             padding: 20px;
         }
         
         .container {
-            max-width: 1200px;
+            max-width: 1400px;
             margin: 0 auto;
         }
         
         .header {
             background: white;
-            padding: 30px;
+            padding: 20px 30px;
             border-radius: 15px;
+            margin-bottom: 20px;
             box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-            margin-bottom: 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
         
-        .header h1 {
+        .header-left h1 {
             color: #667eea;
-            font-size: 2.5em;
-            margin-bottom: 10px;
+            margin-bottom: 5px;
+            font-size: 24px;
         }
         
-        .header p {
+        .header-left p {
             color: #666;
-            font-size: 1.1em;
+            font-size: 14px;
         }
         
-        .main-content {
+        .mode-switcher {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .mode-btn {
+            padding: 10px 20px;
+            border: 2px solid #667eea;
+            background: white;
+            color: #667eea;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+        
+        .mode-btn.active {
+            background: #667eea;
+            color: white;
+        }
+        
+        .mode-btn:hover {
+            transform: translateY(-2px);
+        }
+        
+        .main-grid {
             display: grid;
-            grid-template-columns: 2fr 1fr;
+            grid-template-columns: 300px 1fr;
             gap: 20px;
         }
         
-        .card {
+        .sidebar {
             background: white;
-            padding: 25px;
+            padding: 20px;
             border-radius: 15px;
             box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            height: fit-content;
         }
         
-        .card h2 {
+        .sidebar h3 {
             color: #667eea;
-            margin-bottom: 20px;
-            font-size: 1.5em;
-        }
-        
-        .input-section {
-            grid-column: 1 / -1;
-        }
-        
-        textarea {
-            width: 100%;
-            padding: 15px;
-            border: 2px solid #e0e0e0;
-            border-radius: 10px;
-            font-size: 16px;
-            font-family: inherit;
-            resize: vertical;
-            min-height: 120px;
             margin-bottom: 15px;
+            font-size: 16px;
         }
         
-        textarea:focus {
-            outline: none;
-            border-color: #667eea;
-        }
-        
-        .options {
-            display: flex;
-            gap: 20px;
+        .project-info {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
             margin-bottom: 20px;
-            align-items: center;
-        }
-        
-        .checkbox-label {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            cursor: pointer;
-        }
-        
-        input[type="checkbox"] {
-            width: 20px;
-            height: 20px;
-            cursor: pointer;
-        }
-        
-        button {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            padding: 15px 40px;
-            font-size: 18px;
-            font-weight: 600;
-            border-radius: 10px;
-            cursor: pointer;
-            transition: transform 0.2s, box-shadow 0.2s;
-        }
-        
-        button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
-        }
-        
-        button:active {
-            transform: translateY(0);
-        }
-        
-        button:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-            transform: none;
-        }
-        
-        .result-container {
-            grid-column: 1 / -1;
             display: none;
         }
         
-        .result-container.show {
+        .project-info.active {
             display: block;
         }
         
-        .orchestrator-badge {
-            display: inline-block;
-            padding: 8px 16px;
-            border-radius: 20px;
+        .project-info label {
+            display: block;
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 5px;
+        }
+        
+        .project-info span {
+            display: block;
             font-weight: 600;
-            font-size: 14px;
-            margin-bottom: 15px;
-        }
-        
-        .orchestrator-badge.sonnet {
-            background: #e3f2fd;
-            color: #1976d2;
-        }
-        
-        .orchestrator-badge.opus {
-            background: #f3e5f5;
-            color: #7b1fa2;
-        }
-        
-        .specialist-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 15px;
-            margin: 20px 0;
-        }
-        
-        .specialist-card {
-            background: #f8f9fa;
-            padding: 15px;
-            border-radius: 10px;
-            border-left: 4px solid #667eea;
-        }
-        
-        .specialist-card h4 {
-            color: #667eea;
+            color: #333;
             margin-bottom: 10px;
         }
         
-        .specialist-card .time {
-            color: #999;
-            font-size: 12px;
-            margin-top: 10px;
-        }
-        
-        .consensus-score {
-            background: #e8f5e9;
-            padding: 20px;
-            border-radius: 10px;
-            margin: 20px 0;
-        }
-        
-        .consensus-score.low {
-            background: #ffebee;
-        }
-        
-        .score-bar {
-            height: 30px;
-            background: #4caf50;
-            border-radius: 15px;
-            margin: 10px 0;
-            position: relative;
-            overflow: hidden;
-        }
-        
-        .score-bar.low {
-            background: #f44336;
-        }
-        
-        .score-label {
-            position: absolute;
-            left: 50%;
-            top: 50%;
-            transform: translate(-50%, -50%);
+        .phase-indicator {
+            background: #667eea;
             color: white;
-            font-weight: 600;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 11px;
+            display: inline-block;
         }
         
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 15px;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 20px;
         }
         
         .stat-card {
             background: #f8f9fa;
-            padding: 20px;
-            border-radius: 10px;
+            padding: 10px;
+            border-radius: 8px;
             text-align: center;
         }
         
         .stat-value {
-            font-size: 2em;
+            font-size: 20px;
             font-weight: 700;
             color: #667eea;
-            margin-bottom: 5px;
         }
         
         .stat-label {
+            font-size: 11px;
             color: #666;
-            font-size: 0.9em;
+            margin-top: 2px;
+        }
+        
+        .quick-actions {
+            list-style: none;
+        }
+        
+        .quick-actions li {
+            padding: 10px;
+            margin: 5px 0;
+            background: #f8f9fa;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 13px;
+        }
+        
+        .quick-actions li:hover {
+            background: #667eea;
+            color: white;
+            transform: translateX(5px);
+        }
+        
+        .main-content {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        
+        .conversation {
+            height: 500px;
+            overflow-y: auto;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            background: #f8f9fa;
+        }
+        
+        .message {
+            margin-bottom: 20px;
+            padding: 15px;
+            border-radius: 10px;
+            max-width: 80%;
+        }
+        
+        .message.user {
+            background: #667eea;
+            color: white;
+            margin-left: auto;
+        }
+        
+        .message.assistant {
+            background: white;
+            border: 2px solid #e0e0e0;
+        }
+        
+        .message-header {
+            font-weight: 600;
+            margin-bottom: 8px;
+            font-size: 14px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .message-content {
+            line-height: 1.6;
+        }
+        
+        .message-actions {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid #e0e0e0;
+        }
+        
+        .feedback-section {
+            display: none;
+            margin-top: 10px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        
+        .feedback-section.active {
+            display: block;
+        }
+        
+        .rating-buttons {
+            display: flex;
+            gap: 5px;
+            margin: 10px 0;
+        }
+        
+        .rating-btn {
+            padding: 5px 15px;
+            border: 2px solid #e0e0e0;
+            background: white;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.2s;
+        }
+        
+        .rating-btn:hover {
+            border-color: #667eea;
+            background: #f0f0ff;
+        }
+        
+        .rating-btn.selected {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+        
+        .feedback-input {
+            width: 100%;
+            padding: 8px;
+            border: 2px solid #e0e0e0;
+            border-radius: 5px;
+            font-size: 12px;
+            font-family: inherit;
+            resize: vertical;
+            min-height: 60px;
+        }
+        
+        .btn-small {
+            padding: 5px 15px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-top: 8px;
+        }
+        
+        .btn-small:hover {
+            background: #5568d3;
+        }
+        
+        .btn-link {
+            background: none;
+            border: none;
+            color: #667eea;
+            cursor: pointer;
+            font-size: 12px;
+            text-decoration: underline;
+            padding: 5px;
         }
         
         .loading {
+            display: none;
+            padding: 20px;
             text-align: center;
-            padding: 40px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            margin-bottom: 20px;
         }
         
-        .spinner {
+        .loading.active {
+            display: block;
+        }
+        
+        .loading-spinner {
+            display: inline-block;
+            width: 40px;
+            height: 40px;
             border: 4px solid #f3f3f3;
             border-top: 4px solid #667eea;
             border-radius: 50%;
-            width: 50px;
-            height: 50px;
             animation: spin 1s linear infinite;
-            margin: 0 auto 20px;
         }
         
         @keyframes spin {
@@ -260,595 +328,449 @@
             100% { transform: rotate(360deg); }
         }
         
-        .output-box {
-            background: #f8f9fa;
-            padding: 20px;
-            border-radius: 10px;
-            white-space: pre-wrap;
-            font-family: 'Courier New', monospace;
+        .loading-text {
+            margin-top: 10px;
+            color: #666;
             font-size: 14px;
-            max-height: 400px;
-            overflow-y: auto;
-            margin: 15px 0;
         }
         
-        .feedback-section {
-            background: #f0f4ff;
-            padding: 25px;
-            border-radius: 15px;
-            margin: 30px 0;
-            border: 2px solid #667eea;
-        }
-        
-        .feedback-section h3 {
-            color: #667eea;
-            margin-bottom: 20px;
-        }
-        
-        .rating-row {
+        .input-area {
             display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin: 15px 0;
-            padding: 10px;
-            background: white;
-            border-radius: 8px;
-        }
-        
-        .rating-label {
-            font-weight: 600;
-            color: #333;
-            flex: 1;
-        }
-        
-        .star-rating {
-            display: flex;
-            gap: 8px;
-            flex: 1;
-            justify-content: flex-end;
-        }
-        
-        .star {
-            font-size: 28px;
-            cursor: pointer;
-            color: #ddd;
-            transition: color 0.2s;
-            user-select: none;
-        }
-        
-        .star.active,
-        .star:hover {
-            color: #ffc107;
-        }
-        
-        .improvement-checks {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
             gap: 10px;
-            margin: 15px 0;
         }
         
-        .improvement-check {
-            background: white;
-            padding: 12px;
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-        
-        .improvement-check:hover {
-            background: #e3f2fd;
-        }
-        
-        .improvement-check input[type="checkbox"] {
-            width: 20px;
-            height: 20px;
-            cursor: pointer;
-        }
-        
-        .feedback-comment {
-            width: 100%;
-            padding: 12px;
+        .input-area textarea {
+            flex: 1;
+            padding: 15px;
             border: 2px solid #e0e0e0;
-            border-radius: 8px;
+            border-radius: 10px;
             font-family: inherit;
             font-size: 14px;
-            margin: 15px 0;
-            min-height: 80px;
-            resize: vertical;
+            resize: none;
+            height: 80px;
         }
         
-        .feedback-actions {
-            display: flex;
-            gap: 15px;
-            margin-top: 20px;
-        }
-        
-        .btn-feedback {
-            flex: 1;
-            padding: 12px 24px;
-            border: none;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        
-        .btn-feedback.primary {
+        .input-area button {
+            padding: 15px 30px;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
-        }
-        
-        .btn-feedback.secondary {
-            background: white;
-            color: #667eea;
-            border: 2px solid #667eea;
-        }
-        
-        .btn-feedback:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
-        }
-        
-        .feedback-success {
-            background: #4caf50;
-            color: white;
-            padding: 15px;
-            border-radius: 8px;
-            margin: 15px 0;
-            text-align: center;
+            border: none;
+            border-radius: 10px;
             font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        
+        .input-area button:hover {
+            transform: translateY(-2px);
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            margin: 2px;
+        }
+        
+        .badge.knowledge {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+        
+        .badge.workflow {
+            background: #f3e5f5;
+            color: #7b1fa2;
+        }
+        
+        .badge.formatted {
+            background: #e8f5e9;
+            color: #388e3c;
+        }
+        
+        .mode-indicator {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            display: inline-block;
+            margin-left: 10px;
+        }
+        
+        .mode-indicator.quick {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+        
+        .mode-indicator.project {
+            background: #f3e5f5;
+            color: #7b1fa2;
         }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>🤖 AI Swarm Orchestrator</h1>
-            <p>Intelligent multi-AI collaboration system for Shiftwork Solutions LLC</p>
+            <div class="header-left">
+                <h1>🤖 AI Swarm - Unified Interface</h1>
+                <p>Quick tasks + Project workflows with learning feedback</p>
+            </div>
+            <div class="mode-switcher">
+                <button class="mode-btn active" onclick="switchMode('quick')" id="quickModeBtn">
+                    ⚡ Quick Task
+                </button>
+                <button class="mode-btn" onclick="switchMode('project')" id="projectModeBtn">
+                    📁 Project Mode
+                </button>
+            </div>
         </div>
         
-        <div class="main-content">
-            <!-- Input Section -->
-            <div class="card input-section">
-                <h2>What do you need?</h2>
-                <textarea id="userRequest" placeholder="Describe what you want the AI swarm to create or analyze...
-
-Examples:
-• Create a PowerPoint presentation about 12-hour shift benefits
-• Build an Excel calculator for overtime cost analysis
-• Analyze this survey data and provide recommendations
-• Write LinkedIn posts about shift work challenges"></textarea>
-                
-                <div class="options">
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="enableConsensus" checked>
-                        <span>Enable consensus validation</span>
-                    </label>
-                </div>
-                
-                <button id="submitBtn" onclick="submitRequest()">🚀 Launch Swarm</button>
-            </div>
-            
-            <!-- Stats Panel -->
-            <div class="card">
-                <h2>📊 System Stats</h2>
-                <div id="statsContainer" class="stats-grid">
+        <div class="main-grid">
+            <!-- Sidebar -->
+            <div class="sidebar">
+                <!-- Stats (always visible) -->
+                <h3>📊 System Stats</h3>
+                <div class="stats-grid">
                     <div class="stat-card">
                         <div class="stat-value" id="totalTasks">0</div>
-                        <div class="stat-label">Total Tasks</div>
+                        <div class="stat-label">Tasks</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-value" id="sonnetPercent">0%</div>
-                        <div class="stat-label">Sonnet Handled</div>
+                        <div class="stat-value" id="avgRating">-</div>
+                        <div class="stat-label">Avg Rating</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-value" id="opusPercent">0%</div>
-                        <div class="stat-label">Opus Handled</div>
+                        <div class="stat-value" id="knowledgeDocs">22</div>
+                        <div class="stat-label">Documents</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-value" id="avgTime">0s</div>
-                        <div class="stat-label">Avg Time</div>
+                        <div class="stat-value" id="consensusAccuracy">-</div>
+                        <div class="stat-label">Accuracy</div>
                     </div>
                 </div>
+                
+                <!-- Project Info (only in project mode) -->
+                <div class="project-info" id="projectInfo">
+                    <h3 style="margin-bottom: 10px;">Current Project</h3>
+                    <label>Client</label>
+                    <span id="clientName">No active project</span>
+                    
+                    <label>Phase</label>
+                    <span id="projectPhase">
+                        <div class="phase-indicator">Not started</div>
+                    </span>
+                    
+                    <button onclick="startNewProject()" style="width: 100%; padding: 10px; margin-top: 10px; background: #667eea; color: white; border: none; border-radius: 8px; cursor: pointer;">
+                        Start New Project
+                    </button>
+                </div>
+                
+                <!-- Quick Actions -->
+                <h3 style="margin-top: 20px;">Quick Actions</h3>
+                <ul class="quick-actions" id="quickActions">
+                    <!-- Dynamically populated based on mode -->
+                </ul>
             </div>
             
-            <!-- System Status -->
-            <div class="card">
-                <h2>⚙️ System Status</h2>
-                <div id="systemStatus">Loading...</div>
-            </div>
-            
-            <!-- Results Section -->
-            <div class="card result-container" id="resultContainer">
-                <h2>🎯 Results</h2>
-                <div id="resultContent"></div>
+            <!-- Main Conversation Area -->
+            <div class="main-content">
+                <div class="conversation" id="conversation">
+                    <div class="message assistant">
+                        <div class="message-header">
+                            🤖 AI Swarm
+                            <span class="mode-indicator quick" id="initialModeIndicator">⚡ Quick Task Mode</span>
+                        </div>
+                        <div class="message-content">
+                            <strong>Welcome to the unified AI Swarm interface!</strong>
+                            
+                            <p style="margin-top: 10px;">Choose your mode:</p>
+                            <ul style="margin-top: 10px; margin-left: 20px;">
+                                <li><strong>⚡ Quick Task Mode:</strong> One-off requests, document creation, analysis</li>
+                                <li><strong>📁 Project Mode:</strong> Full consulting engagements with context tracking</li>
+                            </ul>
+                            
+                            <p style="margin-top: 15px;"><strong>Features:</strong></p>
+                            <ul style="margin-top: 5px; margin-left: 20px;">
+                                <li>✅ 22 knowledge documents (30+ years expertise)</li>
+                                <li>✅ Professional formatting</li>
+                                <li>✅ Feedback & learning on every response</li>
+                                <li>✅ Multi-AI consensus validation</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="loading" id="loadingIndicator">
+                    <div class="loading-spinner"></div>
+                    <div class="loading-text">AI Swarm is thinking... Searching knowledge base and generating response...</div>
+                </div>
+                
+                <div class="input-area">
+                    <textarea id="userInput" placeholder="Type your request here..."></textarea>
+                    <button onclick="sendMessage()">Send</button>
+                </div>
             </div>
         </div>
     </div>
     
     <script>
-        // Load stats on page load
-        loadStats();
-        loadSystemStatus();
+        let currentMode = 'quick';  // 'quick' or 'project'
+        let currentProjectId = null;
+        let messageCounter = 0;
         
-        async function submitRequest() {
-            const userRequest = document.getElementById('userRequest').value.trim();
-            const enableConsensus = document.getElementById('enableConsensus').checked;
-            const submitBtn = document.getElementById('submitBtn');
-            const resultContainer = document.getElementById('resultContainer');
-            const resultContent = document.getElementById('resultContent');
+        // Mode switching
+        function switchMode(mode) {
+            currentMode = mode;
             
-            if (!userRequest) {
-                alert('Please enter a request');
-                return;
+            // Update button states
+            document.getElementById('quickModeBtn').classList.toggle('active', mode === 'quick');
+            document.getElementById('projectModeBtn').classList.toggle('active', mode === 'project');
+            
+            // Show/hide project info
+            document.getElementById('projectInfo').classList.toggle('active', mode === 'project');
+            
+            // Update quick actions
+            updateQuickActions();
+            
+            // Update input placeholder
+            const input = document.getElementById('userInput');
+            if (mode === 'quick') {
+                input.placeholder = "Type your request... (e.g., 'Create a 12-hour DuPont schedule')";
+            } else {
+                input.placeholder = "Type your request... (e.g., 'I need a data collection document')";
             }
+        }
+        
+        function updateQuickActions() {
+            const actions = document.getElementById('quickActions');
+            
+            if (currentMode === 'quick') {
+                actions.innerHTML = `
+                    <li onclick="quickAction('Create a 12-hour rotating schedule')">📅 Create Schedule</li>
+                    <li onclick="quickAction('Analyze overtime costs')">💰 Cost Analysis</li>
+                    <li onclick="quickAction('Compare DuPont vs 2-2-3 schedules')">⚖️ Compare Schedules</li>
+                    <li onclick="quickAction('Write a LinkedIn post about shift work')">💼 LinkedIn Post</li>
+                `;
+            } else {
+                actions.innerHTML = `
+                    <li onclick="quickAction('data collection')">📋 Data Collection Doc</li>
+                    <li onclick="quickAction('proposal')">📄 Create Proposal</li>
+                    <li onclick="quickAction('analyze files')">📊 Analyze Files</li>
+                    <li onclick="quickAction('linkedin post')">💼 LinkedIn Post</li>
+                `;
+            }
+        }
+        
+        function quickAction(action) {
+            document.getElementById('userInput').value = action;
+        }
+        
+        // Project management
+        function startNewProject() {
+            const clientName = prompt("Enter client name:");
+            if (!clientName) return;
+            
+            const industry = prompt("Enter industry (e.g., Pharmaceutical, Food Processing):");
+            const facilityType = prompt("Enter facility type (e.g., Manufacturing, Distribution):");
+            
+            fetch('/api/project/start', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    client_name: clientName,
+                    industry: industry,
+                    facility_type: facilityType
+                })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    currentProjectId = data.project_id;
+                    document.getElementById('clientName').textContent = clientName;
+                    document.getElementById('projectPhase').innerHTML = '<div class="phase-indicator">Initial Phase</div>';
+                    
+                    addMessage('assistant', `✅ Project started for ${clientName}! ${data.suggested_first_step}`, null, 'project');
+                }
+            });
+        }
+        
+        // Main message sending
+        function sendMessage() {
+            const input = document.getElementById('userInput');
+            const message = input.value.trim();
+            if (!message) return;
+            
+            // Add user message
+            addMessage('user', message);
+            input.value = '';
             
             // Show loading
-            submitBtn.disabled = true;
-            submitBtn.textContent = '⏳ Processing...';
-            resultContainer.classList.add('show');
-            resultContent.innerHTML = `
-                <div class="loading">
-                    <div class="spinner"></div>
-                    <p>AI swarm is analyzing and executing your request...</p>
-                </div>
-            `;
+            const loading = document.getElementById('loadingIndicator');
+            loading.classList.add('active');
             
-            try {
-                const response = await fetch('/api/orchestrate', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        request: userRequest,
-                        enable_consensus: enableConsensus
-                    })
-                });
-                
-                const data = await response.json();
+            // Send to swarm
+            fetch('/api/orchestrate', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    request: message,
+                    enable_consensus: true,
+                    project_id: currentMode === 'project' ? currentProjectId : null
+                })
+            })
+            .then(r => r.json())
+            .then(data => {
+                loading.classList.remove('active');
                 
                 if (data.success) {
-                    displayResults(data);
-                    loadStats(); // Refresh stats
+                    let badges = '';
+                    if (data.knowledge_used) badges += '<span class="badge knowledge">📚 Knowledge</span>';
+                    if (data.project_workflow && data.project_workflow.active) badges += '<span class="badge workflow">📁 Project</span>';
+                    if (data.formatting_applied) badges += '<span class="badge formatted">🎨 Formatted</span>';
+                    
+                    addMessage('assistant', data.actual_output + '<div style="margin-top: 10px;">' + badges + '</div>', data.task_id, currentMode);
+                    
+                    // Refresh stats
+                    loadStats();
                 } else {
-                    resultContent.innerHTML = `
-                        <div style="color: red; padding: 20px;">
-                            <h3>❌ Error</h3>
-                            <p>${data.error}</p>
-                        </div>
-                    `;
+                    addMessage('assistant', `❌ Error: ${data.error}`);
                 }
-            } catch (error) {
-                resultContent.innerHTML = `
-                    <div style="color: red; padding: 20px;">
-                        <h3>❌ Error</h3>
-                        <p>${error.message}</p>
-                    </div>
-                `;
-            } finally {
-                submitBtn.disabled = false;
-                submitBtn.textContent = '🚀 Launch Swarm';
-            }
-        }
-        
-        function displayResults(data) {
-            const resultContent = document.getElementById('resultContent');
-            
-            let html = `
-                <div>
-                    <span class="orchestrator-badge ${data.orchestrator}">
-                        ${data.orchestrator === 'opus' ? '🧠 Handled by Opus (Strategic)' : '⚡ Handled by Sonnet (Fast)'}
-                    </span>
-                    <p><strong>Task ID:</strong> ${data.task_id}</p>
-                    <p><strong>Execution Time:</strong> ${data.execution_time_seconds.toFixed(2)}s</p>
-                </div>
-            `;
-            
-            // Show actual output FIRST and prominently
-            if (data.actual_output) {
-                html += `
-                    <h3 style="margin: 20px 0 10px;">📄 Output</h3>
-                    <div class="output-box" style="background: white; border: 2px solid #667eea; font-family: inherit; font-size: 15px; line-height: 1.6; max-height: none;">${escapeHtml(data.actual_output)}</div>
-                `;
-            }
-            
-            // Show consensus if enabled
-            let consensusScore = null;
-            if (data.consensus) {
-                const agreementScore = data.consensus.agreement_score;
-                consensusScore = agreementScore;
-                const scoreClass = agreementScore >= 0.7 ? '' : 'low';
-                const scorePercent = (agreementScore * 100).toFixed(0);
-                
-                html += `
-                    <h3 style="margin: 20px 0 10px;">✓ Consensus Validation</h3>
-                    <div class="consensus-score ${scoreClass}">
-                        <p><strong>Agreement Score:</strong></p>
-                        <div class="score-bar ${scoreClass}" style="width: ${scorePercent}%">
-                            <span class="score-label">${scorePercent}%</span>
-                        </div>
-                        <p style="margin-top: 10px;">
-                            ${agreementScore >= 0.7 ? 
-                                '✅ High consensus - output validated' : 
-                                '⚠️ Low consensus - review recommended'}
-                        </p>
-                    </div>
-                `;
-            }
-            
-            // FEEDBACK FORM
-            html += `
-                <div class="feedback-section" id="feedbackSection">
-                    <h3>📊 Rate This Output (Help the System Learn)</h3>
-                    
-                    <div class="rating-row">
-                        <span class="rating-label">Overall Quality:</span>
-                        <div class="star-rating" data-rating-type="overall">
-                            ${[1,2,3,4,5].map(i => `<span class="star" data-value="${i}">★</span>`).join('')}
-                        </div>
-                    </div>
-                    
-                    <div class="rating-row">
-                        <span class="rating-label">Accuracy:</span>
-                        <div class="star-rating" data-rating-type="accuracy">
-                            ${[1,2,3,4,5].map(i => `<span class="star" data-value="${i}">★</span>`).join('')}
-                        </div>
-                    </div>
-                    
-                    <div class="rating-row">
-                        <span class="rating-label">Usefulness:</span>
-                        <div class="star-rating" data-rating-type="usefulness">
-                            ${[1,2,3,4,5].map(i => `<span class="star" data-value="${i}">★</span>`).join('')}
-                        </div>
-                    </div>
-                    
-                    <div class="rating-row">
-                        <span class="rating-label">Clarity:</span>
-                        <div class="star-rating" data-rating-type="quality">
-                            ${[1,2,3,4,5].map(i => `<span class="star" data-value="${i}">★</span>`).join('')}
-                        </div>
-                    </div>
-                    
-                    <h4 style="margin: 20px 0 10px;">What needs improvement? (optional)</h4>
-                    <div class="improvement-checks">
-                        <label class="improvement-check">
-                            <input type="checkbox" value="more_specific" name="improvements">
-                            <span>More specific</span>
-                        </label>
-                        <label class="improvement-check">
-                            <input type="checkbox" value="wrong_tone" name="improvements">
-                            <span>Wrong tone</span>
-                        </label>
-                        <label class="improvement-check">
-                            <input type="checkbox" value="missing_points" name="improvements">
-                            <span>Missing key points</span>
-                        </label>
-                        <label class="improvement-check">
-                            <input type="checkbox" value="too_long" name="improvements">
-                            <span>Too long/short</span>
-                        </label>
-                        <label class="improvement-check">
-                            <input type="checkbox" value="factual_errors" name="improvements">
-                            <span>Factual errors</span>
-                        </label>
-                        <label class="improvement-check">
-                            <input type="checkbox" value="poor_formatting" name="improvements">
-                            <span>Poor formatting</span>
-                        </label>
-                    </div>
-                    
-                    <h4 style="margin: 20px 0 10px;">Additional comments (optional)</h4>
-                    <textarea class="feedback-comment" id="feedbackComment" placeholder="Any other feedback to help the system improve..."></textarea>
-                    
-                    <div class="feedback-actions">
-                        <button class="btn-feedback primary" onclick="submitFeedback(${data.task_id}, true, ${consensusScore})">
-                            ✓ Submit Feedback & Used Output
-                        </button>
-                        <button class="btn-feedback secondary" onclick="submitFeedback(${data.task_id}, false, ${consensusScore})">
-                            Submit Feedback (Didn't Use)
-                        </button>
-                    </div>
-                    
-                    <div id="feedbackSuccess" style="display: none;" class="feedback-success">
-                        ✓ Feedback submitted! System is learning from your input.
-                    </div>
-                </div>
-            `;
-            
-            // Show routing analysis (collapsed by default)
-            html += `
-                <details style="margin: 20px 0;">
-                    <summary style="cursor: pointer; font-weight: 600; color: #667eea;">🔍 View Routing Analysis</summary>
-                    <div class="output-box" style="margin-top: 10px;">${JSON.stringify(data.analysis, null, 2)}</div>
-                </details>
-            `;
-            
-            // Show specialist results if any (besides the orchestrator)
-            if (data.specialist_results && data.specialist_results.length > 1) {
-                html += `<h3 style="margin: 20px 0 10px;">Specialist Outputs</h3>`;
-                html += `<div class="specialist-grid">`;
-                
-                data.specialist_results.forEach(result => {
-                    if (result.specialist !== data.orchestrator) {
-                        html += `
-                            <div class="specialist-card">
-                                <h4>${result.specialist.toUpperCase()}</h4>
-                                <div class="output-box">${escapeHtml(result.output.substring(0, 200))}...</div>
-                                <div class="time">⏱️ ${result.execution_time.toFixed(2)}s</div>
-                            </div>
-                        `;
-                    }
-                });
-                
-                html += `</div>`;
-            }
-            
-            resultContent.innerHTML = html;
-            
-            // Initialize star rating functionality
-            initializeStarRatings();
-        }
-        
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-        
-        // Star rating system
-        const ratings = {
-            overall: 0,
-            quality: 0,
-            accuracy: 0,
-            usefulness: 0
-        };
-        
-        function initializeStarRatings() {
-            document.querySelectorAll('.star-rating').forEach(ratingContainer => {
-                const ratingType = ratingContainer.getAttribute('data-rating-type');
-                const stars = ratingContainer.querySelectorAll('.star');
-                
-                stars.forEach(star => {
-                    star.addEventListener('click', () => {
-                        const value = parseInt(star.getAttribute('data-value'));
-                        ratings[ratingType] = value;
-                        
-                        // Update visual state
-                        stars.forEach(s => {
-                            const starValue = parseInt(s.getAttribute('data-value'));
-                            if (starValue <= value) {
-                                s.classList.add('active');
-                            } else {
-                                s.classList.remove('active');
-                            }
-                        });
-                    });
-                    
-                    // Hover effect
-                    star.addEventListener('mouseenter', () => {
-                        const value = parseInt(star.getAttribute('data-value'));
-                        stars.forEach(s => {
-                            const starValue = parseInt(s.getAttribute('data-value'));
-                            if (starValue <= value) {
-                                s.style.color = '#ffc107';
-                            } else {
-                                s.style.color = '#ddd';
-                            }
-                        });
-                    });
-                });
-                
-                // Reset on mouse leave
-                ratingContainer.addEventListener('mouseleave', () => {
-                    const currentRating = ratings[ratingType];
-                    stars.forEach(s => {
-                        const starValue = parseInt(s.getAttribute('data-value'));
-                        if (starValue <= currentRating) {
-                            s.style.color = '#ffc107';
-                        } else {
-                            s.style.color = '#ddd';
-                        }
-                    });
-                });
+            })
+            .catch(err => {
+                loading.classList.remove('active');
+                addMessage('assistant', `❌ Error: ${err.message}`);
             });
         }
         
-        async function submitFeedback(taskId, outputUsed, consensusScore) {
-            // Validate all ratings are provided
-            if (!ratings.overall || !ratings.quality || !ratings.accuracy || !ratings.usefulness) {
-                alert('Please provide all ratings before submitting');
+        // Add message to conversation
+        function addMessage(role, content, taskId = null, mode = null) {
+            const conversation = document.getElementById('conversation');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role}`;
+            messageDiv.id = `msg_${++messageCounter}`;
+            
+            let modeIndicator = '';
+            if (role === 'assistant' && mode) {
+                modeIndicator = mode === 'quick' 
+                    ? '<span class="mode-indicator quick">⚡ Quick Task</span>'
+                    : '<span class="mode-indicator project">📁 Project Mode</span>';
+            }
+            
+            const header = role === 'user' ? '👤 You' : '🤖 AI Swarm';
+            
+            let feedbackSection = '';
+            if (role === 'assistant' && taskId) {
+                feedbackSection = `
+                    <div class="message-actions">
+                        <button class="btn-link" onclick="showFeedback('${messageDiv.id}', ${taskId})">💬 Provide Feedback</button>
+                    </div>
+                    <div class="feedback-section" id="feedback_${messageDiv.id}">
+                        <strong>Rate this response:</strong>
+                        <div class="rating-buttons">
+                            <button class="rating-btn" onclick="selectRating('${messageDiv.id}', 1)">1 ⭐</button>
+                            <button class="rating-btn" onclick="selectRating('${messageDiv.id}', 2)">2 ⭐⭐</button>
+                            <button class="rating-btn" onclick="selectRating('${messageDiv.id}', 3)">3 ⭐⭐⭐</button>
+                            <button class="rating-btn" onclick="selectRating('${messageDiv.id}', 4)">4 ⭐⭐⭐⭐</button>
+                            <button class="rating-btn" onclick="selectRating('${messageDiv.id}', 5)">5 ⭐⭐⭐⭐⭐</button>
+                        </div>
+                        <textarea class="feedback-input" id="comments_${messageDiv.id}" placeholder="What worked well? What could be better?"></textarea>
+                        <button class="btn-small" onclick="submitFeedback('${messageDiv.id}', ${taskId})">Submit Feedback</button>
+                    </div>
+                `;
+            }
+            
+            messageDiv.innerHTML = `
+                <div class="message-header">${header} ${modeIndicator}</div>
+                <div class="message-content">${content}</div>
+                ${feedbackSection}
+            `;
+            
+            conversation.appendChild(messageDiv);
+            conversation.scrollTop = conversation.scrollHeight;
+        }
+        
+        // Feedback functions
+        let selectedRatings = {};
+        
+        function showFeedback(msgId, taskId) {
+            const feedback = document.getElementById(`feedback_${msgId}`);
+            feedback.classList.toggle('active');
+        }
+        
+        function selectRating(msgId, rating) {
+            selectedRatings[msgId] = rating;
+            
+            // Update button styles
+            const buttons = document.querySelectorAll(`#feedback_${msgId} .rating-btn`);
+            buttons.forEach((btn, idx) => {
+                btn.classList.toggle('selected', idx + 1 === rating);
+            });
+        }
+        
+        function submitFeedback(msgId, taskId) {
+            const rating = selectedRatings[msgId];
+            const comments = document.getElementById(`comments_${msgId}`).value;
+            
+            if (!rating) {
+                alert('Please select a rating');
                 return;
             }
             
-            // Gather improvement categories
-            const improvements = [];
-            document.querySelectorAll('input[name="improvements"]:checked').forEach(checkbox => {
-                improvements.push(checkbox.value);
-            });
-            
-            // Get comment
-            const comment = document.getElementById('feedbackComment').value;
-            
-            // Submit feedback
-            try {
-                const response = await fetch('/api/feedback', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        task_id: taskId,
-                        overall_rating: ratings.overall,
-                        quality_rating: ratings.quality,
-                        accuracy_rating: ratings.accuracy,
-                        usefulness_rating: ratings.usefulness,
-                        improvement_categories: improvements,
-                        user_comment: comment,
-                        output_used: outputUsed
-                    })
-                });
-                
-                const data = await response.json();
-                
+            fetch('/api/feedback', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    task_id: taskId,
+                    overall_rating: rating,
+                    comments: comments,
+                    consensus_was_accurate: rating >= 4  // 4-5 stars means consensus was good
+                })
+            })
+            .then(r => r.json())
+            .then(data => {
                 if (data.success) {
-                    // Show success message
-                    document.getElementById('feedbackSuccess').style.display = 'block';
-                    document.getElementById('feedbackSection').style.opacity = '0.6';
-                    document.getElementById('feedbackSection').style.pointerEvents = 'none';
+                    const feedback = document.getElementById(`feedback_${msgId}`);
+                    feedback.innerHTML = '<div style="color: #388e3c; font-weight: 600;">✅ Feedback recorded - system is learning!</div>';
                     
-                    // Scroll to success message
-                    document.getElementById('feedbackSuccess').scrollIntoView({ behavior: 'smooth', block: 'center' });
-                    
-                    // Reload stats
+                    // Refresh stats
                     loadStats();
-                } else {
-                    alert('Error submitting feedback: ' + data.error);
                 }
-            } catch (error) {
-                alert('Error submitting feedback: ' + error.message);
-            }
+            });
         }
         
-        async function loadStats() {
-            try {
-                const response = await fetch('/api/stats');
-                const stats = await response.json();
-                
-                document.getElementById('totalTasks').textContent = stats.total_tasks;
-                document.getElementById('sonnetPercent').textContent = stats.sonnet_percentage + '%';
-                document.getElementById('opusPercent').textContent = (100 - stats.sonnet_percentage).toFixed(1) + '%';
-                document.getElementById('avgTime').textContent = stats.average_time_seconds + 's';
-            } catch (error) {
-                console.error('Error loading stats:', error);
-            }
+        // Load stats
+        function loadStats() {
+            fetch('/api/stats')
+                .then(r => r.json())
+                .then(data => {
+                    document.getElementById('totalTasks').textContent = data.total_tasks || 0;
+                });
+            
+            fetch('/api/learning/stats')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.average_ratings && data.average_ratings.overall) {
+                        document.getElementById('avgRating').textContent = data.average_ratings.overall.toFixed(1) + '⭐';
+                    }
+                    if (data.consensus_accuracy) {
+                        const accuracy = (data.consensus_accuracy.accurate / data.consensus_accuracy.total * 100).toFixed(0);
+                        document.getElementById('consensusAccuracy').textContent = accuracy + '%';
+                    }
+                });
         }
         
-        async function loadSystemStatus() {
-            try {
-                const response = await fetch('/health');
-                const health = await response.json();
-                
-                let html = '<div>';
-                html += `<p><strong>Orchestrators:</strong></p>`;
-                html += `<p>Sonnet: ${health.orchestrators.sonnet === 'configured' ? '✅' : '❌'}</p>`;
-                html += `<p>Opus: ${health.orchestrators.opus === 'configured' ? '✅' : '❌'}</p>`;
-                html += `<p><strong>Specialists:</strong></p>`;
-                html += `<p>GPT-4: ${health.specialists.gpt4 === 'configured' ? '✅' : '❌'}</p>`;
-                html += `<p>DeepSeek: ${health.specialists.deepseek === 'configured' ? '✅' : '❌'}</p>`;
-                html += `<p>Gemini: ${health.specialists.gemini === 'configured' ? '✅' : '❌'}</p>`;
-                html += '</div>';
-                
-                document.getElementById('systemStatus').innerHTML = html;
-            } catch (error) {
-                document.getElementById('systemStatus').innerHTML = '<p style="color: red;">Error loading status</p>';
+        // Initialize
+        updateQuickActions();
+        loadStats();
+        
+        // Allow Enter to send (Shift+Enter for new line)
+        document.getElementById('userInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
             }
-        }
+        });
         
         // Refresh stats every 30 seconds
         setInterval(loadStats, 30000);
