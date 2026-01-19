@@ -482,11 +482,13 @@ def orchestrate():
             orchestrator = "sonnet"
             plan = sonnet_analysis
         
-        # Step 3: Execute with specialists
+        # Step 3: Execute with specialists OR orchestrator handles directly
         specialist_results = []
         specialists_needed = plan.get('specialists_needed', [])
+        actual_output = None
         
         if specialists_needed and specialists_needed != ["none"]:
+            # Use specialists
             for specialist in specialists_needed:
                 specialist_task = f"User request: {user_request}\n\nYour role as {specialist}: Complete the task using your specialty."
                 result = execute_specialist_task(specialist, specialist_task)
@@ -501,13 +503,29 @@ def orchestrate():
                      result.get('output'), result.get('execution_time'), result.get('success'))
                 )
                 db.commit()
+                
+                # Use first specialist's output as primary
+                if not actual_output:
+                    actual_output = result.get('output')
+        else:
+            # No specialists needed - orchestrator handles it directly
+            if orchestrator == "opus":
+                actual_output = call_claude_opus(f"Complete this request:\n\n{user_request}")
+            else:
+                actual_output = call_claude_sonnet(f"Complete this request:\n\n{user_request}")
+            
+            # Store as a "specialist" result for consistency
+            specialist_results.append({
+                "specialist": orchestrator,
+                "output": actual_output,
+                "execution_time": 0,
+                "success": True
+            })
         
         # Step 4: Consensus validation if enabled
         consensus_result = None
-        if enable_consensus and specialist_results:
-            # Validate the first specialist's output
-            primary_output = specialist_results[0].get('output', '')
-            consensus_result = validate_with_consensus(primary_output)
+        if enable_consensus and actual_output:
+            consensus_result = validate_with_consensus(actual_output)
             
             db.execute(
                 '''INSERT INTO consensus_validations
@@ -535,6 +553,7 @@ def orchestrate():
             'task_id': task_id,
             'orchestrator': orchestrator,
             'analysis': plan,
+            'actual_output': actual_output,
             'specialist_results': specialist_results,
             'consensus': consensus_result,
             'execution_time_seconds': total_time
