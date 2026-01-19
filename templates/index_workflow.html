@@ -207,6 +207,40 @@
             background: #e8f5e9;
             color: #388e3c;
         }
+        
+        .loading {
+            display: none;
+            padding: 20px;
+            text-align: center;
+            background: #f8f9fa;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        
+        .loading.active {
+            display: block;
+        }
+        
+        .loading-spinner {
+            display: inline-block;
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .loading-text {
+            margin-top: 10px;
+            color: #666;
+            font-size: 14px;
+        }
     </style>
 </head>
 <body>
@@ -268,6 +302,11 @@
                     </div>
                 </div>
                 
+                <div class="loading" id="loadingIndicator">
+                    <div class="loading-spinner"></div>
+                    <div class="loading-text">AI Swarm is thinking... Searching knowledge base and generating response...</div>
+                </div>
+                
                 <div class="input-area">
                     <textarea id="userInput" placeholder="Type your request here...  (e.g., 'I need a data collection document')"></textarea>
                     <button onclick="sendMessage()">Send</button>
@@ -318,6 +357,10 @@
             addMessage('user', message);
             input.value = '';
             
+            // Show loading indicator
+            const loading = document.getElementById('loadingIndicator');
+            loading.classList.add('active');
+            
             // Send to swarm
             fetch('/api/orchestrate', {
                 method: 'POST',
@@ -330,10 +373,13 @@
             })
             .then(r => r.json())
             .then(data => {
+                // Hide loading indicator
+                loading.classList.remove('active');
+                
                 if (data.success) {
                     let badges = '';
                     if (data.knowledge_used) badges += '<span class="badge knowledge">📚 Knowledge Used</span>';
-                    if (data.project_workflow.active) badges += '<span class="badge workflow">📁 Project Context</span>';
+                    if (data.project_workflow && data.project_workflow.active) badges += '<span class="badge workflow">📁 Project Context</span>';
                     if (data.formatting_applied) badges += '<span class="badge formatted">🎨 Formatted</span>';
                     
                     addMessage('assistant', data.actual_output + '<div style="margin-top: 10px;">' + badges + '</div>');
@@ -342,6 +388,8 @@
                 }
             })
             .catch(err => {
+                // Hide loading indicator
+                loading.classList.remove('active');
                 addMessage('assistant', `❌ Error: ${err.message}`);
             });
         }
