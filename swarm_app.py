@@ -1,7 +1,11 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: January 18, 2026
+Last Updated: January 19, 2026
+
+CHANGES IN THIS VERSION:
+- Fixed Anthropic API timeout issues (extended to 180 seconds)
+- Added proper timeout configuration for long-running AI operations
 
 PURPOSE:
 Intelligent AI orchestration system that routes tasks to specialist AIs,
@@ -147,7 +151,7 @@ def init_db():
             submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             overall_rating INTEGER CHECK(overall_rating >= 1 AND overall_rating <= 5),
             quality_rating INTEGER CHECK(quality_rating >= 1 AND quality_rating <= 5),
-            accuracy_rating INTEGER CHECK(accuracy_rating >= 1 AND accuracy_rating <= 5),
+            accuracy_rating INTEGER CHECK(accuracy_rating >= 1 AND overall_rating <= 5),
             usefulness_rating INTEGER CHECK(usefulness_rating >= 1 AND usefulness_rating <= 5),
             consensus_was_accurate BOOLEAN,
             improvement_categories TEXT,
@@ -164,11 +168,14 @@ def init_db():
 init_db()
 
 # ============================================================================
-# AI CLIENT FUNCTIONS
+# AI CLIENT FUNCTIONS (FIXED TIMEOUTS - January 19, 2026)
 # ============================================================================
 
 def call_claude_sonnet(prompt, max_tokens=4000):
-    """Call Claude Sonnet (Primary Orchestrator)"""
+    """
+    Call Claude Sonnet (Primary Orchestrator)
+    FIXED: Extended timeout to 180 seconds for complex requests
+    """
     try:
         response = requests.post(
             "https://api.anthropic.com/v1/messages",
@@ -182,7 +189,7 @@ def call_claude_sonnet(prompt, max_tokens=4000):
                 "max_tokens": max_tokens,
                 "messages": [{"role": "user", "content": prompt}]
             },
-            timeout=60
+            timeout=180  # FIXED: Was 60, now 180 seconds
         )
         response.raise_for_status()
         return response.json()['content'][0]['text']
@@ -190,7 +197,10 @@ def call_claude_sonnet(prompt, max_tokens=4000):
         return f"ERROR: Claude Sonnet call failed - {str(e)}"
 
 def call_claude_opus(prompt, max_tokens=4000):
-    """Call Claude Opus (Strategic Supervisor)"""
+    """
+    Call Claude Opus (Strategic Supervisor)
+    FIXED: Extended timeout to 180 seconds for complex strategic analysis
+    """
     try:
         response = requests.post(
             "https://api.anthropic.com/v1/messages",
@@ -204,7 +214,7 @@ def call_claude_opus(prompt, max_tokens=4000):
                 "max_tokens": max_tokens,
                 "messages": [{"role": "user", "content": prompt}]
             },
-            timeout=90
+            timeout=180  # FIXED: Was 90, now 180 seconds
         )
         response.raise_for_status()
         return response.json()['content'][0]['text']
@@ -218,7 +228,8 @@ def call_gpt4(prompt, max_tokens=4000):
             model="gpt-4",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=max_tokens,
-            temperature=0.7
+            temperature=0.7,
+            timeout=180  # Extended timeout for consistency
         )
         return response.choices[0].message.content
     except Exception as e:
@@ -230,7 +241,8 @@ def call_deepseek(prompt, max_tokens=4000):
         response = deepseek_client.chat.completions.create(
             model="deepseek-chat",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=max_tokens
+            max_tokens=max_tokens,
+            timeout=180  # Extended timeout for consistency
         )
         return response.choices[0].message.content
     except Exception as e:
@@ -243,7 +255,7 @@ def call_gemini(prompt, max_tokens=4000):
         response = requests.post(
             url,
             json={"contents": [{"parts": [{"text": prompt}]}]},
-            timeout=60
+            timeout=180  # Extended timeout for consistency
         )
         response.raise_for_status()
         return response.json()['candidates'][0]['content']['parts'][0]['text']
@@ -863,11 +875,6 @@ def learning_stats():
         'orchestrator_performance': [dict(row) for row in orchestrator_performance],
         'common_improvement_areas': improvement_counts
     })
-
-@app.route('/health')
-def health_legacy():
-    """Legacy health check - redirect to main health endpoint"""
-    return health()
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
