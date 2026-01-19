@@ -196,7 +196,7 @@ def create_project_aware_prompt(user_request, intent, workflow, knowledge_contex
     project_context = workflow.get_context_summary() if workflow else "No active project context"
     
     prompt_templates = {
-        'create_data_collection': f"""You are creating a data collection document for Shiftwork Solutions LLC.
+        'create_data_collection': f"""You are creating a Week 1 Data Collection document for Shiftwork Solutions LLC.
 
 {knowledge_context}
 
@@ -205,15 +205,79 @@ CURRENT PROJECT CONTEXT:
 
 USER REQUEST: {user_request}
 
-Create a comprehensive data collection document that includes:
-1. Cover letter explaining what we need and why
-2. List of specific data items needed (refer to Data_Collection.docx template)
-3. Format requirements for each data type
-4. Timeline for data submission
-5. Contact information
+CRITICAL: Create a professional Word document (.docx) using this EXACT structure:
 
-Use the company's professional tone and proven methodology from the knowledge base.
-Format as a clean, professional document ready to send to the client.""",
+=== DOCUMENT STRUCTURE ===
+
+**TITLE (Title style):**
+Kick-off and Data Collection – Week 1
+
+**INTRODUCTION:**
+Congratulations on starting your project with Shiftwork Solutions LLC. Your Project Manager, Jim Dillingham, will guide you through this engagement.
+
+This document is your guide through the first week of the project.
+
+**CONTACT INFORMATION:**
+James Dillingham
+Project Manager and Subject Matter Expert
+Shiftwork Solutions LLC
+Email: jim@shift-work.com
+Phone: 415.265.1621
+www.shift-work.com
+
+Let's get this project started!
+
+**SECTION 1: Dates and Activities (Heading 1)**
+When: [Insert week/dates]
+• [Day]: kick-off day
+• Kick-off meeting (30 minutes) with management team
+• Site tour
+• Data collection and interviews begin
+• [Other days]: interviews and data collection
+• [Final day]: review meeting (15 minutes) with leadership team
+
+**SECTION 2: Data Collection Needs (Heading 1)**
+We need the following information:
+
+1. **Operational Data:**
+   • Current shift schedules for all departments
+   • Staffing levels and headcount by shift
+   • Operating hours and production schedules
+
+2. **Financial Data:**
+   • Payroll data (last 12 months if possible)
+   • Overtime costs and trends
+   • Labor cost structure
+
+3. **People Data:**
+   • Demographics (tenure, age ranges)
+   • Turnover data
+   • Absenteeism patterns
+
+**SECTION 3: Interview Schedule (Heading 1)**
+We will conduct interviews with:
+• Leadership team members
+• Department supervisors
+• Front-line employees (sample)
+
+Duration: 30-60 minutes each
+Format: One-on-one or small group
+
+**SECTION 4: Deliverables (Heading 1)**
+By end of Week 1:
+• Complete data collection
+• Initial observations
+• Schedule for Week 2 analysis
+
+Please provide this data by [date] to keep the project on schedule.
+
+Thank you for your partnership!
+
+=== END STRUCTURE ===
+
+Format this as a clean, professional document ready to send to the client.
+Use proper spacing, bullet points, and section headers.
+Customize the dates and details based on the client information in the project context.""",
 
         'analyze_files': f"""You are analyzing client data files for a Shiftwork Solutions consulting project.
 
