@@ -387,11 +387,24 @@ def execute_specialist_task(specialist_ai, task_description):
         "success": not result.startswith("ERROR")
     }
 
-def validate_with_consensus(task_result, validators=["sonnet", "gpt4"]):
+def validate_with_consensus(task_result, validators=None):
     """
     Multiple AIs review the output
     Return agreement score and any disagreements
+    Auto-detects available validators
     """
+    
+    # Auto-detect available validators if not specified
+    if validators is None:
+        validators = []
+        # Always have Sonnet
+        validators.append("sonnet")
+        # Add GPT-4 if available
+        if OPENAI_API_KEY:
+            validators.append("gpt4")
+        # If only one validator, just use that one (no consensus needed)
+        if len(validators) == 1:
+            validators = ["sonnet"]  # Single validator mode
     
     validation_prompt = f"""Review this AI-generated output and rate its quality on these criteria (0-10 each):
 1. Accuracy
@@ -400,7 +413,7 @@ def validate_with_consensus(task_result, validators=["sonnet", "gpt4"]):
 4. Usefulness
 
 OUTPUT TO REVIEW:
-{task_result}
+{task_result[:2000]}
 
 Respond with JSON:
 {{
@@ -414,13 +427,14 @@ Respond with JSON:
 
     validation_results = []
     
+    # Run validators in parallel for speed
     with ThreadPoolExecutor(max_workers=len(validators)) as executor:
         futures = {}
         for validator in validators:
             if validator.lower() == "sonnet":
-                futures[executor.submit(call_claude_sonnet, validation_prompt)] = validator
-            elif validator.lower() == "gpt4":
-                futures[executor.submit(call_gpt4, validation_prompt)] = validator
+                futures[executor.submit(call_claude_sonnet, validation_prompt, 1000)] = validator
+            elif validator.lower() == "gpt4" and OPENAI_API_KEY:
+                futures[executor.submit(call_gpt4, validation_prompt, 1000)] = validator
         
         for future in as_completed(futures):
             validator = futures[future]
@@ -436,22 +450,29 @@ Respond with JSON:
                 parsed = json.loads(result)
                 parsed['validator'] = validator
                 validation_results.append(parsed)
-            except:
+            except Exception as e:
                 validation_results.append({
                     "validator": validator,
-                    "error": "Failed to parse validation",
+                    "error": f"Failed to parse: {str(e)[:100]}",
                     "overall_score": 5
                 })
     
     # Calculate consensus
     scores = [v.get('overall_score', 5) for v in validation_results]
-    agreement_score = 1.0 - (max(scores) - min(scores)) / 10.0  # High agreement if scores are similar
+    
+    if len(scores) == 1:
+        # Single validator - no consensus possible
+        agreement_score = 1.0
+    else:
+        # Multiple validators - measure agreement
+        agreement_score = 1.0 - (max(scores) - min(scores)) / 10.0
     
     return {
         "validators": validators,
         "validation_results": validation_results,
         "agreement_score": agreement_score,
-        "average_score": sum(scores) / len(scores) if scores else 5
+        "average_score": sum(scores) / len(scores) if scores else 5,
+        "validator_count": len(validation_results)
     }
 
 # ============================================================================
