@@ -274,7 +274,45 @@ def analyze_task_with_sonnet(user_request):
     3. If no: Escalate to Opus
     """
     
+    # Get learning context from past feedback
+    db = get_db()
+    learning_context = ""
+    try:
+        # Get recent high-performing patterns
+        high_performers = db.execute('''
+            SELECT pattern_type, pattern_data, success_rate 
+            FROM learning_records 
+            WHERE success_rate > 0.7 
+            ORDER BY times_applied DESC 
+            LIMIT 5
+        ''').fetchall()
+        
+        if high_performers:
+            learning_context = "\n\nLEARNING FROM PAST PERFORMANCE:\n"
+            for record in high_performers:
+                pattern_data = json.loads(record['pattern_data']) if record['pattern_data'] else {}
+                learning_context += f"- {record['pattern_type']}: Success rate {record['success_rate']:.1%}\n"
+                if 'improvement_areas' in pattern_data:
+                    learning_context += f"  Common issues to avoid: {pattern_data['improvement_areas']}\n"
+    except:
+        pass
+    finally:
+        db.close()
+    
     analysis_prompt = f"""You are the primary orchestrator in an AI swarm system. Analyze this user request and provide a JSON response.
+
+IMPORTANT BUSINESS CONTEXT:
+This system is owned by Shiftwork Solutions LLC, a consulting firm specializing in EMPLOYEE SHIFT SCHEDULING for 24/7 operations. When the user mentions "scheduling" or "shift work," they are referring to:
+- Employee work schedules (not production schedules)
+- Shift rotations (day/night/swing shifts)  
+- Workforce planning for continuous operations
+- 12-hour vs 8-hour shift patterns
+- Work-life balance for shift workers
+- Overtime management for hourly employees
+
+NOT about: production scheduling, machine scheduling, maintenance scheduling, or manufacturing schedules.
+
+{learning_context}
 
 USER REQUEST: {user_request}
 
