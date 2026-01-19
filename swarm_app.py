@@ -705,6 +705,32 @@ def health():
         }
     })
 
+@app.route('/api/slow-test')
+def slow_test():
+    """
+    Test endpoint to diagnose timeout issues
+    This endpoint deliberately sleeps for 45 seconds to test if Render
+    has a platform-level 30-second timeout that overrides our settings.
+    
+    Expected behavior:
+    - If this completes after 45s: Render timeout is NOT the issue
+    - If this fails at 30s: Render has a hard 30s limit we can't override
+    """
+    import time
+    start = time.time()
+    
+    # Sleep for 45 seconds
+    time.sleep(45)
+    
+    elapsed = time.time() - start
+    
+    return jsonify({
+        'message': 'Success! Request completed after long delay',
+        'elapsed_seconds': round(elapsed, 2),
+        'expected_seconds': 45,
+        'diagnosis': 'If you see this, Render is NOT blocking long requests'
+    })
+
 @app.route('/api/feedback', methods=['POST'])
 def submit_feedback():
     """
