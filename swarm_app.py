@@ -44,11 +44,21 @@ import time
 # Import our knowledge integration module
 from knowledge_integration import get_knowledge_base
 
-# Import formatting enhancement module
-from formatting_enhancement import format_with_gpt4, detect_output_type, needs_formatting
+# Import formatting enhancement module (optional)
+try:
+    from formatting_enhancement import format_with_gpt4, detect_output_type, needs_formatting
+    FORMATTING_AVAILABLE = True
+except ImportError:
+    print("⚠️ Warning: formatting_enhancement module not found - formatting features disabled")
+    FORMATTING_AVAILABLE = False
 
-# Import project workflow module
-from project_workflow import ProjectWorkflow, detect_project_intent, create_project_aware_prompt
+# Import project workflow module (optional)
+try:
+    from project_workflow import ProjectWorkflow, detect_project_intent, create_project_aware_prompt
+    WORKFLOW_AVAILABLE = True
+except ImportError:
+    print("⚠️ Warning: project_workflow module not found - workflow features disabled")
+    WORKFLOW_AVAILABLE = False
 
 app = Flask(__name__)
 
@@ -737,11 +747,13 @@ def orchestrate():
     
     # Get project workflow if specified
     workflow = None
-    if project_id:
-        workflow = active_workflows.get(project_id)
+    intent = 'general_question'
+    intent_params = {}
     
-    # Detect project intent
-    intent, intent_params = detect_project_intent(user_request, workflow)
+    if project_id and WORKFLOW_AVAILABLE:
+        workflow = active_workflows.get(project_id)
+        # Detect project intent
+        intent, intent_params = detect_project_intent(user_request, workflow)
     
     db = get_db()
     cursor = db.execute(
@@ -769,7 +781,9 @@ def orchestrate():
                 print(f"⚠️ Knowledge retrieval error: {e}")
         
         # Create project-aware prompt if workflow exists
-        if workflow and intent != 'general_question':
+        user_request_for_ai = user_request
+        
+        if workflow and intent != 'general_question' and WORKFLOW_AVAILABLE:
             # Use project workflow to enhance the prompt
             enhanced_prompt = create_project_aware_prompt(
                 user_request, 
@@ -783,8 +797,6 @@ def orchestrate():
             
             # Use the enhanced prompt for analysis
             user_request_for_ai = enhanced_prompt
-        else:
-            user_request_for_ai = user_request
         
         # Step 1: Sonnet analyzes WITH PROJECT KNOWLEDGE AND WORKFLOW CONTEXT
         sonnet_analysis = analyze_task_with_sonnet(user_request_for_ai)
@@ -863,7 +875,7 @@ def orchestrate():
         formatting_applied = False
         original_output = actual_output
         
-        if actual_output and OPENAI_API_KEY:  # Only if GPT-4 is available
+        if actual_output and OPENAI_API_KEY and FORMATTING_AVAILABLE:  # Only if GPT-4 AND formatting module available
             # Check if formatting would help
             needs_format, format_issues = needs_formatting(actual_output)
             
