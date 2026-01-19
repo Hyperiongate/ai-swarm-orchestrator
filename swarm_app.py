@@ -47,7 +47,13 @@ from knowledge_integration import get_knowledge_base
 # Import formatting enhancement module
 from formatting_enhancement import format_with_gpt4, detect_output_type, needs_formatting
 
+# Import project workflow module
+from project_workflow import ProjectWorkflow, detect_project_intent, create_project_aware_prompt
+
 app = Flask(__name__)
+
+# Global workflow storage (in production, use database or session storage)
+active_workflows = {}
 
 # ============================================================================
 # API CONFIGURATION
@@ -621,18 +627,121 @@ Respond with JSON:
     }
 
 # ============================================================================
-# MAIN ORCHESTRATION ENDPOINT
+# PROJECT WORKFLOW ENDPOINTS (NEW)
+# ============================================================================
+
+@app.route('/api/project/start', methods=['POST'])
+def start_project():
+    """Start a new project workflow"""
+    data = request.json
+    project_id = data.get('project_id') or f"proj_{int(time.time())}"
+    
+    workflow = ProjectWorkflow()
+    workflow.project_id = project_id
+    workflow.client_name = data.get('client_name', '')
+    workflow.industry = data.get('industry', '')
+    workflow.facility_type = data.get('facility_type', '')
+    
+    active_workflows[project_id] = workflow
+    workflow.add_context('project_started', f"New project for {workflow.client_name}")
+    
+    return jsonify({
+        'success': True,
+        'project_id': project_id,
+        'message': f'Project workflow started for {workflow.client_name}',
+        'suggested_first_step': 'Create a data collection document'
+    })
+
+@app.route('/api/project/<project_id>/context', methods=['GET'])
+def get_project_context(project_id):
+    """Get current project context"""
+    workflow = active_workflows.get(project_id)
+    
+    if not workflow:
+        return jsonify({'error': 'Project not found'}), 404
+    
+    return jsonify({
+        'success': True,
+        'project_id': project_id,
+        'client_name': workflow.client_name,
+        'phase': workflow.project_phase,
+        'context_summary': workflow.get_context_summary(),
+        'files_count': len(workflow.uploaded_files),
+        'findings_count': len(workflow.key_findings)
+    })
+
+@app.route('/api/project/<project_id>/add_context', methods=['POST'])
+def add_project_context(project_id):
+    """Add context to an active project"""
+    workflow = active_workflows.get(project_id)
+    
+    if not workflow:
+        return jsonify({'error': 'Project not found'}), 404
+    
+    data = request.json
+    context_type = data.get('type')  # 'file', 'email', 'finding', 'schedule', 'note'
+    content = data.get('content')
+    
+    if context_type == 'file':
+        workflow.uploaded_files.append(content)
+    elif context_type == 'email':
+        workflow.email_context.append(content)
+    elif context_type == 'finding':
+        workflow.key_findings.append(content)
+    elif context_type == 'schedule':
+        workflow.schedules_proposed.append(content)
+    
+    workflow.add_context(context_type, content)
+    
+    return jsonify({
+        'success': True,
+        'message': f'Added {context_type} to project context'
+    })
+
+@app.route('/api/project/<project_id>/phase', methods=['POST'])
+def update_project_phase(project_id):
+    """Move project to next phase"""
+    workflow = active_workflows.get(project_id)
+    
+    if not workflow:
+        return jsonify({'error': 'Project not found'}), 404
+    
+    data = request.json
+    new_phase = data.get('phase')
+    
+    old_phase = workflow.project_phase
+    workflow.project_phase = new_phase
+    workflow.add_context('phase_change', f"Moved from {old_phase} to {new_phase}")
+    
+    return jsonify({
+        'success': True,
+        'old_phase': old_phase,
+        'new_phase': new_phase,
+        'message': f'Project moved to {new_phase} phase'
+    })
+
+# ============================================================================
+# MAIN ORCHESTRATION ENDPOINT (ENHANCED WITH PROJECT WORKFLOW)
 # ============================================================================
 
 @app.route('/api/orchestrate', methods=['POST'])
 def orchestrate():
-    """Main endpoint - receives user request, orchestrates AI swarm WITH PROJECT KNOWLEDGE"""
+    """Main endpoint - receives user request, orchestrates AI swarm WITH PROJECT KNOWLEDGE AND WORKFLOW CONTEXT"""
     data = request.json
     user_request = data.get('request')
     enable_consensus = data.get('enable_consensus', True)
+    project_id = data.get('project_id')  # Optional - for project-aware requests
     
     if not user_request:
         return jsonify({'error': 'Request text required'}), 400
+    
+    # Get project workflow if specified
+    workflow = None
+    if project_id:
+        workflow = active_workflows.get(project_id)
+    
+    # Detect project intent
+    intent, intent_params = detect_project_intent(user_request, workflow)
     
     db = get_db()
     cursor = db.execute(
@@ -647,10 +756,40 @@ def orchestrate():
     knowledge_sources = []
     
     try:
-        # Step 1: Sonnet analyzes WITH PROJECT KNOWLEDGE
-        sonnet_analysis = analyze_task_with_sonnet(user_request)
-        knowledge_used = sonnet_analysis.get('knowledge_applied', False)
-        knowledge_sources = sonnet_analysis.get('knowledge_sources', [])
+        # Get relevant knowledge from project base
+        knowledge_context = ""
+        if knowledge_base:
+            try:
+                knowledge_context = knowledge_base.get_context_for_task(user_request, max_context=3000)
+                if knowledge_context:
+                    knowledge_used = True
+                    search_results = knowledge_base.search(user_request, max_results=3)
+                    knowledge_sources = [r['filename'] for r in search_results]
+            except Exception as e:
+                print(f"⚠️ Knowledge retrieval error: {e}")
+        
+        # Create project-aware prompt if workflow exists
+        if workflow and intent != 'general_question':
+            # Use project workflow to enhance the prompt
+            enhanced_prompt = create_project_aware_prompt(
+                user_request, 
+                intent, 
+                workflow,
+                knowledge_context
+            )
+            
+            # Add to workflow history
+            workflow.add_context('request', f"{intent}: {user_request}")
+            
+            # Use the enhanced prompt for analysis
+            user_request_for_ai = enhanced_prompt
+        else:
+            user_request_for_ai = user_request
+        
+        # Step 1: Sonnet analyzes WITH PROJECT KNOWLEDGE AND WORKFLOW CONTEXT
+        sonnet_analysis = analyze_task_with_sonnet(user_request_for_ai)
+        knowledge_used = sonnet_analysis.get('knowledge_applied', False) or knowledge_used
+        knowledge_sources = knowledge_sources or sonnet_analysis.get('knowledge_sources', [])
         
         # Step 2: Escalate to Opus if needed
         if sonnet_analysis.get('escalate_to_opus'):
@@ -660,7 +799,7 @@ def orchestrate():
             )
             db.commit()
             
-            opus_plan = handle_with_opus(user_request, sonnet_analysis)
+            opus_plan = handle_with_opus(user_request_for_ai, sonnet_analysis)
             orchestrator = "opus"
             plan = opus_plan
             if opus_plan.get('knowledge_applied'):
@@ -771,7 +910,13 @@ def orchestrate():
             'execution_time_seconds': total_time,
             'knowledge_used': knowledge_used,
             'knowledge_sources': knowledge_sources,
-            'formatting_applied': formatting_applied
+            'formatting_applied': formatting_applied,
+            'project_workflow': {
+                'active': workflow is not None,
+                'project_id': project_id if workflow else None,
+                'intent_detected': intent,
+                'phase': workflow.project_phase if workflow else None
+            }
         })
         
     except Exception as e:
