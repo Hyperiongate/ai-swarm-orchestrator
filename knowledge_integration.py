@@ -1,396 +1,452 @@
 """
-PROJECT WORKFLOW ORCHESTRATOR 
+SWARM PROJECT KNOWLEDGE INTEGRATION MODULE
 Created: January 19, 2026
 Last Updated: January 19, 2026
 
 PURPOSE:
-Conversational interface for managing complete consulting projects from
-initial data collection through final deliverables. Handles:
-- Data collection document creation
-- File analysis (payroll, surveys, etc.)
-- Email thread review and context extraction  
-- LinkedIn post generation
-- Full project lifecycle management
+Integrates the entire Shiftwork Solutions project knowledge base into the AI Swarm,
+giving it access to 30+ years of expertise, templates, frameworks, and methodologies.
+
+FEATURES:
+- Document extraction from all project files
+- Semantic search across knowledge base
+- Template and framework retrieval
+- Expertise injection into swarm prompts
+- Real-time knowledge access during task execution
 
 AUTHOR: Jim @ Shiftwork Solutions LLC
 """
 
+import os
 import json
+from pathlib import Path
+import sqlite3
 from datetime import datetime
+import re
+
+# For document processing
+try:
+    from docx import Document
+    DOCX_AVAILABLE = True
+except ImportError:
+    DOCX_AVAILABLE = False
+
+try:
+    import openpyxl
+    EXCEL_AVAILABLE = True
+except ImportError:
+    EXCEL_AVAILABLE = False
+
+try:
+    import PyPDF2
+    PDF_AVAILABLE = True
+except ImportError:
+    PDF_AVAILABLE = False
 
 
-class ProjectWorkflow:
+class ProjectKnowledgeBase:
     """
-    Manages state and context for a consulting project
-    Enables conversational interaction across multiple project phases
+    Manages access to the entire Shiftwork Solutions project knowledge base.
+    Provides search, retrieval, and integration with the AI Swarm.
     """
     
-    def __init__(self):
-        self.project_id = None
-        self.client_name = None
-        self.industry = None
-        self.facility_type = None
-        self.project_phase = "initial"  # initial, data_collection, analysis, implementation, followup
-        self.uploaded_files = []
-        self.email_context = []
-        self.key_findings = []
-        self.schedules_proposed = []
-        self.project_history = []
+    def __init__(self, project_path="/mnt/project", db_path="swarm_intelligence.db"):
+        self.project_path = Path(project_path)
+        self.db_path = db_path
+        self.knowledge_index = {}
         
-    def add_context(self, context_type, content):
-        """Add contextual information to the project"""
-        entry = {
-            'timestamp': datetime.now().isoformat(),
-            'type': context_type,
-            'content': content
-        }
-        self.project_history.append(entry)
+    def initialize(self):
+        """
+        Initialize the knowledge base:
+        1. Create knowledge_documents table
+        2. Extract all documents
+        3. Build searchable index
+        """
+        print("🔍 Initializing Project Knowledge Base...")
         
-    def get_context_summary(self):
-        """Get a summary of all project context for AI consumption"""
-        summary = f"""
-PROJECT CONTEXT FOR AI:
-
-Client: {self.client_name or 'Not set'}
-Industry: {self.industry or 'Not set'}  
-Facility: {self.facility_type or 'Not set'}
-Current Phase: {self.project_phase}
-
-Files Uploaded: {len(self.uploaded_files)}
-{self._format_files()}
-
-Email Threads: {len(self.email_context)}
-{self._format_emails()}
-
-Key Findings So Far:
-{self._format_findings()}
-
-Proposed Schedules:
-{self._format_schedules()}
-
-Recent Activity:
-{self._format_recent_history()}
-"""
-        return summary
+        # Create database table
+        self._create_knowledge_table()
         
-    def _format_files(self):
-        if not self.uploaded_files:
-            return "  None yet"
-        return "\n".join([f"  - {f['name']} ({f['type']})" for f in self.uploaded_files[-5:]])
-    
-    def _format_emails(self):
-        if not self.email_context:
-            return "  None yet"
-        return "\n".join([f"  - {e['subject']}" for e in self.email_context[-3:]])
-    
-    def _format_findings(self):
-        if not self.key_findings:
-            return "  None yet"
-        return "\n".join([f"  - {f}" for f in self.key_findings[-5:]])
-    
-    def _format_schedules(self):
-        if not self.schedules_proposed:
-            return "  None yet"
-        return "\n".join([f"  - {s}" for s in self.schedules_proposed])
-    
-    def _format_recent_history(self):
-        recent = self.project_history[-5:]
-        if not recent:
-            return "  No activity yet"
-        return "\n".join([f"  - [{h['timestamp'][:10]}] {h['type']}: {str(h['content'])[:60]}..." for h in recent])
-
-
-def detect_project_intent(user_message, current_workflow=None):
-    """
-    Analyzes user message to determine what project action they want
-    Returns: (intent, parameters)
-    
-    Intents:
-    - create_data_collection: User wants data collection document
-    - analyze_files: User has files to analyze
-    - review_emails: User wants email context reviewed
-    - generate_linkedin: User wants LinkedIn content
-    - create_proposal: User wants scope of work / proposal
-    - create_presentation: User wants PowerPoint
-    - next_phase: User wants to move to next project phase
-    - general_question: General consulting question
-    """
-    
-    message_lower = user_message.lower()
-    
-    # Data collection intent
-    if any(phrase in message_lower for phrase in [
-        'data collection', 'collect data', 'data request',
-        'need data from client', 'initial data', 'data gathering'
-    ]):
-        return 'create_data_collection', {
-            'document_type': 'data_collection',
-            'phase': 'initial'
+        # Extract and index all documents
+        self._index_all_documents()
+        
+        print(f"✅ Knowledge Base Ready: {len(self.knowledge_index)} documents indexed")
+        
+    def _create_knowledge_table(self):
+        """Create knowledge_documents table in the swarm database"""
+        db = sqlite3.connect(self.db_path)
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS knowledge_documents (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                filename TEXT NOT NULL,
+                file_type TEXT,
+                title TEXT,
+                content TEXT,
+                keywords TEXT,
+                category TEXT,
+                indexed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                word_count INTEGER,
+                metadata TEXT
+            )
+        ''')
+        db.commit()
+        db.close()
+        
+    def _index_all_documents(self):
+        """Extract and index all documents from the project knowledge base"""
+        if not self.project_path.exists():
+            print(f"⚠️ Project path not found: {self.project_path}")
+            return
+            
+        db = sqlite3.connect(self.db_path)
+        
+        # Clear existing index
+        db.execute('DELETE FROM knowledge_documents')
+        db.commit()
+        
+        for file_path in self.project_path.iterdir():
+            if file_path.is_file():
+                try:
+                    content = self._extract_content(file_path)
+                    if content:
+                        metadata = self._extract_metadata(file_path, content)
+                        
+                        db.execute('''
+                            INSERT INTO knowledge_documents 
+                            (filename, file_type, title, content, keywords, category, word_count, metadata)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', (
+                            file_path.name,
+                            file_path.suffix,
+                            metadata['title'],
+                            content[:50000],  # Store first 50k chars
+                            metadata['keywords'],
+                            metadata['category'],
+                            metadata['word_count'],
+                            json.dumps(metadata)
+                        ))
+                        
+                        self.knowledge_index[file_path.name] = {
+                            'content': content,
+                            'metadata': metadata
+                        }
+                        
+                        print(f"  ✅ Indexed: {file_path.name} ({metadata['word_count']} words)")
+                        
+                except Exception as e:
+                    # Only show errors for unexpected failures, not format mismatches
+                    error_msg = str(e)
+                    if "File is not a zip file" in error_msg or "not a zip file" in error_msg.lower():
+                        # This is a mislabeled file (text saved as .docx) - try as text
+                        try:
+                            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                                content = f.read()
+                                if content:
+                                    metadata = self._extract_metadata(file_path, content)
+                                    db.execute('''
+                                        INSERT INTO knowledge_documents 
+                                        (filename, file_type, title, content, keywords, category, word_count, metadata)
+                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                    ''', (
+                                        file_path.name,
+                                        file_path.suffix,
+                                        metadata['title'],
+                                        content[:50000],
+                                        metadata['keywords'],
+                                        metadata['category'],
+                                        metadata['word_count'],
+                                        json.dumps(metadata)
+                                    ))
+                                    self.knowledge_index[file_path.name] = {
+                                        'content': content,
+                                        'metadata': metadata
+                                    }
+                                    print(f"  ✅ Indexed: {file_path.name} ({metadata['word_count']} words) [as text]")
+                        except:
+                            pass  # Silently skip if text extraction also fails
+                    elif "EOF marker not found" in error_msg:
+                        pass  # Silently skip corrupted PDFs
+                    else:
+                        print(f"  ⚠️ Error indexing {file_path.name}: {e}")
+                    
+        db.commit()
+        db.close()
+        
+    def _extract_content(self, file_path):
+        """Extract text content from various file types"""
+        suffix = file_path.suffix.lower()
+        
+        try:
+            # Plain text files
+            if suffix in ['.txt', '.md', '']:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    return f.read()
+                    
+            # Word documents
+            elif suffix == '.docx' and DOCX_AVAILABLE:
+                try:
+                    doc = Document(file_path)
+                    paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+                    return '\n\n'.join(paragraphs)
+                except Exception as e:
+                    # If docx fails, try reading as plain text (mislabeled file)
+                    if "not a zip file" in str(e).lower():
+                        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                            return f.read()
+                    raise  # Re-raise other errors
+                
+            # Excel files
+            elif suffix == '.xlsx' and EXCEL_AVAILABLE:
+                wb = openpyxl.load_workbook(file_path, data_only=True)
+                content = []
+                for sheet in wb.worksheets:
+                    content.append(f"=== {sheet.title} ===\n")
+                    for row in sheet.iter_rows(values_only=True):
+                        row_text = ' | '.join(str(cell) if cell else '' for cell in row)
+                        if row_text.strip():
+                            content.append(row_text)
+                return '\n'.join(content)
+                
+            # PDF files
+            elif suffix == '.pdf' and PDF_AVAILABLE:
+                with open(file_path, 'rb') as f:
+                    reader = PyPDF2.PdfReader(f)
+                    content = []
+                    for page in reader.pages:
+                        content.append(page.extract_text())
+                    return '\n\n'.join(content)
+                    
+        except Exception as e:
+            print(f"    Error extracting {file_path.name}: {e}")
+            
+        return None
+        
+    def _extract_metadata(self, file_path, content):
+        """Extract metadata from document content"""
+        # Count words
+        word_count = len(content.split())
+        
+        # Try to extract title (first non-empty line or filename)
+        lines = [l.strip() for l in content.split('\n') if l.strip()]
+        title = lines[0] if lines else file_path.stem.replace('_', ' ')
+        
+        # Extract keywords (common industry terms)
+        keywords = self._extract_keywords(content)
+        
+        # Categorize document
+        category = self._categorize_document(file_path.name, content)
+        
+        return {
+            'title': title[:200],
+            'keywords': ', '.join(keywords[:20]),
+            'category': category,
+            'word_count': word_count,
+            'file_size': file_path.stat().st_size,
+            'modified': datetime.fromtimestamp(file_path.stat().st_mtime).isoformat()
         }
-    
-    # File analysis intent  
-    if any(phrase in message_lower for phrase in [
-        'analyze file', 'process file', 'look at file',
-        'review file', 'uploaded file', 'have data',
-        'payroll data', 'survey data', 'cost data'
-    ]):
-        return 'analyze_files', {
-            'awaiting_files': True
+        
+    def _extract_keywords(self, content):
+        """Extract relevant keywords from content"""
+        # Industry-specific terms
+        terms = [
+            'schedule', 'shift', 'overtime', 'staffing', 'crew', 'rotation',
+            'coverage', 'fatigue', 'turnover', 'work-life balance', '12-hour',
+            '8-hour', 'continental', 'DuPont', 'pitman', 'panama', '2-2-3',
+            'fixed', 'rotating', 'survey', 'implementation', 'change management',
+            'employee', 'supervisor', 'production', 'manufacturing', 'operations',
+            'consultation', 'assessment', 'analysis', 'recommendation', 'cost'
+        ]
+        
+        content_lower = content.lower()
+        found = [term for term in terms if term in content_lower]
+        
+        return found[:20]  # Return top 20
+        
+    def _categorize_document(self, filename, content):
+        """Categorize document based on filename and content"""
+        filename_lower = filename.lower()
+        content_lower = content.lower()[:1000]  # First 1000 chars
+        
+        if 'contract' in filename_lower:
+            return 'Contract'
+        elif 'implementation' in filename_lower or 'implementation' in content_lower:
+            return 'Implementation Guide'
+        elif 'survey' in filename_lower or 'survey' in content_lower:
+            return 'Survey & Assessment'
+        elif 'schedule' in filename_lower and 'definitive' in filename_lower:
+            return 'Schedule Library'
+        elif 'bio' in filename_lower or 'profile' in filename_lower:
+            return 'Company Profile'
+        elif 'lesson' in filename_lower:
+            return 'Lessons Learned'
+        elif 'guide' in filename_lower or 'essential' in filename_lower:
+            return 'Best Practices Guide'
+        elif 'summary' in filename_lower:
+            return 'Executive Summary'
+        elif 'scope' in filename_lower:
+            return 'Scope of Work'
+        else:
+            return 'Reference Material'
+            
+    def search(self, query, max_results=5):
+        """
+        Search the knowledge base for relevant documents
+        Returns list of relevant documents with excerpts
+        """
+        query_lower = query.lower()
+        query_words = set(query_lower.split())
+        
+        results = []
+        
+        for filename, data in self.knowledge_index.items():
+            content = data['content'].lower()
+            metadata = data['metadata']
+            
+            # Calculate relevance score
+            score = 0
+            
+            # Exact phrase match
+            if query_lower in content:
+                score += 10
+                
+            # Word matches
+            content_words = set(content.split())
+            matching_words = query_words.intersection(content_words)
+            score += len(matching_words) * 2
+            
+            # Title/category matches
+            if any(word in metadata['title'].lower() for word in query_words):
+                score += 5
+            if any(word in metadata['category'].lower() for word in query_words):
+                score += 3
+                
+            if score > 0:
+                # Extract relevant excerpt
+                excerpt = self._extract_excerpt(data['content'], query_lower)
+                
+                results.append({
+                    'filename': filename,
+                    'title': metadata['title'],
+                    'category': metadata['category'],
+                    'score': score,
+                    'excerpt': excerpt,
+                    'word_count': metadata['word_count']
+                })
+                
+        # Sort by relevance
+        results.sort(key=lambda x: x['score'], reverse=True)
+        
+        return results[:max_results]
+        
+    def _extract_excerpt(self, content, query, context_words=100):
+        """Extract relevant excerpt around the query"""
+        content_lower = content.lower()
+        query_pos = content_lower.find(query)
+        
+        if query_pos == -1:
+            # No exact match, return first N words
+            words = content.split()[:context_words]
+            return ' '.join(words) + '...'
+            
+        # Extract context around query
+        words = content.split()
+        query_word_pos = len(content[:query_pos].split())
+        
+        start = max(0, query_word_pos - context_words // 2)
+        end = min(len(words), query_word_pos + context_words // 2)
+        
+        excerpt = ' '.join(words[start:end])
+        
+        if start > 0:
+            excerpt = '...' + excerpt
+        if end < len(words):
+            excerpt = excerpt + '...'
+            
+        return excerpt
+        
+    def get_document(self, filename):
+        """Retrieve full document by filename"""
+        if filename in self.knowledge_index:
+            return self.knowledge_index[filename]
+        return None
+        
+    def get_all_documents(self):
+        """Get list of all indexed documents"""
+        return [
+            {
+                'filename': filename,
+                'title': data['metadata']['title'],
+                'category': data['metadata']['category'],
+                'word_count': data['metadata']['word_count']
+            }
+            for filename, data in self.knowledge_index.items()
+        ]
+        
+    def get_context_for_task(self, task_description, max_context=5000):
+        """
+        Get relevant context from knowledge base for a specific task
+        Returns a formatted context string to inject into prompts
+        """
+        # Search for relevant documents
+        results = self.search(task_description, max_results=3)
+        
+        if not results:
+            return ""
+            
+        # Build context string
+        context = "\n\n=== RELEVANT SHIFTWORK SOLUTIONS EXPERTISE ===\n\n"
+        
+        for result in results:
+            context += f"📄 {result['title']} ({result['category']})\n"
+            context += f"{result['excerpt']}\n\n"
+            
+        # Trim to max length
+        if len(context) > max_context:
+            context = context[:max_context] + "\n\n[Context truncated...]"
+            
+        return context
+        
+    def get_stats(self):
+        """Get knowledge base statistics"""
+        total_docs = len(self.knowledge_index)
+        total_words = sum(d['metadata']['word_count'] for d in self.knowledge_index.values())
+        
+        categories = {}
+        for data in self.knowledge_index.values():
+            cat = data['metadata']['category']
+            categories[cat] = categories.get(cat, 0) + 1
+            
+        return {
+            'total_documents': total_docs,
+            'total_words': total_words,
+            'categories': categories,
+            'available_templates': self._get_template_list()
         }
-    
-    # Email review intent
-    if any(phrase in message_lower for phrase in [
-        'review email', 'read email', 'email thread',
-        'email with client', 'correspondence', 'email exchange'
-    ]):
-        return 'review_emails', {
-            'awaiting_emails': True
-        }
-    
-    # LinkedIn content intent
-    if any(phrase in message_lower for phrase in [
-        'linkedin post', 'linkedin content', 'social media',
-        'post about', 'share on linkedin'
-    ]):
-        return 'generate_linkedin', {
-            'content_type': 'linkedin_post'
-        }
-    
-    # Proposal/SOW intent
-    if any(phrase in message_lower for phrase in [
-        'proposal', 'scope of work', 'sow', 'contract',
-        'engagement letter', 'quote'
-    ]):
-        return 'create_proposal', {
-            'document_type': 'proposal'
-        }
-    
-    # Presentation intent
-    if any(phrase in message_lower for phrase in [
-        'powerpoint', 'presentation', 'slides', 'deck',
-        'client presentation'
-    ]):
-        return 'create_presentation', {
-            'document_type': 'presentation'
-        }
-    
-    # Phase transition intent
-    if any(phrase in message_lower for phrase in [
-        'next phase', 'move forward', 'next step',
-        'ready to', 'proceed to'
-    ]):
-        return 'next_phase', {
-            'current_phase': current_workflow.project_phase if current_workflow else 'unknown'
-        }
-    
-    # General question
-    return 'general_question', {}
+        
+    def _get_template_list(self):
+        """Get list of available templates"""
+        templates = []
+        for filename, data in self.knowledge_index.items():
+            category = data['metadata']['category']
+            if category in ['Contract', 'Implementation Guide', 'Scope of Work', 'Executive Summary']:
+                templates.append({
+                    'name': data['metadata']['title'],
+                    'type': category,
+                    'filename': filename
+                })
+        return templates
 
 
-def create_project_aware_prompt(user_request, intent, workflow, knowledge_context=""):
-    """
-    Creates an enhanced prompt that includes full project context
-    This makes the AI aware of the entire consulting engagement
-    """
-    
-    project_context = workflow.get_context_summary() if workflow else "No active project context"
-    
-    prompt_templates = {
-        'create_data_collection': f"""You are creating a Week 1 Data Collection document for Shiftwork Solutions LLC.
+# Singleton instance
+_knowledge_base = None
 
-{knowledge_context}
-
-CURRENT PROJECT CONTEXT:
-{project_context}
-
-USER REQUEST: {user_request}
-
-CRITICAL: Create a professional Word document (.docx) using this EXACT structure:
-
-=== DOCUMENT STRUCTURE ===
-
-**TITLE (Title style):**
-Kick-off and Data Collection – Week 1
-
-**INTRODUCTION:**
-Congratulations on starting your project with Shiftwork Solutions LLC. Your Project Manager, Jim Dillingham, will guide you through this engagement.
-
-This document is your guide through the first week of the project.
-
-**CONTACT INFORMATION:**
-James Dillingham
-Project Manager and Subject Matter Expert
-Shiftwork Solutions LLC
-Email: jim@shift-work.com
-Phone: 415.265.1621
-www.shift-work.com
-
-Let's get this project started!
-
-**SECTION 1: Dates and Activities (Heading 1)**
-When: [Insert week/dates]
-• [Day]: kick-off day
-• Kick-off meeting (30 minutes) with management team
-• Site tour
-• Data collection and interviews begin
-• [Other days]: interviews and data collection
-• [Final day]: review meeting (15 minutes) with leadership team
-
-**SECTION 2: Data Collection Needs (Heading 1)**
-We need the following information:
-
-1. **Operational Data:**
-   • Current shift schedules for all departments
-   • Staffing levels and headcount by shift
-   • Operating hours and production schedules
-
-2. **Financial Data:**
-   • Payroll data (last 12 months if possible)
-   • Overtime costs and trends
-   • Labor cost structure
-
-3. **People Data:**
-   • Demographics (tenure, age ranges)
-   • Turnover data
-   • Absenteeism patterns
-
-**SECTION 3: Interview Schedule (Heading 1)**
-We will conduct interviews with:
-• Leadership team members
-• Department supervisors
-• Front-line employees (sample)
-
-Duration: 30-60 minutes each
-Format: One-on-one or small group
-
-**SECTION 4: Deliverables (Heading 1)**
-By end of Week 1:
-• Complete data collection
-• Initial observations
-• Schedule for Week 2 analysis
-
-Please provide this data by [date] to keep the project on schedule.
-
-Thank you for your partnership!
-
-=== END STRUCTURE ===
-
-Format this as a clean, professional document ready to send to the client.
-Use proper spacing, bullet points, and section headers.
-Customize the dates and details based on the client information in the project context.""",
-
-        'analyze_files': f"""You are analyzing client data files for a Shiftwork Solutions consulting project.
-
-{knowledge_context}
-
-CURRENT PROJECT CONTEXT:
-{project_context}
-
-USER REQUEST: {user_request}
-
-The user will upload files for analysis. Based on the project context:
-1. Identify what type of data this is (payroll, survey, operational, etc.)
-2. Perform relevant analysis using Shiftwork Solutions methodologies
-3. Extract key findings related to shift schedule optimization
-4. Flag any data quality issues
-5. Provide recommendations based on the analysis
-
-Use cost analysis principles from the Essential Guide and Implementation Manuals.""",
-
-        'review_emails': f"""You are reviewing email correspondence for a Shiftwork Solutions project.
-
-{knowledge_context}
-
-CURRENT PROJECT CONTEXT:
-{project_context}
-
-USER REQUEST: {user_request}
-
-Review the email thread and:
-1. Extract key client requirements and concerns
-2. Identify decision-makers and their priorities
-3. Note any commitments or deadlines
-4. Flag potential scope changes
-5. Suggest next steps based on the conversation
-
-Provide a concise summary for project planning.""",
-
-        'generate_linkedin': f"""You are creating LinkedIn content for Shiftwork Solutions LLC.
-
-{knowledge_context}
-
-CURRENT PROJECT CONTEXT:
-{project_context}
-
-USER REQUEST: {user_request}
-
-Create a LinkedIn post that:
-1. Shares insights from this project (without identifying the client)
-2. Demonstrates Shiftwork Solutions expertise
-3. Provides value to operations managers and HR leaders
-4. Includes relevant statistics or findings
-5. Uses professional but engaging tone
-
-Length: 150-250 words
-Include: 3-5 relevant hashtags""",
-
-        'create_proposal': f"""You are creating a proposal/scope of work for Shiftwork Solutions LLC.
-
-{knowledge_context}
-
-CURRENT PROJECT CONTEXT:
-{project_context}
-
-USER REQUEST: {user_request}
-
-Create a professional proposal that includes:
-1. Executive Summary
-2. Understanding of Client Needs
-3. Our Approach (use proven methodology from Scope_of_work_by_AI.docx)
-4. Deliverables and Timeline  
-5. Investment and Terms
-6. Why Shiftwork Solutions
-
-Use the company's contract templates and pricing models as reference.""",
-
-        'create_presentation': f"""You are creating a PowerPoint presentation for Shiftwork Solutions LLC.
-
-{knowledge_context}
-
-CURRENT PROJECT CONTEXT:
-{project_context}
-
-USER REQUEST: {user_request}
-
-Outline a presentation with:
-1. Title slide
-2. Client situation overview
-3. Analysis findings (use data from project context)
-4. Recommendations
-5. Implementation approach
-6. Next steps
-
-Format as slide-by-slide outline with bullet points for each slide.""",
-
-        'general_question': f"""You are answering a question about a Shiftwork Solutions consulting project.
-
-{knowledge_context}
-
-CURRENT PROJECT CONTEXT:
-{project_context}
-
-USER REQUEST: {user_request}
-
-Provide a helpful response based on:
-1. The current project context
-2. Shiftwork Solutions' proven methodologies
-3. Your 30+ years of expertise in the knowledge base
-
-Be specific and actionable."""
-    }
-    
-    template = prompt_templates.get(intent, prompt_templates['general_question'])
-    return template
+def get_knowledge_base():
+    """Get or create singleton knowledge base instance"""
+    global _knowledge_base
+    if _knowledge_base is None:
+        _knowledge_base = ProjectKnowledgeBase()
+        _knowledge_base.initialize()
+    return _knowledge_base
 
 
 # I did no harm and this file is not truncated
