@@ -540,6 +540,15 @@
                 <ul class="quick-actions" id="quickActions">
                     <!-- Dynamically populated based on mode -->
                 </ul>
+                
+                <!-- Generated Documents -->
+                <h3 style="margin-top: 20px;">📄 Documents</h3>
+                <div id="documentsList" style="font-size: 12px; max-height: 200px; overflow-y: auto;">
+                    <div style="color: #999; padding: 10px; text-align: center;">No documents yet</div>
+                </div>
+                <button onclick="refreshDocuments()" style="width: 100%; padding: 8px; margin-top: 10px; background: #f0f0f0; border: 1px solid #e0e0e0; border-radius: 6px; cursor: pointer; font-size: 12px; color: #666;">
+                    🔄 Refresh
+                </button>
             </div>
             
             <!-- Main Conversation Area -->
@@ -577,7 +586,19 @@
                 
                 <div class="input-area">
                     <textarea id="userInput" placeholder="Type your request here..."></textarea>
-                    <button onclick="sendMessage()">Send</button>
+                    <div style="display: flex; flex-direction: column; gap: 10px;">
+                        <button onclick="sendMessage()">Send</button>
+                        <label for="fileUpload" style="padding: 10px 20px; background: #e0e0e0; color: #333; border: none; border-radius: 10px; font-weight: 600; cursor: pointer; text-align: center; transition: background 0.2s;">
+                            📎 Upload Files
+                        </label>
+                        <input type="file" id="fileUpload" multiple accept=".pdf,.docx,.xlsx,.csv,.txt,.png,.jpg,.jpeg" style="display: none;" onchange="handleFileUpload(event)">
+                    </div>
+                </div>
+                
+                <!-- File preview area -->
+                <div id="filePreview" style="margin-top: 10px; display: none;">
+                    <div style="font-size: 12px; font-weight: 600; color: #667eea; margin-bottom: 5px;">Attached Files:</div>
+                    <div id="fileList" style="display: flex; flex-wrap: wrap; gap: 8px;"></div>
                 </div>
             </div>
         </div>
@@ -588,6 +609,98 @@
         let currentProjectId = null;
         let messageCounter = 0;
         let feedbackRatings = {};  // Store ratings for each message
+        let uploadedFiles = [];  // Store uploaded files
+        
+        // File upload handling
+        function handleFileUpload(event) {
+            const files = Array.from(event.target.files);
+            uploadedFiles = uploadedFiles.concat(files);
+            
+            displayFilePreview();
+        }
+        
+        function displayFilePreview() {
+            const preview = document.getElementById('filePreview');
+            const fileList = document.getElementById('fileList');
+            
+            if (uploadedFiles.length === 0) {
+                preview.style.display = 'none';
+                return;
+            }
+            
+            preview.style.display = 'block';
+            fileList.innerHTML = '';
+            
+            uploadedFiles.forEach((file, index) => {
+                const fileTag = document.createElement('div');
+                fileTag.style.cssText = 'display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px; background: #e3f2fd; border-radius: 5px; font-size: 12px;';
+                
+                const icon = getFileIcon(file.name);
+                fileTag.innerHTML = `
+                    ${icon} ${file.name} (${formatFileSize(file.size)})
+                    <button onclick="removeFile(${index})" style="background: none; border: none; color: #d32f2f; cursor: pointer; font-weight: bold; padding: 0 0 0 5px;">×</button>
+                `;
+                
+                fileList.appendChild(fileTag);
+            });
+        }
+        
+        function removeFile(index) {
+            uploadedFiles.splice(index, 1);
+            displayFilePreview();
+        }
+        
+        function getFileIcon(filename) {
+            const ext = filename.split('.').pop().toLowerCase();
+            const icons = {
+                'pdf': '📄',
+                'docx': '📝',
+                'doc': '📝',
+                'xlsx': '📊',
+                'xls': '📊',
+                'csv': '📊',
+                'txt': '📃',
+                'png': '🖼️',
+                'jpg': '🖼️',
+                'jpeg': '🖼️'
+            };
+            return icons[ext] || '📎';
+        }
+        
+        function formatFileSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        }
+        
+        // Copy to clipboard function
+        function copyToClipboard(msgId) {
+            const content = document.getElementById(`content_${msgId}`);
+            if (!content) return;
+            
+            // Get text content without HTML
+            const text = content.innerText || content.textContent;
+            
+            // Copy to clipboard
+            navigator.clipboard.writeText(text).then(() => {
+                // Show success feedback
+                const button = event.target;
+                const originalText = button.innerHTML;
+                button.innerHTML = '✓ Copied!';
+                button.style.background = '#4caf50';
+                button.style.color = 'white';
+                button.style.borderColor = '#4caf50';
+                
+                setTimeout(() => {
+                    button.innerHTML = originalText;
+                    button.style.background = 'none';
+                    button.style.color = '#666';
+                    button.style.borderColor = '#e0e0e0';
+                }, 2000);
+            }).catch(err => {
+                alert('Failed to copy to clipboard');
+            });
+        }
         
         // Mode switching
         function switchMode(mode) {
@@ -669,25 +782,43 @@
         function sendMessage() {
             const input = document.getElementById('userInput');
             const message = input.value.trim();
-            if (!message) return;
+            if (!message && uploadedFiles.length === 0) return;
             
             // Add user message
-            addMessage('user', message);
+            let displayMessage = message || 'Uploaded files for analysis';
+            if (uploadedFiles.length > 0) {
+                displayMessage += ` (${uploadedFiles.length} file${uploadedFiles.length > 1 ? 's' : ''} attached)`;
+            }
+            addMessage('user', displayMessage);
+            
             input.value = '';
             
             // Show loading
             const loading = document.getElementById('loadingIndicator');
             loading.classList.add('active');
             
+            // Prepare request
+            const formData = new FormData();
+            formData.append('request', message || 'Please analyze the uploaded files');
+            formData.append('enable_consensus', 'true');
+            if (currentMode === 'project' && currentProjectId) {
+                formData.append('project_id', currentProjectId);
+            }
+            
+            // Add files
+            uploadedFiles.forEach((file) => {
+                formData.append('files', file);
+            });
+            
+            // Clear uploaded files
+            const filesCount = uploadedFiles.length;
+            uploadedFiles = [];
+            displayFilePreview();
+            
             // Send to swarm
             fetch('/api/orchestrate', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    request: message,
-                    enable_consensus: true,
-                    project_id: currentMode === 'project' ? currentProjectId : null
-                })
+                body: formData
             })
             .then(r => r.json())
             .then(data => {
@@ -698,8 +829,31 @@
                     if (data.knowledge_used) badges += '<span class="badge knowledge">📚 Knowledge</span>';
                     if (data.project_workflow && data.project_workflow.active) badges += '<span class="badge workflow">📁 Project</span>';
                     if (data.formatting_applied) badges += '<span class="badge formatted">🎨 Formatted</span>';
+                    if (filesCount > 0) badges += `<span class="badge" style="background: #fff3e0; color: #f57c00;">📎 ${filesCount} file${filesCount > 1 ? 's' : ''}</span>`;
                     
-                    addMessage('assistant', data.actual_output + '<div style="margin-top: 10px;">' + badges + '</div>', data.task_id, currentMode, data);
+                    // Add download button if document was created
+                    let downloadSection = '';
+                    if (data.document_created && data.document_url) {
+                        const docType = (data.document_type || 'docx').toUpperCase();
+                        const icon = docType === 'PDF' ? '📄' : docType === 'DOCX' ? '📝' : docType === 'XLSX' ? '📊' : '📄';
+                        
+                        downloadSection = `
+                            <div style="margin-top: 15px; padding: 12px; background: #e8f5e9; border-left: 4px solid #4caf50; border-radius: 4px;">
+                                <div style="font-weight: 600; margin-bottom: 8px; color: #2e7d32;">
+                                    ${icon} Document Created
+                                </div>
+                                <a href="${data.document_url}" download style="display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; background: #4caf50; color: white; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 14px; transition: background 0.2s;">
+                                    <span>⬇️</span>
+                                    <span>Download ${docType}</span>
+                                </a>
+                                <div style="font-size: 11px; color: #666; margin-top: 8px;">
+                                    Professional ${docType} document ready for download
+                                </div>
+                            </div>
+                        `;
+                    }
+                    
+                    addMessage('assistant', data.actual_output + '<div style="margin-top: 10px;">' + badges + '</div>' + downloadSection, data.task_id, currentMode, data);
                     
                     // Refresh stats
                     loadStats();
@@ -855,8 +1009,11 @@
             }
             
             messageDiv.innerHTML = `
-                <div class="message-header">${header} ${modeIndicator}</div>
-                <div class="message-content">${content}</div>
+                <div class="message-header">
+                    ${header} ${modeIndicator}
+                    ${role === 'assistant' ? `<button onclick="copyToClipboard('${msgId}')" style="background: none; border: 1px solid #e0e0e0; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; color: #666; margin-left: auto;">📋 Copy</button>` : ''}
+                </div>
+                <div class="message-content" id="content_${msgId}">${content}</div>
                 ${consensusSection}
                 ${feedbackSection}
             `;
@@ -976,9 +1133,58 @@
                 });
         }
         
+        // Load generated documents
+        function loadDocuments() {
+            fetch('/api/documents')
+                .then(r => r.json())
+                .then(data => {
+                    const docsList = document.getElementById('documentsList');
+                    
+                    if (!data.success || data.documents.length === 0) {
+                        docsList.innerHTML = '<div style="color: #999; padding: 10px; text-align: center;">No documents yet</div>';
+                        return;
+                    }
+                    
+                    docsList.innerHTML = '';
+                    
+                    data.documents.forEach(doc => {
+                        const docItem = document.createElement('div');
+                        docItem.style.cssText = 'padding: 8px; margin: 4px 0; background: #f8f9fa; border-radius: 6px; border: 1px solid #e0e0e0;';
+                        
+                        const icon = doc.type === 'pdf' ? '📄' : doc.type === 'docx' ? '📝' : doc.type === 'xlsx' ? '📊' : '📎';
+                        const size = formatFileSize(doc.size);
+                        const date = new Date(doc.modified).toLocaleDateString();
+                        
+                        docItem.innerHTML = `
+                            <div style="display: flex; align-items: start; gap: 6px;">
+                                <span style="font-size: 16px;">${icon}</span>
+                                <div style="flex: 1; min-width: 0;">
+                                    <div style="font-weight: 600; font-size: 11px; color: #333; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${doc.filename}">
+                                        ${doc.filename}
+                                    </div>
+                                    <div style="font-size: 10px; color: #999; margin-top: 2px;">
+                                        ${size} • ${date}
+                                    </div>
+                                    <a href="${doc.download_url}" download style="display: inline-block; margin-top: 4px; padding: 4px 8px; background: #667eea; color: white; text-decoration: none; border-radius: 4px; font-size: 10px; font-weight: 600;">
+                                        ⬇️ Download
+                                    </a>
+                                </div>
+                            </div>
+                        `;
+                        
+                        docsList.appendChild(docItem);
+                    });
+                });
+        }
+        
+        function refreshDocuments() {
+            loadDocuments();
+        }
+        
         // Initialize
         updateQuickActions();
         loadStats();
+        loadDocuments();
         
         // Allow Enter to send (Shift+Enter for new line)
         document.getElementById('userInput').addEventListener('keypress', (e) => {
@@ -988,8 +1194,11 @@
             }
         });
         
-        // Refresh stats every 30 seconds
-        setInterval(loadStats, 30000);
+        // Refresh stats and documents every 30 seconds
+        setInterval(() => {
+            loadStats();
+            loadDocuments();
+        }, 30000);
     </script>
 </body>
 </html>
