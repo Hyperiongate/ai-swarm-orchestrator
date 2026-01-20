@@ -492,6 +492,9 @@
                 <button class="mode-btn" onclick="switchMode('project')" id="projectModeBtn">
                     📁 Project Mode
                 </button>
+                <button class="mode-btn" onclick="switchMode('marketing')" id="marketingModeBtn">
+                    📢 Marketing
+                </button>
             </div>
         </div>
         
@@ -522,6 +525,12 @@
                 <!-- Project Info (only in project mode) -->
                 <div class="project-info" id="projectInfo">
                     <h3 style="margin-bottom: 10px;">Current Project</h3>
+                    
+                    <label>Select Existing Project</label>
+                    <select id="existingProjects" onchange="loadExistingProject()" style="width: 100%; padding: 8px; margin-bottom: 10px; border: 2px solid #e0e0e0; border-radius: 6px;">
+                        <option value="">-- Select Project --</option>
+                    </select>
+                    
                     <label>Client</label>
                     <span id="clientName">No active project</span>
                     
@@ -531,7 +540,30 @@
                     </span>
                     
                     <button onclick="startNewProject()" style="width: 100%; padding: 10px; margin-top: 10px; background: #667eea; color: white; border: none; border-radius: 8px; cursor: pointer;">
-                        Start New Project
+                        + New Project
+                    </button>
+                </div>
+                
+                <!-- Marketing Info (only in marketing mode) -->
+                <div class="marketing-info" id="marketingInfo" style="display: none;">
+                    <h3 style="margin-bottom: 10px;">Marketing Hub</h3>
+                    
+                    <div style="font-size: 12px; margin-bottom: 15px;">
+                        <div style="font-weight: 600; margin-bottom: 5px;">Platform Status:</div>
+                        <div id="platformStatus" style="padding: 10px; background: #f0f0f0; border-radius: 6px;">
+                            Loading...
+                        </div>
+                    </div>
+                    
+                    <h4 style="font-size: 14px; margin-bottom: 8px;">Quick Actions</h4>
+                    <button onclick="generateSocialPost()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #0077b5; color: white; border: none; border-radius: 6px; cursor: pointer;">
+                        📝 Generate LinkedIn Post
+                    </button>
+                    <button onclick="conductResearch()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #764ba2; color: white; border: none; border-radius: 6px; cursor: pointer;">
+                        🔍 Market Research
+                    </button>
+                    <button onclick="analyzeCompetitors()" style="width: 100%; padding: 8px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer;">
+                        📊 Competitive Analysis
                     </button>
                 </div>
                 
@@ -709,9 +741,21 @@
             // Update button states
             document.getElementById('quickModeBtn').classList.toggle('active', mode === 'quick');
             document.getElementById('projectModeBtn').classList.toggle('active', mode === 'project');
+            document.getElementById('marketingModeBtn').classList.toggle('active', mode === 'marketing');
             
-            // Show/hide project info
-            document.getElementById('projectInfo').classList.toggle('active', mode === 'project');
+            // Show/hide panels
+            document.getElementById('projectInfo').style.display = mode === 'project' ? 'block' : 'none';
+            document.getElementById('marketingInfo').style.display = mode === 'marketing' ? 'block' : 'none';
+            
+            // Load saved projects when switching to project mode
+            if (mode === 'project') {
+                loadSavedProjects();
+            }
+            
+            // Load marketing status when switching to marketing mode
+            if (mode === 'marketing') {
+                loadMarketingStatus();
+            }
             
             // Update quick actions
             updateQuickActions();
@@ -720,8 +764,10 @@
             const input = document.getElementById('userInput');
             if (mode === 'quick') {
                 input.placeholder = "Type your request... (e.g., 'Create a 12-hour DuPont schedule')";
-            } else {
+            } else if (mode === 'project') {
                 input.placeholder = "Type your request... (e.g., 'I need a data collection document')";
+            } else if (mode === 'marketing') {
+                input.placeholder = "Type your request... (e.g., 'Generate a LinkedIn post about 12-hour schedules')";
             }
         }
         
@@ -750,6 +796,52 @@
         }
         
         // Project management
+        function loadSavedProjects() {
+            fetch('/api/projects')
+                .then(r => r.json())
+                .then(data => {
+                    const select = document.getElementById('existingProjects');
+                    if (!select) return;
+                    
+                    // Keep the first option
+                    select.innerHTML = '<option value="">-- Select Project --</option>';
+                    
+                    if (data.success && data.projects.length > 0) {
+                        data.projects.forEach(project => {
+                            const option = document.createElement('option');
+                            option.value = project.project_id;
+                            option.textContent = `${project.client_name} (${project.project_phase})`;
+                            select.appendChild(option);
+                        });
+                    }
+                });
+        }
+        
+        function loadExistingProject() {
+            const select = document.getElementById('existingProjects');
+            const projectId = select.value;
+            
+            if (!projectId) {
+                currentProjectId = null;
+                document.getElementById('clientName').textContent = 'No active project';
+                document.getElementById('projectPhase').innerHTML = '<div class="phase-indicator">Not started</div>';
+                return;
+            }
+            
+            // Load project details
+            fetch(`/api/project/${projectId}/context`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        currentProjectId = projectId;
+                        document.getElementById('clientName').textContent = data.client_name;
+                        document.getElementById('projectPhase').innerHTML = `<div class="phase-indicator">${data.phase}</div>`;
+                        
+                        addMessage('assistant', `✅ Loaded project for ${data.client_name}. Currently in ${data.phase} phase. ${data.files_count} files uploaded, ${data.findings_count} findings recorded.`, null, 'project');
+                    }
+                });
+        }
+        
         function startNewProject() {
             const clientName = prompt("Enter client name:");
             if (!clientName) return;
@@ -772,6 +864,14 @@
                     currentProjectId = data.project_id;
                     document.getElementById('clientName').textContent = clientName;
                     document.getElementById('projectPhase').innerHTML = '<div class="phase-indicator">Initial Phase</div>';
+                    
+                    // Refresh projects list
+                    loadSavedProjects();
+                    
+                    // Select the new project
+                    setTimeout(() => {
+                        document.getElementById('existingProjects').value = data.project_id;
+                    }, 500);
                     
                     addMessage('assistant', `✅ Project started for ${clientName}! ${data.suggested_first_step}`, null, 'project');
                 }
@@ -1179,6 +1279,157 @@
         
         function refreshDocuments() {
             loadDocuments();
+        }
+        
+        // Marketing functions
+        function loadMarketingStatus() {
+            fetch('/api/marketing/status')
+                .then(r => r.json())
+                .then(data => {
+                    const statusDiv = document.getElementById('platformStatus');
+                    if (data.platforms) {
+                        const linkedin = data.platforms.linkedin ? '✅' : '❌';
+                        const twitter = data.platforms.twitter ? '✅' : '❌';
+                        const facebook = data.platforms.facebook ? '✅' : '❌';
+                        
+                        statusDiv.innerHTML = `
+                            <div style="font-size: 11px;">
+                                ${linkedin} LinkedIn<br>
+                                ${twitter} Twitter/X<br>
+                                ${facebook} Facebook
+                            </div>
+                        `;
+                    }
+                });
+        }
+        
+        function generateSocialPost() {
+            const topic = prompt('What topic should the post be about?');
+            if (!topic) return;
+            
+            addMessage('user', `Generate a LinkedIn post about: ${topic}`);
+            
+            const loading = document.getElementById('loadingIndicator');
+            loading.classList.add('active');
+            
+            fetch('/api/marketing/generate', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({topic, platform: 'linkedin'})
+            })
+            .then(r => r.json())
+            .then(data => {
+                loading.classList.remove('active');
+                
+                if (data.success) {
+                    const content = data.content;
+                    const postAction = `
+                        <div style="margin-top: 15px; padding: 12px; background: #e8f5e9; border-left: 4px solid #0077b5; border-radius: 4px;">
+                            <div style="font-weight: 600; margin-bottom: 8px; color: #0077b5;">
+                                📝 LinkedIn Post Generated
+                            </div>
+                            <button onclick="postToLinkedIn(\`${content.replace(/`/g, '\\`')}\`)" style="padding: 8px 16px; background: #0077b5; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">
+                                📤 Post to LinkedIn
+                            </button>
+                            <div style="font-size: 11px; color: #666; margin-top: 8px;">
+                                ${data.length} characters • Ready to post
+                            </div>
+                        </div>
+                    `;
+                    
+                    addMessage('assistant', content + postAction, null, 'marketing');
+                } else {
+                    addMessage('assistant', `❌ Error: ${data.error}`);
+                }
+            })
+            .catch(err => {
+                loading.classList.remove('active');
+                addMessage('assistant', `❌ Error: ${err.message}`);
+            });
+        }
+        
+        function postToLinkedIn(content) {
+            if (!confirm('Post this to LinkedIn now?')) return;
+            
+            const loading = document.getElementById('loadingIndicator');
+            loading.classList.add('active');
+            
+            fetch('/api/marketing/post', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({content, platform: 'linkedin'})
+            })
+            .then(r => r.json())
+            .then(data => {
+                loading.classList.remove('active');
+                
+                if (data.success) {
+                    addMessage('assistant', `✅ Posted to LinkedIn successfully! Post ID: ${data.post_id}`, null, 'marketing');
+                } else {
+                    addMessage('assistant', `❌ Error posting: ${data.error}`, null, 'marketing');
+                }
+            })
+            .catch(err => {
+                loading.classList.remove('active');
+                addMessage('assistant', `❌ Error: ${err.message}`);
+            });
+        }
+        
+        function conductResearch() {
+            const topic = prompt('What market research topic?');
+            if (!topic) return;
+            
+            addMessage('user', `Conduct market research on: ${topic}`);
+            
+            const loading = document.getElementById('loadingIndicator');
+            loading.classList.add('active');
+            
+            fetch('/api/marketing/research', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({topic})
+            })
+            .then(r => r.json())
+            .then(data => {
+                loading.classList.remove('active');
+                
+                if (data.success) {
+                    addMessage('assistant', data.findings, null, 'marketing');
+                } else {
+                    addMessage('assistant', `❌ Error: ${data.error}`);
+                }
+            })
+            .catch(err => {
+                loading.classList.remove('active');
+                addMessage('assistant', `❌ Error: ${err.message}`);
+            });
+        }
+        
+        function analyzeCompetitors() {
+            addMessage('user', 'Analyze competitors in the shift scheduling consulting space');
+            
+            const loading = document.getElementById('loadingIndicator');
+            loading.classList.add('active');
+            
+            fetch('/api/marketing/research', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({topic: 'competitive analysis for shift scheduling consulting services'})
+            })
+            .then(r => r.json())
+            .then(data => {
+                loading.classList.remove('active');
+                
+                if (data.success) {
+                    addMessage('assistant', data.findings, null, 'marketing');
+                } else {
+                    addMessage('assistant', `❌ Error: ${data.error}`);
+                }
+            })
+            .catch(err => {
+                loading.classList.remove('active');
+                addMessage('assistant', `❌ Error: ${err.message}`);
+            });
         }
         
         // Initialize
