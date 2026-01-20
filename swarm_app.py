@@ -60,6 +60,14 @@ except ImportError:
     print("⚠️ Warning: project_workflow module not found - workflow features disabled")
     WORKFLOW_AVAILABLE = False
 
+# Import document generator module (optional)
+try:
+    from document_generator import get_document_generator
+    DOCUMENT_GENERATOR_AVAILABLE = True
+except ImportError:
+    print("⚠️ Warning: document_generator module not found - will return text only")
+    DOCUMENT_GENERATOR_AVAILABLE = False
+
 app = Flask(__name__)
 
 # Global workflow storage (in production, use database or session storage)
@@ -900,6 +908,36 @@ def orchestrate():
                 except Exception as e:
                     print(f"  ⚠️ Formatting error: {e}")
         
+        # Step 6: Document Generation (NEW!)
+        document_file = None
+        document_url = None
+        
+        if actual_output and DOCUMENT_GENERATOR_AVAILABLE:
+            doc_gen = get_document_generator()
+            should_create, doc_type = doc_gen.should_create_document(user_request)
+            
+            if should_create and doc_type:
+                print(f"  📄 Generating {doc_type.upper()} document...")
+                
+                try:
+                    if doc_type == 'docx':
+                        document_file = doc_gen.create_word_document(actual_output)
+                    elif doc_type == 'pdf':
+                        document_file = doc_gen.create_pdf(actual_output)
+                    elif doc_type == 'pptx':
+                        document_file = doc_gen.create_powerpoint(actual_output)
+                    
+                    if document_file:
+                        # Generate download URL
+                        filename = os.path.basename(document_file)
+                        document_url = f"/api/download/{filename}"
+                        print(f"  ✅ Document created: {filename}")
+                    else:
+                        print(f"  ⚠️ Document generation failed, returning text")
+                        
+                except Exception as e:
+                    print(f"  ⚠️ Document generation error: {e}")
+        
         total_time = time.time() - overall_start
         
         # Update task status WITH KNOWLEDGE TRACKING
@@ -923,6 +961,9 @@ def orchestrate():
             'knowledge_used': knowledge_used,
             'knowledge_sources': knowledge_sources,
             'formatting_applied': formatting_applied,
+            'document_created': document_file is not None,
+            'document_url': document_url,
+            'document_type': doc_type if document_file else None,
             'project_workflow': {
                 'active': workflow is not None,
                 'project_id': project_id if workflow else None,
@@ -1200,6 +1241,31 @@ def index():
 def workflow():
     """New conversational workflow interface"""
     return render_template('index_workflow.html')
+
+@app.route('/api/download/<filename>')
+def download_file(filename):
+    """Download generated documents"""
+    from flask import send_file
+    import os
+    
+    file_path = os.path.join('/mnt/user-data/outputs', filename)
+    
+    if not os.path.exists(file_path):
+        return jsonify({'error': 'File not found'}), 404
+    
+    # Determine mimetype
+    if filename.endswith('.docx'):
+        mimetype = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    elif filename.endswith('.pdf'):
+        mimetype = 'application/pdf'
+    elif filename.endswith('.pptx'):
+        mimetype = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+    elif filename.endswith('.xlsx'):
+        mimetype = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    else:
+        mimetype = 'application/octet-stream'
+    
+    return send_file(file_path, mimetype=mimetype, as_attachment=True, download_name=filename)
 
 @app.route('/api/tasks')
 def get_tasks():
