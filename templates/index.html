@@ -490,7 +490,13 @@
                     ⚡ Quick Task
                 </button>
                 <button class="mode-btn" onclick="switchMode('project')" id="projectModeBtn">
-                    📁 Project Mode
+                    📁 Project
+                </button>
+                <button class="mode-btn" onclick="switchMode('calculator')" id="calculatorModeBtn">
+                    🧮 Calculator
+                </button>
+                <button class="mode-btn" onclick="switchMode('survey')" id="surveyModeBtn">
+                    📋 Survey
                 </button>
                 <button class="mode-btn" onclick="switchMode('marketing')" id="marketingModeBtn">
                     📢 Marketing
@@ -564,6 +570,45 @@
                     </button>
                     <button onclick="analyzeCompetitors()" style="width: 100%; padding: 8px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer;">
                         📊 Competitive Analysis
+                    </button>
+                </div>
+                
+                <!-- Calculator Panel (only in calculator mode) -->
+                <div class="calculator-info" id="calculatorInfo" style="display: none;">
+                    <h3 style="margin-bottom: 10px;">Cost Calculator</h3>
+                    
+                    <h4 style="font-size: 14px; margin-bottom: 8px;">Quick Calculations</h4>
+                    <button onclick="calculateOvertimeCost()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer;">
+                        💰 Overtime Cost
+                    </button>
+                    <button onclick="compareHireVsOT()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #764ba2; color: white; border: none; border-radius: 6px; cursor: pointer;">
+                        👥 Hire vs OT
+                    </button>
+                    <button onclick="scheduleImpact()" style="width: 100%; padding: 8px; background: #0077b5; color: white; border: none; border-radius: 6px; cursor: pointer;">
+                        📊 Schedule Impact
+                    </button>
+                </div>
+                
+                <!-- Survey Panel (only in survey mode) -->
+                <div class="survey-info" id="surveyInfo" style="display: none;">
+                    <h3 style="margin-bottom: 10px;">Survey Builder</h3>
+                    
+                    <div style="font-size: 12px; margin-bottom: 15px;">
+                        <div style="font-weight: 600; margin-bottom: 5px;">Question Bank:</div>
+                        <div id="questionBankStatus" style="padding: 10px; background: #f0f0f0; border-radius: 6px;">
+                            Loading...
+                        </div>
+                    </div>
+                    
+                    <h4 style="font-size: 14px; margin-bottom: 8px;">Quick Actions</h4>
+                    <button onclick="createNewSurvey()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer;">
+                        ➕ Create Survey
+                    </button>
+                    <button onclick="viewSurveyResults()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #0077b5; color: white; border: none; border-radius: 6px; cursor: pointer;">
+                        📊 View Results
+                    </button>
+                    <button onclick="exportSurveyData()" style="width: 100%; padding: 8px; background: #764ba2; color: white; border: none; border-radius: 6px; cursor: pointer;">
+                        📤 Export Data
                     </button>
                 </div>
                 
@@ -741,19 +786,24 @@
             // Update button states
             document.getElementById('quickModeBtn').classList.toggle('active', mode === 'quick');
             document.getElementById('projectModeBtn').classList.toggle('active', mode === 'project');
+            document.getElementById('calculatorModeBtn').classList.toggle('active', mode === 'calculator');
+            document.getElementById('surveyModeBtn').classList.toggle('active', mode === 'survey');
             document.getElementById('marketingModeBtn').classList.toggle('active', mode === 'marketing');
             
             // Show/hide panels
             document.getElementById('projectInfo').style.display = mode === 'project' ? 'block' : 'none';
+            document.getElementById('calculatorInfo').style.display = mode === 'calculator' ? 'block' : 'none';
+            document.getElementById('surveyInfo').style.display = mode === 'survey' ? 'block' : 'none';
             document.getElementById('marketingInfo').style.display = mode === 'marketing' ? 'block' : 'none';
             
-            // Load saved projects when switching to project mode
+            // Load data for specific modes
             if (mode === 'project') {
                 loadSavedProjects();
-            }
-            
-            // Load marketing status when switching to marketing mode
-            if (mode === 'marketing') {
+            } else if (mode === 'calculator') {
+                // Calculator mode ready
+            } else if (mode === 'survey') {
+                loadQuestionBank();
+            } else if (mode === 'marketing') {
                 loadMarketingStatus();
             }
             
@@ -766,6 +816,10 @@
                 input.placeholder = "Type your request... (e.g., 'Create a 12-hour DuPont schedule')";
             } else if (mode === 'project') {
                 input.placeholder = "Type your request... (e.g., 'I need a data collection document')";
+            } else if (mode === 'calculator') {
+                input.placeholder = "Type your request... (e.g., 'Calculate overtime cost for $25/hr with 10 hours OT weekly')";
+            } else if (mode === 'survey') {
+                input.placeholder = "Type your request... (e.g., 'Create a survey about weekend preferences')";
             } else if (mode === 'marketing') {
                 input.placeholder = "Type your request... (e.g., 'Generate a LinkedIn post about 12-hour schedules')";
             }
@@ -1430,6 +1484,258 @@
                 loading.classList.remove('active');
                 addMessage('assistant', `❌ Error: ${err.message}`);
             });
+        }
+        
+        // Calculator functions
+        function calculateOvertimeCost() {
+            const baseWage = prompt('Enter base hourly wage (e.g., 25):');
+            if (!baseWage) return;
+            
+            const otHours = prompt('Enter average overtime hours per week (e.g., 10):');
+            if (!otHours) return;
+            
+            addMessage('user', `Calculate overtime cost: $${baseWage}/hr with ${otHours} OT hours/week`);
+            
+            const loading = document.getElementById('loadingIndicator');
+            loading.classList.add('active');
+            
+            fetch('/api/calculator/overtime', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    base_wage: parseFloat(baseWage),
+                    ot_hours_weekly: parseFloat(otHours)
+                })
+            })
+            .then(r => r.json())
+            .then(data => {
+                loading.classList.remove('active');
+                
+                if (data.success) {
+                    const calc = data.calculation;
+                    const response = `
+💰 OVERTIME COST ANALYSIS
+
+Base Wage: $${calc.base_wage}/hour
+Overtime Rate: $${calc.overtime_rate}/hour (1.5x)
+Weekly OT Hours: ${calc.overtime_hours_weekly}
+
+📊 ANNUAL COSTS:
+• OT Wages: $${calc.overtime_wages_annual.toLocaleString()}
+• Burden/Benefits: $${calc.burden_cost_annual.toLocaleString()}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• TOTAL: $${calc.total_cost_annual.toLocaleString()}/year
+
+Weekly Cost: $${calc.total_cost_weekly.toLocaleString()}
+                    `;
+                    addMessage('assistant', response, null, 'calculator');
+                } else {
+                    addMessage('assistant', `❌ Error: ${data.error}`);
+                }
+            })
+            .catch(err => {
+                loading.classList.remove('active');
+                addMessage('assistant', `❌ Error: ${err.message}`);
+            });
+        }
+        
+        function compareHireVsOT() {
+            const currentOT = prompt('Enter current annual overtime cost (e.g., 50000):');
+            if (!currentOT) return;
+            
+            const newWage = prompt('Enter annual wage for new employee (e.g., 45000):');
+            if (!newWage) return;
+            
+            addMessage('user', `Compare: $${currentOT} OT vs hiring at $${newWage}/year`);
+            
+            const loading = document.getElementById('loadingIndicator');
+            loading.classList.add('active');
+            
+            fetch('/api/calculator/hire-vs-ot', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    current_ot_cost: parseFloat(currentOT),
+                    new_employee_wage: parseFloat(newWage)
+                })
+            })
+            .then(r => r.json())
+            .then(data => {
+                loading.classList.remove('active');
+                
+                if (data.success) {
+                    const comp = data.comparison;
+                    const response = `
+👥 HIRE vs OVERTIME COMPARISON
+
+Current OT Cost: $${comp.current_overtime_cost.toLocaleString()}/year
+New Employee Cost: $${comp.new_employee_annual_cost.toLocaleString()}/year
+First Year (with training): $${comp.new_employee_first_year_cost.toLocaleString()}
+
+💡 FINANCIAL IMPACT:
+• Annual Savings: $${comp.annual_savings.toLocaleString()}
+• First Year Savings: $${comp.first_year_savings.toLocaleString()}
+• Payback Period: ${comp.payback_months} months
+
+✅ RECOMMENDATION: ${comp.recommendation}
+${comp.break_even_analysis}
+                    `;
+                    addMessage('assistant', response, null, 'calculator');
+                } else {
+                    addMessage('assistant', `❌ Error: ${data.error}`);
+                }
+            })
+            .catch(err => {
+                loading.classList.remove('active');
+                addMessage('assistant', `❌ Error: ${err.message}`);
+            });
+        }
+        
+        function scheduleImpact() {
+            addMessage('user', 'Calculate schedule change financial impact');
+            addMessage('assistant', '🔧 Schedule impact calculator coming soon! For now, use the AI to analyze schedule changes by describing your current and proposed schedules.', null, 'calculator');
+        }
+        
+        // Survey functions
+        function loadQuestionBank() {
+            fetch('/api/survey/questions')
+                .then(r => r.json())
+                .then(data => {
+                    const statusDiv = document.getElementById('questionBankStatus');
+                    if (data.success) {
+                        statusDiv.innerHTML = `
+                            <div style="font-size: 11px;">
+                                ✅ ${data.total_count} validated questions<br>
+                                Ready to build surveys
+                            </div>
+                        `;
+                    }
+                });
+        }
+        
+        function createNewSurvey() {
+            const projectName = prompt('Enter project/client name:');
+            if (!projectName) return;
+            
+            addMessage('user', `Create new survey for: ${projectName}`);
+            
+            const loading = document.getElementById('loadingIndicator');
+            loading.classList.add('active');
+            
+            fetch('/api/survey/create', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    project_name: projectName,
+                    selected_questions: ['dept', 'shift', 'time_off_importance', 'current_satisfaction', 'overtime_willing']
+                })
+            })
+            .then(r => r.json())
+            .then(data => {
+                loading.classList.remove('active');
+                
+                if (data.success) {
+                    const survey = data.survey;
+                    const response = `
+✅ SURVEY CREATED
+
+Project: ${survey.project_name}
+Survey ID: ${survey.id}
+Questions: ${survey.questions.length}
+Survey Link: ${survey.link}
+
+📋 Included Questions:
+${survey.questions.map(q => `• ${q.text}`).join('\n')}
+
+🔗 Share this link with employees to collect responses.
+                    `;
+                    addMessage('assistant', response, null, 'survey');
+                } else {
+                    addMessage('assistant', `❌ Error: ${data.error}`);
+                }
+            })
+            .catch(err => {
+                loading.classList.remove('active');
+                addMessage('assistant', `❌ Error: ${err.message}`);
+            });
+        }
+        
+        function viewSurveyResults() {
+            const surveyId = prompt('Enter Survey ID:');
+            if (!surveyId) return;
+            
+            addMessage('user', `View results for survey: ${surveyId}`);
+            
+            const loading = document.getElementById('loadingIndicator');
+            loading.classList.add('active');
+            
+            fetch(`/api/survey/${surveyId}/analyze`)
+                .then(r => r.json())
+                .then(data => {
+                    loading.classList.remove('active');
+                    
+                    if (data.success || data.response_count !== undefined) {
+                        if (data.response_count === 0) {
+                            addMessage('assistant', '📊 No responses yet. Share the survey link with employees.', null, 'survey');
+                        } else {
+                            const insights = data.key_insights ? data.key_insights.join('\n') : 'Analysis complete';
+                            const response = `
+📊 SURVEY RESULTS ANALYSIS
+
+Project: ${data.project_name}
+Responses: ${data.response_count}
+
+🔍 KEY INSIGHTS:
+${insights}
+
+Questions Analyzed: ${Object.keys(data.questions_analyzed || {}).length}
+
+Use the Export function to download full data for detailed analysis.
+                            `;
+                            addMessage('assistant', response, null, 'survey');
+                        }
+                    } else {
+                        addMessage('assistant', `❌ Error: ${data.error || 'Unknown error'}`);
+                    }
+                })
+                .catch(err => {
+                    loading.classList.remove('active');
+                    addMessage('assistant', `❌ Error: ${err.message}`);
+                });
+        }
+        
+        function exportSurveyData() {
+            const surveyId = prompt('Enter Survey ID to export:');
+            if (!surveyId) return;
+            
+            addMessage('user', `Export survey data: ${surveyId}`);
+            
+            const loading = document.getElementById('loadingIndicator');
+            loading.classList.add('active');
+            
+            fetch(`/api/survey/${surveyId}/export`)
+                .then(r => r.json())
+                .then(data => {
+                    loading.classList.remove('active');
+                    
+                    if (data.success) {
+                        // Create downloadable CSV file
+                        const blob = new Blob([data.csv_data], { type: 'text/csv' });
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `survey_${surveyId}_export.csv`;
+                        a.click();
+                        
+                        addMessage('assistant', `✅ Survey data exported successfully! Check your downloads for survey_${surveyId}_export.csv (Remark-compatible format)`, null, 'survey');
+                    } else {
+                        addMessage('assistant', `❌ Error: ${data.error}`);
+                    }
+                })
+                .catch(err => {
+                    loading.classList.remove('active');
+                    addMessage('assistant', `❌ Error: ${err.message}`);
+                });
         }
         
         // Initialize
