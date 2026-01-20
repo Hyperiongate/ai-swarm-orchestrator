@@ -561,6 +561,11 @@
                         </div>
                     </div>
                     
+                    <h4 style="font-size: 14px; margin-bottom: 8px;">💡 AI Initiative</h4>
+                    <button onclick="generateMarketingIdea()" style="width: 100%; padding: 12px; margin-bottom: 15px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 10px; cursor: pointer; font-weight: 700; font-size: 14px; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4); transition: transform 0.2s;">
+                        🚀 "Hey Jim, I have an idea!"
+                    </button>
+                    
                     <h4 style="font-size: 14px; margin-bottom: 8px;">Quick Actions</h4>
                     <button onclick="generateSocialPost()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #0077b5; color: white; border: none; border-radius: 6px; cursor: pointer;">
                         📝 Generate LinkedIn Post
@@ -1354,6 +1359,39 @@
                             </div>
                         `;
                     }
+                });
+        }
+        
+        function generateMarketingIdea() {
+            addMessage('user', '🚀 "Hey Jim, I have an idea!"');
+            
+            const loading = document.getElementById('loadingIndicator');
+            loading.classList.add('active');
+            
+            fetch('/api/marketing/idea')
+                .then(r => r.json())
+                .then(data => {
+                    loading.classList.remove('active');
+                    
+                    if (data.success && data.has_idea) {
+                        addMessage('assistant', data.message, null, 'marketing');
+                    } else if (data.success && !data.has_idea) {
+                        addMessage('assistant', data.message, null, 'marketing');
+                    } else {
+                        addMessage('assistant', `❌ Error: ${data.error || 'Unknown error'}`);
+                    }
+                })
+                .catch(err => {
+                    loading.classList.remove('active');
+                    addMessage('assistant', `❌ Error: ${err.message}`);
+                });
+        }
+                        addMessage('assistant', data.message || 'Unable to generate idea right now', null, 'marketing');
+                    }
+                })
+                .catch(err => {
+                    loading.classList.remove('active');
+                    addMessage('assistant', `❌ Error: ${err.message}`);
                 });
         }
         
