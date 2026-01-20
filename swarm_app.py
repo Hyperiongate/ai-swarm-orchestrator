@@ -1,9 +1,16 @@
 """
-AI SWARM ORCHESTRATOR - Main Application with Project Knowledge Integration
+AI SWARM ORCHESTRATOR - Main Application with OUTPUT FORMATTING ENFORCEMENT
 Created: January 18, 2026
 Last Updated: January 19, 2026
 
 CHANGES IN THIS VERSION:
+- January 19, 2026: ADDED OUTPUT FORMATTING ENFORCEMENT
+  * Automatically detects terrible text dumps with asterisks/markdown
+  * Forces clean, professional formatting on ALL outputs
+  * Converts schedule dumps into proper formatted tables
+  * Adds strict formatting requirements to AI prompts
+  * Prevents walls of text from reaching users
+
 - January 19, 2026: INTEGRATED ENTIRE PROJECT KNOWLEDGE BASE
   * All Shiftwork Solutions documents now accessible to swarm
   * Automatic context injection from 30+ years of expertise
@@ -16,8 +23,8 @@ CHANGES IN THIS VERSION:
 
 PURPOSE:
 Intelligent AI orchestration system that routes tasks to specialist AIs,
-validates through consensus, learns from outcomes, and leverages your
-complete Shiftwork Solutions knowledge base.
+validates through consensus, learns from outcomes, leverages your
+complete Shiftwork Solutions knowledge base, and ENFORCES PROFESSIONAL OUTPUT.
 
 ARCHITECTURE:
 - Sonnet (Primary Orchestrator): Fast routing for 90% of tasks + PROJECT KNOWLEDGE ACCESS
@@ -26,6 +33,7 @@ ARCHITECTURE:
 - Consensus Engine: Multi-AI validation
 - Learning Layer: Improves over time
 - Knowledge Base: 20+ documents from /mnt/project automatically indexed and searchable
+- OUTPUT FORMATTER: Enforces professional standards, NO text dumps allowed
 
 AUTHOR: Jim @ Shiftwork Solutions LLC
 REPOSITORY: ai-swarm-orchestrator
@@ -68,6 +76,15 @@ except ImportError:
     print("⚠️ Warning: document_generator module not found - will return text only")
     DOCUMENT_GENERATOR_AVAILABLE = False
 
+# Import output formatter module (CRITICAL - ENFORCES PROFESSIONAL OUTPUT)
+try:
+    from output_formatter import get_output_formatter
+    OUTPUT_FORMATTER_AVAILABLE = True
+    print("✅ Output formatter loaded - will enforce professional formatting")
+except ImportError:
+    print("⚠️ Warning: output_formatter module not found - may produce terrible text dumps")
+    OUTPUT_FORMATTER_AVAILABLE = False
+
 app = Flask(__name__)
 
 # Global workflow storage (in production, use database or session storage)
@@ -99,7 +116,7 @@ GROQ_API_KEY = os.environ.get('GROQ_API_KEY')
 groq_client = OpenAI(api_key=GROQ_API_KEY, base_url="https://api.groq.com/openai/v1") if GROQ_API_KEY else None
 
 # ============================================================================
-# DATABASE SETUP
+# DATABASE SETUP (UNCHANGED)
 # ============================================================================
 
 DATABASE = 'swarm_intelligence.db'
@@ -240,13 +257,36 @@ except Exception as e:
     knowledge_base = None
 
 # ============================================================================
-# AI CLIENT FUNCTIONS (FIXED TIMEOUTS)
+# AI CLIENT FUNCTIONS WITH FORMATTING REQUIREMENTS
 # ============================================================================
 
+# FORMATTING ENFORCEMENT PROMPT (CRITICAL - PREVENTS TEXT DUMPS)
+FORMATTING_REQUIREMENTS = """
+CRITICAL OUTPUT FORMATTING REQUIREMENTS:
+1. NEVER use markdown symbols (**bold**, *italic*, ###headers) in your final output
+2. For schedules: Use clean tables or structured lists, NOT walls of text
+3. NO consecutive capital letters spanning more than 10 characters
+4. Use proper section breaks (blank lines) between topics
+5. If creating a schedule, present it in a clear, readable format:
+   - Use section headers like "ROTATION PATTERN:" or "TIME OFF SCHEDULE:"
+   - List weeks clearly: "Week 1: Work 7 days" (not **Week 1:** Work 7 days)
+   - Use dash lines (----) to separate sections
+6. Maximum line length: 100 characters (wrap longer content)
+7. For professional consulting outputs, use clean prose without formatting symbols
+
+YOUR OUTPUT WILL BE CHECKED. If it contains excessive markdown, walls of text, or
+poor formatting, it will be automatically reformatted, which wastes processing time.
+
+Format your response professionally from the start.
+"""
+
 def call_claude_sonnet(prompt, max_tokens=4000):
-    """Call Claude Sonnet (Primary Orchestrator) with 180-second timeout"""
+    """Call Claude Sonnet with FORMATTING REQUIREMENTS"""
     if not ANTHROPIC_API_KEY:
         return "ERROR: Anthropic API key not configured"
+    
+    # Add formatting requirements to prompt
+    enhanced_prompt = f"{prompt}\n\n{FORMATTING_REQUIREMENTS}"
     
     try:
         response = requests.post(
@@ -259,9 +299,9 @@ def call_claude_sonnet(prompt, max_tokens=4000):
             json={
                 'model': 'claude-sonnet-4-20250514',
                 'max_tokens': max_tokens,
-                'messages': [{'role': 'user', 'content': prompt}]
+                'messages': [{'role': 'user', 'content': enhanced_prompt}]
             },
-            timeout=180  # 3 minutes - CRITICAL for long operations
+            timeout=180
         )
         
         if response.status_code == 200:
@@ -275,9 +315,12 @@ def call_claude_sonnet(prompt, max_tokens=4000):
         return f"ERROR: Sonnet API call failed: {str(e)}"
 
 def call_claude_opus(prompt, max_tokens=4000):
-    """Call Claude Opus (Strategic Supervisor) with 180-second timeout"""
+    """Call Claude Opus with FORMATTING REQUIREMENTS"""
     if not ANTHROPIC_API_KEY:
         return "ERROR: Anthropic API key not configured"
+    
+    # Add formatting requirements to prompt
+    enhanced_prompt = f"{prompt}\n\n{FORMATTING_REQUIREMENTS}"
     
     try:
         response = requests.post(
@@ -290,9 +333,9 @@ def call_claude_opus(prompt, max_tokens=4000):
             json={
                 'model': 'claude-opus-4-20250514',
                 'max_tokens': max_tokens,
-                'messages': [{'role': 'user', 'content': prompt}]
+                'messages': [{'role': 'user', 'content': enhanced_prompt}]
             },
-            timeout=180  # 3 minutes
+            timeout=180
         )
         
         if response.status_code == 200:
@@ -361,7 +404,7 @@ def call_gemini(prompt, max_tokens=4000):
         return f"ERROR: Gemini call failed: {str(e)}"
 
 # ============================================================================
-# ORCHESTRATION LOGIC WITH PROJECT KNOWLEDGE INTEGRATION
+# ORCHESTRATION LOGIC (KEEPS EXISTING IMPLEMENTATION)
 # ============================================================================
 
 def get_learning_context():
@@ -645,7 +688,7 @@ Respond with JSON:
     }
 
 # ============================================================================
-# PROJECT WORKFLOW ENDPOINTS (NEW)
+# PROJECT WORKFLOW ENDPOINTS (UNCHANGED - KEEPING EXISTING)
 # ============================================================================
 
 @app.route('/api/project/start', methods=['POST'])
@@ -739,16 +782,16 @@ def update_project_phase(project_id):
     })
 
 # ============================================================================
-# MAIN ORCHESTRATION ENDPOINT (ENHANCED WITH PROJECT WORKFLOW)
+# MAIN ORCHESTRATION ENDPOINT WITH OUTPUT FORMATTING ENFORCEMENT
 # ============================================================================
 
 @app.route('/api/orchestrate', methods=['POST'])
 def orchestrate():
-    """Main endpoint - receives user request, orchestrates AI swarm WITH PROJECT KNOWLEDGE AND WORKFLOW CONTEXT"""
+    """Main endpoint with OUTPUT FORMATTING ENFORCEMENT"""
     data = request.json
     user_request = data.get('request')
     enable_consensus = data.get('enable_consensus', True)
-    project_id = data.get('project_id')  # Optional - for project-aware requests
+    project_id = data.get('project_id')
     
     if not user_request:
         return jsonify({'error': 'Request text required'}), 400
@@ -760,8 +803,8 @@ def orchestrate():
     
     if project_id and WORKFLOW_AVAILABLE:
         workflow = active_workflows.get(project_id)
-        # Detect project intent
-        intent, intent_params = detect_project_intent(user_request, workflow)
+        if workflow:
+            intent, intent_params = detect_project_intent(user_request, workflow)
     
     db = get_db()
     cursor = db.execute(
@@ -792,21 +835,16 @@ def orchestrate():
         user_request_for_ai = user_request
         
         if workflow and intent != 'general_question' and WORKFLOW_AVAILABLE:
-            # Use project workflow to enhance the prompt
             enhanced_prompt = create_project_aware_prompt(
                 user_request, 
                 intent, 
                 workflow,
                 knowledge_context
             )
-            
-            # Add to workflow history
             workflow.add_context('request', f"{intent}: {user_request}")
-            
-            # Use the enhanced prompt for analysis
             user_request_for_ai = enhanced_prompt
         
-        # Step 1: Sonnet analyzes WITH PROJECT KNOWLEDGE AND WORKFLOW CONTEXT
+        # Step 1: Sonnet analyzes
         sonnet_analysis = analyze_task_with_sonnet(user_request_for_ai)
         knowledge_used = sonnet_analysis.get('knowledge_applied', False) or knowledge_used
         knowledge_sources = knowledge_sources or sonnet_analysis.get('knowledge_sources', [])
@@ -879,25 +917,39 @@ def orchestrate():
             )
             db.commit()
         
-        # Step 5: Professional Formatting Pass (NEW!)
+        # Step 5: OUTPUT FORMATTING ENFORCEMENT (NEW - CRITICAL)
         formatting_applied = False
-        original_output = actual_output
+        formatting_fixed = False
         
-        if actual_output and OPENAI_API_KEY and FORMATTING_AVAILABLE:  # Only if GPT-4 AND formatting module available
-            # Check if formatting would help
+        if actual_output and OUTPUT_FORMATTER_AVAILABLE:
+            formatter = get_output_formatter()
+            
+            # Check if output is terrible
+            is_bad, reasons = formatter.is_unacceptable(actual_output)
+            
+            if is_bad:
+                print(f"  ⚠️ UNACCEPTABLE OUTPUT DETECTED: {reasons}")
+                print(f"  🔧 Applying automatic formatting fix...")
+                
+                # Fix the terrible output
+                actual_output = formatter.format_output(actual_output)
+                formatting_fixed = True
+                formatting_applied = True
+                
+                print(f"  ✅ Output reformatted to professional standard")
+        
+        # Step 6: Professional Formatting Pass (if not already fixed)
+        if actual_output and OPENAI_API_KEY and FORMATTING_AVAILABLE and not formatting_fixed:
             needs_format, format_issues = needs_formatting(actual_output)
             
             if needs_format:
                 print(f"  🎨 Applying formatting pass (issues: {format_issues})")
                 
-                # Detect document type
                 doc_type = detect_output_type(user_request, actual_output)
                 
-                # Format with GPT-4
                 try:
                     formatted_output = format_with_gpt4(actual_output, doc_type, call_gpt4)
                     
-                    # Only use formatted version if it's actually different and not an error
                     if formatted_output and not formatted_output.startswith('[Formatting pass failed'):
                         actual_output = formatted_output
                         formatting_applied = True
@@ -908,7 +960,7 @@ def orchestrate():
                 except Exception as e:
                     print(f"  ⚠️ Formatting error: {e}")
         
-        # Step 6: Document Generation (NEW!)
+        # Step 7: Document Generation
         document_file = None
         document_url = None
         
@@ -928,7 +980,6 @@ def orchestrate():
                         document_file = doc_gen.create_powerpoint(actual_output)
                     
                     if document_file:
-                        # Generate download URL
                         filename = os.path.basename(document_file)
                         document_url = f"/api/download/{filename}"
                         print(f"  ✅ Document created: {filename}")
@@ -940,7 +991,7 @@ def orchestrate():
         
         total_time = time.time() - overall_start
         
-        # Update task status WITH KNOWLEDGE TRACKING
+        # Update task status
         db.execute(
             '''UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ?,
                knowledge_used = ?, knowledge_sources = ? WHERE id = ?''',
@@ -961,6 +1012,7 @@ def orchestrate():
             'knowledge_used': knowledge_used,
             'knowledge_sources': knowledge_sources,
             'formatting_applied': formatting_applied,
+            'formatting_fixed': formatting_fixed,  # NEW - Shows if terrible output was auto-fixed
             'document_created': document_file is not None,
             'document_url': document_url,
             'document_type': doc_type if document_file else None,
@@ -988,7 +1040,7 @@ def orchestrate():
         db.close()
 
 # ============================================================================
-# PROJECT KNOWLEDGE API ENDPOINTS (NEW)
+# REST OF THE ENDPOINTS (UNCHANGED - KEEPING ALL EXISTING FUNCTIONALITY)
 # ============================================================================
 
 @app.route('/api/knowledge/search', methods=['POST'])
@@ -1027,7 +1079,7 @@ def get_knowledge_document(filename):
             return jsonify({
                 'success': True,
                 'filename': filename,
-                'content': doc['content'][:10000],  # First 10k chars
+                'content': doc['content'][:10000],
                 'metadata': doc['metadata'],
                 'full_content_length': len(doc['content'])
             })
@@ -1066,10 +1118,6 @@ def list_knowledge_documents():
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
-# ============================================================================
-# FEEDBACK & LEARNING ENDPOINTS
-# ============================================================================
 
 @app.route('/api/feedback', methods=['POST'])
 def submit_feedback():
@@ -1198,7 +1246,6 @@ def learning_stats():
             for cat in categories:
                 improvement_counts[cat] = improvement_counts.get(cat, 0) + 1
     
-    # NEW: Knowledge usage stats
     knowledge_usage = db.execute('''
         SELECT 
             COUNT(*) as total_tasks,
@@ -1228,10 +1275,6 @@ def learning_stats():
         }
     })
 
-# ============================================================================
-# MONITORING & STATUS ENDPOINTS
-# ============================================================================
-
 @app.route('/')
 def index():
     """Main interface"""
@@ -1253,7 +1296,6 @@ def download_file(filename):
     if not os.path.exists(file_path):
         return jsonify({'error': 'File not found'}), 404
     
-    # Determine mimetype
     if filename.endswith('.docx'):
         mimetype = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
     elif filename.endswith('.pdf'):
@@ -1342,6 +1384,9 @@ def health():
         'knowledge_base': {
             'status': kb_status,
             'documents_indexed': kb_doc_count
+        },
+        'output_formatter': {
+            'status': 'enabled' if OUTPUT_FORMATTER_AVAILABLE else 'disabled'
         }
     })
 
@@ -1363,7 +1408,6 @@ def debug_knowledge():
         'files_in_current_dir': []
     }
     
-    # Check paths
     for path in ["/mnt/project", "project_files", "./project_files"]:
         path_obj = Path(path)
         debug_info['paths_checked'].append({
@@ -1373,7 +1417,6 @@ def debug_knowledge():
             'files': list(path_obj.iterdir()) if path_obj.exists() and path_obj.is_dir() else []
         })
     
-    # Check libraries
     try:
         import docx
         debug_info['libraries']['python-docx'] = 'installed'
@@ -1392,13 +1435,11 @@ def debug_knowledge():
     except:
         debug_info['libraries']['PyPDF2'] = 'MISSING'
     
-    # List files in current directory
     try:
         debug_info['files_in_current_dir'] = os.listdir('.')
     except:
         pass
     
-    # Knowledge base details
     if knowledge_base:
         debug_info['knowledge_base_details'] = {
             'project_path': str(knowledge_base.project_path),
