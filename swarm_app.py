@@ -129,6 +129,26 @@ except ImportError:
     print("⚠️ Warning: survey_builder module not found")
     SURVEY_AVAILABLE = False
 
+# Import Proactive Intelligence (SHOWS INITIATIVE)
+try:
+    from proactive_intelligence import get_proactive_intelligence
+    PROACTIVE_AVAILABLE = True
+    proactive_ai = get_proactive_intelligence()
+    print("✅ Proactive Intelligence loaded - AI will show initiative and suggest next steps")
+except ImportError:
+    print("⚠️ Warning: proactive_intelligence module not found")
+    PROACTIVE_AVAILABLE = False
+
+# Import Marketing Initiative (CREATIVE BUSINESS PARTNER)
+try:
+    from marketing_initiative import get_marketing_initiative
+    MARKETING_INITIATIVE_AVAILABLE = True
+    marketing_ideas = get_marketing_initiative()
+    print("✅ Marketing Initiative loaded - AI will proactively suggest business ideas")
+except ImportError:
+    print("⚠️ Warning: marketing_initiative module not found")
+    MARKETING_INITIATIVE_AVAILABLE = False
+
 app = Flask(__name__)
 
 # Global workflow storage (in production, use database or session storage)
@@ -947,6 +967,39 @@ def marketing_generate_content():
     
     return jsonify(result)
 
+@app.route('/api/marketing/idea', methods=['GET'])
+def marketing_generate_idea():
+    """Proactively generate a creative marketing idea - "Hey Jim, I have an idea!" """
+    if not MARKETING_INITIATIVE_AVAILABLE:
+        return jsonify({'error': 'Marketing Initiative not available'}), 503
+    
+    # Generate proactive marketing message
+    message = marketing_ideas.generate_proactive_marketing_message()
+    
+    if message:
+        return jsonify({
+            'success': True,
+            'has_idea': True,
+            'message': message,
+            'timestamp': datetime.now().isoformat()
+        })
+    else:
+        return jsonify({
+            'success': True,
+            'has_idea': False,
+            'message': '💤 No new ideas right now - I shared one recently. Check back in an hour!'
+        })
+
+@app.route('/api/marketing/content-idea', methods=['GET'])
+def get_detailed_content_idea():
+    """Get a specific content idea with full execution plan"""
+    if not MARKETING_INITIATIVE_AVAILABLE:
+        return jsonify({'error': 'Marketing Initiative not available'}), 503
+    
+    idea = marketing_ideas.generate_content_idea()
+    
+    return jsonify({'success': True, 'idea': idea})
+
 
 # ==================== CALCULATOR ENDPOINTS ====================
 
@@ -1304,6 +1357,41 @@ def orchestrate():
         if workflow:
             intent, intent_params = detect_project_intent(user_request, workflow)
     
+    # PROACTIVE INTELLIGENCE - Analyze context and show initiative
+    proactive_analysis = None
+    if PROACTIVE_AVAILABLE:
+        project_context = None
+        if workflow:
+            project_context = {
+                'project_phase': workflow.project_phase,
+                'uploaded_files': workflow.uploaded_files,
+                'key_findings': workflow.key_findings,
+                'schedules_proposed': workflow.schedules_proposed
+            }
+        
+        proactive_analysis = proactive_ai.analyze_context(
+            user_request,
+            project_context=project_context,
+            conversation_history=None  # Could add conversation tracking
+        )
+        
+        # If proactive AI has critical suggestions, prepend to response
+        if proactive_analysis and proactive_analysis.get('has_suggestions'):
+            print(f"  🎯 Proactive Intelligence activated:")
+            for suggestion in proactive_analysis.get('suggestions', [])[:2]:
+                print(f"     • {suggestion.get('type')}: {suggestion.get('suggestion')[:80]}...")
+            
+            # Check for phase advancement readiness
+            if workflow and proactive_analysis.get('identified_gaps'):
+                readiness = proactive_ai.detect_readiness_to_advance(project_context)
+                if readiness.get('ready'):
+                    print(f"  ✅ Project ready to advance: {readiness.get('recommendation')}")
+    
+    # Enhance the prompt with proactive context
+    proactive_context = ""
+    if proactive_analysis and proactive_analysis.get('proactive_message'):
+        proactive_context = f"\n\nPROACTIVE INSIGHT: {proactive_analysis['proactive_message']}\n"
+    
     db = get_db()
     cursor = db.execute(
         'INSERT INTO tasks (user_request, status) VALUES (?, ?)',
@@ -1552,6 +1640,31 @@ def orchestrate():
         
         total_time = time.time() - overall_start
         
+        # ==================== PROACTIVE INTELLIGENCE ====================
+        # Generate proactive suggestions based on context
+        proactive_suggestions = None
+        proactive_message = None
+        
+        if PROACTIVE_AVAILABLE and proactive_ai.should_show_initiative():
+            suggestions = proactive_ai.analyze_context_and_suggest(
+                user_request,
+                project_phase=workflow.project_phase if workflow else None,
+                project_context={
+                    'uploaded_files': workflow.uploaded_files if workflow else [],
+                    'email_context': workflow.email_context if workflow else [],
+                    'key_findings': workflow.key_findings if workflow else []
+                } if workflow else None
+            )
+            
+            if suggestions.get('has_suggestions'):
+                proactive_message = proactive_ai.generate_proactive_message(suggestions)
+                proactive_suggestions = suggestions
+                proactive_ai.last_suggestion_time = datetime.now()
+                
+                # Append proactive message to output
+                if proactive_message:
+                    actual_output += f"\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n🧠 **PROACTIVE SUGGESTIONS**\n{proactive_message}"
+        
         # Update task status
         db.execute(
             '''UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ?,
@@ -1573,11 +1686,12 @@ def orchestrate():
             'knowledge_used': knowledge_used,
             'knowledge_sources': knowledge_sources,
             'formatting_applied': formatting_applied,
-            'formatting_fixed': formatting_fixed,  # NEW - Shows if terrible output was auto-fixed
+            'formatting_fixed': formatting_fixed,
             'document_created': document_file is not None,
             'document_url': document_url,
             'document_type': doc_type if document_file else None,
-            'files_processed': file_names,  # NEW - Shows uploaded files
+            'files_processed': file_names,
+            'proactive_suggestions': proactive_suggestions,  # NEW - Shows initiative!
             'project_workflow': {
                 'active': workflow is not None,
                 'project_id': project_id if workflow else None,
