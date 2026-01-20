@@ -225,69 +225,134 @@
             border-top: 1px solid #e0e0e0;
         }
         
+        /* ENHANCED FEEDBACK SECTION */
         .feedback-section {
             display: none;
-            margin-top: 10px;
-            padding: 10px;
+            margin-top: 15px;
+            padding: 15px;
             background: #f8f9fa;
             border-radius: 8px;
+            border: 2px solid #e0e0e0;
         }
         
         .feedback-section.active {
             display: block;
         }
         
-        .rating-buttons {
+        .feedback-header {
+            font-weight: 600;
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 14px;
+        }
+        
+        .rating-row {
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .rating-label {
+            font-size: 13px;
+            font-weight: 500;
+            color: #333;
+            min-width: 120px;
+        }
+        
+        .star-rating {
             display: flex;
             gap: 5px;
-            margin: 10px 0;
         }
         
-        .rating-btn {
-            padding: 5px 15px;
-            border: 2px solid #e0e0e0;
-            background: white;
-            border-radius: 5px;
+        .star {
+            font-size: 24px;
             cursor: pointer;
-            font-size: 12px;
+            color: #ddd;
             transition: all 0.2s;
+            user-select: none;
         }
         
-        .rating-btn:hover {
-            border-color: #667eea;
-            background: #f0f0ff;
+        .star:hover,
+        .star.active {
+            color: #ffd700;
+            transform: scale(1.1);
         }
         
-        .rating-btn.selected {
-            background: #667eea;
-            color: white;
-            border-color: #667eea;
+        .improvement-checks {
+            margin: 15px 0;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+        
+        .improvement-check {
+            display: flex;
+            align-items: center;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        
+        .improvement-check input {
+            margin-right: 6px;
+            cursor: pointer;
         }
         
         .feedback-input {
             width: 100%;
-            padding: 8px;
+            padding: 10px;
             border: 2px solid #e0e0e0;
             border-radius: 5px;
-            font-size: 12px;
+            font-size: 13px;
             font-family: inherit;
             resize: vertical;
-            min-height: 60px;
+            min-height: 70px;
+            margin-top: 10px;
         }
         
-        .btn-small {
-            padding: 5px 15px;
-            background: #667eea;
-            color: white;
+        .feedback-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        .btn-feedback {
+            padding: 10px 20px;
             border: none;
             border-radius: 5px;
             cursor: pointer;
-            font-size: 12px;
-            margin-top: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            transition: all 0.2s;
         }
         
-        .btn-small:hover {
+        .btn-feedback.primary {
+            background: #667eea;
+            color: white;
+        }
+        
+        .btn-feedback.primary:hover {
             background: #5568d3;
+            transform: translateY(-1px);
+        }
+        
+        .btn-feedback.secondary {
+            background: #e0e0e0;
+            color: #333;
+        }
+        
+        .btn-feedback.secondary:hover {
+            background: #d0d0d0;
+        }
+        
+        .feedback-success {
+            background: #e8f5e9;
+            color: #388e3c;
+            padding: 12px;
+            border-radius: 5px;
+            font-weight: 600;
+            text-align: center;
+            margin-top: 10px;
         }
         
         .btn-link {
@@ -298,6 +363,10 @@
             font-size: 12px;
             text-decoration: underline;
             padding: 5px;
+        }
+        
+        .btn-link:hover {
+            color: #5568d3;
         }
         
         .loading {
@@ -518,6 +587,7 @@
         let currentMode = 'quick';  // 'quick' or 'project'
         let currentProjectId = null;
         let messageCounter = 0;
+        let feedbackRatings = {};  // Store ratings for each message
         
         // Mode switching
         function switchMode(mode) {
@@ -648,7 +718,18 @@
             const conversation = document.getElementById('conversation');
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${role}`;
-            messageDiv.id = `msg_${++messageCounter}`;
+            const msgId = `msg_${++messageCounter}`;
+            messageDiv.id = msgId;
+            
+            // Initialize ratings storage for this message
+            if (taskId) {
+                feedbackRatings[msgId] = {
+                    overall: 0,
+                    quality: 0,
+                    accuracy: 0,
+                    usefulness: 0
+                };
+            }
             
             let modeIndicator = '';
             if (role === 'assistant' && mode) {
@@ -663,19 +744,81 @@
             if (role === 'assistant' && taskId) {
                 feedbackSection = `
                     <div class="message-actions">
-                        <button class="btn-link" onclick="showFeedback('${messageDiv.id}', ${taskId})">💬 Provide Feedback</button>
+                        <button class="btn-link" onclick="toggleFeedback('${msgId}')">💬 Provide Feedback (Help System Learn)</button>
                     </div>
-                    <div class="feedback-section" id="feedback_${messageDiv.id}">
-                        <strong>Rate this response:</strong>
-                        <div class="rating-buttons">
-                            <button class="rating-btn" onclick="selectRating('${messageDiv.id}', 1)">1 ⭐</button>
-                            <button class="rating-btn" onclick="selectRating('${messageDiv.id}', 2)">2 ⭐⭐</button>
-                            <button class="rating-btn" onclick="selectRating('${messageDiv.id}', 3)">3 ⭐⭐⭐</button>
-                            <button class="rating-btn" onclick="selectRating('${messageDiv.id}', 4)">4 ⭐⭐⭐⭐</button>
-                            <button class="rating-btn" onclick="selectRating('${messageDiv.id}', 5)">5 ⭐⭐⭐⭐⭐</button>
+                    <div class="feedback-section" id="feedback_${msgId}">
+                        <div class="feedback-header">📊 Rate This Output (Helps AI Learn)</div>
+                        
+                        <div class="rating-row">
+                            <span class="rating-label">Overall Quality:</span>
+                            <div class="star-rating" id="stars_overall_${msgId}">
+                                ${[1,2,3,4,5].map(i => `<span class="star" onclick="setRating('${msgId}', 'overall', ${i})">★</span>`).join('')}
+                            </div>
                         </div>
-                        <textarea class="feedback-input" id="comments_${messageDiv.id}" placeholder="What worked well? What could be better?"></textarea>
-                        <button class="btn-small" onclick="submitFeedback('${messageDiv.id}', ${taskId})">Submit Feedback</button>
+                        
+                        <div class="rating-row">
+                            <span class="rating-label">Accuracy:</span>
+                            <div class="star-rating" id="stars_accuracy_${msgId}">
+                                ${[1,2,3,4,5].map(i => `<span class="star" onclick="setRating('${msgId}', 'accuracy', ${i})">★</span>`).join('')}
+                            </div>
+                        </div>
+                        
+                        <div class="rating-row">
+                            <span class="rating-label">Usefulness:</span>
+                            <div class="star-rating" id="stars_usefulness_${msgId}">
+                                ${[1,2,3,4,5].map(i => `<span class="star" onclick="setRating('${msgId}', 'usefulness', ${i})">★</span>`).join('')}
+                            </div>
+                        </div>
+                        
+                        <div class="rating-row">
+                            <span class="rating-label">Clarity:</span>
+                            <div class="star-rating" id="stars_quality_${msgId}">
+                                ${[1,2,3,4,5].map(i => `<span class="star" onclick="setRating('${msgId}', 'quality', ${i})">★</span>`).join('')}
+                            </div>
+                        </div>
+                        
+                        <div style="margin-top: 15px;">
+                            <strong style="font-size: 13px;">What needs improvement? (optional)</strong>
+                            <div class="improvement-checks">
+                                <label class="improvement-check">
+                                    <input type="checkbox" value="more_specific" id="imp_more_specific_${msgId}">
+                                    <span>More specific</span>
+                                </label>
+                                <label class="improvement-check">
+                                    <input type="checkbox" value="wrong_tone" id="imp_wrong_tone_${msgId}">
+                                    <span>Wrong tone</span>
+                                </label>
+                                <label class="improvement-check">
+                                    <input type="checkbox" value="missing_points" id="imp_missing_points_${msgId}">
+                                    <span>Missing key points</span>
+                                </label>
+                                <label class="improvement-check">
+                                    <input type="checkbox" value="too_long" id="imp_too_long_${msgId}">
+                                    <span>Too long/short</span>
+                                </label>
+                                <label class="improvement-check">
+                                    <input type="checkbox" value="factual_errors" id="imp_factual_errors_${msgId}">
+                                    <span>Factual errors</span>
+                                </label>
+                                <label class="improvement-check">
+                                    <input type="checkbox" value="poor_formatting" id="imp_poor_formatting_${msgId}">
+                                    <span>Poor formatting</span>
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <textarea class="feedback-input" id="comment_${msgId}" placeholder="Additional comments to help the system improve..."></textarea>
+                        
+                        <div class="feedback-actions">
+                            <button class="btn-feedback primary" onclick="submitFeedback('${msgId}', ${taskId}, true)">
+                                ✓ Submit & I Used This Output
+                            </button>
+                            <button class="btn-feedback secondary" onclick="submitFeedback('${msgId}', ${taskId}, false)">
+                                Submit (Didn't Use)
+                            </button>
+                        </div>
+                        
+                        <div id="feedbackSuccess_${msgId}" style="display: none;"></div>
                     </div>
                 `;
             }
@@ -691,51 +834,93 @@
         }
         
         // Feedback functions
-        let selectedRatings = {};
-        
-        function showFeedback(msgId, taskId) {
+        function toggleFeedback(msgId) {
             const feedback = document.getElementById(`feedback_${msgId}`);
             feedback.classList.toggle('active');
         }
         
-        function selectRating(msgId, rating) {
-            selectedRatings[msgId] = rating;
+        function setRating(msgId, type, rating) {
+            // Store the rating
+            feedbackRatings[msgId][type] = rating;
             
-            // Update button styles
-            const buttons = document.querySelectorAll(`#feedback_${msgId} .rating-btn`);
-            buttons.forEach((btn, idx) => {
-                btn.classList.toggle('selected', idx + 1 === rating);
+            // Update star display
+            const stars = document.querySelectorAll(`#stars_${type}_${msgId} .star`);
+            stars.forEach((star, idx) => {
+                if (idx < rating) {
+                    star.classList.add('active');
+                } else {
+                    star.classList.remove('active');
+                }
             });
         }
         
-        function submitFeedback(msgId, taskId) {
-            const rating = selectedRatings[msgId];
-            const comments = document.getElementById(`comments_${msgId}`).value;
+        function submitFeedback(msgId, taskId, outputUsed) {
+            const ratings = feedbackRatings[msgId];
             
-            if (!rating) {
-                alert('Please select a rating');
+            // Validate that at least overall rating is set
+            if (ratings.overall === 0) {
+                alert('Please rate at least the Overall Quality');
                 return;
             }
             
+            // Default other ratings to overall if not set
+            const overall_rating = ratings.overall;
+            const quality_rating = ratings.quality || ratings.overall;
+            const accuracy_rating = ratings.accuracy || ratings.overall;
+            const usefulness_rating = ratings.usefulness || ratings.overall;
+            
+            // Get improvement categories
+            const improvements = [];
+            const checkboxes = [
+                'more_specific', 'wrong_tone', 'missing_points', 
+                'too_long', 'factual_errors', 'poor_formatting'
+            ];
+            
+            checkboxes.forEach(cb => {
+                const elem = document.getElementById(`imp_${cb}_${msgId}`);
+                if (elem && elem.checked) {
+                    improvements.push(cb);
+                }
+            });
+            
+            // Get comment
+            const comment = document.getElementById(`comment_${msgId}`).value;
+            
+            // Submit to backend
             fetch('/api/feedback', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
                     task_id: taskId,
-                    overall_rating: rating,
-                    comments: comments,
-                    consensus_was_accurate: rating >= 4  // 4-5 stars means consensus was good
+                    overall_rating: overall_rating,
+                    quality_rating: quality_rating,
+                    accuracy_rating: accuracy_rating,
+                    usefulness_rating: usefulness_rating,
+                    improvement_categories: improvements,
+                    user_comment: comment,
+                    output_used: outputUsed
                 })
             })
             .then(r => r.json())
             .then(data => {
                 if (data.success) {
-                    const feedback = document.getElementById(`feedback_${msgId}`);
-                    feedback.innerHTML = '<div style="color: #388e3c; font-weight: 600;">✅ Feedback recorded - system is learning!</div>';
+                    // Hide feedback form, show success
+                    const feedbackSection = document.getElementById(`feedback_${msgId}`);
+                    const successDiv = document.getElementById(`feedbackSuccess_${msgId}`);
+                    
+                    feedbackSection.innerHTML = `
+                        <div class="feedback-success">
+                            ✅ Feedback recorded! The AI swarm is learning from your input.
+                            ${data.learning_updated ? '<br>Learning patterns updated.' : ''}
+                        </div>
+                    `;
                     
                     // Refresh stats
                     loadStats();
                 }
+            })
+            .catch(err => {
+                alert('Error submitting feedback: ' + err.message);
             });
         }
         
@@ -750,12 +935,11 @@
             fetch('/api/learning/stats')
                 .then(r => r.json())
                 .then(data => {
-                    if (data.average_ratings && data.average_ratings.overall) {
-                        document.getElementById('avgRating').textContent = data.average_ratings.overall.toFixed(1) + '⭐';
+                    if (data.average_overall_rating) {
+                        document.getElementById('avgRating').textContent = data.average_overall_rating.toFixed(1) + '⭐';
                     }
-                    if (data.consensus_accuracy) {
-                        const accuracy = (data.consensus_accuracy.accurate / data.consensus_accuracy.total * 100).toFixed(0);
-                        document.getElementById('consensusAccuracy').textContent = accuracy + '%';
+                    if (data.consensus_accuracy_rate) {
+                        document.getElementById('consensusAccuracy').textContent = data.consensus_accuracy_rate + '%';
                     }
                 });
         }
@@ -778,4 +962,15 @@
 </body>
 </html>
 
-<!-- I did no harm and this file is not truncated -->
+<!-- 
+CHANGE LOG:
+- January 19, 2026: ENHANCED FEEDBACK SYSTEM
+  * Added 4 separate star ratings (Overall, Accuracy, Usefulness, Clarity)
+  * Added 6 improvement checkboxes matching backend expectations
+  * Added "Used Output" vs "Didn't Use" submission buttons
+  * Fixed rating storage and validation
+  * Matches backend API requirements exactly
+  * Provides robust learning data for AI swarm improvement
+
+I did no harm and this file is not truncated
+-->
