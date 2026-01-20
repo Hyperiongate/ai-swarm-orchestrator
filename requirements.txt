@@ -1,8 +1,9 @@
 # AI SWARM ORCHESTRATOR - Python Dependencies
 # Created: January 18, 2026
-# Last Updated: January 19, 2026 - Added document processing libraries for project knowledge integration
+# Last Updated: January 20, 2026 - Added Microsoft 365 integration
 #
 # CHANGES:
+# - January 20, 2026: Added msal==1.31.0 for Microsoft 365 Graph API integration
 # - January 19, 2026: Added python-docx, openpyxl, PyPDF2 for project knowledge document extraction
 # - January 19, 2026: Updated openai from ==1.12.0 to >=1.30.0 for Python 3.13 compatibility
 #
@@ -14,7 +15,7 @@
 # - python-docx==1.1.0: Extract text from Word documents (.docx)
 # - openpyxl==3.1.2: Read Excel files (.xlsx)
 # - PyPDF2==3.0.1: Extract text from PDF files
-
+# - msal==1.31.0: Microsoft Authentication Library for Microsoft 365 integration (NEW)
 Flask==3.0.0
 openai>=1.30.0
 requests==2.31.0
@@ -23,5 +24,4 @@ python-docx==1.1.0
 openpyxl==3.1.2
 PyPDF2==3.0.1
 msal==1.31.0
-
 # I did no harm and this file is not truncated
