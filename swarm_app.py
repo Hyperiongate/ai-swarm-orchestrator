@@ -787,14 +787,90 @@ def update_project_phase(project_id):
 
 @app.route('/api/orchestrate', methods=['POST'])
 def orchestrate():
-    """Main endpoint with OUTPUT FORMATTING ENFORCEMENT"""
-    data = request.json
-    user_request = data.get('request')
-    enable_consensus = data.get('enable_consensus', True)
-    project_id = data.get('project_id')
+    """Main endpoint with OUTPUT FORMATTING ENFORCEMENT and FILE UPLOAD SUPPORT"""
+    
+    # Handle both JSON and FormData requests
+    if request.is_json:
+        data = request.json
+        user_request = data.get('request')
+        enable_consensus = data.get('enable_consensus', True)
+        project_id = data.get('project_id')
+        uploaded_files = []
+    else:
+        # FormData (with file uploads)
+        user_request = request.form.get('request')
+        enable_consensus = request.form.get('enable_consensus', 'true').lower() == 'true'
+        project_id = request.form.get('project_id')
+        uploaded_files = request.files.getlist('files')
     
     if not user_request:
         return jsonify({'error': 'Request text required'}), 400
+    
+    # Process uploaded files
+    file_context = ""
+    file_names = []
+    
+    if uploaded_files:
+        file_context = "\n\n=== UPLOADED FILES ===\n"
+        for file in uploaded_files:
+            if file.filename:
+                file_names.append(file.filename)
+                
+                # Save file temporarily
+                import tempfile
+                temp_dir = tempfile.mkdtemp()
+                file_path = os.path.join(temp_dir, file.filename)
+                file.save(file_path)
+                
+                # Extract text based on file type
+                file_ext = file.filename.split('.')[-1].lower()
+                
+                if file_ext in ['txt', 'csv']:
+                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        content = f.read()[:5000]  # First 5000 chars
+                        file_context += f"\n--- {file.filename} ---\n{content}\n"
+                
+                elif file_ext in ['pdf']:
+                    try:
+                        import PyPDF2
+                        with open(file_path, 'rb') as f:
+                            pdf = PyPDF2.PdfReader(f)
+                            text = ""
+                            for page in pdf.pages[:5]:  # First 5 pages
+                                text += page.extract_text()
+                            file_context += f"\n--- {file.filename} ---\n{text[:5000]}\n"
+                    except Exception as e:
+                        file_context += f"\n--- {file.filename} ---\n[Error reading PDF: {e}]\n"
+                
+                elif file_ext in ['docx']:
+                    try:
+                        import docx
+                        doc = docx.Document(file_path)
+                        text = "\n".join([p.text for p in doc.paragraphs])
+                        file_context += f"\n--- {file.filename} ---\n{text[:5000]}\n"
+                    except Exception as e:
+                        file_context += f"\n--- {file.filename} ---\n[Error reading DOCX: {e}]\n"
+                
+                elif file_ext in ['xlsx', 'xls']:
+                    try:
+                        import openpyxl
+                        wb = openpyxl.load_workbook(file_path)
+                        text = ""
+                        for sheet in wb.worksheets[:3]:  # First 3 sheets
+                            text += f"\n--- Sheet: {sheet.title} ---\n"
+                            for row in list(sheet.rows)[:50]:  # First 50 rows
+                                text += " | ".join([str(cell.value) if cell.value else "" for cell in row]) + "\n"
+                        file_context += f"\n--- {file.filename} ---\n{text[:5000]}\n"
+                    except Exception as e:
+                        file_context += f"\n--- {file.filename} ---\n[Error reading Excel: {e}]\n"
+                
+                else:
+                    file_context += f"\n--- {file.filename} ---\n[File type not supported for text extraction]\n"
+        
+        file_context += "\n=== END OF FILES ===\n"
+        
+        # Append file context to user request
+        user_request = f"{user_request}\n{file_context}"
     
     # Get project workflow if specified
     workflow = None
@@ -1016,6 +1092,7 @@ def orchestrate():
             'document_created': document_file is not None,
             'document_url': document_url,
             'document_type': doc_type if document_file else None,
+            'files_processed': file_names,  # NEW - Shows uploaded files
             'project_workflow': {
                 'active': workflow is not None,
                 'project_id': project_id if workflow else None,
@@ -1308,6 +1385,45 @@ def download_file(filename):
         mimetype = 'application/octet-stream'
     
     return send_file(file_path, mimetype=mimetype, as_attachment=True, download_name=filename)
+
+@app.route('/api/documents')
+def list_documents():
+    """List all generated documents available for download"""
+    import os
+    from pathlib import Path
+    
+    output_dir = '/mnt/user-data/outputs'
+    
+    if not os.path.exists(output_dir):
+        return jsonify({'documents': []})
+    
+    documents = []
+    for file in os.listdir(output_dir):
+        file_path = os.path.join(output_dir, file)
+        if os.path.isfile(file_path):
+            # Get file stats
+            stat = os.stat(file_path)
+            
+            # Determine file type
+            ext = file.split('.')[-1].lower()
+            if ext in ['docx', 'pdf', 'xlsx', 'pptx', 'csv', 'txt']:
+                documents.append({
+                    'filename': file,
+                    'size': stat.st_size,
+                    'created': datetime.fromtimestamp(stat.st_ctime).isoformat(),
+                    'modified': datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                    'type': ext,
+                    'download_url': f'/api/download/{file}'
+                })
+    
+    # Sort by modified time (newest first)
+    documents.sort(key=lambda x: x['modified'], reverse=True)
+    
+    return jsonify({
+        'success': True,
+        'documents': documents,
+        'total_count': len(documents)
+    })
 
 @app.route('/api/tasks')
 def get_tasks():
