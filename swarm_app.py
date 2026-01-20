@@ -148,6 +148,26 @@ def init_db():
         )
     ''')
     
+    # Projects table - persistent project storage (NEW)
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS projects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id TEXT UNIQUE NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            client_name TEXT,
+            industry TEXT,
+            facility_type TEXT,
+            project_phase TEXT DEFAULT 'initial',
+            context_data TEXT,
+            uploaded_files TEXT,
+            email_context TEXT,
+            key_findings TEXT,
+            schedules_proposed TEXT,
+            status TEXT DEFAULT 'active'
+        )
+    ''')
+    
     # Specialist assignments - which AI did what
     db.execute('''
         CREATE TABLE IF NOT EXISTS specialist_assignments (
@@ -218,6 +238,110 @@ def init_db():
             FOREIGN KEY (task_id) REFERENCES tasks(id)
         )
     ''')
+    
+    db.commit()
+    db.close()
+
+# Initialize database on startup
+init_db()
+
+# Helper functions for project persistence
+def load_project_from_db(project_id):
+    """Load project from database"""
+    if not WORKFLOW_AVAILABLE:
+        return None
+    
+    db = get_db()
+    project_row = db.execute(
+        'SELECT * FROM projects WHERE project_id = ? AND status = "active"',
+        (project_id,)
+    ).fetchone()
+    db.close()
+    
+    if not project_row:
+        return None
+    
+    workflow = ProjectWorkflow()
+    workflow.project_id = project_row['project_id']
+    workflow.client_name = project_row['client_name']
+    workflow.industry = project_row['industry']
+    workflow.facility_type = project_row['facility_type']
+    workflow.project_phase = project_row['project_phase']
+    
+    # Load JSON data
+    if project_row['context_data']:
+        workflow.context_history = json.loads(project_row['context_data'])
+    if project_row['uploaded_files']:
+        workflow.uploaded_files = json.loads(project_row['uploaded_files'])
+    if project_row['email_context']:
+        workflow.email_context = json.loads(project_row['email_context'])
+    if project_row['key_findings']:
+        workflow.key_findings = json.loads(project_row['key_findings'])
+    if project_row['schedules_proposed']:
+        workflow.schedules_proposed = json.loads(project_row['schedules_proposed'])
+    
+    return workflow
+
+def save_project_to_db(workflow):
+    """Save project to database"""
+    if not workflow:
+        return
+    
+    db = get_db()
+    
+    # Check if project exists
+    existing = db.execute(
+        'SELECT id FROM projects WHERE project_id = ?',
+        (workflow.project_id,)
+    ).fetchone()
+    
+    if existing:
+        # Update existing
+        db.execute('''
+            UPDATE projects SET
+                updated_at = CURRENT_TIMESTAMP,
+                client_name = ?,
+                industry = ?,
+                facility_type = ?,
+                project_phase = ?,
+                context_data = ?,
+                uploaded_files = ?,
+                email_context = ?,
+                key_findings = ?,
+                schedules_proposed = ?
+            WHERE project_id = ?
+        ''', (
+            workflow.client_name,
+            workflow.industry,
+            workflow.facility_type,
+            workflow.project_phase,
+            json.dumps(workflow.context_history),
+            json.dumps(workflow.uploaded_files),
+            json.dumps(workflow.email_context),
+            json.dumps(workflow.key_findings),
+            json.dumps(workflow.schedules_proposed),
+            workflow.project_id
+        ))
+    else:
+        # Insert new
+        db.execute('''
+            INSERT INTO projects (
+                project_id, client_name, industry, facility_type, 
+                project_phase, context_data, uploaded_files, email_context,
+                key_findings, schedules_proposed
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            workflow.project_id,
+            workflow.client_name,
+            workflow.industry,
+            workflow.facility_type,
+            workflow.project_phase,
+            json.dumps(workflow.context_history),
+            json.dumps(workflow.uploaded_files),
+            json.dumps(workflow.email_context),
+            json.dumps(workflow.key_findings),
+            json.dumps(workflow.schedules_proposed)
+        ))
     
     db.commit()
     db.close()
@@ -691,9 +815,30 @@ Respond with JSON:
 # PROJECT WORKFLOW ENDPOINTS (UNCHANGED - KEEPING EXISTING)
 # ============================================================================
 
+@app.route('/api/projects', methods=['GET'])
+def list_projects():
+    """List all active projects"""
+    db = get_db()
+    
+    projects = db.execute('''
+        SELECT project_id, client_name, industry, facility_type, 
+               project_phase, created_at, updated_at
+        FROM projects 
+        WHERE status = 'active'
+        ORDER BY updated_at DESC
+    ''').fetchall()
+    
+    db.close()
+    
+    return jsonify({
+        'success': True,
+        'projects': [dict(p) for p in projects],
+        'total_count': len(projects)
+    })
+
 @app.route('/api/project/start', methods=['POST'])
 def start_project():
-    """Start a new project workflow"""
+    """Start a new project workflow with DATABASE PERSISTENCE"""
     data = request.json
     project_id = data.get('project_id') or f"proj_{int(time.time())}"
     
@@ -703,8 +848,11 @@ def start_project():
     workflow.industry = data.get('industry', '')
     workflow.facility_type = data.get('facility_type', '')
     
-    active_workflows[project_id] = workflow
+    # Save to database
+    save_project_to_db(workflow)
+    
     workflow.add_context('project_started', f"New project for {workflow.client_name}")
+    save_project_to_db(workflow)  # Save context update
     
     return jsonify({
         'success': True,
@@ -715,8 +863,8 @@ def start_project():
 
 @app.route('/api/project/<project_id>/context', methods=['GET'])
 def get_project_context(project_id):
-    """Get current project context"""
-    workflow = active_workflows.get(project_id)
+    """Get current project context from DATABASE"""
+    workflow = load_project_from_db(project_id)
     
     if not workflow:
         return jsonify({'error': 'Project not found'}), 404
@@ -733,8 +881,8 @@ def get_project_context(project_id):
 
 @app.route('/api/project/<project_id>/add_context', methods=['POST'])
 def add_project_context(project_id):
-    """Add context to an active project"""
-    workflow = active_workflows.get(project_id)
+    """Add context to an active project and SAVE TO DATABASE"""
+    workflow = load_project_from_db(project_id)
     
     if not workflow:
         return jsonify({'error': 'Project not found'}), 404
@@ -754,6 +902,9 @@ def add_project_context(project_id):
     
     workflow.add_context(context_type, content)
     
+    # Save to database
+    save_project_to_db(workflow)
+    
     return jsonify({
         'success': True,
         'message': f'Added {context_type} to project context'
@@ -761,8 +912,8 @@ def add_project_context(project_id):
 
 @app.route('/api/project/<project_id>/phase', methods=['POST'])
 def update_project_phase(project_id):
-    """Move project to next phase"""
-    workflow = active_workflows.get(project_id)
+    """Move project to next phase and SAVE TO DATABASE"""
+    workflow = load_project_from_db(project_id)
     
     if not workflow:
         return jsonify({'error': 'Project not found'}), 404
@@ -773,6 +924,9 @@ def update_project_phase(project_id):
     old_phase = workflow.project_phase
     workflow.project_phase = new_phase
     workflow.add_context('phase_change', f"Moved from {old_phase} to {new_phase}")
+    
+    # Save to database
+    save_project_to_db(workflow)
     
     return jsonify({
         'success': True,
@@ -872,13 +1026,13 @@ def orchestrate():
         # Append file context to user request
         user_request = f"{user_request}\n{file_context}"
     
-    # Get project workflow if specified
+    # Get project workflow if specified - LOAD FROM DATABASE
     workflow = None
     intent = 'general_question'
     intent_params = {}
     
     if project_id and WORKFLOW_AVAILABLE:
-        workflow = active_workflows.get(project_id)
+        workflow = load_project_from_db(project_id)
         if workflow:
             intent, intent_params = detect_project_intent(user_request, workflow)
     
@@ -918,6 +1072,10 @@ def orchestrate():
                 knowledge_context
             )
             workflow.add_context('request', f"{intent}: {user_request}")
+            
+            # Save workflow updates to database
+            save_project_to_db(workflow)
+            
             user_request_for_ai = enhanced_prompt
         
         # Step 1: Sonnet analyzes
