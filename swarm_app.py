@@ -99,6 +99,16 @@ except ImportError:
     print("⚠️ Warning: microsoft365_integration module not found")
     MS365_AVAILABLE = False
 
+# Import Marketing Hub (SOCIAL MEDIA & RESEARCH)
+try:
+    from marketing_hub import get_marketing_hub
+    MARKETING_AVAILABLE = True
+    marketing = get_marketing_hub()
+    print(f"✅ Marketing Hub loaded - {sum(marketing.platforms_configured.values())}/3 platforms configured")
+except ImportError:
+    print("⚠️ Warning: marketing_hub module not found")
+    MARKETING_AVAILABLE = False
+
 app = Flask(__name__)
 
 # Global workflow storage (in production, use database or session storage)
@@ -849,6 +859,74 @@ def list_projects():
         'projects': [dict(p) for p in projects],
         'total_count': len(projects)
     })
+
+
+# ==================== MARKETING HUB ENDPOINTS ====================
+
+@app.route('/api/marketing/status', methods=['GET'])
+def marketing_status():
+    """Get marketing platform configuration status"""
+    if not MARKETING_AVAILABLE:
+        return jsonify({'error': 'Marketing Hub not available'}), 503
+    
+    status = marketing.get_status()
+    return jsonify(status)
+
+@app.route('/api/marketing/post', methods=['POST'])
+def marketing_post():
+    """Post to social media platforms"""
+    if not MARKETING_AVAILABLE:
+        return jsonify({'error': 'Marketing Hub not available'}), 503
+    
+    data = request.json
+    content = data.get('content')
+    platform = data.get('platform', 'linkedin')
+    
+    if not content:
+        return jsonify({'error': 'Content required'}), 400
+    
+    if platform == 'linkedin':
+        result = marketing.post_to_linkedin(content)
+    else:
+        result = {'success': False, 'error': f'Platform {platform} not yet implemented'}
+    
+    return jsonify(result)
+
+@app.route('/api/marketing/research', methods=['POST'])
+def marketing_research():
+    """Conduct market research"""
+    if not MARKETING_AVAILABLE:
+        return jsonify({'error': 'Marketing Hub not available'}), 503
+    
+    data = request.json
+    topic = data.get('topic')
+    
+    if not topic:
+        return jsonify({'error': 'Research topic required'}), 400
+    
+    # Use Claude Sonnet for research
+    result = marketing.conduct_market_research(topic, call_claude_sonnet)
+    
+    return jsonify(result)
+
+@app.route('/api/marketing/generate', methods=['POST'])
+def marketing_generate_content():
+    """Generate platform-optimized content"""
+    if not MARKETING_AVAILABLE:
+        return jsonify({'error': 'Marketing Hub not available'}), 503
+    
+    data = request.json
+    topic = data.get('topic')
+    platform = data.get('platform', 'linkedin')
+    
+    if not topic:
+        return jsonify({'error': 'Topic required'}), 400
+    
+    # Use Claude Sonnet for content generation
+    result = marketing.generate_social_content(topic, platform, call_claude_sonnet)
+    
+    return jsonify(result)
+
 
 @app.route('/api/project/start', methods=['POST'])
 def start_project():
