@@ -699,7 +699,7 @@
                     if (data.project_workflow && data.project_workflow.active) badges += '<span class="badge workflow">📁 Project</span>';
                     if (data.formatting_applied) badges += '<span class="badge formatted">🎨 Formatted</span>';
                     
-                    addMessage('assistant', data.actual_output + '<div style="margin-top: 10px;">' + badges + '</div>', data.task_id, currentMode);
+                    addMessage('assistant', data.actual_output + '<div style="margin-top: 10px;">' + badges + '</div>', data.task_id, currentMode, data);
                     
                     // Refresh stats
                     loadStats();
@@ -714,7 +714,7 @@
         }
         
         // Add message to conversation
-        function addMessage(role, content, taskId = null, mode = null) {
+        function addMessage(role, content, taskId = null, mode = null, data = null) {
             const conversation = document.getElementById('conversation');
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${role}`;
@@ -739,6 +739,37 @@
             }
             
             const header = role === 'user' ? '👤 You' : '🤖 AI Swarm';
+            
+            // Add consensus validation display if available
+            let consensusSection = '';
+            if (role === 'assistant' && data && data.consensus) {
+                const consensus = data.consensus;
+                const agreementScore = consensus.agreement_score || 0;
+                const scorePercent = (agreementScore * 100).toFixed(0);
+                const scoreClass = agreementScore >= 0.7 ? 'high' : 'low';
+                
+                consensusSection = `
+                    <div style="margin-top: 15px; padding: 12px; background: #f8f9fa; border-left: 4px solid ${agreementScore >= 0.7 ? '#4caf50' : '#ff9800'}; border-radius: 4px;">
+                        <div style="font-weight: 600; margin-bottom: 8px; color: #333;">
+                            ✓ Multi-AI Consensus Validation
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+                            <div style="flex: 1; background: #e0e0e0; height: 8px; border-radius: 4px; overflow: hidden;">
+                                <div style="width: ${scorePercent}%; height: 100%; background: ${agreementScore >= 0.7 ? '#4caf50' : '#ff9800'}; transition: width 0.3s;"></div>
+                            </div>
+                            <div style="font-weight: 700; color: ${agreementScore >= 0.7 ? '#4caf50' : '#ff9800'};">${scorePercent}%</div>
+                        </div>
+                        <div style="font-size: 12px; color: #666;">
+                            ${agreementScore >= 0.7 
+                                ? '✅ High agreement - output validated by multiple AIs' 
+                                : '⚠️ Lower agreement - consider reviewing output'}
+                        </div>
+                        <div style="font-size: 11px; color: #999; margin-top: 4px;">
+                            Validated by: ${consensus.validators ? consensus.validators.join(', ') : 'Multiple AIs'}
+                        </div>
+                    </div>
+                `;
+            }
             
             let feedbackSection = '';
             if (role === 'assistant' && taskId) {
@@ -826,6 +857,7 @@
             messageDiv.innerHTML = `
                 <div class="message-header">${header} ${modeIndicator}</div>
                 <div class="message-content">${content}</div>
+                ${consensusSection}
                 ${feedbackSection}
             `;
             
