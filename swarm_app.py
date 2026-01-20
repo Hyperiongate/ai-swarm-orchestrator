@@ -109,6 +109,26 @@ except ImportError:
     print("⚠️ Warning: marketing_hub module not found")
     MARKETING_AVAILABLE = False
 
+# Import Cost Calculator (OVERTIME ANALYSIS)
+try:
+    from cost_calculator import get_calculator
+    CALCULATOR_AVAILABLE = True
+    calculator = get_calculator()
+    print("✅ Cost Calculator loaded - overtime and schedule cost analysis ready")
+except ImportError:
+    print("⚠️ Warning: cost_calculator module not found")
+    CALCULATOR_AVAILABLE = False
+
+# Import Survey Builder (EMPLOYEE SURVEYS)
+try:
+    from survey_builder import get_survey_builder
+    SURVEY_AVAILABLE = True
+    survey_builder = get_survey_builder()
+    print(f"✅ Survey Builder loaded - {len(survey_builder.question_bank)} questions available")
+except ImportError:
+    print("⚠️ Warning: survey_builder module not found")
+    SURVEY_AVAILABLE = False
+
 app = Flask(__name__)
 
 # Global workflow storage (in production, use database or session storage)
@@ -926,6 +946,162 @@ def marketing_generate_content():
     result = marketing.generate_social_content(topic, platform, call_claude_sonnet)
     
     return jsonify(result)
+
+
+# ==================== CALCULATOR ENDPOINTS ====================
+
+@app.route('/api/calculator/overtime', methods=['POST'])
+def calculate_overtime():
+    """Calculate overtime costs"""
+    if not CALCULATOR_AVAILABLE:
+        return jsonify({'error': 'Calculator not available'}), 503
+    
+    data = request.json
+    base_wage = data.get('base_wage')
+    ot_hours_weekly = data.get('ot_hours_weekly')
+    
+    if not base_wage or not ot_hours_weekly:
+        return jsonify({'error': 'base_wage and ot_hours_weekly required'}), 400
+    
+    result = calculator.calculate_overtime_cost(
+        float(base_wage),
+        float(ot_hours_weekly),
+        weeks=data.get('weeks', 52),
+        burden_rate=data.get('burden_rate')
+    )
+    
+    return jsonify({'success': True, 'calculation': result})
+
+@app.route('/api/calculator/hire-vs-ot', methods=['POST'])
+def compare_hire_vs_ot():
+    """Compare hiring vs continuing overtime"""
+    if not CALCULATOR_AVAILABLE:
+        return jsonify({'error': 'Calculator not available'}), 503
+    
+    data = request.json
+    current_ot_cost = data.get('current_ot_cost')
+    new_employee_wage = data.get('new_employee_wage')
+    
+    if not current_ot_cost or not new_employee_wage:
+        return jsonify({'error': 'current_ot_cost and new_employee_wage required'}), 400
+    
+    result = calculator.compare_overtime_vs_hiring(
+        float(current_ot_cost),
+        float(new_employee_wage),
+        training_cost=data.get('training_cost'),
+        burden_rate=data.get('burden_rate')
+    )
+    
+    return jsonify({'success': True, 'comparison': result})
+
+@app.route('/api/calculator/report', methods=['POST'])
+def generate_cost_report():
+    """Generate cost analysis report"""
+    if not CALCULATOR_AVAILABLE:
+        return jsonify({'error': 'Calculator not available'}), 503
+    
+    data = request.json
+    analysis_data = data.get('analysis_data')
+    client_name = data.get('client_name')
+    
+    if not analysis_data:
+        return jsonify({'error': 'analysis_data required'}), 400
+    
+    report = calculator.generate_cost_report(analysis_data, client_name)
+    
+    return jsonify({'success': True, 'report': report})
+
+
+# ==================== SURVEY ENDPOINTS ====================
+
+@app.route('/api/survey/create', methods=['POST'])
+def create_survey():
+    """Create a new survey"""
+    if not SURVEY_AVAILABLE:
+        return jsonify({'error': 'Survey Builder not available'}), 503
+    
+    data = request.json
+    project_name = data.get('project_name')
+    selected_questions = data.get('selected_questions')
+    custom_questions = data.get('custom_questions')
+    
+    if not project_name:
+        return jsonify({'error': 'project_name required'}), 400
+    
+    survey = survey_builder.create_survey(
+        project_name,
+        selected_questions=selected_questions,
+        custom_questions=custom_questions
+    )
+    
+    return jsonify({'success': True, 'survey': survey})
+
+@app.route('/api/survey/<survey_id>', methods=['GET'])
+def get_survey(survey_id):
+    """Get survey by ID"""
+    if not SURVEY_AVAILABLE:
+        return jsonify({'error': 'Survey Builder not available'}), 503
+    
+    survey = survey_builder.get_survey(survey_id)
+    
+    if not survey:
+        return jsonify({'error': 'Survey not found'}), 404
+    
+    return jsonify({'success': True, 'survey': survey})
+
+@app.route('/api/survey/<survey_id>/respond', methods=['POST'])
+def submit_survey_response(survey_id):
+    """Submit a survey response"""
+    if not SURVEY_AVAILABLE:
+        return jsonify({'error': 'Survey Builder not available'}), 503
+    
+    data = request.json
+    answers = data.get('answers')
+    respondent_id = data.get('respondent_id')
+    
+    if not answers:
+        return jsonify({'error': 'answers required'}), 400
+    
+    result = survey_builder.submit_response(survey_id, answers, respondent_id)
+    
+    return jsonify(result)
+
+@app.route('/api/survey/<survey_id>/analyze', methods=['GET'])
+def analyze_survey(survey_id):
+    """Analyze survey responses"""
+    if not SURVEY_AVAILABLE:
+        return jsonify({'error': 'Survey Builder not available'}), 503
+    
+    analysis = survey_builder.analyze_responses(survey_id)
+    
+    return jsonify(analysis)
+
+@app.route('/api/survey/<survey_id>/export', methods=['GET'])
+def export_survey_data(survey_id):
+    """Export survey data in Remark format"""
+    if not SURVEY_AVAILABLE:
+        return jsonify({'error': 'Survey Builder not available'}), 503
+    
+    csv_data = survey_builder.export_to_remark_format(survey_id)
+    
+    if not csv_data:
+        return jsonify({'error': 'Survey not found'}), 404
+    
+    return jsonify({'success': True, 'csv_data': csv_data})
+
+@app.route('/api/survey/questions', methods=['GET'])
+def get_question_bank():
+    """Get available questions from question bank"""
+    if not SURVEY_AVAILABLE:
+        return jsonify({'error': 'Survey Builder not available'}), 503
+    
+    questions = survey_builder.question_bank
+    
+    return jsonify({
+        'success': True,
+        'questions': questions,
+        'total_count': len(questions)
+    })
 
 
 @app.route('/api/project/start', methods=['POST'])
