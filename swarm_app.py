@@ -85,6 +85,20 @@ except ImportError:
     print("⚠️ Warning: output_formatter module not found - may produce terrible text dumps")
     OUTPUT_FORMATTER_AVAILABLE = False
 
+# Import Microsoft 365 integration (PROFESSIONAL DOCUMENTS)
+try:
+    from microsoft365_integration import get_ms365
+    MS365_AVAILABLE = True
+    ms365 = get_ms365()
+    if ms365.is_configured:
+        print("✅ Microsoft 365 integrated - will create professional Office documents")
+    else:
+        print("⚠️ Microsoft 365 not configured - set MS365_CLIENT_ID, MS365_CLIENT_SECRET, MS365_TENANT_ID")
+        MS365_AVAILABLE = False
+except ImportError:
+    print("⚠️ Warning: microsoft365_integration module not found")
+    MS365_AVAILABLE = False
+
 app = Flask(__name__)
 
 # Global workflow storage (in production, use database or session storage)
@@ -1194,34 +1208,93 @@ def orchestrate():
                 except Exception as e:
                     print(f"  ⚠️ Formatting error: {e}")
         
-        # Step 7: Document Generation
+        # Step 7: Document Generation (MICROSOFT 365 PRIORITY)
         document_file = None
         document_url = None
+        doc_type = None
         
-        if actual_output and DOCUMENT_GENERATOR_AVAILABLE:
-            doc_gen = get_document_generator()
-            should_create, doc_type = doc_gen.should_create_document(user_request)
+        if actual_output:
+            # Detect if document should be created
+            should_create_doc = False
             
-            if should_create and doc_type:
-                print(f"  📄 Generating {doc_type.upper()} document...")
-                
-                try:
-                    if doc_type == 'docx':
-                        document_file = doc_gen.create_word_document(actual_output)
-                    elif doc_type == 'pdf':
-                        document_file = doc_gen.create_pdf(actual_output)
-                    elif doc_type == 'pptx':
-                        document_file = doc_gen.create_powerpoint(actual_output)
-                    
-                    if document_file:
-                        filename = os.path.basename(document_file)
-                        document_url = f"/api/download/{filename}"
-                        print(f"  ✅ Document created: {filename}")
+            if DOCUMENT_GENERATOR_AVAILABLE:
+                doc_gen = get_document_generator()
+                should_create_doc, doc_type = doc_gen.should_create_document(user_request)
+            
+            # Check if user explicitly requests a document
+            request_lower = user_request.lower()
+            if any(word in request_lower for word in ['create document', 'create schedule', 'create report', 'create proposal', 'word document', 'excel', 'spreadsheet']):
+                should_create_doc = True
+                if not doc_type:
+                    if 'excel' in request_lower or 'spreadsheet' in request_lower:
+                        doc_type = 'xlsx'
                     else:
-                        print(f"  ⚠️ Document generation failed, returning text")
+                        doc_type = 'docx'
+            
+            if should_create_doc and doc_type:
+                print(f"  📄 Creating {doc_type.upper()} document...")
+                
+                # PRIORITIZE MICROSOFT 365
+                if MS365_AVAILABLE and ms365.is_configured and doc_type in ['docx', 'xlsx']:
+                    try:
+                        # Generate descriptive filename
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        base_name = "document"
                         
-                except Exception as e:
-                    print(f"  ⚠️ Document generation error: {e}")
+                        if "schedule" in request_lower:
+                            base_name = "schedule"
+                        elif "proposal" in request_lower:
+                            base_name = "proposal"
+                        elif "report" in request_lower:
+                            base_name = "report"
+                        elif "analysis" in request_lower:
+                            base_name = "analysis"
+                        
+                        filename = f"{base_name}_{timestamp}.{doc_type}"
+                        
+                        print(f"  ☁️  Using Microsoft 365 for professional document...")
+                        
+                        if doc_type == 'docx':
+                            result = ms365.create_word_document(actual_output, filename)
+                        elif doc_type == 'xlsx':
+                            # For Excel, convert text to structured data
+                            result = ms365.create_excel_workbook({'Sheet1': [[actual_output]]}, filename)
+                        
+                        if result.get('success'):
+                            document_url = result.get('web_url')  # OneDrive web link
+                            document_file = filename
+                            print(f"  ✅ Microsoft 365 document created: {filename}")
+                            print(f"  🔗 OneDrive link: {document_url}")
+                        else:
+                            print(f"  ⚠️ Microsoft 365 failed: {result.get('error')}, falling back to local generation")
+                            # Fall back to local generation
+                            MS365_AVAILABLE_FALLBACK = False
+                    
+                    except Exception as e:
+                        print(f"  ⚠️ Microsoft 365 error: {e}, falling back to local generation")
+                        MS365_AVAILABLE_FALLBACK = False
+                
+                # FALLBACK: Use local document generator
+                if not document_file and DOCUMENT_GENERATOR_AVAILABLE:
+                    try:
+                        doc_gen = get_document_generator()
+                        
+                        if doc_type == 'docx':
+                            document_file = doc_gen.create_word_document(actual_output)
+                        elif doc_type == 'pdf':
+                            document_file = doc_gen.create_pdf(actual_output)
+                        elif doc_type == 'pptx':
+                            document_file = doc_gen.create_powerpoint(actual_output)
+                        
+                        if document_file:
+                            filename = os.path.basename(document_file)
+                            document_url = f"/api/download/{filename}"
+                            print(f"  ✅ Local document created: {filename}")
+                        else:
+                            print(f"  ⚠️ Document generation failed, returning text")
+                    
+                    except Exception as e:
+                        print(f"  ⚠️ Document generation error: {e}")
         
         total_time = time.time() - overall_start
         
