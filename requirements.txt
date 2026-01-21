@@ -1,36 +1,47 @@
-# AI SWARM ORCHESTRATOR - Python Dependencies
-# Created: January 18, 2026
-# Last Updated: January 21, 2026 - Fixed anthropic SDK version
-#
-# CHANGES:
-# - January 21, 2026: Updated anthropic to 0.40.0 (fixes httpx proxies error)
-# - January 21, 2026: Added anthropic SDK for Claude (CRITICAL)
-# - January 21, 2026: Added google-generativeai for Gemini API (CRITICAL)
-# - January 20, 2026: Added msal==1.31.0 for Microsoft 365 Graph API integration
-# - January 19, 2026: Added python-docx, openpyxl, PyPDF2 for project knowledge
-# - January 19, 2026: Updated openai from ==1.12.0 to >=1.30.0 for Python 3.13
-#
-# DEPENDENCIES:
-# - Flask==3.0.0: Web framework for API and interface
-# - anthropic>=0.40.0: Anthropic SDK for Claude Sonnet/Opus (UPDATED for compatibility)
-# - openai>=1.30.0: OpenAI SDK for GPT-4 specialist (must be 1.30+ for Python 3.13)
-# - google-generativeai==0.8.3: Google SDK for Gemini specialist
-# - requests==2.31.0: HTTP library for HTTP-based API calls
-# - gunicorn==21.2.0: Production WSGI server for Render deployment
-# - python-docx==1.1.0: Extract text from Word documents (.docx)
-# - openpyxl==3.1.2: Read Excel files (.xlsx) and CREATE schedule files
-# - PyPDF2==3.0.1: Extract text from PDF files
-# - msal==1.31.0: Microsoft Authentication Library for Microsoft 365
+# AI SWARM ORCHESTRATOR - Requirements
+# Last Updated: January 21, 2026
+# 
+# This file includes all dependencies for:
+# - Core Flask application
+# - AI API clients (Anthropic, OpenAI, DeepSeek, Google)
+# - Schedule generator (Excel creation)
+# - Knowledge base (document processing)
+# - Database operations
 
+# ==========================================
+# CORE FRAMEWORK
+# ==========================================
 Flask==3.0.0
-anthropic>=0.40.0
-openai>=1.30.0
-google-generativeai==0.8.3
-requests==2.31.0
-gunicorn==21.2.0
-python-docx==1.1.0
-openpyxl==3.1.2
-PyPDF2==3.0.1
-msal==1.31.0
+gunicorn>=20.1.0
+
+# ==========================================
+# AI API CLIENTS - CRITICAL FIX
+# ==========================================
+anthropic>=0.40.0           # MUST be >=0.40.0 to fix httpx proxies error
+openai>=1.12.0
+google-generativeai==0.8.3  # Gemini API
+requests>=2.31.0
+
+# ==========================================
+# DOCUMENT PROCESSING FOR KNOWLEDGE BASE
+# ==========================================
+python-docx>=0.8.11         # Word documents (.docx)
+openpyxl>=3.1.2             # Excel files (.xlsx)
+PyPDF2>=3.0.1               # PDF files
+
+# ==========================================
+# SCHEDULE GENERATOR
+# ==========================================
+XlsxWriter>=3.1.9           # Excel file creation with formatting
+
+# ==========================================
+# DATABASE
+# ==========================================
+# SQLite is built into Python, no package needed
+
+# ==========================================
+# UTILITIES
+# ==========================================
+python-dateutil>=2.8.2
 
 # I did no harm and this file is not truncated
