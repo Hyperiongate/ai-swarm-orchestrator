@@ -1,36 +1,25 @@
 """
-Configuration Module
-Created: January 21, 2026
-Last Updated: January 21, 2026
+AI SWARM ORCHESTRATOR - Configuration
+Created: January 18, 2026
+Last Updated: January 21, 2026 - FIXED: Updated to Claude Opus 4.5 model name
 
-All API keys, database paths, and configuration in one place.
-No more hunting through 2,500 lines of code.
+CRITICAL FIX: Changed CLAUDE_OPUS_MODEL from claude-opus-4-20241229 (doesn't exist) 
+to claude-opus-4-5-20251101 (Opus 4.5)
 
-FIXED: Removed circular import (was importing from database)
+All API keys, model names, and system configuration.
+AUTHOR: Jim @ Shiftwork Solutions LLC
 """
 
 import os
 
 # ============================================================================
-# API KEYS
+# API KEYS - FROM ENVIRONMENT VARIABLES
 # ============================================================================
 
-# Anthropic (Claude Opus + Sonnet)
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY')
-
-# OpenAI (GPT-4 for design/content)
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
-
-# DeepSeek (Code specialist)
 DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY')
-
-# Google Gemini (Multimodal specialist)
 GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY')
-
-# Mistral (Alternative perspective)
-MISTRAL_API_KEY = os.environ.get('MISTRAL_API_KEY')
-
-# Groq (Fast inference)
 GROQ_API_KEY = os.environ.get('GROQ_API_KEY')
 
 # Microsoft 365
@@ -41,9 +30,6 @@ MS365_TENANT_ID = os.environ.get('MS365_TENANT_ID')
 # LinkedIn
 LINKEDIN_ACCESS_TOKEN = os.environ.get('LINKEDIN_ACCESS_TOKEN')
 
-# Twitter/X
-TWITTER_API_KEY = os.environ.get('TWITTER_API_KEY')
-
 # ============================================================================
 # DATABASE
 # ============================================================================
@@ -51,21 +37,19 @@ TWITTER_API_KEY = os.environ.get('TWITTER_API_KEY')
 DATABASE = 'swarm_intelligence.db'
 
 # ============================================================================
-# FORMATTING REQUIREMENTS
+# FORMATTING REQUIREMENTS (Added to every prompt)
 # ============================================================================
 
 FORMATTING_REQUIREMENTS = """
-CRITICAL OUTPUT FORMATTING REQUIREMENTS:
+FORMAT YOUR RESPONSE PROFESSIONALLY:
 
-1. NEVER use markdown symbols (**bold**, *italic*, ###headers) in your final output
-2. For schedules: Use clean tables or structured lists, NOT walls of text
-3. NO consecutive capital letters spanning more than 10 characters
-4. Use proper section breaks (blank lines) between topics
-5. If creating a schedule, present it in a clear, readable format:
-   - Use section headers like "ROTATION PATTERN:" or "TIME OFF SCHEDULE:"
-   - List weeks clearly: "Week 1: Work 7 days" (not **Week 1:** Work 7 days)
-   - Use dash lines (----) to separate sections
-6. Maximum line length: 100 characters (wrap longer content)
+1. Use clear paragraphs, NOT walls of text
+2. Use markdown headers (##) sparingly - only for major sections
+3. Use bullet points for lists of 3+ items
+4. Keep paragraphs under 4 sentences
+5. Use bold (**text**) only for critical emphasis
+6. Break up dense content with whitespace
+Maximum line length: 100 characters (wrap longer content)
 7. For professional consulting outputs, use clean prose without formatting symbols
 
 YOUR OUTPUT WILL BE CHECKED. If it contains excessive markdown, walls of text, or
@@ -83,11 +67,11 @@ DEEPSEEK_TIMEOUT = 120
 GEMINI_TIMEOUT = 120
 
 # ============================================================================
-# MODEL CONFIGURATIONS
+# MODEL CONFIGURATIONS - CRITICAL FIX: Updated Opus to 4.5
 # ============================================================================
 
-CLAUDE_SONNET_MODEL = "claude-sonnet-4-20250514"
-CLAUDE_OPUS_MODEL = "claude-opus-4-20241229"
+CLAUDE_SONNET_MODEL = "claude-sonnet-4-20250514"  # Sonnet 4
+CLAUDE_OPUS_MODEL = "claude-opus-4-5-20251101"    # FIXED: Opus 4.5 (was using non-existent 20241229)
 GPT4_MODEL = "gpt-4-turbo-preview"
 DEEPSEEK_MODEL = "deepseek-chat"
 GEMINI_MODEL = "gemini-1.5-pro"
