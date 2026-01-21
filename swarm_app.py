@@ -148,6 +148,29 @@ try:
 except ImportError:
     print("⚠️ Warning: marketing_initiative module not found")
     MARKETING_INITIATIVE_AVAILABLE = False
+# Import Normative Database (206-COMPANY BENCHMARKING)
+try:
+    from normative_database import get_normative_database
+    NORMATIVE_DB_AVAILABLE = True
+    normative_db = get_normative_database()
+    if normative_db and normative_db.loaded:
+        print(f"✅ Normative Database loaded - {len(normative_db.companies)} companies")
+    else:
+        print("⚠️ Normative Database not loaded - check Excel file location")
+        NORMATIVE_DB_AVAILABLE = False
+except Exception as e:
+    print(f"⚠️ Warning: normative_database module error: {e}")
+    NORMATIVE_DB_AVAILABLE = False
+
+# Import Opportunity Finder (BUSINESS OPPORTUNITY IDENTIFICATION)
+try:
+    from opportunity_finder import get_opportunity_finder
+    OPPORTUNITY_FINDER_AVAILABLE = True
+    opportunity_finder = get_opportunity_finder()
+    print(f"✅ Opportunity Finder loaded - {len(opportunity_finder.opportunity_templates)} opportunities identified")
+except Exception as e:
+    print(f"⚠️ Warning: opportunity_finder module error: {e}")
+    OPPORTUNITY_FINDER_AVAILABLE = False
 
 app = Flask(__name__)
 
@@ -2164,6 +2187,227 @@ def debug_knowledge():
         }
     
     return jsonify(debug_info)
+# ==================== OPPORTUNITIES API ENDPOINTS ====================
+
+@app.route('/api/opportunities/status', methods=['GET'])
+def opportunities_status():
+    """Get status of normative database and opportunity finder"""
+    normative_status = {
+        'available': NORMATIVE_DB_AVAILABLE,
+        'companies_count': len(normative_db.companies) if NORMATIVE_DB_AVAILABLE and normative_db else 0,
+        'questions_count': len(normative_db.questions) if NORMATIVE_DB_AVAILABLE and normative_db else 0,
+        'loaded': normative_db.loaded if NORMATIVE_DB_AVAILABLE and normative_db else False
+    }
+    
+    opportunity_status = {
+        'available': OPPORTUNITY_FINDER_AVAILABLE,
+        'total_opportunities': len(opportunity_finder.opportunity_templates) if OPPORTUNITY_FINDER_AVAILABLE else 0,
+        'capabilities_count': len(opportunity_finder.capabilities) if OPPORTUNITY_FINDER_AVAILABLE else 0
+    }
+    
+    return jsonify({
+        'success': True,
+        'normative_database': normative_status,
+        'opportunity_finder': opportunity_status,
+        'schedules_count': normative_status['companies_count'],
+        'metrics_count': normative_status['questions_count']
+    })
+
+@app.route('/api/opportunities/analyze', methods=['POST'])
+def analyze_schedule_opportunities():
+    """Analyze schedule for improvement opportunities using normative data"""
+    if not OPPORTUNITY_FINDER_AVAILABLE:
+        return jsonify({'error': 'Opportunity Finder not available'}), 503
+    
+    data = request.json
+    schedule_description = data.get('schedule_description', '')
+    
+    if not schedule_description:
+        return jsonify({'error': 'schedule_description required'}), 400
+    
+    try:
+        analysis = {
+            'schedule_type': 'Unknown',
+            'opportunities': []
+        }
+        
+        desc_lower = schedule_description.lower()
+        if 'dupont' in desc_lower:
+            analysis['schedule_type'] = 'DuPont 12-hour rotating'
+        elif '2-2-3' in desc_lower or '223' in desc_lower:
+            analysis['schedule_type'] = '2-2-3 (Panama) 12-hour'
+        elif 'pitman' in desc_lower:
+            analysis['schedule_type'] = 'Pitman 12-hour rotating'
+        elif '12' in desc_lower or 'twelve' in desc_lower:
+            analysis['schedule_type'] = '12-hour shifts'
+        elif '8' in desc_lower or 'eight' in desc_lower:
+            analysis['schedule_type'] = '8-hour shifts'
+        
+        if '8' in desc_lower:
+            analysis['opportunities'].append({
+                'finding': 'Operating 8-hour shifts for 24/7 coverage',
+                'impact': 'Consider 12-hour shifts for 25-40% more time off for employees',
+                'priority': 'High',
+                'estimated_benefit': 'Reduced turnover, improved satisfaction'
+            })
+        
+        if 'rotating' in desc_lower and '12' in desc_lower:
+            analysis['opportunities'].append({
+                'finding': '12-hour rotating schedule detected',
+                'impact': 'Evaluate if fixed shifts could reduce complexity',
+                'priority': 'Medium',
+                'estimated_benefit': 'Simplified scheduling, potential satisfaction boost'
+            })
+        
+        if len(analysis['opportunities']) == 0:
+            analysis['opportunities'].append({
+                'finding': 'Schedule analysis needed',
+                'impact': 'Conduct employee survey to identify specific pain points',
+                'priority': 'Medium',
+                'estimated_benefit': 'Data-driven insights for improvement'
+            })
+        
+        analysis['recommendations'] = [
+            'Conduct employee survey to validate opportunities',
+            'Model financial impact of proposed changes',
+            'Create phased implementation plan'
+        ]
+        
+        return jsonify({
+            'success': True,
+            'analysis': analysis
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/opportunities/compare', methods=['POST'])
+def compare_to_industry_norms():
+    """Compare client metrics to normative database"""
+    if not NORMATIVE_DB_AVAILABLE:
+        return jsonify({'error': 'Normative database not available'}), 503
+    
+    data = request.json
+    current_metrics = data.get('current_metrics', '')
+    
+    if not current_metrics:
+        return jsonify({'error': 'current_metrics required'}), 400
+    
+    try:
+        import re
+        metrics = {}
+        
+        percent_pattern = r'(\d+(?:\.\d+)?)\s*%'
+        text_lower = current_metrics.lower()
+        
+        if 'overtime' in text_lower or 'ot' in text_lower:
+            match = re.search(percent_pattern, current_metrics)
+            if match:
+                metrics['overtime'] = float(match.group(1))
+        
+        if 'turnover' in text_lower:
+            match = re.search(r'turnover.*?(\d+(?:\.\d+)?)\s*%', current_metrics, re.IGNORECASE)
+            if match:
+                metrics['turnover'] = float(match.group(1))
+        
+        if 'coverage' in text_lower:
+            match = re.search(r'coverage.*?(\d+(?:\.\d+)?)\s*%', current_metrics, re.IGNORECASE)
+            if match:
+                metrics['coverage'] = float(match.group(1))
+        
+        comparisons = []
+        
+        benchmarks = {
+            'overtime': {'target': 10, 'good': 5, 'concerning': 15},
+            'turnover': {'target': 15, 'good': 10, 'concerning': 20},
+            'coverage': {'target': 90, 'good': 95, 'concerning': 85}
+        }
+        
+        for metric_name, value in metrics.items():
+            if metric_name in benchmarks:
+                bench = benchmarks[metric_name]
+                
+                if metric_name in ['overtime', 'turnover']:
+                    if value <= bench['good']:
+                        status = '✅ Good'
+                        variance = f"{bench['target'] - value:.1f}% better than target"
+                    elif value <= bench['target']:
+                        status = '⚠️ Acceptable'
+                        variance = f"{value - bench['target']:.1f}% above target"
+                    elif value <= bench['concerning']:
+                        status = '⚠️ Concerning'
+                        variance = f"{value - bench['target']:.1f}% above target"
+                    else:
+                        status = '❌ Critical'
+                        variance = f"{value - bench['target']:.1f}% above target"
+                else:
+                    if value >= bench['good']:
+                        status = '✅ Good'
+                        variance = f"{value - bench['target']:.1f}% above target"
+                    elif value >= bench['target']:
+                        status = '⚠️ Acceptable'
+                        variance = f"{value - bench['target']:.1f}% above target"
+                    elif value >= bench['concerning']:
+                        status = '⚠️ Concerning'
+                        variance = f"{bench['target'] - value:.1f}% below target"
+                    else:
+                        status = '❌ Critical'
+                        variance = f"{bench['target'] - value:.1f}% below target"
+                
+                comparisons.append({
+                    'metric': metric_name.title(),
+                    'your_value': f"{value}%",
+                    'norm_value': f"{bench['target']}%",
+                    'status': status,
+                    'variance': variance
+                })
+        
+        critical = [c for c in comparisons if '❌' in c['status']]
+        concerning = [c for c in comparisons if '⚠️ Concerning' in c['status']]
+        
+        if len(critical) > 0:
+            gap_analysis = f"CRITICAL: {len(critical)} metric(s) need immediate attention."
+        elif len(concerning) > 0:
+            gap_analysis = f"Action needed on {len(concerning)} metric(s). Plan improvements within 6 months."
+        else:
+            gap_analysis = "Overall performance is acceptable. Focus on continuous improvement."
+        
+        return jsonify({
+            'success': True,
+            'comparison': comparisons,
+            'gap_analysis': gap_analysis
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/opportunities/suggest', methods=['GET'])
+def get_improvement_suggestions():
+    """Get general improvement opportunities"""
+    if not OPPORTUNITY_FINDER_AVAILABLE:
+        return jsonify({'error': 'Opportunity Finder not available'}), 503
+    
+    try:
+        top_opportunities = opportunity_finder.get_top_opportunities(limit=5)
+        
+        suggestions = []
+        for opp in top_opportunities:
+            suggestions.append({
+                'title': opp['details']['name'],
+                'description': opp['details']['tagline'],
+                'impact': opp['details']['estimated_revenue'],
+                'difficulty': opp['details']['effort_to_launch']
+            })
+        
+        return jsonify({
+            'success': True,
+            'suggestions': suggestions
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ==================== END OPPORTUNITIES API ENDPOINTS ====================
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
