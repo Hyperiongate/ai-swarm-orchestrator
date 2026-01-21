@@ -1315,9 +1315,9 @@ def orchestrate():
             return jsonify({'error': 'Request text required'}), 400
     
         # ==================== SCHEDULE GENERATION INTERCEPT ====================
-    # CHECK IMMEDIATELY - BEFORE ANY OTHER PROCESSING
-    if SCHEDULE_GENERATOR_AVAILABLE:
-        schedule_type = schedule_gen.identify_schedule_type(user_request)
+        # CHECK IMMEDIATELY - BEFORE ANY OTHER PROCESSING
+        if SCHEDULE_GENERATOR_AVAILABLE:
+            schedule_type = schedule_gen.identify_schedule_type(user_request)
     
         if schedule_type:
             print(f"  📅 SCHEDULE REQUEST DETECTED: {schedule_type}")
@@ -1379,7 +1379,7 @@ def orchestrate():
                 # Fall through to normal AI processing if schedule generation fails
 
     # Process uploaded files
-    file_context = ""
+        file_context = ""
         file_names = []
     
     if uploaded_files:
