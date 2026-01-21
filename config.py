@@ -54,6 +54,7 @@ DATABASE = 'swarm_intelligence.db'
 
 FORMATTING_REQUIREMENTS = """
 CRITICAL OUTPUT FORMATTING REQUIREMENTS:
+
 1. NEVER use markdown symbols (**bold**, *italic*, ###headers) in your final output
 2. For schedules: Use clean tables or structured lists, NOT walls of text
 3. NO consecutive capital letters spanning more than 10 characters
@@ -67,7 +68,6 @@ CRITICAL OUTPUT FORMATTING REQUIREMENTS:
 
 YOUR OUTPUT WILL BE CHECKED. If it contains excessive markdown, walls of text, or
 poor formatting, it will be automatically reformatted, which wastes processing time.
-
 Format your response professionally from the start.
 """
 
@@ -79,5 +79,62 @@ ANTHROPIC_TIMEOUT = 180  # seconds
 OPENAI_TIMEOUT = 120
 DEEPSEEK_TIMEOUT = 120
 GEMINI_TIMEOUT = 120
+
+# ============================================================================
+# MODEL CONFIGURATIONS
+# ============================================================================
+
+CLAUDE_SONNET_MODEL = "claude-sonnet-4-20250514"
+CLAUDE_OPUS_MODEL = "claude-opus-4-20241229"
+GPT4_MODEL = "gpt-4-turbo-preview"
+DEEPSEEK_MODEL = "deepseek-chat"
+GEMINI_MODEL = "gemini-1.5-pro"
+
+# ============================================================================
+# DEFAULT TOKENS
+# ============================================================================
+
+DEFAULT_MAX_TOKENS = 4000
+SONNET_MAX_TOKENS = 4000
+OPUS_MAX_TOKENS = 4000
+
+# ============================================================================
+# ESCALATION THRESHOLDS
+# ============================================================================
+
+CONFIDENCE_THRESHOLD_LOW = 0.7  # Below this = escalate to Opus
+COMPLEXITY_THRESHOLD = 0.8      # Above this = escalate to Opus
+
+# ============================================================================
+# CONSENSUS VALIDATION
+# ============================================================================
+
+CONSENSUS_THRESHOLD = 0.85  # 85% agreement required
+ENABLE_CONSENSUS_BY_DEFAULT = True
+
+# ============================================================================
+# DEEPSEEK CONFIGURATION
+# ============================================================================
+
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+
+# ============================================================================
+# KNOWLEDGE BASE
+# ============================================================================
+
+KNOWLEDGE_BASE_PATHS = [
+    "/mnt/project",
+    "project_files",
+    "./project_files"
+]
+
+# ============================================================================
+# OPTIONAL INTEGRATIONS
+# ============================================================================
+
+MICROSOFT_365_ENABLED = False
+SOCIAL_MEDIA_ENABLED = False
+CALCULATOR_ENABLED = True
+SURVEY_BUILDER_ENABLED = False
 
 # I did no harm and this file is not truncated
