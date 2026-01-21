@@ -377,4 +377,206 @@ def download_file(filename):
     
     return send_file(filepath, as_attachment=True, download_name=filename, mimetype=mimetype)
 
+"""
+EMERGENCY DIAGNOSTIC ROUTE
+Add this temporarily to routes/core.py to diagnose knowledge base issues
+
+ADD THIS ENTIRE BLOCK TO THE BOTTOM OF routes/core.py (before the final comment)
+Then push to GitHub and visit /api/diagnose on your Render URL
+"""
+
+@core_bp.route('/api/diagnose', methods=['GET'])
+def diagnose_system():
+    """
+    Emergency diagnostic endpoint - shows everything about the system state
+    Visit: https://your-app.onrender.com/api/diagnose
+    """
+    from pathlib import Path
+    import sys
+    
+    diagnosis = {
+        'timestamp': datetime.now().isoformat(),
+        '1_environment': {},
+        '2_file_system': {},
+        '3_libraries': {},
+        '4_knowledge_base': {},
+        '5_initialization_attempt': {}
+    }
+    
+    # ============ ENVIRONMENT ============
+    diagnosis['1_environment'] = {
+        'python_version': sys.version,
+        'current_working_directory': os.getcwd(),
+        'is_render': bool(os.getenv('RENDER')),
+        'render_service_name': os.getenv('RENDER_SERVICE_NAME', 'N/A')
+    }
+    
+    # ============ FILE SYSTEM ============
+    # Check all possible locations
+    paths_to_check = [
+        'project_files',
+        './project_files', 
+        '../project_files',
+        '/opt/render/project/src/project_files',
+        '/mnt/project'
+    ]
+    
+    diagnosis['2_file_system']['paths_checked'] = []
+    
+    for path_str in paths_to_check:
+        path = Path(path_str)
+        info = {
+            'path': path_str,
+            'absolute': str(path.absolute()),
+            'exists': path.exists(),
+            'is_directory': path.is_dir() if path.exists() else False
+        }
+        
+        if path.exists() and path.is_dir():
+            try:
+                files = list(path.iterdir())
+                info['file_count'] = len(files)
+                info['files'] = [f.name for f in files]
+            except Exception as e:
+                info['error'] = str(e)
+        
+        diagnosis['2_file_system']['paths_checked'].append(info)
+    
+    # List what's in root directory
+    try:
+        root_items = os.listdir('.')
+        diagnosis['2_file_system']['root_directory'] = sorted([f for f in root_items if not f.startswith('.')])
+    except Exception as e:
+        diagnosis['2_file_system']['root_directory_error'] = str(e)
+    
+    # ============ LIBRARIES ============
+    libs = ['docx', 'openpyxl', 'PyPDF2', 'xlsxwriter']
+    
+    for lib in libs:
+        try:
+            imported = __import__(lib)
+            diagnosis['3_libraries'][lib] = {
+                'status': '✅ INSTALLED',
+                'version': getattr(imported, '__version__', 'unknown'),
+                'location': getattr(imported, '__file__', 'unknown')
+            }
+        except ImportError as e:
+            diagnosis['3_libraries'][lib] = {
+                'status': '❌ MISSING',
+                'error': str(e)
+            }
+    
+    # ============ KNOWLEDGE BASE STATUS ============
+    try:
+        # Get the app module
+        app_module = sys.modules.get('app')
+        
+        if app_module:
+            kb = getattr(app_module, 'knowledge_base', None)
+            
+            if kb:
+                diagnosis['4_knowledge_base'] = {
+                    'instance_exists': True,
+                    'class_name': kb.__class__.__name__,
+                    'project_path': str(kb.project_path),
+                    'project_path_absolute': str(kb.project_path.absolute()),
+                    'project_path_exists': kb.project_path.exists(),
+                    'documents_in_index': len(kb.knowledge_index),
+                    'document_names': list(kb.knowledge_index.keys())
+                }
+                
+                # Check database
+                try:
+                    import sqlite3
+                    db = sqlite3.connect(kb.db_path)
+                    count = db.execute('SELECT COUNT(*) FROM knowledge_documents').fetchone()[0]
+                    db.close()
+                    diagnosis['4_knowledge_base']['documents_in_database'] = count
+                except Exception as db_error:
+                    diagnosis['4_knowledge_base']['database_error'] = str(db_error)
+            else:
+                diagnosis['4_knowledge_base'] = {
+                    'instance_exists': False,
+                    'reason': 'knowledge_base variable is None'
+                }
+        else:
+            diagnosis['4_knowledge_base'] = {
+                'error': 'Could not access app module'
+            }
+    except Exception as e:
+        diagnosis['4_knowledge_base']['error'] = str(e)
+    
+    # ============ TRY TO INITIALIZE ============
+    diagnosis['5_initialization_attempt']['message'] = 'Attempting fresh initialization...'
+    
+    try:
+        # Find the project_files directory
+        found_path = None
+        for path_str in ['project_files', './project_files']:
+            if Path(path_str).exists():
+                found_path = path_str
+                break
+        
+        if found_path:
+            diagnosis['5_initialization_attempt']['found_path'] = found_path
+            
+            # Try to create a fresh instance
+            from knowledge_integration import ProjectKnowledgeBase
+            
+            test_kb = ProjectKnowledgeBase(project_path=found_path)
+            diagnosis['5_initialization_attempt']['test_instance_created'] = True
+            
+            # Try to initialize it
+            try:
+                test_kb.initialize()
+                diagnosis['5_initialization_attempt']['initialization_result'] = {
+                    'success': True,
+                    'documents_indexed': len(test_kb.knowledge_index),
+                    'document_names': list(test_kb.knowledge_index.keys())
+                }
+            except Exception as init_error:
+                diagnosis['5_initialization_attempt']['initialization_result'] = {
+                    'success': False,
+                    'error': str(init_error),
+                    'error_type': type(init_error).__name__
+                }
+        else:
+            diagnosis['5_initialization_attempt']['error'] = 'No project_files directory found'
+    except Exception as e:
+        diagnosis['5_initialization_attempt']['error'] = str(e)
+        import traceback
+        diagnosis['5_initialization_attempt']['traceback'] = traceback.format_exc()
+    
+    # ============ RECOMMENDATIONS ============
+    diagnosis['6_recommendations'] = []
+    
+    # Check if libraries are missing
+    missing_libs = [lib for lib, info in diagnosis['3_libraries'].items() 
+                    if isinstance(info, dict) and info.get('status') == '❌ MISSING']
+    if missing_libs:
+        diagnosis['6_recommendations'].append(
+            f"CRITICAL: Missing libraries: {', '.join(missing_libs)}. Update requirements.txt and redeploy."
+        )
+    
+    # Check if project_files exists
+    project_files_exists = any(
+        p.get('exists') and p.get('path') in ['project_files', './project_files']
+        for p in diagnosis['2_file_system'].get('paths_checked', [])
+    )
+    if not project_files_exists:
+        diagnosis['6_recommendations'].append(
+            "CRITICAL: project_files directory not found on server. Verify it's in your GitHub repo and pushed."
+        )
+    
+    # Check initialization result
+    init_result = diagnosis['5_initialization_attempt'].get('initialization_result', {})
+    if init_result.get('success'):
+        diagnosis['6_recommendations'].append(
+            f"SUCCESS: Test initialization worked! Indexed {init_result.get('documents_indexed')} documents. "
+            f"The issue may be in how app.py initializes the knowledge base."
+        )
+    
+    return jsonify(diagnosis)
+
+# I did no harm and this file is not truncated
 # I did no harm and this file is not truncated
