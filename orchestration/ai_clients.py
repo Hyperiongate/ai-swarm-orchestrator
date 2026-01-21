@@ -5,140 +5,220 @@ Last Updated: January 21, 2026
 
 All AI API calls in one place.
 Clean, simple, no indentation nightmares.
+
+MERGED VERSION: Combines formatting requirements with dict return structure
 """
 
-import requests
+import anthropic
+import openai
 from openai import OpenAI
-from config import (
-    ANTHROPIC_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, 
-    GOOGLE_API_KEY, GROQ_API_KEY, FORMATTING_REQUIREMENTS,
-    ANTHROPIC_TIMEOUT, OPENAI_TIMEOUT, DEEPSEEK_TIMEOUT, GEMINI_TIMEOUT
-)
+import google.generativeai as genai
+import config
 
-# Initialize clients
-openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
-deepseek_client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com") if DEEPSEEK_API_KEY else None
-groq_client = OpenAI(api_key=GROQ_API_KEY, base_url="https://api.groq.com/openai/v1") if GROQ_API_KEY else None
+# Initialize Anthropic client
+anthropic_client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY) if config.ANTHROPIC_API_KEY else None
+
+# Initialize OpenAI client
+openai_client = OpenAI(api_key=config.OPENAI_API_KEY) if config.OPENAI_API_KEY else None
+
+# Initialize DeepSeek client
+deepseek_client = OpenAI(
+    api_key=config.DEEPSEEK_API_KEY,
+    base_url=config.DEEPSEEK_BASE_URL
+) if config.DEEPSEEK_API_KEY else None
+
+# Initialize Google Gemini
+if config.GOOGLE_API_KEY:
+    genai.configure(api_key=config.GOOGLE_API_KEY)
 
 def call_claude_sonnet(prompt, max_tokens=4000):
-    """Call Claude Sonnet with formatting requirements"""
-    if not ANTHROPIC_API_KEY:
-        return "ERROR: Anthropic API key not configured"
+    """
+    Call Claude Sonnet (primary orchestrator)
+    Returns dict with 'content' and 'usage'
+    """
+    if not anthropic_client:
+        return {
+            'content': "ERROR: Anthropic API key not configured",
+            'usage': {'input_tokens': 0, 'output_tokens': 0},
+            'error': True
+        }
     
-    enhanced_prompt = f"{prompt}\n\n{FORMATTING_REQUIREMENTS}"
+    # Add formatting requirements
+    enhanced_prompt = f"{prompt}\n\n{config.FORMATTING_REQUIREMENTS}"
     
     try:
-        response = requests.post(
-            'https://api.anthropic.com/v1/messages',
-            headers={
-                'x-api-key': ANTHROPIC_API_KEY,
-                'anthropic-version': '2023-06-01',
-                'content-type': 'application/json'
-            },
-            json={
-                'model': 'claude-sonnet-4-20250514',
-                'max_tokens': max_tokens,
-                'messages': [{'role': 'user', 'content': enhanced_prompt}]
-            },
-            timeout=ANTHROPIC_TIMEOUT
+        response = anthropic_client.messages.create(
+            model=config.CLAUDE_SONNET_MODEL,
+            max_tokens=max_tokens,
+            messages=[{
+                "role": "user",
+                "content": enhanced_prompt
+            }],
+            timeout=config.ANTHROPIC_TIMEOUT
         )
         
-        if response.status_code == 200:
-            return response.json()['content'][0]['text']
-        else:
-            return f"ERROR: Sonnet API returned {response.status_code}: {response.text}"
-            
-    except requests.exceptions.Timeout:
-        return f"ERROR: Sonnet API timeout after {ANTHROPIC_TIMEOUT} seconds"
+        return {
+            'content': response.content[0].text,
+            'usage': {
+                'input_tokens': response.usage.input_tokens,
+                'output_tokens': response.usage.output_tokens
+            }
+        }
     except Exception as e:
-        return f"ERROR: Sonnet API call failed: {str(e)}"
+        return {
+            'content': f"ERROR: Claude Sonnet call failed: {str(e)}",
+            'usage': {'input_tokens': 0, 'output_tokens': 0},
+            'error': True
+        }
 
 def call_claude_opus(prompt, max_tokens=4000):
-    """Call Claude Opus with formatting requirements"""
-    if not ANTHROPIC_API_KEY:
-        return "ERROR: Anthropic API key not configured"
+    """
+    Call Claude Opus (strategic supervisor)
+    Returns dict with 'content' and 'usage'
+    """
+    if not anthropic_client:
+        return {
+            'content': "ERROR: Anthropic API key not configured",
+            'usage': {'input_tokens': 0, 'output_tokens': 0},
+            'error': True
+        }
     
-    enhanced_prompt = f"{prompt}\n\n{FORMATTING_REQUIREMENTS}"
+    # Add formatting requirements
+    enhanced_prompt = f"{prompt}\n\n{config.FORMATTING_REQUIREMENTS}"
     
     try:
-        response = requests.post(
-            'https://api.anthropic.com/v1/messages',
-            headers={
-                'x-api-key': ANTHROPIC_API_KEY,
-                'anthropic-version': '2023-06-01',
-                'content-type': 'application/json'
-            },
-            json={
-                'model': 'claude-opus-4-20250514',
-                'max_tokens': max_tokens,
-                'messages': [{'role': 'user', 'content': enhanced_prompt}]
-            },
-            timeout=ANTHROPIC_TIMEOUT
+        response = anthropic_client.messages.create(
+            model=config.CLAUDE_OPUS_MODEL,
+            max_tokens=max_tokens,
+            messages=[{
+                "role": "user",
+                "content": enhanced_prompt
+            }],
+            timeout=config.ANTHROPIC_TIMEOUT
         )
         
-        if response.status_code == 200:
-            return response.json()['content'][0]['text']
-        else:
-            return f"ERROR: Opus API returned {response.status_code}: {response.text}"
-            
-    except requests.exceptions.Timeout:
-        return f"ERROR: Opus API timeout after {ANTHROPIC_TIMEOUT} seconds"
+        return {
+            'content': response.content[0].text,
+            'usage': {
+                'input_tokens': response.usage.input_tokens,
+                'output_tokens': response.usage.output_tokens
+            }
+        }
     except Exception as e:
-        return f"ERROR: Opus API call failed: {str(e)}"
+        return {
+            'content': f"ERROR: Claude Opus call failed: {str(e)}",
+            'usage': {'input_tokens': 0, 'output_tokens': 0},
+            'error': True
+        }
 
 def call_gpt4(prompt, max_tokens=4000):
-    """Call GPT-4 (Design & Content Specialist)"""
+    """
+    Call GPT-4 (design specialist)
+    Returns dict with 'content' and 'usage'
+    """
     if not openai_client:
-        return "ERROR: OpenAI API not configured"
+        return {
+            'content': "ERROR: OpenAI API not configured",
+            'usage': {'input_tokens': 0, 'output_tokens': 0},
+            'error': True
+        }
     
     try:
         response = openai_client.chat.completions.create(
-            model="gpt-4-turbo-preview",
-            messages=[{"role": "user", "content": prompt}],
+            model=config.GPT4_MODEL,
+            messages=[{
+                "role": "user",
+                "content": prompt
+            }],
             max_tokens=max_tokens,
-            timeout=OPENAI_TIMEOUT
+            timeout=config.OPENAI_TIMEOUT
         )
-        return response.choices[0].message.content
+        
+        return {
+            'content': response.choices[0].message.content,
+            'usage': {
+                'input_tokens': response.usage.prompt_tokens,
+                'output_tokens': response.usage.completion_tokens
+            }
+        }
     except Exception as e:
-        return f"ERROR: GPT-4 call failed: {str(e)}"
+        return {
+            'content': f"ERROR: GPT-4 call failed: {str(e)}",
+            'usage': {'input_tokens': 0, 'output_tokens': 0},
+            'error': True
+        }
 
 def call_deepseek(prompt, max_tokens=4000):
-    """Call DeepSeek (Code Specialist)"""
+    """
+    Call DeepSeek (code specialist)
+    Returns dict with 'content' and 'usage'
+    """
     if not deepseek_client:
-        return "ERROR: DeepSeek API not configured"
+        return {
+            'content': "ERROR: DeepSeek API not configured",
+            'usage': {'input_tokens': 0, 'output_tokens': 0},
+            'error': True
+        }
     
     try:
         response = deepseek_client.chat.completions.create(
-            model="deepseek-chat",
-            messages=[{"role": "user", "content": prompt}],
+            model=config.DEEPSEEK_MODEL,
+            messages=[{
+                "role": "user",
+                "content": prompt
+            }],
             max_tokens=max_tokens,
-            timeout=DEEPSEEK_TIMEOUT
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        return f"ERROR: DeepSeek call failed: {str(e)}"
-
-def call_gemini(prompt, max_tokens=4000):
-    """Call Google Gemini (Multimodal Specialist)"""
-    if not GOOGLE_API_KEY:
-        return "ERROR: Google API not configured"
-    
-    try:
-        response = requests.post(
-            f'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={GOOGLE_API_KEY}',
-            json={
-                'contents': [{'parts': [{'text': prompt}]}],
-                'generationConfig': {'maxOutputTokens': max_tokens}
-            },
-            timeout=GEMINI_TIMEOUT
+            timeout=config.DEEPSEEK_TIMEOUT
         )
         
-        if response.status_code == 200:
-            return response.json()['candidates'][0]['content']['parts'][0]['text']
-        else:
-            return f"ERROR: Gemini API returned {response.status_code}"
-            
+        return {
+            'content': response.choices[0].message.content,
+            'usage': {
+                'input_tokens': response.usage.prompt_tokens,
+                'output_tokens': response.usage.completion_tokens
+            }
+        }
     except Exception as e:
-        return f"ERROR: Gemini call failed: {str(e)}"
+        return {
+            'content': f"ERROR: DeepSeek call failed: {str(e)}",
+            'usage': {'input_tokens': 0, 'output_tokens': 0},
+            'error': True
+        }
+
+def call_gemini(prompt, max_tokens=4000):
+    """
+    Call Google Gemini (multimodal specialist)
+    Returns dict with 'content' and 'usage'
+    """
+    if not config.GOOGLE_API_KEY:
+        return {
+            'content': "ERROR: Google API not configured",
+            'usage': {'input_tokens': 0, 'output_tokens': 0},
+            'error': True
+        }
+    
+    try:
+        model = genai.GenerativeModel(config.GEMINI_MODEL)
+        
+        response = model.generate_content(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                max_output_tokens=max_tokens,
+            )
+        )
+        
+        return {
+            'content': response.text,
+            'usage': {
+                'input_tokens': 0,  # Gemini doesn't provide token counts easily
+                'output_tokens': 0
+            }
+        }
+    except Exception as e:
+        return {
+            'content': f"ERROR: Gemini call failed: {str(e)}",
+            'usage': {'input_tokens': 0, 'output_tokens': 0},
+            'error': True
+        }
 
 # I did no harm and this file is not truncated
