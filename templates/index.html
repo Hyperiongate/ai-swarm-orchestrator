@@ -775,7 +775,7 @@
         
         // File upload handling
         function handleFileUpload(event) {
-            const files = Array.from(event.target.files);
+            const files = Array.from(event.currentTarget.files);
             uploadedFiles = uploadedFiles.concat(files);
             
             displayFilePreview();
@@ -1083,7 +1083,8 @@
                     
                     // Add download button if document was created
                     let downloadSection = '';
-                    if (data.document_created && data.document_url) {
+                    const hasDocument = data.document_created || (data.document_url && data.document_url !== null);
+                    if (hasDocument && data.document_url) {
                         const docType = (data.document_type || 'docx').toUpperCase();
                         const icon = docType === 'PDF' ? '📄' : docType === 'DOCX' ? '📝' : docType === 'XLSX' ? '📊' : '📄';
                         
