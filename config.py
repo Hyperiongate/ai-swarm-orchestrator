@@ -1,137 +1,142 @@
 """
-AI SWARM ORCHESTRATOR - Main Application (REFACTORED)
-Created: January 18, 2026
+Configuration Module
+Created: January 21, 2026
 Last Updated: January 21, 2026
 
-MAJOR REFACTORING:
-- Broke up 2,500 line monster file into logical modules
-- No more indentation nightmares
-- Easy to find and fix things
-- Each file is ~100-300 lines instead of thousands
+All API keys, database paths, and configuration in one place.
+No more hunting through 2,500 lines of code.
 
-CRITICAL FIX (January 21, 2026):
-- Added app.config lines to make schedule generator available to routes
-- Without these, schedule_generator module loads but routes can't use it
-
-ARCHITECTURE:
-- config.py: All configuration
-- database.py: All database operations  
-- orchestration/: All AI logic
-- routes/: All Flask endpoints
-- app.py (this file): Just imports and runs
-
-AUTHOR: Jim @ Shiftwork Solutions LLC
+FIXED: Removed circular import (was importing from database)
 """
 
-from flask import Flask, render_template, jsonify
-from database import init_db
 import os
 
-# Initialize Flask
-app = Flask(__name__)
+# ============================================================================
+# API KEYS
+# ============================================================================
 
-# Initialize database
-init_db()
+# Anthropic (Claude Opus + Sonnet)
+ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY')
 
-# Initialize knowledge base
-print("🔍 Initializing Project Knowledge Base...")
-knowledge_base = None
-try:
-    from pathlib import Path
-    from knowledge_integration import get_knowledge_base
-    
-    project_paths = ["/mnt/project", "project_files", "./project_files"]
-    found_path = None
-    
-    for path in project_paths:
-        if Path(path).exists():
-            found_path = path
-            file_count = len(list(Path(path).iterdir())) if Path(path).is_dir() else 0
-            print(f"  📁 Found directory: {path} ({file_count} files)")
-            break
-    
-    if not found_path:
-        print(f"  ⚠️ No project files found. Checked: {project_paths}")
-        print(f"  ℹ️  Knowledge base features disabled until files are added")
-    else:
-        knowledge_base = get_knowledge_base()
-        print(f"  ✅ Knowledge Base Ready: {len(knowledge_base.knowledge_index)} documents indexed")
-        
-except Exception as e:
-    print(f"  ⚠️ Warning: Knowledge Base initialization failed: {e}")
-    knowledge_base = None
+# OpenAI (GPT-4 for design/content)
+OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
 
-# Load optional modules
-SCHEDULE_GENERATOR_AVAILABLE = False
-try:
-    from schedule_generator import get_schedule_generator
-    SCHEDULE_GENERATOR_AVAILABLE = True
-    schedule_gen = get_schedule_generator()
-    print("✅ Schedule Generator loaded")
-    
-    # CRITICAL: Make schedule generator available to routes
-    app.config['SCHEDULE_GENERATOR_AVAILABLE'] = SCHEDULE_GENERATOR_AVAILABLE
-    app.config['SCHEDULE_GENERATOR'] = schedule_gen
-    
-except ImportError:
-    print("⚠️ Warning: schedule_generator module not found")
-    app.config['SCHEDULE_GENERATOR_AVAILABLE'] = False
+# DeepSeek (Code specialist)
+DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY')
 
-OUTPUT_FORMATTER_AVAILABLE = False
-try:
-    from output_formatter import get_output_formatter
-    OUTPUT_FORMATTER_AVAILABLE = True
-    print("✅ Output Formatter loaded")
-except ImportError:
-    print("⚠️ Warning: output_formatter module not found")
+# Google Gemini (Multimodal specialist)
+GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY')
 
-# Basic routes
-@app.route('/')
-def index():
-    """Main interface"""
-    return render_template('index.html')
+# Mistral (Alternative perspective)
+MISTRAL_API_KEY = os.environ.get('MISTRAL_API_KEY')
 
-@app.route('/workflow')
-def workflow():
-    """Workflow interface"""
-    return render_template('index_workflow.html')
+# Groq (Fast inference)
+GROQ_API_KEY = os.environ.get('GROQ_API_KEY')
 
-@app.route('/health')
-def health():
-    """Health check"""
-    from config import ANTHROPIC_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, GOOGLE_API_KEY
-    
-    kb_status = 'initialized' if knowledge_base and len(knowledge_base.knowledge_index) > 0 else 'not_initialized'
-    kb_doc_count = len(knowledge_base.knowledge_index) if knowledge_base else 0
-    
-    return jsonify({
-        'status': 'healthy',
-        'orchestrators': {
-            'sonnet': 'configured' if ANTHROPIC_API_KEY else 'missing',
-            'opus': 'configured' if ANTHROPIC_API_KEY else 'missing'
-        },
-        'specialists': {
-            'gpt4': 'configured' if OPENAI_API_KEY else 'missing',
-            'deepseek': 'configured' if DEEPSEEK_API_KEY else 'missing',
-            'gemini': 'configured' if GOOGLE_API_KEY else 'missing'
-        },
-        'knowledge_base': {
-            'status': kb_status,
-            'documents_indexed': kb_doc_count
-        },
-        'schedule_generator': {
-            'status': 'enabled' if SCHEDULE_GENERATOR_AVAILABLE else 'disabled'
-        },
-        'output_formatter': {
-            'status': 'enabled' if OUTPUT_FORMATTER_AVAILABLE else 'disabled'
-        }
-    })
+# Microsoft 365
+MS365_CLIENT_ID = os.environ.get('MS365_CLIENT_ID')
+MS365_CLIENT_SECRET = os.environ.get('MS365_CLIENT_SECRET')
+MS365_TENANT_ID = os.environ.get('MS365_TENANT_ID')
 
-# Register blueprints (CRITICAL - THIS MAKES THE API WORK)
-from routes.core import core_bp
-app.register_blueprint(core_bp)
+# LinkedIn
+LINKEDIN_ACCESS_TOKEN = os.environ.get('LINKEDIN_ACCESS_TOKEN')
 
-if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+# Twitter/X
+TWITTER_API_KEY = os.environ.get('TWITTER_API_KEY')
+
+# ============================================================================
+# DATABASE
+# ============================================================================
+
+DATABASE = 'swarm_intelligence.db'
+
+# ============================================================================
+# FORMATTING REQUIREMENTS
+# ============================================================================
+
+FORMATTING_REQUIREMENTS = """
+CRITICAL OUTPUT FORMATTING REQUIREMENTS:
+
+1. NEVER use markdown symbols (**bold**, *italic*, ###headers) in your final output
+2. For schedules: Use clean tables or structured lists, NOT walls of text
+3. NO consecutive capital letters spanning more than 10 characters
+4. Use proper section breaks (blank lines) between topics
+5. If creating a schedule, present it in a clear, readable format:
+   - Use section headers like "ROTATION PATTERN:" or "TIME OFF SCHEDULE:"
+   - List weeks clearly: "Week 1: Work 7 days" (not **Week 1:** Work 7 days)
+   - Use dash lines (----) to separate sections
+6. Maximum line length: 100 characters (wrap longer content)
+7. For professional consulting outputs, use clean prose without formatting symbols
+
+YOUR OUTPUT WILL BE CHECKED. If it contains excessive markdown, walls of text, or
+poor formatting, it will be automatically reformatted, which wastes processing time.
+Format your response professionally from the start.
+"""
+
+# ============================================================================
+# API TIMEOUTS
+# ============================================================================
+
+ANTHROPIC_TIMEOUT = 180  # seconds
+OPENAI_TIMEOUT = 120
+DEEPSEEK_TIMEOUT = 120
+GEMINI_TIMEOUT = 120
+
+# ============================================================================
+# MODEL CONFIGURATIONS
+# ============================================================================
+
+CLAUDE_SONNET_MODEL = "claude-sonnet-4-20250514"
+CLAUDE_OPUS_MODEL = "claude-opus-4-20241229"
+GPT4_MODEL = "gpt-4-turbo-preview"
+DEEPSEEK_MODEL = "deepseek-chat"
+GEMINI_MODEL = "gemini-1.5-pro"
+
+# ============================================================================
+# DEFAULT TOKENS
+# ============================================================================
+
+DEFAULT_MAX_TOKENS = 4000
+SONNET_MAX_TOKENS = 4000
+OPUS_MAX_TOKENS = 4000
+
+# ============================================================================
+# ESCALATION THRESHOLDS
+# ============================================================================
+
+CONFIDENCE_THRESHOLD_LOW = 0.7  # Below this = escalate to Opus
+COMPLEXITY_THRESHOLD = 0.8      # Above this = escalate to Opus
+
+# ============================================================================
+# CONSENSUS VALIDATION
+# ============================================================================
+
+CONSENSUS_THRESHOLD = 0.85  # 85% agreement required
+ENABLE_CONSENSUS_BY_DEFAULT = True
+
+# ============================================================================
+# DEEPSEEK CONFIGURATION
+# ============================================================================
+
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+
+# ============================================================================
+# KNOWLEDGE BASE
+# ============================================================================
+
+KNOWLEDGE_BASE_PATHS = [
+    "/mnt/project",
+    "project_files",
+    "./project_files"
+]
+
+# ============================================================================
+# OPTIONAL INTEGRATIONS
+# ============================================================================
+
+MICROSOFT_365_ENABLED = False
+SOCIAL_MEDIA_ENABLED = False
+CALCULATOR_ENABLED = True
+SURVEY_BUILDER_ENABLED = False
 
 # I did no harm and this file is not truncated
