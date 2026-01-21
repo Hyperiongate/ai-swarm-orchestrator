@@ -1,10 +1,12 @@
 """
 Task Analysis Module
 Created: January 21, 2026
-Last Updated: January 21, 2026
+Last Updated: January 21, 2026 - FIXED: Made learning_records table optional
 
 Sonnet analyzes tasks, Opus handles complex cases.
 Clean separation of concerns.
+
+CRITICAL FIX: Wrapped get_learning_context() in try-catch to handle missing table gracefully
 """
 
 import json
@@ -14,31 +16,46 @@ from database import get_db
 
 def get_learning_context():
     """Retrieve learning patterns to inform orchestration decisions"""
-    db = get_db()
-    
-    patterns = db.execute('''
-        SELECT pattern_type, success_rate, times_applied, pattern_data
-        FROM learning_records
-        WHERE times_applied >= 2
-        ORDER BY success_rate DESC
-        LIMIT 10
-    ''').fetchall()
-    
-    db.close()
-    
-    if not patterns:
-        return ""
+    try:
+        db = get_db()
         
-    context = "\n\n=== LEARNING FROM PAST TASKS ===\n"
-    context += "Your system has learned these patterns:\n\n"
-    
-    for p in patterns:
-        pattern_data = json.loads(p['pattern_data'])
-        context += f"- {p['pattern_type']}: {p['success_rate']*100:.0f}% success rate ({p['times_applied']} times)\n"
-        if 'improvement_areas' in pattern_data and pattern_data['improvement_areas']:
-            context += f"  Common issues: {', '.join(pattern_data['improvement_areas'])}\n"
-    
-    return context
+        # Check if table exists first
+        table_check = db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='learning_records'"
+        ).fetchone()
+        
+        if not table_check:
+            # Table doesn't exist yet - return empty context
+            db.close()
+            return ""
+        
+        patterns = db.execute('''
+            SELECT pattern_type, success_rate, times_applied, pattern_data
+            FROM learning_records
+            WHERE times_applied >= 2
+            ORDER BY success_rate DESC
+            LIMIT 10
+        ''').fetchall()
+        
+        db.close()
+        
+        if not patterns:
+            return ""
+            
+        context = "\n\n=== LEARNING FROM PAST TASKS ===\n"
+        context += "Your system has learned these patterns:\n\n"
+        
+        for p in patterns:
+            pattern_data = json.loads(p['pattern_data'])
+            context += f"- {p['pattern_type']}: {p['success_rate']*100:.0f}% success rate ({p['times_applied']} times)\n"
+            if 'improvement_areas' in pattern_data and pattern_data['improvement_areas']:
+                context += f"  Common issues: {', '.join(pattern_data['improvement_areas'])}\n"
+        
+        return context
+    except Exception as e:
+        # If anything goes wrong with learning, just return empty context
+        print(f"⚠️ Learning context unavailable: {e}")
+        return ""
 
 def analyze_task_with_sonnet(user_request, knowledge_base=None):
     """
