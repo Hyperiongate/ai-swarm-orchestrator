@@ -501,6 +501,9 @@
                 <button class="mode-btn" onclick="switchMode('marketing')" id="marketingModeBtn">
                     📢 Marketing
                 </button>
+                <button class="mode-btn" onclick="switchMode('opportunities')" id="opportunitiesModeBtn">
+                    🎯 Opportunities
+                </button>
             </div>
         </div>
         
@@ -616,7 +619,28 @@
                         📤 Export Data
                     </button>
                 </div>
-                
+                <!-- Opportunities Panel (only in opportunities mode) -->
+                <div class="opportunities-info" id="opportunitiesInfo" style="display: none;">
+                    <h3 style="margin-bottom: 10px;">🎯 Opportunity Finder</h3>
+                    
+                    <div style="font-size: 12px; margin-bottom: 15px;">
+                        <div style="font-weight: 600; margin-bottom: 5px;">Database Status:</div>
+                        <div id="normativeStatus" style="padding: 10px; background: #f0f0f0; border-radius: 6px;">
+                            Loading...
+                        </div>
+                    </div>
+                    
+                    <h4 style="font-size: 14px; margin-bottom: 8px;">Quick Analysis</h4>
+                    <button onclick="analyzeScheduleOpportunities()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer;">
+                        📊 Analyze Current Schedule
+                    </button>
+                    <button onclick="compareToNorms()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #764ba2; color: white; border: none; border-radius: 6px; cursor: pointer;">
+                        📈 Compare to Industry
+                    </button>
+                    <button onclick="findImprovements()" style="width: 100%; padding: 8px; background: #0077b5; color: white; border: none; border-radius: 6px; cursor: pointer;">
+                        💡 Find Improvements
+                    </button>
+                </div>
                 <!-- Quick Actions -->
                 <h3 style="margin-top: 20px;">Quick Actions</h3>
                 <ul class="quick-actions" id="quickActions">
@@ -794,12 +818,14 @@
             document.getElementById('calculatorModeBtn').classList.toggle('active', mode === 'calculator');
             document.getElementById('surveyModeBtn').classList.toggle('active', mode === 'survey');
             document.getElementById('marketingModeBtn').classList.toggle('active', mode === 'marketing');
+            document.getElementById('opportunitiesModeBtn').classList.toggle('active', mode === 'opportunities');
             
             // Show/hide panels
             document.getElementById('projectInfo').style.display = mode === 'project' ? 'block' : 'none';
             document.getElementById('calculatorInfo').style.display = mode === 'calculator' ? 'block' : 'none';
             document.getElementById('surveyInfo').style.display = mode === 'survey' ? 'block' : 'none';
             document.getElementById('marketingInfo').style.display = mode === 'marketing' ? 'block' : 'none';
+            document.getElementById('opportunitiesInfo').style.display = mode === 'opportunities' ? 'block' : 'none';
             
             // Load data for specific modes
             if (mode === 'project') {
@@ -810,8 +836,9 @@
                 loadQuestionBank();
             } else if (mode === 'marketing') {
                 loadMarketingStatus();
+            } else if (mode === 'opportunities') {
+                loadNormativeStatus();
             }
-            
             // Update quick actions
             updateQuickActions();
             
@@ -840,14 +867,21 @@
                     <li onclick="quickAction('Compare DuPont vs 2-2-3 schedules')">⚖️ Compare Schedules</li>
                     <li onclick="quickAction('Write a LinkedIn post about shift work')">💼 LinkedIn Post</li>
                 `;
-            } else {
-                actions.innerHTML = `
-                    <li onclick="quickAction('data collection')">📋 Data Collection Doc</li>
-                    <li onclick="quickAction('proposal')">📄 Create Proposal</li>
-                    <li onclick="quickAction('analyze files')">📊 Analyze Files</li>
-                    <li onclick="quickAction('linkedin post')">💼 LinkedIn Post</li>
-                `;
-            }
+            } else if (currentMode === 'opportunities') {
+            actions.innerHTML = `
+                <li onclick="quickAction('Analyze my 12-hour DuPont schedule')">📊 Quick Analysis</li>
+                <li onclick="quickAction('Compare my metrics to norms')">📈 Industry Comparison</li>
+                <li onclick="quickAction('Find cost reduction opportunities')">💰 Cost Savings</li>
+                <li onclick="quickAction('Evaluate schedule alternatives')">🔄 Alternative Schedules</li>
+            `;
+        } else {
+            actions.innerHTML = `
+                <li onclick="quickAction('data collection')">📋 Data Collection Doc</li>
+                <li onclick="quickAction('proposal')">📄 Create Proposal</li>
+                <li onclick="quickAction('analyze files')">📊 Analyze Files</li>
+                <li onclick="quickAction('linkedin post')">💼 LinkedIn Post</li>
+            `;
+        }
         }
         
         function quickAction(action) {
@@ -1794,6 +1828,157 @@ Use the Export function to download full data for detailed analysis.
             loadStats();
             loadDocuments();
         }, 30000);
+
+// ==================== OPPORTUNITIES FUNCTIONS ====================
+        
+        function loadNormativeStatus() {
+            fetch('/api/opportunities/status')
+                .then(r => r.json())
+                .then(data => {
+                    const statusDiv = document.getElementById('normativeStatus');
+                    if (data.success) {
+                        statusDiv.innerHTML = `
+                            <div style="font-size: 11px;">
+                                ✅ ${data.schedules_count || 0} companies<br>
+                                ✅ ${data.metrics_count || 0} metrics<br>
+                                Ready for analysis
+                            </div>
+                        `;
+                    } else {
+                        statusDiv.innerHTML = '<div style="font-size: 11px; color: #d32f2f;">⚠️ Database loading...</div>';
+                    }
+                })
+                .catch(err => {
+                    document.getElementById('normativeStatus').innerHTML = 
+                        '<div style="font-size: 11px; color: #d32f2f;">⚠️ Database loading...</div>';
+                });
+        }
+        
+        function analyzeScheduleOpportunities() {
+            const scheduleInfo = prompt('Describe your current schedule (e.g., "12-hour rotating DuPont, 4 crews, 24/7"):');
+            if (!scheduleInfo) return;
+            
+            addMessage('user', `Analyze opportunities for: ${scheduleInfo}`);
+            
+            const loading = document.getElementById('loadingIndicator');
+            loading.classList.add('active');
+            
+            fetch('/api/opportunities/analyze', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ schedule_description: scheduleInfo })
+            })
+            .then(r => r.json())
+            .then(data => {
+                loading.classList.remove('active');
+                
+                if (data.success) {
+                    let response = `🎯 OPPORTUNITY ANALYSIS\n\n`;
+                    response += `Current Schedule: ${data.analysis.schedule_type}\n\n`;
+                    response += `📊 KEY FINDINGS:\n`;
+                    data.analysis.opportunities.forEach(opp => {
+                        response += `\n• ${opp.finding}\n`;
+                        response += `  Impact: ${opp.impact}\n`;
+                        response += `  Priority: ${opp.priority}\n`;
+                    });
+                    
+                    if (data.analysis.recommendations) {
+                        response += `\n💡 RECOMMENDATIONS:\n`;
+                        data.analysis.recommendations.forEach(rec => {
+                            response += `\n• ${rec}\n`;
+                        });
+                    }
+                    
+                    addMessage('assistant', response, null, 'opportunities');
+                } else {
+                    addMessage('assistant', `❌ Error: ${data.error}`);
+                }
+            })
+            .catch(err => {
+                loading.classList.remove('active');
+                addMessage('assistant', `❌ Error: ${err.message}`);
+            });
+        }
+        
+        function compareToNorms() {
+            const metrics = prompt('Enter your current metrics (e.g., "15% turnover, 12% overtime, 85% coverage"):');
+            if (!metrics) return;
+            
+            addMessage('user', `Compare to industry norms: ${metrics}`);
+            
+            const loading = document.getElementById('loadingIndicator');
+            loading.classList.add('active');
+            
+            fetch('/api/opportunities/compare', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ current_metrics: metrics })
+            })
+            .then(r => r.json())
+            .then(data => {
+                loading.classList.remove('active');
+                
+                if (data.success) {
+                    let response = `📈 INDUSTRY COMPARISON\n\n`;
+                    response += `Your Performance vs Industry Norms:\n\n`;
+                    
+                    data.comparison.forEach(item => {
+                        response += `${item.metric}:\n`;
+                        response += `  You: ${item.your_value}\n`;
+                        response += `  Industry: ${item.norm_value}\n`;
+                        response += `  Status: ${item.status} (${item.variance})\n\n`;
+                    });
+                    
+                    if (data.gap_analysis) {
+                        response += `🎯 GAP ANALYSIS:\n${data.gap_analysis}\n`;
+                    }
+                    
+                    addMessage('assistant', response, null, 'opportunities');
+                } else {
+                    addMessage('assistant', `❌ Error: ${data.error}`);
+                }
+            })
+            .catch(err => {
+                loading.classList.remove('active');
+                addMessage('assistant', `❌ Error: ${err.message}`);
+            });
+        }
+        
+        function findImprovements() {
+            addMessage('user', 'Find improvement opportunities');
+            
+            const loading = document.getElementById('loadingIndicator');
+            loading.classList.add('active');
+            
+            fetch('/api/opportunities/suggest')
+                .then(r => r.json())
+                .then(data => {
+                    loading.classList.remove('active');
+                    
+                    if (data.success) {
+                        let response = `💡 IMPROVEMENT OPPORTUNITIES\n\n`;
+                        response += `Top Recommendations:\n\n`;
+                        
+                        data.suggestions.forEach((sugg, idx) => {
+                            response += `${idx + 1}. ${sugg.title}\n`;
+                            response += `   ${sugg.description}\n`;
+                            response += `   Expected Impact: ${sugg.impact}\n`;
+                            response += `   Difficulty: ${sugg.difficulty}\n\n`;
+                        });
+                        
+                        addMessage('assistant', response, null, 'opportunities');
+                    } else {
+                        addMessage('assistant', `❌ Error: ${data.error}`);
+                    }
+                })
+                .catch(err => {
+                    loading.classList.remove('active');
+                    addMessage('assistant', `❌ Error: ${err.message}`);
+                });
+        }
+        
+        // ==================== END OPPORTUNITIES FUNCTIONS ====================
+        
     </script>
 </body>
 </html>
