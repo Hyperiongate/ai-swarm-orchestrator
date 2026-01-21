@@ -1,10 +1,9 @@
 """
 Core Routes
 Created: January 21, 2026
-Last Updated: January 21, 2026 - Added comprehensive error handling
+Last Updated: January 21, 2026 - FIXED: Pass knowledge_base to orchestration functions
 
-Main orchestration endpoint and core API routes.
-CRITICAL FIX: Wrapped everything in try-except to prevent 500 errors
+CRITICAL FIX: analyze_task_with_sonnet() needs knowledge_base parameter
 """
 
 from flask import Blueprint, request, jsonify, send_file, current_app
@@ -25,7 +24,7 @@ core_bp = Blueprint('core', __name__)
 @core_bp.route('/api/orchestrate', methods=['POST'])
 def orchestrate():
     """
-    Main orchestration endpoint with comprehensive error handling
+    Main orchestration endpoint with knowledge base integration
     """
     try:
         # Parse request
@@ -44,6 +43,11 @@ def orchestrate():
         
         overall_start = time.time()
         
+        # Get knowledge base from app
+        import sys
+        app_module = sys.modules.get('app')
+        knowledge_base = getattr(app_module, 'knowledge_base', None) if app_module else None
+        
         # Create task in database
         db = get_db()
         cursor = db.execute(
@@ -54,7 +58,6 @@ def orchestrate():
         db.commit()
         
         # ==================== SCHEDULE GENERATOR INTERCEPT ====================
-        # Check if this is a schedule request - bypass AI if so
         schedule_keywords = ['dupont', 'panama', 'pitman', 'southern swing', '2-2-3', '2-3-2', 
                             'create a schedule', 'generate a schedule', 'make a schedule']
         
@@ -66,11 +69,9 @@ def orchestrate():
                 schedule_type = schedule_gen.identify_schedule_type(user_request)
                 
                 if schedule_type:
-                    # Generate the schedule
                     schedule_file = schedule_gen.create_schedule(schedule_type)
                     
                     if schedule_file and os.path.exists(schedule_file):
-                        # Return download link
                         filename = os.path.basename(schedule_file)
                         
                         db.execute(
@@ -90,23 +91,27 @@ def orchestrate():
                             'orchestrator': 'schedule_generator'
                         })
             except Exception as schedule_error:
-                # If schedule generation fails, continue with regular AI processing
                 print(f"Schedule generation failed: {schedule_error}")
         
         # ==================== REGULAR AI ORCHESTRATION ====================
         try:
-            # Step 1: Analyze with Sonnet
-            analysis = analyze_task_with_sonnet(user_request)
+            # Step 1: Analyze with Sonnet - PASS KNOWLEDGE_BASE!
+            analysis = analyze_task_with_sonnet(user_request, knowledge_base=knowledge_base)
             
             orchestrator = analysis.get('orchestrator', 'sonnet')
-            specialists_needed = analysis.get('specialists', [])
+            specialists_needed = analysis.get('specialists_needed', [])
             confidence = analysis.get('confidence', 0.5)
+            escalate = analysis.get('escalate_to_opus', False)
             
             # Step 2: Escalate to Opus if needed
-            if orchestrator == "opus":
-                opus_result = handle_with_opus(user_request)
-                actual_output = opus_result.get('output')
+            if escalate or orchestrator == "opus":
+                opus_result = handle_with_opus(user_request, analysis, knowledge_base=knowledge_base)
+                actual_output = opus_result.get('strategic_analysis', 'Task analyzed by Opus')
                 orchestrator = 'opus'
+                
+                # Use specialist assignments from Opus
+                if opus_result.get('specialist_assignments'):
+                    specialists_needed = [s.get('ai') for s in opus_result.get('specialist_assignments', [])]
             else:
                 actual_output = None
             
@@ -116,7 +121,7 @@ def orchestrate():
             if specialists_needed:
                 for specialist_info in specialists_needed:
                     if isinstance(specialist_info, dict):
-                        specialist = specialist_info.get('specialist')
+                        specialist = specialist_info.get('specialist') or specialist_info.get('ai')
                         specialist_task = specialist_info.get('task', user_request)
                     else:
                         specialist = specialist_info
@@ -125,7 +130,7 @@ def orchestrate():
                     result = execute_specialist_task(specialist, specialist_task)
                     specialist_results.append(result)
                     
-                    if not actual_output:
+                    if not actual_output and result.get('output'):
                         actual_output = result.get('output')
             else:
                 # No specialists - use orchestrator directly
@@ -144,7 +149,6 @@ def orchestrate():
                     consensus_result = validate_with_consensus(actual_output)
                 except Exception as consensus_error:
                     print(f"Consensus validation failed: {consensus_error}")
-                    consensus_result = None
             
             total_time = time.time() - overall_start
             
@@ -164,11 +168,15 @@ def orchestrate():
                 'orchestrator': orchestrator,
                 'specialists_used': [s.get('specialist') for s in specialist_results] if specialist_results else [],
                 'consensus': consensus_result,
-                'execution_time': total_time
+                'execution_time': total_time,
+                'knowledge_applied': analysis.get('knowledge_applied', False)
             })
             
         except Exception as orchestration_error:
-            # Orchestration failed - return error but don't crash
+            import traceback
+            error_trace = traceback.format_exc()
+            print(f"Orchestration error: {error_trace}")
+            
             db.execute(
                 '''UPDATE tasks SET status = ? WHERE id = ?''',
                 ('failed', task_id)
@@ -183,15 +191,13 @@ def orchestrate():
             }), 500
             
     except Exception as e:
-        # Top-level error - something went very wrong
         import traceback
         error_trace = traceback.format_exc()
-        print(f"CRITICAL ERROR in orchestrate: {error_trace}")
+        print(f"CRITICAL ERROR: {error_trace}")
         
         return jsonify({
             'success': False,
-            'error': f'Server error: {str(e)}',
-            'details': 'Check server logs for full traceback'
+            'error': f'Server error: {str(e)}'
         }), 500
 
 
