@@ -1312,9 +1312,9 @@ def orchestrate():
         uploaded_files = request.files.getlist('files')
     
     if not user_request:
-    return jsonify({'error': 'Request text required'}), 400
-
-# ==================== SCHEDULE GENERATION INTERCEPT ====================
+        return jsonify({'error': 'Request text required'}), 400
+    
+    # ==================== SCHEDULE GENERATION INTERCEPT ====================
 # CHECK IMMEDIATELY - BEFORE ANY OTHER PROCESSING
 if SCHEDULE_GENERATOR_AVAILABLE:
     schedule_type = schedule_gen.identify_schedule_type(user_request)
