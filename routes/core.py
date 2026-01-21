@@ -1,9 +1,9 @@
 """
 Core Routes
 Created: January 21, 2026
-Last Updated: January 21, 2026 - FIXED: Pass knowledge_base to orchestration functions
+Last Updated: January 21, 2026 - Added missing /api/documents and /api/learning/stats endpoints
 
-CRITICAL FIX: analyze_task_with_sonnet() needs knowledge_base parameter
+ADDED: Two missing endpoints that frontend was calling
 """
 
 from flask import Blueprint, request, jsonify, send_file, current_app
@@ -252,6 +252,86 @@ def get_stats():
             'total_tasks': total_tasks,
             'completed_tasks': completed_tasks,
             'success_rate': (completed_tasks / total_tasks * 100) if total_tasks > 0 else 0
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@core_bp.route('/api/documents', methods=['GET'])
+def get_documents():
+    """Get knowledge base documents list"""
+    try:
+        import sys
+        app_module = sys.modules.get('app')
+        knowledge_base = getattr(app_module, 'knowledge_base', None) if app_module else None
+        
+        if not knowledge_base:
+            return jsonify({
+                'documents': [],
+                'count': 0,
+                'status': 'knowledge_base_not_initialized'
+            })
+        
+        # Get list of documents from knowledge base
+        documents = []
+        for filename, doc_data in knowledge_base.knowledge_index.items():
+            documents.append({
+                'filename': filename,
+                'title': doc_data.get('title', filename),
+                'word_count': doc_data.get('word_count', 0),
+                'category': doc_data.get('category', 'general')
+            })
+        
+        return jsonify({
+            'documents': documents,
+            'count': len(documents),
+            'status': 'available'
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@core_bp.route('/api/learning/stats', methods=['GET'])
+def get_learning_stats():
+    """Get learning system statistics"""
+    try:
+        db = get_db()
+        
+        # Check if learning_records table exists
+        table_check = db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='learning_records'"
+        ).fetchone()
+        
+        if not table_check:
+            db.close()
+            return jsonify({
+                'patterns': [],
+                'total_patterns': 0,
+                'status': 'learning_not_initialized'
+            })
+        
+        # Get learning patterns
+        patterns = db.execute('''
+            SELECT pattern_type, success_rate, times_applied, pattern_data
+            FROM learning_records
+            ORDER BY success_rate DESC
+            LIMIT 10
+        ''').fetchall()
+        
+        db.close()
+        
+        pattern_list = []
+        for p in patterns:
+            pattern_list.append({
+                'type': p['pattern_type'],
+                'success_rate': p['success_rate'],
+                'times_applied': p['times_applied']
+            })
+        
+        return jsonify({
+            'patterns': pattern_list,
+            'total_patterns': len(pattern_list),
+            'status': 'available'
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
