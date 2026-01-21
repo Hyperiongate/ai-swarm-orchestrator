@@ -1,13 +1,15 @@
 """
 Core Routes
 Created: January 21, 2026
-Last Updated: January 21, 2026 - Added schedule intercept, file upload, download endpoint
+Last Updated: January 21, 2026 - FIXED: Use current_app.config for schedule generator
 
 Main orchestration endpoint and core API routes.
 NO MORE 500+ LINE FUNCTIONS. Clean and manageable.
+
+CRITICAL FIX: Uses current_app.config to access schedule generator (not direct import)
 """
 
-from flask import Blueprint, request, jsonify, send_file
+from flask import Blueprint, request, jsonify, send_file, current_app
 import time
 import json
 import os
@@ -50,60 +52,63 @@ def orchestrate():
     file_names = []
     
     if request.files:
-        from PyPDF2 import PdfReader
-        from docx import Document
-        import openpyxl
-        
-        files = request.files.getlist('files')
-        
-        for file in files:
-            filename = file.filename
-            file_names.append(filename)
+        try:
+            from PyPDF2 import PdfReader
+            from docx import Document
+            import openpyxl
             
-            try:
-                if filename.endswith('.pdf'):
-                    # Extract PDF text
-                    pdf_reader = PdfReader(file.stream)
-                    text = ""
-                    for page in pdf_reader.pages:
-                        text += page.extract_text()
-                    file_context += f"\n\n=== FILE: {filename} ===\n{text[:2000]}\n"
-                    
-                elif filename.endswith('.docx'):
-                    # Extract Word document text
-                    doc = Document(file.stream)
-                    text = "\n".join([para.text for para in doc.paragraphs])
-                    file_context += f"\n\n=== FILE: {filename} ===\n{text[:2000]}\n"
-                    
-                elif filename.endswith('.xlsx'):
-                    # Extract Excel data
-                    wb = openpyxl.load_workbook(file.stream)
-                    sheet = wb.active
-                    data = []
-                    for row in sheet.iter_rows(values_only=True):
-                        data.append(str(row))
-                    file_context += f"\n\n=== FILE: {filename} ===\n" + "\n".join(data[:50]) + "\n"
-                    
-                elif filename.endswith('.txt') or filename.endswith('.csv'):
-                    # Extract text files
-                    text = file.stream.read().decode('utf-8', errors='ignore')
-                    file_context += f"\n\n=== FILE: {filename} ===\n{text[:2000]}\n"
-                    
-            except Exception as e:
-                print(f"Error processing {filename}: {e}")
-                file_context += f"\n\n=== FILE: {filename} ===\n[Error reading file: {str(e)}]\n"
-        
-        # Add file context to user request
-        if file_context:
-            user_request = f"{user_request}\n\n{file_context}"
+            files = request.files.getlist('files')
+            
+            for file in files:
+                filename = file.filename
+                file_names.append(filename)
+                
+                try:
+                    if filename.endswith('.pdf'):
+                        # Extract PDF text
+                        pdf_reader = PdfReader(file.stream)
+                        text = ""
+                        for page in pdf_reader.pages:
+                            text += page.extract_text()
+                        file_context += f"\n\n=== FILE: {filename} ===\n{text[:2000]}\n"
+                        
+                    elif filename.endswith('.docx'):
+                        # Extract Word document text
+                        doc = Document(file.stream)
+                        text = "\n".join([para.text for para in doc.paragraphs])
+                        file_context += f"\n\n=== FILE: {filename} ===\n{text[:2000]}\n"
+                        
+                    elif filename.endswith('.xlsx'):
+                        # Extract Excel data
+                        wb = openpyxl.load_workbook(file.stream)
+                        sheet = wb.active
+                        data = []
+                        for row in sheet.iter_rows(values_only=True):
+                            data.append(str(row))
+                        file_context += f"\n\n=== FILE: {filename} ===\n" + "\n".join(data[:50]) + "\n"
+                        
+                    elif filename.endswith('.txt') or filename.endswith('.csv'):
+                        # Extract text files
+                        text = file.stream.read().decode('utf-8', errors='ignore')
+                        file_context += f"\n\n=== FILE: {filename} ===\n{text[:2000]}\n"
+                        
+                except Exception as e:
+                    print(f"Error processing {filename}: {e}")
+                    file_context += f"\n\n=== FILE: {filename} ===\n[Error reading file: {str(e)}]\n"
+            
+            # Add file context to user request
+            if file_context:
+                user_request = f"{user_request}\n\n{file_context}"
+        except ImportError:
+            print("⚠️ File processing libraries not available")
     
     # ==================== SCHEDULE GENERATION INTERCEPT ====================
     # CHECK IMMEDIATELY - BEFORE ANY AI PROCESSING
     # If this is a schedule request, generate Excel directly and bypass AI
     
-    from app import SCHEDULE_GENERATOR_AVAILABLE, schedule_gen
-    
-    if SCHEDULE_GENERATOR_AVAILABLE:
+    # CRITICAL: Use current_app.config (not direct import)
+    if current_app.config.get('SCHEDULE_GENERATOR_AVAILABLE'):
+        schedule_gen = current_app.config.get('SCHEDULE_GENERATOR')
         schedule_type = schedule_gen.identify_schedule_type(user_request)
         
         if schedule_type:
@@ -165,6 +170,8 @@ def orchestrate():
                 
             except Exception as e:
                 print(f"  ❌ Schedule generation error: {e}")
+                import traceback
+                traceback.print_exc()
                 # Fall through to normal AI processing if schedule generation fails
     
     # ==================== NORMAL AI ORCHESTRATION ====================
@@ -213,8 +220,8 @@ def orchestrate():
                 specialist_results.append(result)
                 
                 db.execute(
-                    '''INSERT INTO specialist_assignments 
-                       (task_id, specialist_name, specialist_role, output, execution_time_seconds, success)
+                    '''INSERT INTO specialist_calls 
+                       (task_id, specialist_name, specialist_role, output, duration_seconds, success)
                        VALUES (?, ?, ?, ?, ?, ?)''',
                     (task_id, specialist, result.get('specialist'), 
                      result.get('output'), result.get('execution_time'), result.get('success'))
@@ -227,9 +234,11 @@ def orchestrate():
             # No specialists needed - orchestrator handles it directly
             from orchestration.ai_clients import call_claude_opus, call_claude_sonnet
             if orchestrator == "opus":
-                actual_output = call_claude_opus(f"Complete this request:\n\n{user_request}")
+                opus_response = call_claude_opus(f"Complete this request:\n\n{user_request}")
+                actual_output = opus_response.get('content') if isinstance(opus_response, dict) else opus_response
             else:
-                actual_output = call_claude_sonnet(f"Complete this request:\n\n{user_request}")
+                sonnet_response = call_claude_sonnet(f"Complete this request:\n\n{user_request}")
+                actual_output = sonnet_response.get('content') if isinstance(sonnet_response, dict) else sonnet_response
             
             specialist_results.append({
                 "specialist": orchestrator,
@@ -304,7 +313,7 @@ def get_task_detail(task_id):
     db = get_db()
     
     task = db.execute('SELECT * FROM tasks WHERE id = ?', (task_id,)).fetchone()
-    specialists = db.execute('SELECT * FROM specialist_assignments WHERE task_id = ?', (task_id,)).fetchall()
+    specialists = db.execute('SELECT * FROM specialist_calls WHERE task_id = ?', (task_id,)).fetchall()
     consensus = db.execute('SELECT * FROM consensus_validations WHERE task_id = ?', (task_id,)).fetchone()
     escalation = db.execute('SELECT * FROM escalations WHERE task_id = ?', (task_id,)).fetchone()
     
@@ -329,7 +338,7 @@ def get_stats():
     
     specialist_usage = db.execute('''
         SELECT specialist_name, COUNT(*) as count 
-        FROM specialist_assignments 
+        FROM specialist_calls 
         GROUP BY specialist_name
     ''').fetchall()
     
