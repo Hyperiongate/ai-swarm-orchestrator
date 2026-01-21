@@ -1312,10 +1312,74 @@ def orchestrate():
         uploaded_files = request.files.getlist('files')
     
     if not user_request:
-        return jsonify({'error': 'Request text required'}), 400
+    return jsonify({'error': 'Request text required'}), 400
+
+# ==================== SCHEDULE GENERATION INTERCEPT ====================
+# CHECK IMMEDIATELY - BEFORE ANY OTHER PROCESSING
+if SCHEDULE_GENERATOR_AVAILABLE:
+    schedule_type = schedule_gen.identify_schedule_type(user_request)
     
-    # Process uploaded files
-    file_context = ""
+    if schedule_type:
+        print(f"  📅 SCHEDULE REQUEST DETECTED: {schedule_type}")
+        print(f"  ⚡ Bypassing AI - generating Excel directly")
+        
+        try:
+            # Generate Excel schedule directly
+            schedule_bytes = schedule_gen.create_schedule(schedule_type, weeks=8)
+            
+            # Save to outputs directory
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"schedule_{schedule_type}_{timestamp}.xlsx"
+            filepath = os.path.join('/mnt/user-data/outputs', filename)
+            
+            # Ensure output directory exists
+            os.makedirs('/mnt/user-data/outputs', exist_ok=True)
+            
+            with open(filepath, 'wb') as f:
+                f.write(schedule_bytes)
+            
+            # Get pattern info
+            pattern_info = schedule_gen.get_schedule_description(schedule_type)
+            
+            # Create response message
+            response_message = f"""✅ **SCHEDULE CREATED: {pattern_info['name']}**
+
+📋 **Pattern:** {pattern_info['description']}
+👥 **Crews:** {pattern_info['crews']}
+⏰ **Shift Length:** {pattern_info['shift_length']} hours
+📅 **Weeks Generated:** 8
+
+**What's in the Excel file:**
+- Week-by-week schedule layout for all crews
+- Color-coded shifts (Yellow = Day, Green = Night, Gray = Off)
+- D = Day shift, N = Night shift, O = Off
+- Professional formatting ready to use
+- Legend included
+
+**Download your schedule below** 👇
+"""
+            
+            print(f"  ✅ Schedule created successfully: {filename}")
+            
+            # Return immediate response WITHOUT going through AI orchestration
+            return jsonify({
+                'success': True,
+                'actual_output': response_message,
+                'document_created': True,
+                'document_url': f'/api/download/{filename}',
+                'document_type': 'xlsx',
+                'knowledge_used': False,
+                'formatting_applied': False,
+                'task_id': None,
+                'execution_time_seconds': 0.5
+            })
+            
+        except Exception as e:
+            print(f"  ❌ Schedule generation error: {e}")
+            # Fall through to normal AI processing if schedule generation fails
+
+# Process uploaded files
+file_context = ""
     file_names = []
     
     if uploaded_files:
@@ -1591,56 +1655,8 @@ def orchestrate():
         if actual_output:
             # Detect if document should be created
             should_create_doc = False
-# CHECK IF SCHEDULE REQUEST
-    schedule_type = None
-    if SCHEDULE_GENERATOR_AVAILABLE:
-        schedule_type = schedule_gen.identify_schedule_type(user_request)
-    
-    if schedule_type:
-        print(f"  📅 Creating {schedule_type} schedule...")
-        try:
-            # Generate Excel schedule
-            schedule_bytes = schedule_gen.create_schedule(schedule_type, weeks=8)
-            
-            # Save to outputs directory
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"schedule_{schedule_type}_{timestamp}.xlsx"
-            filepath = os.path.join('/mnt/user-data/outputs', filename)
-            
-            with open(filepath, 'wb') as f:
-                f.write(schedule_bytes)
-            
-            document_file = filename
-            document_url = f"/outputs/{filename}"
-            doc_type = 'xlsx'
-            
-            # Update output to explain what was created
-            pattern_info = schedule_gen.get_schedule_description(schedule_type)
-            actual_output = f"""
-✅ SCHEDULE CREATED: {pattern_info['name']}
-
-📋 Pattern: {pattern_info['description']}
-👥 Crews: {pattern_info['crews']}
-⏰ Shift Length: {pattern_info['shift_length']} hours
-📅 Weeks Generated: 8
-
-The Excel file below contains:
-- Week-by-week schedule layout
-- Color-coded shifts (Day/Night/Off)
-- All crew rotations
-- Professional formatting
-
-Download the Excel file to view your schedule pattern.
-"""
-            
-            print(f"  ✅ Schedule created: {filename}")
-            should_create_doc = False  # Already created
-            
-        except Exception as e:
-            print(f"  ❌ Schedule generation error: {e}")
-            actual_output += f"\n\n⚠️ Schedule generation encountered an error: {e}"
-         
-            
+     
+           
             if DOCUMENT_GENERATOR_AVAILABLE:
                 doc_gen = get_document_generator()
                 should_create_doc, doc_type = doc_gen.should_create_document(user_request)
