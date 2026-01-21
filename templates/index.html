@@ -1420,14 +1420,7 @@
                     addMessage('assistant', `❌ Error: ${err.message}`);
                 });
         }
-                        addMessage('assistant', data.message || 'Unable to generate idea right now', null, 'marketing');
-                    }
-                })
-                .catch(err => {
-                    loading.classList.remove('active');
-                    addMessage('assistant', `❌ Error: ${err.message}`);
-                });
-        }
+                      
         
         function generateSocialPost() {
             const topic = prompt('What topic should the post be about?');
