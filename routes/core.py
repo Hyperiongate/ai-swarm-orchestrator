@@ -1,7 +1,7 @@
 """
 Core Routes
 Created: January 21, 2026
-Last Updated: January 21, 2026
+Last Updated: January 21, 2026 - Added schedule generator intercept
 
 Main orchestration endpoint and core API routes.
 NO MORE 500+ LINE FUNCTIONS. Clean and manageable.
@@ -10,6 +10,8 @@ NO MORE 500+ LINE FUNCTIONS. Clean and manageable.
 from flask import Blueprint, request, jsonify
 import time
 import json
+import os
+from datetime import datetime
 from database import get_db
 from orchestration import (
     analyze_task_with_sonnet,
@@ -25,6 +27,7 @@ def orchestrate():
     """
     Main orchestration endpoint - NOW READABLE!
     Handles task analysis, specialist routing, consensus validation.
+    INCLUDES: Schedule generator intercept for instant Excel creation
     """
     
     # Parse request
@@ -40,6 +43,79 @@ def orchestrate():
     
     if not user_request:
         return jsonify({'error': 'Request text required'}), 400
+    
+    # ==================== SCHEDULE GENERATION INTERCEPT ====================
+    # CHECK IMMEDIATELY - BEFORE ANY AI PROCESSING
+    # If this is a schedule request, generate Excel directly and bypass AI
+    
+    from app import SCHEDULE_GENERATOR_AVAILABLE, schedule_gen
+    
+    if SCHEDULE_GENERATOR_AVAILABLE:
+        schedule_type = schedule_gen.identify_schedule_type(user_request)
+        
+        if schedule_type:
+            print(f"  📅 SCHEDULE REQUEST DETECTED: {schedule_type}")
+            print(f"  ⚡ Bypassing AI - generating Excel directly")
+            
+            try:
+                # Generate Excel schedule directly
+                schedule_bytes = schedule_gen.create_schedule(schedule_type, weeks=8)
+                
+                # Save to outputs directory
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"schedule_{schedule_type}_{timestamp}.xlsx"
+                filepath = os.path.join('/mnt/user-data/outputs', filename)
+                
+                # Ensure output directory exists
+                os.makedirs('/mnt/user-data/outputs', exist_ok=True)
+                
+                with open(filepath, 'wb') as f:
+                    f.write(schedule_bytes)
+                
+                # Get pattern info
+                pattern_info = schedule_gen.get_schedule_description(schedule_type)
+                
+                # Create response message
+                response_message = f"""✅ **SCHEDULE CREATED: {pattern_info['name']}**
+
+📋 **Pattern:** {pattern_info['description']}
+👥 **Crews:** {pattern_info['crews']}
+⏰ **Shift Length:** {pattern_info['shift_length']} hours
+📅 **Weeks Generated:** 8
+
+**What's in the Excel file:**
+- Week-by-week schedule layout for all crews
+- Color-coded shifts (Yellow = Day, Green = Night, Gray = Off)
+- D = Day shift, N = Night shift, O = Off
+- Professional formatting ready to use
+- Legend included
+
+**Download your schedule below** 👇
+"""
+                
+                print(f"  ✅ Schedule created successfully: {filename}")
+                
+                # Return immediate response WITHOUT going through AI orchestration
+                return jsonify({
+                    'success': True,
+                    'actual_output': response_message,
+                    'document_created': True,
+                    'document_url': f'/api/download/{filename}',
+                    'document_type': 'xlsx',
+                    'knowledge_used': False,
+                    'formatting_applied': False,
+                    'task_id': None,
+                    'execution_time_seconds': 0.5,
+                    'orchestrator': 'schedule_generator',
+                    'specialist_results': []
+                })
+                
+            except Exception as e:
+                print(f"  ❌ Schedule generation error: {e}")
+                # Fall through to normal AI processing if schedule generation fails
+    
+    # ==================== NORMAL AI ORCHESTRATION ====================
+    # If not a schedule request, or if schedule generation failed, continue with AI
     
     # Create task in database
     db = get_db()
