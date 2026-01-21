@@ -1322,11 +1322,11 @@ def orchestrate():
         if schedule_type:
             print(f"  📅 SCHEDULE REQUEST DETECTED: {schedule_type}")
             print(f"  ⚡ Bypassing AI - generating Excel directly")
-        
+
             try:
                 # Generate Excel schedule directly
                 schedule_bytes = schedule_gen.create_schedule(schedule_type, weeks=8)
-            
+
                 # Save to outputs directory
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 filename = f"schedule_{schedule_type}_{timestamp}.xlsx"
