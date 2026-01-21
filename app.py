@@ -9,6 +9,11 @@ MAJOR REFACTORING:
 - Easy to find and fix things
 - Each file is ~100-300 lines instead of thousands
 
+SCHEDULE GENERATOR FIX (January 21, 2026):
+- Added proper schedule_generator module loading
+- Fixed SCHEDULE_GENERATOR_AVAILABLE flag
+- Enables Excel file generation for schedule requests
+
 ARCHITECTURE:
 - config.py: All configuration
 - database.py: All database operations  
@@ -47,33 +52,46 @@ try:
             break
     
     if not found_path:
-        print(f"  ⚠️ No project files found. Checked: {project_paths}")
-        print(f"  ℹ️  Knowledge base features disabled until files are added")
+        print(f"  ⚠️ No project files found in checked paths")
+        found_path = "."
+    
+    kb = get_knowledge_base(found_path)
+    if kb and kb.documents:
+        knowledge_base = kb
+        print(f"  ✅ Loaded {len(knowledge_base.documents)} documents")
     else:
-        knowledge_base = get_knowledge_base()
-        print(f"  ✅ Knowledge Base Ready: {len(knowledge_base.knowledge_index)} documents indexed")
+        print(f"  ⚠️ Knowledge base initialized but no documents loaded")
         
 except Exception as e:
-    print(f"  ⚠️ Warning: Knowledge Base initialization failed: {e}")
-    knowledge_base = None
+    print(f"  ❌ Could not initialize knowledge base: {e}")
 
-# Load optional modules
+# SCHEDULE GENERATOR MODULE - Load it properly
 SCHEDULE_GENERATOR_AVAILABLE = False
 try:
     from schedule_generator import get_schedule_generator
     SCHEDULE_GENERATOR_AVAILABLE = True
-    schedule_gen = get_schedule_generator()
-    print("✅ Schedule Generator loaded")
-except ImportError:
-    print("⚠️ Warning: schedule_generator module not found")
+    print("✅ Schedule Generator loaded successfully")
+except ImportError as e:
+    print(f"⚠️  Warning: schedule_generator module not found: {e}")
+    print("   Schedule generation will not be available")
 
+# OUTPUT FORMATTER MODULE - Optional enhancement
 OUTPUT_FORMATTER_AVAILABLE = False
 try:
     from output_formatter import get_output_formatter
     OUTPUT_FORMATTER_AVAILABLE = True
     print("✅ Output Formatter loaded")
 except ImportError:
-    print("⚠️ Warning: output_formatter module not found")
+    print("⚠️  Output Formatter not available")
+
+# Register blueprints
+from routes.core import core_bp
+app.register_blueprint(core_bp)
+
+# Make schedule generator available to routes
+app.config['SCHEDULE_GENERATOR_AVAILABLE'] = SCHEDULE_GENERATOR_AVAILABLE
+if SCHEDULE_GENERATOR_AVAILABLE:
+    app.config['SCHEDULE_GENERATOR'] = get_schedule_generator()
 
 # Basic routes
 @app.route('/')
@@ -88,37 +106,16 @@ def workflow():
 
 @app.route('/health')
 def health():
-    """Health check"""
-    from config import ANTHROPIC_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, GOOGLE_API_KEY
-    
-    kb_status = 'initialized' if knowledge_base and len(knowledge_base.knowledge_index) > 0 else 'not_initialized'
-    kb_doc_count = len(knowledge_base.knowledge_index) if knowledge_base else 0
-    
+    """Health check endpoint"""
     return jsonify({
         'status': 'healthy',
-        'orchestrators': {
-            'sonnet': 'configured' if ANTHROPIC_API_KEY else 'missing',
-            'opus': 'configured' if ANTHROPIC_API_KEY else 'missing'
-        },
-        'specialists': {
-            'gpt4': 'configured' if OPENAI_API_KEY else 'missing',
-            'deepseek': 'configured' if DEEPSEEK_API_KEY else 'missing',
-            'gemini': 'configured' if GOOGLE_API_KEY else 'missing'
-        },
-        'knowledge_base': {
-            'status': kb_status,
-            'documents_indexed': kb_doc_count
-        },
-        'output_formatter': {
-            'status': 'enabled' if OUTPUT_FORMATTER_AVAILABLE else 'disabled'
-        }
+        'knowledge_base': len(knowledge_base.documents) if knowledge_base else 0,
+        'schedule_generator': SCHEDULE_GENERATOR_AVAILABLE,
+        'output_formatter': OUTPUT_FORMATTER_AVAILABLE
     })
 
-# Register blueprints (CRITICAL - THIS MAKES THE API WORK)
-from routes.core import core_bp
-app.register_blueprint(core_bp)
-
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
 
 # I did no harm and this file is not truncated
