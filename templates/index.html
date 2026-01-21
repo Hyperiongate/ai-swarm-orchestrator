@@ -476,6 +476,62 @@
             background: #f3e5f5;
             color: #7b1fa2;
         }
+        
+        /* Beautiful AI Response Formatting - ADDED */
+        .message-content h1 {
+            color: #667eea;
+            font-size: 24px;
+            margin: 15px 0 10px 0;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 5px;
+        }
+        
+        .message-content h2 {
+            color: #764ba2;
+            font-size: 20px;
+            margin: 12px 0 8px 0;
+        }
+        
+        .message-content h3 {
+            color: #333;
+            font-size: 16px;
+            margin: 10px 0 6px 0;
+        }
+        
+        .message-content ul, .message-content ol {
+            margin: 10px 0 10px 20px;
+            line-height: 1.8;
+        }
+        
+        .message-content li {
+            margin: 5px 0;
+        }
+        
+        .message-content p {
+            margin: 8px 0;
+            line-height: 1.7;
+        }
+        
+        .message-content strong {
+            color: #667eea;
+            font-weight: 600;
+        }
+        
+        .message-content code {
+            background: #f5f5f5;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+        }
+        
+        .message-content blockquote {
+            border-left: 4px solid #667eea;
+            padding-left: 15px;
+            margin: 10px 0;
+            color: #666;
+            font-style: italic;
+        }
     </style>
 </head>
 <body>
@@ -779,8 +835,8 @@
             return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
         }
         
-        // Copy to clipboard function
-        function copyToClipboard(msgId) {
+        // Copy to clipboard function - FIXED
+        function copyToClipboard(event, msgId) {
             const content = document.getElementById(`content_${msgId}`);
             if (!content) return;
             
@@ -790,7 +846,7 @@
             // Copy to clipboard
             navigator.clipboard.writeText(text).then(() => {
                 // Show success feedback
-                const button = event.target;
+                const button = event.currentTarget;
                 const originalText = button.innerHTML;
                 button.innerHTML = '✓ Copied!';
                 button.style.background = '#4caf50';
