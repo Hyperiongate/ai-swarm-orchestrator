@@ -1,7 +1,7 @@
 """
 AI SWARM ORCHESTRATOR - Main Application (REFACTORED)
 Created: January 18, 2026
-Last Updated: January 21, 2026
+Last Updated: January 21, 2026 - FIXED: Knowledge base now uses correct project_files path
 
 MAJOR REFACTORING:
 - Broke up 2,500 line monster file into logical modules
@@ -12,6 +12,7 @@ MAJOR REFACTORING:
 CRITICAL FIX (January 21, 2026):
 - Added app.config lines to make schedule generator available to routes
 - Without these, schedule_generator module loads but routes can't use it
+- FIXED: Knowledge base now initializes with project_files path, not /mnt/project
 
 ARCHITECTURE:
 - config.py: All configuration
@@ -38,27 +39,33 @@ print("🔍 Initializing Project Knowledge Base...")
 knowledge_base = None
 try:
     from pathlib import Path
-    from knowledge_integration import get_knowledge_base
+    from knowledge_integration import ProjectKnowledgeBase
     
-    project_paths = ["/mnt/project", "project_files", "./project_files"]
+    # FIXED: Check for project_files first, then fall back to /mnt/project
+    project_paths = ["project_files", "./project_files", "/mnt/project"]
     found_path = None
     
     for path in project_paths:
-        if Path(path).exists():
-            found_path = path
-            file_count = len(list(Path(path).iterdir())) if Path(path).is_dir() else 0
-            print(f"  📁 Found directory: {path} ({file_count} files)")
-            break
+        if Path(path).exists() and Path(path).is_dir():
+            file_count = len(list(Path(path).iterdir()))
+            if file_count > 0:  # Only use paths with actual files
+                found_path = path
+                print(f"  📁 Found directory: {path} ({file_count} files)")
+                break
     
     if not found_path:
         print(f"  ⚠️ No project files found. Checked: {project_paths}")
         print(f"  ℹ️  Knowledge base features disabled until files are added")
     else:
-        knowledge_base = get_knowledge_base()
+        # CRITICAL FIX: Pass the found path to ProjectKnowledgeBase constructor
+        knowledge_base = ProjectKnowledgeBase(project_path=found_path)
+        knowledge_base.initialize()
         print(f"  ✅ Knowledge Base Ready: {len(knowledge_base.knowledge_index)} documents indexed")
         
 except Exception as e:
     print(f"  ⚠️ Warning: Knowledge Base initialization failed: {e}")
+    import traceback
+    print(f"  Traceback: {traceback.format_exc()}")
     knowledge_base = None
 
 # Load optional modules
