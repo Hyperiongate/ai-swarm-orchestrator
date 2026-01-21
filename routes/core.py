@@ -1,13 +1,13 @@
 """
 Core Routes
 Created: January 21, 2026
-Last Updated: January 21, 2026 - Added schedule generator intercept
+Last Updated: January 21, 2026 - Added schedule intercept, file upload, download endpoint
 
 Main orchestration endpoint and core API routes.
 NO MORE 500+ LINE FUNCTIONS. Clean and manageable.
 """
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, send_file
 import time
 import json
 import os
@@ -27,7 +27,7 @@ def orchestrate():
     """
     Main orchestration endpoint - NOW READABLE!
     Handles task analysis, specialist routing, consensus validation.
-    INCLUDES: Schedule generator intercept for instant Excel creation
+    INCLUDES: Schedule generator intercept, file upload processing
     """
     
     # Parse request
@@ -43,6 +43,59 @@ def orchestrate():
     
     if not user_request:
         return jsonify({'error': 'Request text required'}), 400
+    
+    # ==================== FILE UPLOAD HANDLING ====================
+    # Process uploaded files and extract their content
+    file_context = ""
+    file_names = []
+    
+    if request.files:
+        from PyPDF2 import PdfReader
+        from docx import Document
+        import openpyxl
+        
+        files = request.files.getlist('files')
+        
+        for file in files:
+            filename = file.filename
+            file_names.append(filename)
+            
+            try:
+                if filename.endswith('.pdf'):
+                    # Extract PDF text
+                    pdf_reader = PdfReader(file.stream)
+                    text = ""
+                    for page in pdf_reader.pages:
+                        text += page.extract_text()
+                    file_context += f"\n\n=== FILE: {filename} ===\n{text[:2000]}\n"
+                    
+                elif filename.endswith('.docx'):
+                    # Extract Word document text
+                    doc = Document(file.stream)
+                    text = "\n".join([para.text for para in doc.paragraphs])
+                    file_context += f"\n\n=== FILE: {filename} ===\n{text[:2000]}\n"
+                    
+                elif filename.endswith('.xlsx'):
+                    # Extract Excel data
+                    wb = openpyxl.load_workbook(file.stream)
+                    sheet = wb.active
+                    data = []
+                    for row in sheet.iter_rows(values_only=True):
+                        data.append(str(row))
+                    file_context += f"\n\n=== FILE: {filename} ===\n" + "\n".join(data[:50]) + "\n"
+                    
+                elif filename.endswith('.txt') or filename.endswith('.csv'):
+                    # Extract text files
+                    text = file.stream.read().decode('utf-8', errors='ignore')
+                    file_context += f"\n\n=== FILE: {filename} ===\n{text[:2000]}\n"
+                    
+            except Exception as e:
+                print(f"Error processing {filename}: {e}")
+                file_context += f"\n\n=== FILE: {filename} ===\n[Error reading file: {str(e)}]\n"
+        
+        # Add file context to user request
+        if file_context:
+            user_request = f"{user_request}\n\n{file_context}"
     
     # ==================== SCHEDULE GENERATION INTERCEPT ====================
     # CHECK IMMEDIATELY - BEFORE ANY AI PROCESSING
@@ -290,5 +343,29 @@ def get_stats():
         'average_time_seconds': round(avg_time, 2) if avg_time else 0,
         'specialist_usage': [dict(s) for s in specialist_usage]
     })
+
+@core_bp.route('/api/download/<filename>', methods=['GET'])
+def download_file(filename):
+    """Download generated files"""
+    # Security: Only allow files from outputs directory
+    filepath = os.path.join('/mnt/user-data/outputs', filename)
+    
+    # Check if file exists
+    if not os.path.exists(filepath):
+        return jsonify({'error': 'File not found'}), 404
+    
+    # Determine mime type
+    if filename.endswith('.xlsx'):
+        mimetype = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    elif filename.endswith('.docx'):
+        mimetype = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    elif filename.endswith('.pdf'):
+        mimetype = 'application/pdf'
+    elif filename.endswith('.csv'):
+        mimetype = 'text/csv'
+    else:
+        mimetype = 'application/octet-stream'
+    
+    return send_file(filepath, as_attachment=True, download_name=filename, mimetype=mimetype)
 
 # I did no harm and this file is not truncated
