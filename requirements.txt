@@ -1,19 +1,20 @@
 # AI SWARM ORCHESTRATOR - Requirements
 # Last Updated: January 21, 2026
 # 
+# CHANGES:
+# - January 21, 2026: ADDED markdown>=3.5.0 (fixes ModuleNotFoundError in routes/core.py)
+#
 # This file includes all dependencies for:
 # - Core Flask application
 # - AI API clients (Anthropic, OpenAI, DeepSeek, Google)
 # - Schedule generator (Excel creation)
 # - Knowledge base (document processing)
 # - Database operations
-
 # ==========================================
 # CORE FRAMEWORK
 # ==========================================
 Flask==3.0.0
 gunicorn>=20.1.0
-
 # ==========================================
 # AI API CLIENTS - CRITICAL FIX
 # ==========================================
@@ -21,27 +22,23 @@ anthropic>=0.40.0           # MUST be >=0.40.0 to fix httpx proxies error
 openai>=1.12.0
 google-generativeai==0.8.3  # Gemini API
 requests>=2.31.0
-
 # ==========================================
 # DOCUMENT PROCESSING FOR KNOWLEDGE BASE
 # ==========================================
 python-docx>=0.8.11         # Word documents (.docx)
 openpyxl>=3.1.2             # Excel files (.xlsx)
 PyPDF2>=3.0.1               # PDF files
-
+markdown>=3.5.0             # HTML rendering in routes/core.py
 # ==========================================
 # SCHEDULE GENERATOR
 # ==========================================
 XlsxWriter>=3.1.9           # Excel file creation with formatting
-
 # ==========================================
 # DATABASE
 # ==========================================
 # SQLite is built into Python, no package needed
-
 # ==========================================
 # UTILITIES
 # ==========================================
 python-dateutil>=2.8.2
-
 # I did no harm and this file is not truncated
