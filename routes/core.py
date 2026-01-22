@@ -1,16 +1,23 @@
 """
 Core Routes
 Created: January 21, 2026
-Last Updated: January 22, 2026 - CRITICAL FIX: AI now completes tasks instead of meta-commentary
+Last Updated: January 22, 2026 - ADDED PERSISTENT CONVERSATION MEMORY
 
 CHANGES IN THIS VERSION:
+- January 22, 2026: PERSISTENT CONVERSATION MEMORY
+  * Added GET /api/conversations - List recent conversations
+  * Added POST /api/conversations - Create new conversation
+  * Added GET /api/conversations/<id> - Get conversation with messages
+  * Added PUT /api/conversations/<id> - Update conversation metadata
+  * Added DELETE /api/conversations/<id> - Delete conversation
+  * Added POST /api/conversations/<id>/messages - Add message
+  * Updated /api/orchestrate to track conversation_id
+  * Messages auto-saved to conversation history
+
 - January 22, 2026: CRITICAL BUG FIX
   * Fixed orchestration logic - AI now actually completes tasks
   * Previously: Opus meta-commentary was displayed instead of actual work
   * Now: When analysis succeeds, AI is called to complete the actual request
-  * Fixed: specialists_needed = ["none"] is now handled correctly
-  * Added: Better error messages and logging
-  * Added: Knowledge context passed to task completion
 
 - January 22, 2026: Added proactive intelligence (smart questioning + suggestions)
 - January 21, 2026: Added feedback endpoint and learning stats
@@ -21,6 +28,7 @@ ARCHITECTURE:
 - If escalate_to_opus=true, Opus provides strategy, then AI completes the task
 - Specialists are called only when specifically needed
 - Knowledge base context is included in task completion prompts
+- All messages are saved to conversation history for persistence
 
 Author: Jim @ Shiftwork Solutions LLC
 """
@@ -31,7 +39,17 @@ import json
 import os
 import markdown
 from datetime import datetime
-from database import get_db
+from database import (
+    get_db, 
+    create_conversation, 
+    get_conversation, 
+    get_conversations,
+    update_conversation,
+    delete_conversation as db_delete_conversation,
+    add_message,
+    get_messages,
+    get_conversation_context
+)
 from orchestration import (
     analyze_task_with_sonnet,
     handle_with_opus,
@@ -110,21 +128,173 @@ Use this information from our 30+ years of expertise to inform your response:
         return ""
 
 
+# ============================================================================
+# CONVERSATION MEMORY ENDPOINTS (Added January 22, 2026)
+# ============================================================================
+
+@core_bp.route('/api/conversations', methods=['GET'])
+def list_conversations():
+    """Get list of recent conversations"""
+    try:
+        limit = request.args.get('limit', 20, type=int)
+        project_id = request.args.get('project_id')
+        include_archived = request.args.get('include_archived', 'false').lower() == 'true'
+        
+        conversations = get_conversations(
+            limit=limit, 
+            project_id=project_id,
+            include_archived=include_archived
+        )
+        
+        return jsonify({
+            'success': True,
+            'conversations': conversations,
+            'count': len(conversations)
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@core_bp.route('/api/conversations', methods=['POST'])
+def create_new_conversation():
+    """Create a new conversation"""
+    try:
+        data = request.json or {}
+        mode = data.get('mode', 'quick')
+        project_id = data.get('project_id')
+        title = data.get('title')
+        
+        conversation_id = create_conversation(
+            mode=mode,
+            project_id=project_id,
+            title=title
+        )
+        
+        return jsonify({
+            'success': True,
+            'conversation_id': conversation_id,
+            'message': 'Conversation created successfully'
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@core_bp.route('/api/conversations/<conversation_id>', methods=['GET'])
+def get_single_conversation(conversation_id):
+    """Get a specific conversation with its messages"""
+    try:
+        conversation = get_conversation(conversation_id)
+        
+        if not conversation:
+            return jsonify({'success': False, 'error': 'Conversation not found'}), 404
+        
+        messages = get_messages(conversation_id, limit=100)
+        
+        return jsonify({
+            'success': True,
+            'conversation': conversation,
+            'messages': messages
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@core_bp.route('/api/conversations/<conversation_id>', methods=['PUT'])
+def update_single_conversation(conversation_id):
+    """Update conversation metadata"""
+    try:
+        conversation = get_conversation(conversation_id)
+        
+        if not conversation:
+            return jsonify({'success': False, 'error': 'Conversation not found'}), 404
+        
+        data = request.json or {}
+        
+        update_conversation(
+            conversation_id,
+            title=data.get('title'),
+            mode=data.get('mode'),
+            project_id=data.get('project_id'),
+            is_archived=data.get('is_archived')
+        )
+        
+        return jsonify({
+            'success': True,
+            'message': 'Conversation updated successfully'
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@core_bp.route('/api/conversations/<conversation_id>', methods=['DELETE'])
+def delete_single_conversation(conversation_id):
+    """Delete a conversation and all its messages"""
+    try:
+        conversation = get_conversation(conversation_id)
+        
+        if not conversation:
+            return jsonify({'success': False, 'error': 'Conversation not found'}), 404
+        
+        db_delete_conversation(conversation_id)
+        
+        return jsonify({
+            'success': True,
+            'message': 'Conversation deleted successfully'
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@core_bp.route('/api/conversations/<conversation_id>/messages', methods=['POST'])
+def add_conversation_message(conversation_id):
+    """Add a message to a conversation (manual add, not through orchestrate)"""
+    try:
+        conversation = get_conversation(conversation_id)
+        
+        if not conversation:
+            return jsonify({'success': False, 'error': 'Conversation not found'}), 404
+        
+        data = request.json or {}
+        role = data.get('role', 'user')
+        content = data.get('content')
+        task_id = data.get('task_id')
+        metadata = data.get('metadata')
+        
+        if not content:
+            return jsonify({'success': False, 'error': 'Content is required'}), 400
+        
+        add_message(conversation_id, role, content, task_id, metadata)
+        
+        return jsonify({
+            'success': True,
+            'message': 'Message added successfully'
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ============================================================================
+# MAIN ORCHESTRATION ENDPOINT
+# ============================================================================
+
 @core_bp.route('/api/orchestrate', methods=['POST'])
 def orchestrate():
     """
-    Main orchestration endpoint with proactive intelligence
-    Now includes smart questioning and post-task suggestions
+    Main orchestration endpoint with proactive intelligence and conversation memory
+    Now includes smart questioning, post-task suggestions, and message persistence
     
     FLOW:
-    1. Proactive pre-check (questions, project detection)
-    2. Schedule generator intercept (for specific schedule types)
-    3. Sonnet analyzes task and decides routing
-    4. AI completes the actual task (Sonnet or Opus based on analysis)
-    5. Specialists called only if specifically needed
-    6. Document creation if appropriate
-    7. Consensus validation
-    8. Post-task suggestions
+    1. Get or create conversation_id
+    2. Save user message to conversation
+    3. Proactive pre-check (questions, project detection)
+    4. Schedule generator intercept (for specific schedule types)
+    5. Sonnet analyzes task and decides routing
+    6. AI completes the actual task (Sonnet or Opus based on analysis)
+    7. Specialists called only if specifically needed
+    8. Document creation if appropriate
+    9. Consensus validation
+    10. Save assistant response to conversation
+    11. Post-task suggestions
     """
     try:
         # Parse request
@@ -133,15 +303,29 @@ def orchestrate():
             user_request = data.get('request')
             enable_consensus = data.get('enable_consensus', True)
             project_id = data.get('project_id')
+            conversation_id = data.get('conversation_id')
+            mode = data.get('mode', 'quick')
         else:
             user_request = request.form.get('request')
             enable_consensus = request.form.get('enable_consensus', 'true').lower() == 'true'
             project_id = request.form.get('project_id')
+            conversation_id = request.form.get('conversation_id')
+            mode = request.form.get('mode', 'quick')
         
         if not user_request:
             return jsonify({'success': False, 'error': 'Request text required'}), 400
         
         overall_start = time.time()
+        
+        # ============ CONVERSATION MEMORY ============
+        # Create conversation if not provided
+        if not conversation_id:
+            conversation_id = create_conversation(mode=mode, project_id=project_id)
+            print(f"📝 Created new conversation: {conversation_id}")
+        
+        # Save user message to conversation
+        add_message(conversation_id, 'user', user_request)
+        # ============ END CONVERSATION MEMORY ============
         
         # Initialize proactive agent
         proactive = None
@@ -159,8 +343,8 @@ def orchestrate():
                     # Create task for tracking
                     db = get_db()
                     cursor = db.execute(
-                        'INSERT INTO tasks (user_request, status) VALUES (?, ?)',
-                        (user_request, 'needs_clarification')
+                        'INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
+                        (user_request, 'needs_clarification', conversation_id)
                     )
                     task_id = cursor.lastrowid
                     db.commit()
@@ -170,14 +354,16 @@ def orchestrate():
                         'success': True,
                         'needs_clarification': True,
                         'clarification_data': pre_check['data'],
-                        'task_id': task_id
+                        'task_id': task_id,
+                        'conversation_id': conversation_id
                     })
                 
                 if pre_check['action'] == 'detect_project':
                     return jsonify({
                         'success': True,
                         'project_detected': True,
-                        'project_data': pre_check['data']
+                        'project_data': pre_check['data'],
+                        'conversation_id': conversation_id
                     })
             except Exception as proactive_error:
                 print(f"⚠️ Proactive check failed: {proactive_error}")
@@ -188,11 +374,14 @@ def orchestrate():
         app_module = sys.modules.get('app')
         knowledge_base = getattr(app_module, 'knowledge_base', None) if app_module else None
         
+        # Get conversation context for AI
+        conversation_context = get_conversation_context(conversation_id, max_messages=10)
+        
         # Create task in database
         db = get_db()
         cursor = db.execute(
-            'INSERT INTO tasks (user_request, status) VALUES (?, ?)',
-            (user_request, 'processing')
+            'INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
+            (user_request, 'processing', conversation_id)
         )
         task_id = cursor.lastrowid
         db.commit()
@@ -238,6 +427,13 @@ Your professional {schedule_type.replace('_', ' ')} schedule has been generated 
                         )
                         db.commit()
                         
+                        # Save assistant response to conversation
+                        add_message(conversation_id, 'assistant', response_text, task_id, {
+                            'document_created': True,
+                            'document_type': 'xlsx',
+                            'orchestrator': 'schedule_generator'
+                        })
+                        
                         # Generate suggestions
                         suggestions = []
                         if proactive:
@@ -251,6 +447,7 @@ Your professional {schedule_type.replace('_', ' ')} schedule has been generated 
                         return jsonify({
                             'success': True,
                             'task_id': task_id,
+                            'conversation_id': conversation_id,
                             'result': response_html,
                             'document_url': f'/api/download/{filename}',
                             'document_created': True,
@@ -336,12 +533,21 @@ Your professional {schedule_type.replace('_', ' ')} schedule has been generated 
             # Build the completion prompt with knowledge context
             knowledge_context = get_knowledge_context_for_prompt(knowledge_base, user_request)
             
+            # Build conversation history for context
+            conversation_history = ""
+            if conversation_context and len(conversation_context) > 1:
+                conversation_history = "\n\n=== CONVERSATION HISTORY ===\n"
+                for msg in conversation_context[:-1]:  # Exclude current message
+                    role_label = "User" if msg['role'] == 'user' else "Assistant"
+                    conversation_history += f"{role_label}: {msg['content'][:500]}...\n" if len(msg['content']) > 500 else f"{role_label}: {msg['content']}\n"
+                conversation_history += "=== END CONVERSATION HISTORY ===\n\n"
+            
             # If we have specialist output, use that
             if specialist_output:
                 actual_output = specialist_output
             else:
                 # Build a proper completion prompt
-                completion_prompt = f"""{knowledge_context}
+                completion_prompt = f"""{knowledge_context}{conversation_history}
 
 USER REQUEST: {user_request}
 
@@ -467,6 +673,16 @@ Use this guidance to inform your response, but focus on delivering the actual co
             db.commit()
             db.close()
             
+            # ============ SAVE ASSISTANT RESPONSE TO CONVERSATION ============
+            add_message(conversation_id, 'assistant', actual_output, task_id, {
+                'orchestrator': orchestrator,
+                'knowledge_applied': knowledge_applied,
+                'document_created': document_created,
+                'document_type': document_type,
+                'execution_time': total_time
+            })
+            # ============ END SAVE RESPONSE ============
+            
             # Step 8: Generate post-task suggestions
             suggestions = []
             if proactive:
@@ -483,6 +699,7 @@ Use this guidance to inform your response, but focus on delivering the actual co
             return jsonify({
                 'success': True,
                 'task_id': task_id,
+                'conversation_id': conversation_id,
                 'result': formatted_output,
                 'orchestrator': orchestrator,
                 'specialists_used': [s.get('specialist') for s in specialist_results] if specialist_results else [],
@@ -510,10 +727,16 @@ Use this guidance to inform your response, but focus on delivering the actual co
             db.commit()
             db.close()
             
+            # Save error to conversation
+            add_message(conversation_id, 'assistant', f"Error: {str(orchestration_error)}", task_id, {
+                'error': True
+            })
+            
             return jsonify({
                 'success': False,
                 'error': f'Orchestration failed: {str(orchestration_error)}',
-                'task_id': task_id
+                'task_id': task_id,
+                'conversation_id': conversation_id
             }), 500
             
     except Exception as e:
@@ -526,6 +749,10 @@ Use this guidance to inform your response, but focus on delivering the actual co
             'error': f'Server error: {str(e)}'
         }), 500
 
+
+# ============================================================================
+# OTHER EXISTING ENDPOINTS
+# ============================================================================
 
 @core_bp.route('/api/tasks', methods=['GET'])
 def get_tasks():
@@ -572,12 +799,18 @@ def get_stats():
         total_tasks = db.execute('SELECT COUNT(*) FROM tasks').fetchone()[0]
         completed_tasks = db.execute('SELECT COUNT(*) FROM tasks WHERE status = ?', ('completed',)).fetchone()[0]
         
+        # Conversation stats
+        total_conversations = db.execute('SELECT COUNT(*) FROM conversations').fetchone()[0]
+        total_messages = db.execute('SELECT COUNT(*) FROM conversation_messages').fetchone()[0]
+        
         db.close()
         
         return jsonify({
             'total_tasks': total_tasks,
             'completed_tasks': completed_tasks,
-            'success_rate': (completed_tasks / total_tasks * 100) if total_tasks > 0 else 0
+            'success_rate': (completed_tasks / total_tasks * 100) if total_tasks > 0 else 0,
+            'total_conversations': total_conversations,
+            'total_messages': total_messages
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
