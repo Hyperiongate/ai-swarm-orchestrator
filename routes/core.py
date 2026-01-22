@@ -1,18 +1,22 @@
 """
 Core Routes
 Created: January 21, 2026
-Last Updated: January 21, 2026 - FEEDBACK ENDPOINT ADDED
+Last Updated: January 22, 2026 - PROACTIVE INTELLIGENCE ADDED (Sprint 1)
 
-CRITICAL FIXES:
-1. Returns 'result' field (not 'actual_output') for frontend compatibility
-2. Converts markdown to HTML for beautiful display
-3. Triggers document generation for appropriate requests
-4. Always returns proper structure for feedback forms
-5. Ensures download buttons appear when documents created
-6. ADDED /api/feedback endpoint (was causing 404 errors)
-7. FIXED /api/learning/stats to return proper feedback statistics
+UPDATES IN THIS VERSION:
+- January 22, 2026: Added proactive intelligence (smart questioning + suggestions)
+- January 21, 2026: Added feedback endpoint and learning stats
+- Returns 'result' field (not 'actual_output') for frontend compatibility
+- Converts markdown to HTML for beautiful display
+- Triggers document generation for appropriate requests
+- Always returns proper structure for feedback forms
+- Ensures download buttons appear when documents created
 
-All issues resolved in this version.
+Sprint 1 Features:
+- Smart questioning when requests are ambiguous
+- Post-task suggestions for next steps
+- Pattern tracking for automation opportunities
+- Project detection for new client work
 """
 
 from flask import Blueprint, request, jsonify, send_file, current_app
@@ -28,6 +32,7 @@ from orchestration import (
     execute_specialist_task,
     validate_with_consensus
 )
+from orchestration.proactive_agent import ProactiveAgent
 
 core_bp = Blueprint('core', __name__)
 
@@ -75,8 +80,8 @@ def should_create_document(user_request):
 @core_bp.route('/api/orchestrate', methods=['POST'])
 def orchestrate():
     """
-    Main orchestration endpoint with knowledge base integration
-    FIXED: Returns proper fields, creates documents, formats beautifully
+    Main orchestration endpoint with proactive intelligence
+    Now includes smart questioning and post-task suggestions
     """
     try:
         # Parse request
@@ -94,6 +99,38 @@ def orchestrate():
             return jsonify({'error': 'Request text required'}), 400
         
         overall_start = time.time()
+        
+        # ============ NEW: PROACTIVE PRE-CHECK ============
+        try:
+            proactive = ProactiveAgent()
+            pre_check = proactive.pre_process_request(user_request)
+            
+            if pre_check['action'] == 'ask_questions':
+                # Create task for tracking
+                db = get_db()
+                cursor = db.execute(
+                    'INSERT INTO tasks (user_request, status) VALUES (?, ?)',
+                    (user_request, 'needs_clarification')
+                )
+                task_id = cursor.lastrowid
+                db.commit()
+                db.close()
+                
+                return jsonify({
+                    'needs_clarification': True,
+                    'clarification_data': pre_check['data'],
+                    'task_id': task_id
+                })
+            
+            if pre_check['action'] == 'detect_project':
+                return jsonify({
+                    'project_detected': True,
+                    'project_data': pre_check['data']
+                })
+        except Exception as proactive_error:
+            print(f"⚠️ Proactive check failed: {proactive_error}")
+            # Continue with normal processing if proactive check fails
+        # ============ END PROACTIVE PRE-CHECK ============
         
         # Get knowledge base from app
         import sys
@@ -149,6 +186,19 @@ Your professional {schedule_type.replace('_', ' ')} schedule has been generated 
                             ('completed', 'schedule_generator', time.time() - overall_start, task_id)
                         )
                         db.commit()
+                        
+                        # ============ NEW: GENERATE SUGGESTIONS FOR SCHEDULE ============
+                        suggestions = []
+                        try:
+                            suggestions = proactive.post_process_result(
+                                task_id, 
+                                user_request, 
+                                response_text
+                            )
+                        except Exception as suggest_error:
+                            print(f"⚠️ Suggestion generation failed: {suggest_error}")
+                        # ============ END SUGGESTIONS ============
+                        
                         db.close()
                         
                         return jsonify({
@@ -163,7 +213,8 @@ Your professional {schedule_type.replace('_', ' ')} schedule has been generated 
                             'knowledge_applied': False,
                             'formatting_applied': True,
                             'specialists_used': [],
-                            'consensus': None
+                            'consensus': None,
+                            'suggestions': suggestions
                         })
             except Exception as schedule_error:
                 print(f"Schedule generation failed: {schedule_error}")
@@ -288,6 +339,18 @@ Your professional {schedule_type.replace('_', ' ')} schedule has been generated 
             db.commit()
             db.close()
             
+            # ============ NEW: POST-TASK SUGGESTIONS ============
+            suggestions = []
+            try:
+                suggestions = proactive.post_process_result(
+                    task_id, 
+                    user_request, 
+                    actual_output if actual_output else ''
+                )
+            except Exception as suggest_error:
+                print(f"⚠️ Suggestion generation failed: {suggest_error}")
+            # ============ END POST-TASK SUGGESTIONS ============
+            
             # ==================== RETURN PROPER STRUCTURE ====================
             return jsonify({
                 'success': True,
@@ -302,7 +365,8 @@ Your professional {schedule_type.replace('_', ' ')} schedule has been generated 
                 'formatting_applied': True,
                 'document_created': document_created,
                 'document_url': document_url,
-                'document_type': document_type
+                'document_type': document_type,
+                'suggestions': suggestions
             })
             
         except Exception as orchestration_error:
@@ -426,7 +490,7 @@ def get_documents():
 
 @core_bp.route('/api/feedback', methods=['POST'])
 def submit_feedback():
-    """Submit feedback on task results - ADDED January 21, 2026"""
+    """Submit feedback on task results"""
     try:
         data = request.json
         task_id = data.get('task_id')
@@ -536,7 +600,7 @@ def submit_feedback():
 
 @core_bp.route('/api/learning/stats', methods=['GET'])
 def get_learning_stats():
-    """Get learning system statistics - FIXED January 21, 2026"""
+    """Get learning system statistics"""
     try:
         db = get_db()
         
