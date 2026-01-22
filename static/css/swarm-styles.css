@@ -5,6 +5,16 @@ Shiftwork Solutions LLC
 =============================================================================
 
 CHANGE LOG:
+- January 22, 2026: Added Persistent Conversation Memory Styles
+  * Added .conversations-section styles for sidebar
+  * Added .conversations-list with scrollable container
+  * Added .conversation-item styles with hover, active states
+  * Added .conversation-delete-btn with hover reveal
+  * Added .new-conversation-btn styling
+  * Added .memory-indicator styles (active/warning states)
+  * Added .memory-status with green/orange color schemes
+  * Added responsive adjustments for conversation sidebar
+
 - January 22, 2026: Initial extraction from index.html
   * Separated all CSS into dedicated stylesheet
   * Organized into logical sections
@@ -15,14 +25,16 @@ SECTIONS:
 1. Reset & Base Styles
 2. Layout Components (Container, Header, Grid)
 3. Sidebar Styles
-4. Main Content & Conversation
-5. Messages & Formatting
-6. Feedback System
-7. Loading States
-8. Input Area
-9. Badges & Indicators
-10. AI Response Formatting
-11. Utility Classes
+4. Conversations Section (NEW - Memory Feature)
+5. Main Content & Conversation
+6. Memory Indicator (NEW - Memory Feature)
+7. Messages & Formatting
+8. Feedback System
+9. Loading States
+10. Input Area
+11. Badges & Indicators
+12. AI Response Formatting
+13. Utility Classes
 
 =============================================================================
 */
@@ -116,6 +128,8 @@ body {
     border-radius: 15px;
     box-shadow: 0 10px 30px rgba(0,0,0,0.2);
     height: fit-content;
+    max-height: calc(100vh - 140px);
+    overflow-y: auto;
 }
 
 .sidebar h3 {
@@ -206,7 +220,182 @@ body {
 }
 
 /* =============================================================================
-   4. MAIN CONTENT & CONVERSATION
+   4. CONVERSATIONS SECTION (NEW - Memory Feature)
+   ============================================================================= */
+
+.conversations-section {
+    background: #f8f9fa;
+    border-radius: 10px;
+    padding: 15px;
+    margin-bottom: 20px;
+    border: 2px solid #e0e0e0;
+}
+
+.conversations-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.conversations-header h3 {
+    color: #667eea;
+    font-size: 15px;
+    margin: 0;
+}
+
+.new-conversation-btn {
+    padding: 6px 12px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.new-conversation-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 3px 10px rgba(102, 126, 234, 0.4);
+}
+
+.conversations-list {
+    max-height: 250px;
+    overflow-y: auto;
+    border-radius: 6px;
+}
+
+.conversations-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+.conversations-list::-webkit-scrollbar-track {
+    background: #e0e0e0;
+    border-radius: 3px;
+}
+
+.conversations-list::-webkit-scrollbar-thumb {
+    background: #667eea;
+    border-radius: 3px;
+}
+
+.conversations-loading {
+    text-align: center;
+    padding: 20px;
+    color: #999;
+    font-size: 12px;
+}
+
+.conversations-empty {
+    text-align: center;
+    padding: 20px;
+    color: #999;
+    font-size: 12px;
+    font-style: italic;
+}
+
+.conversation-item {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding: 10px 12px;
+    margin-bottom: 6px;
+    background: white;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: 2px solid transparent;
+    position: relative;
+}
+
+.conversation-item:hover {
+    background: #e3f2fd;
+    border-color: #667eea;
+}
+
+.conversation-item.active {
+    background: #e8eaf6;
+    border-color: #667eea;
+    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.2);
+}
+
+.conversation-item-content {
+    flex: 1;
+    min-width: 0;
+    padding-right: 8px;
+}
+
+.conversation-item-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #333;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 4px;
+}
+
+.conversation-item-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: #888;
+}
+
+.conversation-item-date {
+    color: #888;
+}
+
+.conversation-item-count {
+    background: #e0e0e0;
+    padding: 2px 6px;
+    border-radius: 10px;
+    font-size: 10px;
+    color: #666;
+}
+
+.conversation-item.active .conversation-item-count {
+    background: #667eea;
+    color: white;
+}
+
+.conversation-delete-btn {
+    opacity: 0;
+    padding: 4px 8px;
+    background: #ffebee;
+    color: #d32f2f;
+    border: none;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    flex-shrink: 0;
+}
+
+.conversation-item:hover .conversation-delete-btn {
+    opacity: 1;
+}
+
+.conversation-delete-btn:hover {
+    background: #d32f2f;
+    color: white;
+}
+
+/* Mode badge in conversation item */
+.conversation-item-mode {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: #e3f2fd;
+    color: #1976d2;
+    margin-left: 4px;
+}
+
+/* =============================================================================
+   5. MAIN CONTENT & CONVERSATION
    ============================================================================= */
 
 .main-content {
@@ -227,7 +416,65 @@ body {
 }
 
 /* =============================================================================
-   5. MESSAGES & FORMATTING
+   6. MEMORY INDICATOR (NEW - Memory Feature)
+   ============================================================================= */
+
+.memory-indicator {
+    margin-bottom: 15px;
+}
+
+.memory-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 15px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.3s;
+}
+
+.memory-status.active {
+    background: #e8f5e9;
+    color: #2e7d32;
+    border: 1px solid #a5d6a7;
+}
+
+.memory-status.warning {
+    background: #fff3e0;
+    color: #e65100;
+    border: 1px solid #ffcc80;
+}
+
+.memory-status.error {
+    background: #ffebee;
+    color: #c62828;
+    border: 1px solid #ef9a9a;
+}
+
+.memory-icon {
+    font-size: 16px;
+}
+
+.memory-text {
+    flex: 1;
+}
+
+.memory-status .memory-link {
+    font-size: 11px;
+    color: inherit;
+    opacity: 0.8;
+    text-decoration: underline;
+    cursor: pointer;
+    margin-left: auto;
+}
+
+.memory-status .memory-link:hover {
+    opacity: 1;
+}
+
+/* =============================================================================
+   7. MESSAGES & FORMATTING
    ============================================================================= */
 
 .message {
@@ -267,8 +514,20 @@ body {
     border-top: 1px solid #e0e0e0;
 }
 
+/* Timestamp for messages */
+.message-timestamp {
+    font-size: 10px;
+    color: #999;
+    margin-top: 8px;
+    text-align: right;
+}
+
+.message.user .message-timestamp {
+    color: rgba(255, 255, 255, 0.7);
+}
+
 /* =============================================================================
-   6. FEEDBACK SYSTEM
+   8. FEEDBACK SYSTEM
    ============================================================================= */
 
 .feedback-section {
@@ -415,7 +674,7 @@ body {
 }
 
 /* =============================================================================
-   7. LOADING STATES
+   9. LOADING STATES
    ============================================================================= */
 
 .loading {
@@ -453,7 +712,7 @@ body {
 }
 
 /* =============================================================================
-   8. INPUT AREA
+   10. INPUT AREA
    ============================================================================= */
 
 .input-area {
@@ -488,7 +747,7 @@ body {
 }
 
 /* =============================================================================
-   9. BADGES & INDICATORS
+   11. BADGES & INDICATORS
    ============================================================================= */
 
 .badge {
@@ -515,6 +774,11 @@ body {
     color: #388e3c;
 }
 
+.badge.memory {
+    background: #e8f5e9;
+    color: #2e7d32;
+}
+
 .mode-indicator {
     padding: 4px 12px;
     border-radius: 12px;
@@ -535,7 +799,7 @@ body {
 }
 
 /* =============================================================================
-   10. AI RESPONSE FORMATTING (Beautiful Markdown-style Rendering)
+   12. AI RESPONSE FORMATTING (Beautiful Markdown-style Rendering)
    ============================================================================= */
 
 .message-content h1 {
@@ -595,7 +859,7 @@ body {
 }
 
 /* =============================================================================
-   11. UTILITY CLASSES
+   13. UTILITY CLASSES
    ============================================================================= */
 
 /* File upload label styling */
@@ -745,6 +1009,7 @@ body {
     
     .sidebar {
         order: 2;
+        max-height: none;
     }
     
     .main-content {
@@ -753,6 +1018,10 @@ body {
     
     .mode-switcher {
         flex-wrap: wrap;
+    }
+    
+    .conversations-list {
+        max-height: 150px;
     }
 }
 
@@ -777,6 +1046,14 @@ body {
     
     .input-area button {
         width: 100%;
+    }
+    
+    .conversations-section {
+        padding: 10px;
+    }
+    
+    .conversation-item {
+        padding: 8px 10px;
     }
 }
 
