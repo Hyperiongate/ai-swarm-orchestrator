@@ -1,7 +1,7 @@
 """
 Core Routes
 Created: January 21, 2026
-Last Updated: January 21, 2026 - COMPLETE FIX: Proper response fields, document generation, markdown
+Last Updated: January 21, 2026 - FEEDBACK ENDPOINT ADDED
 
 CRITICAL FIXES:
 1. Returns 'result' field (not 'actual_output') for frontend compatibility
@@ -9,6 +9,8 @@ CRITICAL FIXES:
 3. Triggers document generation for appropriate requests
 4. Always returns proper structure for feedback forms
 5. Ensures download buttons appear when documents created
+6. ADDED /api/feedback endpoint (was causing 404 errors)
+7. FIXED /api/learning/stats to return proper feedback statistics
 
 All issues resolved in this version.
 """
@@ -152,7 +154,7 @@ Your professional {schedule_type.replace('_', ' ')} schedule has been generated 
                         return jsonify({
                             'success': True,
                             'task_id': task_id,
-                            'result': response_html,  # ← FIXED: Use 'result' not 'actual_output'
+                            'result': response_html,
                             'document_url': f'/api/download/{filename}',
                             'document_created': True,
                             'document_type': 'xlsx',
@@ -235,7 +237,6 @@ Your professional {schedule_type.replace('_', ' ')} schedule has been generated 
                     title.alignment = 1  # Center
                     
                     # Add content
-                    # Split by lines and add paragraphs
                     lines = actual_output.split('\n')
                     for line in lines:
                         if line.strip():
@@ -291,13 +292,13 @@ Your professional {schedule_type.replace('_', ' ')} schedule has been generated 
             return jsonify({
                 'success': True,
                 'task_id': task_id,
-                'result': formatted_output,  # ← FIXED: Use 'result' (HTML formatted)
+                'result': formatted_output,
                 'orchestrator': orchestrator,
                 'specialists_used': [s.get('specialist') for s in specialist_results] if specialist_results else [],
                 'consensus': consensus_result,
                 'execution_time': total_time,
                 'knowledge_applied': analysis.get('knowledge_applied', False),
-                'knowledge_used': analysis.get('knowledge_applied', False),  # Alias for compatibility
+                'knowledge_used': analysis.get('knowledge_applied', False),
                 'formatting_applied': True,
                 'document_created': document_created,
                 'document_url': document_url,
@@ -423,47 +424,145 @@ def get_documents():
         return jsonify({'error': str(e)}), 500
 
 
+@core_bp.route('/api/feedback', methods=['POST'])
+def submit_feedback():
+    """Submit feedback on task results - ADDED January 21, 2026"""
+    try:
+        data = request.json
+        task_id = data.get('task_id')
+        overall_rating = data.get('overall_rating')
+        quality_rating = data.get('quality_rating')
+        accuracy_rating = data.get('accuracy_rating')
+        usefulness_rating = data.get('usefulness_rating')
+        improvement_categories = data.get('improvement_categories', [])
+        user_comment = data.get('user_comment', '')
+        output_used = data.get('output_used', False)
+        
+        if not task_id or not overall_rating:
+            return jsonify({'error': 'task_id and overall_rating required'}), 400
+        
+        db = get_db()
+        
+        try:
+            # Check if task exists
+            task = db.execute('SELECT * FROM tasks WHERE id = ?', (task_id,)).fetchone()
+            if not task:
+                return jsonify({'error': 'Task not found'}), 404
+            
+            # Get consensus score if it exists
+            consensus = db.execute(
+                'SELECT agreement_score FROM consensus_validations WHERE task_id = ?', 
+                (task_id,)
+            ).fetchone()
+            consensus_score = consensus['agreement_score'] if consensus else None
+            
+            # Determine if consensus was accurate
+            consensus_was_accurate = None
+            if consensus_score is not None:
+                avg_rating = (quality_rating + accuracy_rating + usefulness_rating) / 3
+                if consensus_score >= 0.7 and avg_rating >= 3.5:
+                    consensus_was_accurate = True
+                elif consensus_score < 0.7 and avg_rating < 3.5:
+                    consensus_was_accurate = True
+                else:
+                    consensus_was_accurate = False
+            
+            # Insert feedback
+            db.execute('''
+                INSERT INTO user_feedback 
+                (task_id, overall_rating, quality_rating, accuracy_rating, usefulness_rating,
+                 consensus_was_accurate, improvement_categories, user_comment, output_used)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                task_id, overall_rating, quality_rating, accuracy_rating, usefulness_rating,
+                consensus_was_accurate, json.dumps(improvement_categories), user_comment, output_used
+            ))
+            
+            # Update learning records
+            orchestrator = task['assigned_orchestrator']
+            task_type = 'general'
+            avg_rating = (quality_rating + accuracy_rating + usefulness_rating) / 3
+            
+            pattern_key = f"{orchestrator}_{task_type}"
+            existing_pattern = db.execute(
+                'SELECT * FROM learning_records WHERE pattern_type = ?', 
+                (pattern_key,)
+            ).fetchone()
+            
+            if existing_pattern:
+                # Update existing pattern (using times_applied field)
+                new_avg = (existing_pattern['success_rate'] * existing_pattern['times_applied'] + avg_rating / 5.0) / (existing_pattern['times_applied'] + 1)
+                db.execute('''
+                    UPDATE learning_records 
+                    SET success_rate = ?, times_applied = times_applied + 1
+                    WHERE pattern_type = ?
+                ''', (new_avg, pattern_key))
+            else:
+                # Create new pattern
+                db.execute('''
+                    INSERT INTO learning_records 
+                    (pattern_type, success_rate, times_applied, pattern_data)
+                    VALUES (?, ?, ?, ?)
+                ''', (
+                    pattern_key, avg_rating / 5.0, 1, 
+                    json.dumps({
+                        'orchestrator': orchestrator,
+                        'task_type': task_type,
+                        'last_rating': avg_rating,
+                        'last_consensus': consensus_score
+                    })
+                ))
+            
+            db.commit()
+            
+            return jsonify({
+                'success': True,
+                'message': 'Feedback recorded - system is learning!',
+                'consensus_was_accurate': consensus_was_accurate,
+                'learning_updated': True
+            })
+            
+        except Exception as e:
+            db.rollback()
+            import traceback
+            print(f"Feedback error: {traceback.format_exc()}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+        finally:
+            db.close()
+            
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @core_bp.route('/api/learning/stats', methods=['GET'])
 def get_learning_stats():
-    """Get learning system statistics"""
+    """Get learning system statistics - FIXED January 21, 2026"""
     try:
         db = get_db()
         
-        # Check if learning_records table exists
-        table_check = db.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='learning_records'"
-        ).fetchone()
+        # Get feedback stats
+        total_feedback = db.execute('SELECT COUNT(*) as count FROM user_feedback').fetchone()
+        avg_overall = db.execute('SELECT AVG(overall_rating) as avg FROM user_feedback').fetchone()
         
-        if not table_check:
-            db.close()
-            return jsonify({
-                'patterns': [],
-                'total_patterns': 0,
-                'status': 'learning_not_initialized'
-            })
+        consensus_accuracy = db.execute('''
+            SELECT 
+                COUNT(*) as total,
+                SUM(CASE WHEN consensus_was_accurate = 1 THEN 1 ELSE 0 END) as accurate
+            FROM user_feedback 
+            WHERE consensus_was_accurate IS NOT NULL
+        ''').fetchone()
         
-        # Get learning patterns
-        patterns = db.execute('''
-            SELECT pattern_type, success_rate, times_applied, pattern_data
-            FROM learning_records
-            ORDER BY success_rate DESC
-            LIMIT 10
-        ''').fetchall()
+        consensus_accuracy_rate = None
+        if consensus_accuracy and consensus_accuracy['total'] > 0:
+            consensus_accuracy_rate = int((consensus_accuracy['accurate'] / consensus_accuracy['total']) * 100)
         
         db.close()
         
-        pattern_list = []
-        for p in patterns:
-            pattern_list.append({
-                'type': p['pattern_type'],
-                'success_rate': p['success_rate'],
-                'times_applied': p['times_applied']
-            })
-        
         return jsonify({
-            'patterns': pattern_list,
-            'total_patterns': len(pattern_list),
-            'status': 'available'
+            'success': True,
+            'total_feedback_count': total_feedback['count'] if total_feedback else 0,
+            'average_overall_rating': round(avg_overall['avg'], 2) if avg_overall and avg_overall['avg'] else 0,
+            'consensus_accuracy_rate': consensus_accuracy_rate
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
