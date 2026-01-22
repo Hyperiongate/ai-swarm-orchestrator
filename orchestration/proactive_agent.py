@@ -1,7 +1,7 @@
 """
 Proactive Intelligence Module
 Created: January 22, 2026
-Last Updated: January 22, 2026 - SPRINT 1: Smart Questioning + Suggestions
+Last Updated: January 22, 2026 - SPRINT 2: Project Auto-Detection Added
 
 This module makes the AI Swarm proactive instead of reactive.
 It asks questions, suggests next steps, and anticipates user needs.
@@ -11,6 +11,12 @@ SPRINT 1 FEATURES:
 - Post-task suggestions based on context
 - Pattern tracking for future automation
 
+SPRINT 2 FEATURES:
+- Project auto-detection (detects "new client" keywords)
+- Automatic project structure creation
+- Implementation checklist generation
+- Milestone tracking
+
 Author: Jim @ Shiftwork Solutions LLC (managed by Claude)
 """
 
@@ -18,6 +24,7 @@ import json
 import re
 from datetime import datetime
 from database import get_db
+from project_manager import ProjectManager
 
 
 class SmartQuestioner:
@@ -319,13 +326,37 @@ class ProactiveAgent:
         self.questioner = SmartQuestioner()
         self.suggester = SuggestionEngine()
         self.tracker = PatternTracker()
+        self.project_manager = ProjectManager()  # SPRINT 2: Project management
     
     def pre_process_request(self, user_request):
         """
         Analyze request BEFORE execution
         Returns action: 'ask_questions', 'detect_project', or 'execute'
         """
-        # Check for ambiguity
+        # SPRINT 2: Check for new project indicators FIRST
+        project_detection = self.project_manager.detect_new_project(user_request)
+        
+        if project_detection['detected']:
+            client_name = project_detection.get('client_name', 'Unknown Client')
+            industry = project_detection.get('industry')
+            
+            return {
+                'action': 'detect_project',
+                'data': {
+                    'message': f'🎯 I detected you might be starting a new project with {client_name}!',
+                    'client_name': client_name,
+                    'industry': industry,
+                    'suggestion': 'Want me to set up a complete project structure with:\n' +
+                                '  • Implementation checklist (4 phases, 20 tasks)\n' +
+                                '  • Project milestones with target dates\n' +
+                                '  • Folder organization system\n' +
+                                '  • Document templates\n' +
+                                '  • Progress tracking dashboard',
+                    'action_required': 'create_project'
+                }
+            }
+        
+        # Check for ambiguity (SPRINT 1)
         questions = self.questioner.analyze_ambiguity(user_request)
         
         if questions:
@@ -335,17 +366,6 @@ class ProactiveAgent:
                     'message': 'I need a few details to give you the best result:',
                     'required_questions': [q for q in questions if q.get('required')],
                     'optional_questions': [q for q in questions if not q.get('required')]
-                }
-            }
-        
-        # Check for new project indicators
-        new_project_keywords = ['new client', 'new facility', 'kick off', 'kickoff', 'starting work with']
-        if any(keyword in user_request.lower() for keyword in new_project_keywords):
-            return {
-                'action': 'detect_project',
-                'data': {
-                    'message': '🎯 I detected you might be starting a new project!',
-                    'suggestion': 'Want me to set up a complete project structure with checklist, templates, and tracking?'
                 }
             }
         
