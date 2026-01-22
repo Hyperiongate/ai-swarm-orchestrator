@@ -1,144 +1,111 @@
 """
-AI SWARM ORCHESTRATOR - Main Application (REFACTORED)
-Created: January 18, 2026
-Last Updated: January 21, 2026 - FIXED: Knowledge base now uses correct project_files path
+AI SWARM ORCHESTRATOR - Diagnostic Version
+Last Updated: January 22, 2026 - Added detailed error logging to find crash
 
-MAJOR REFACTORING:
-- Broke up 2,500 line monster file into logical modules
-- No more indentation nightmares
-- Easy to find and fix things
-- Each file is ~100-300 lines instead of thousands
-
-CRITICAL FIX (January 21, 2026):
-- Added app.config lines to make schedule generator available to routes
-- Without these, schedule_generator module loads but routes can't use it
-- FIXED: Knowledge base now initializes with project_files path, not /mnt/project
-
-ARCHITECTURE:
-- config.py: All configuration
-- database.py: All database operations  
-- orchestration/: All AI logic
-- routes/: All Flask endpoints
-- app.py (this file): Just imports and runs
-
-AUTHOR: Jim @ Shiftwork Solutions LLC
+This version adds extensive error logging to identify startup failures.
 """
 
-from flask import Flask, render_template, jsonify
-from database import init_db
+import sys
 import os
 
-# Initialize Flask
-app = Flask(__name__)
+print("=" * 60)
+print("DIAGNOSTIC APP.PY STARTING")
+print("=" * 60)
 
-# Initialize database
-init_db()
-
-# Initialize knowledge base
-print("🔍 Initializing Project Knowledge Base...")
-knowledge_base = None
 try:
-    from pathlib import Path
-    from knowledge_integration import ProjectKnowledgeBase
-    
-    # FIXED: Check for project_files first, then fall back to /mnt/project
-    project_paths = ["project_files", "./project_files", "/mnt/project"]
-    found_path = None
-    
-    for path in project_paths:
-        if Path(path).exists() and Path(path).is_dir():
-            file_count = len(list(Path(path).iterdir()))
-            if file_count > 0:  # Only use paths with actual files
-                found_path = path
-                print(f"  📁 Found directory: {path} ({file_count} files)")
-                break
-    
-    if not found_path:
-        print(f"  ⚠️ No project files found. Checked: {project_paths}")
-        print(f"  ℹ️  Knowledge base features disabled until files are added")
-    else:
-        # CRITICAL FIX: Pass the found path to ProjectKnowledgeBase constructor
-        knowledge_base = ProjectKnowledgeBase(project_path=found_path)
-        knowledge_base.initialize()
-        print(f"  ✅ Knowledge Base Ready: {len(knowledge_base.knowledge_index)} documents indexed")
-        
+    print("Step 1: Importing Flask...")
+    from flask import Flask, render_template, jsonify
+    print("✅ Flask imported successfully")
 except Exception as e:
-    print(f"  ⚠️ Warning: Knowledge Base initialization failed: {e}")
+    print(f"❌ FAILED importing Flask: {e}")
     import traceback
-    print(f"  Traceback: {traceback.format_exc()}")
-    knowledge_base = None
+    traceback.print_exc()
+    sys.exit(1)
 
-# Load optional modules
-SCHEDULE_GENERATOR_AVAILABLE = False
 try:
-    from schedule_generator import get_schedule_generator
-    SCHEDULE_GENERATOR_AVAILABLE = True
-    schedule_gen = get_schedule_generator()
-    print("✅ Schedule Generator loaded")
-    
-    # CRITICAL: Make schedule generator available to routes
-    app.config['SCHEDULE_GENERATOR_AVAILABLE'] = SCHEDULE_GENERATOR_AVAILABLE
-    app.config['SCHEDULE_GENERATOR'] = schedule_gen
-    
-except ImportError:
-    print("⚠️ Warning: schedule_generator module not found")
-    app.config['SCHEDULE_GENERATOR_AVAILABLE'] = False
+    print("Step 2: Importing database...")
+    from database import init_db
+    print("✅ database module imported successfully")
+except Exception as e:
+    print(f"❌ FAILED importing database: {e}")
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
 
-OUTPUT_FORMATTER_AVAILABLE = False
 try:
-    from output_formatter import get_output_formatter
-    OUTPUT_FORMATTER_AVAILABLE = True
-    print("✅ Output Formatter loaded")
-except ImportError:
-    print("⚠️ Warning: output_formatter module not found")
+    print("Step 3: Creating Flask app...")
+    app = Flask(__name__)
+    print("✅ Flask app created successfully")
+except Exception as e:
+    print(f"❌ FAILED creating Flask app: {e}")
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
 
-# Basic routes
-@app.route('/')
-def index():
-    """Main interface"""
-    return render_template('index.html')
+try:
+    print("Step 4: Initializing database...")
+    init_db()
+    print("✅ Database initialized successfully")
+except Exception as e:
+    print(f"❌ FAILED initializing database: {e}")
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
 
-@app.route('/workflow')
-def workflow():
-    """Workflow interface"""
-    return render_template('index_workflow.html')
+try:
+    print("Step 5: Importing knowledge_integration...")
+    from knowledge_integration import ProjectKnowledgeBase
+    print("✅ knowledge_integration imported successfully")
+except Exception as e:
+    print(f"⚠️  Warning: knowledge_integration import failed: {e}")
+    print("   Continuing without knowledge base...")
 
-@app.route('/health')
-def health():
-    """Health check"""
-    from config import ANTHROPIC_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, GOOGLE_API_KEY
+try:
+    print("Step 6: Importing routes.core...")
+    from routes.core import core_bp
+    print("✅ routes.core imported successfully")
+except Exception as e:
+    print(f"❌ FAILED importing routes.core: {e}")
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
+
+try:
+    print("Step 7: Registering blueprint...")
+    app.register_blueprint(core_bp)
+    print("✅ Blueprint registered successfully")
+except Exception as e:
+    print(f"❌ FAILED registering blueprint: {e}")
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
+
+try:
+    print("Step 8: Creating basic routes...")
     
-    kb_status = 'initialized' if knowledge_base and len(knowledge_base.knowledge_index) > 0 else 'not_initialized'
-    kb_doc_count = len(knowledge_base.knowledge_index) if knowledge_base else 0
+    @app.route('/')
+    def index():
+        return render_template('index.html')
     
-    return jsonify({
-        'status': 'healthy',
-        'orchestrators': {
-            'sonnet': 'configured' if ANTHROPIC_API_KEY else 'missing',
-            'opus': 'configured' if ANTHROPIC_API_KEY else 'missing'
-        },
-        'specialists': {
-            'gpt4': 'configured' if OPENAI_API_KEY else 'missing',
-            'deepseek': 'configured' if DEEPSEEK_API_KEY else 'missing',
-            'gemini': 'configured' if GOOGLE_API_KEY else 'missing'
-        },
-        'knowledge_base': {
-            'status': kb_status,
-            'documents_indexed': kb_doc_count
-        },
-        'schedule_generator': {
-            'status': 'enabled' if SCHEDULE_GENERATOR_AVAILABLE else 'disabled'
-        },
-        'output_formatter': {
-            'status': 'enabled' if OUTPUT_FORMATTER_AVAILABLE else 'disabled'
-        }
-    })
+    @app.route('/health')
+    def health():
+        return jsonify({'status': 'healthy', 'message': 'Diagnostic version running'})
+    
+    print("✅ Basic routes created successfully")
+except Exception as e:
+    print(f"❌ FAILED creating routes: {e}")
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
 
-# Register blueprints (CRITICAL - THIS MAKES THE API WORK)
-from routes.core import core_bp
-app.register_blueprint(core_bp)
+print("=" * 60)
+print("✅ ALL STARTUP CHECKS PASSED!")
+print("=" * 60)
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    port = int(os.environ.get('PORT', 5000))
+    debug = os.environ.get('FLASK_ENV') == 'development'
+    print(f"Starting app on port {port}...")
+    app.run(host='0.0.0.0', port=port, debug=debug)
 
 # I did no harm and this file is not truncated
