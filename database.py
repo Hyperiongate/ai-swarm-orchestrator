@@ -1,12 +1,12 @@
 """
 Database Module
 Created: January 21, 2026
-Last Updated: January 21, 2026
+Last Updated: January 22, 2026 - ADDED PROACTIVE INTELLIGENCE TABLES
 
 All database operations isolated here.
 No more SQL scattered across 2,500 lines.
 
-COMPLETE VERSION: Includes both schema AND utility functions.
+SPRINT 1 UPDATE: Added tables for pattern tracking, suggestions, and clarifications.
 """
 
 import sqlite3
@@ -151,9 +151,63 @@ def init_db():
         )
     ''')
     
+    # ============================================================================
+    # PROACTIVE INTELLIGENCE TABLES (Added January 22, 2026 - Sprint 1)
+    # ============================================================================
+    
+    # Pattern tracking - learns user behavior
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS user_patterns (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pattern_type TEXT NOT NULL,
+            pattern_data TEXT NOT NULL,
+            frequency INTEGER DEFAULT 1,
+            last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            suggestion_made BOOLEAN DEFAULT 0,
+            suggestion_accepted BOOLEAN DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    # Suggestion tracking - tracks what AI suggests
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS proactive_suggestions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER,
+            suggestion_type TEXT NOT NULL,
+            suggestion_title TEXT NOT NULL,
+            suggestion_data TEXT NOT NULL,
+            displayed BOOLEAN DEFAULT 0,
+            accepted BOOLEAN DEFAULT 0,
+            dismissed BOOLEAN DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (task_id) REFERENCES tasks(id)
+        )
+    ''')
+    
+    # Clarification history - tracks questions asked
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS clarification_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER,
+            questions_asked TEXT NOT NULL,
+            answers_provided TEXT,
+            improved_result BOOLEAN DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (task_id) REFERENCES tasks(id)
+        )
+    ''')
+    
+    # Indexes for performance
+    db.execute('CREATE INDEX IF NOT EXISTS idx_patterns_type ON user_patterns(pattern_type)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_patterns_last_seen ON user_patterns(last_seen)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_suggestions_task ON proactive_suggestions(task_id)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_suggestions_type ON proactive_suggestions(suggestion_type)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_clarifications_task ON clarification_history(task_id)')
+    
     db.commit()
     db.close()
-    print("✅ Database initialized")
+    print("✅ Database initialized (with proactive intelligence tables)")
 
 # ============================================================================
 # TASK FUNCTIONS (needed by routes/core.py)
