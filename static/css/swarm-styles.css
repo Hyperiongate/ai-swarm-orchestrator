@@ -1,0 +1,783 @@
+/*
+=============================================================================
+SWARM-STYLES.CSS - AI Swarm Unified Interface Styles
+Shiftwork Solutions LLC
+=============================================================================
+
+CHANGE LOG:
+- January 22, 2026: Initial extraction from index.html
+  * Separated all CSS into dedicated stylesheet
+  * Organized into logical sections
+  * Maintained all existing styling functionality
+  * Added section comments for maintainability
+
+SECTIONS:
+1. Reset & Base Styles
+2. Layout Components (Container, Header, Grid)
+3. Sidebar Styles
+4. Main Content & Conversation
+5. Messages & Formatting
+6. Feedback System
+7. Loading States
+8. Input Area
+9. Badges & Indicators
+10. AI Response Formatting
+11. Utility Classes
+
+=============================================================================
+*/
+
+/* =============================================================================
+   1. RESET & BASE STYLES
+   ============================================================================= */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    min-height: 100vh;
+    padding: 20px;
+}
+
+/* =============================================================================
+   2. LAYOUT COMPONENTS
+   ============================================================================= */
+
+.container {
+    max-width: 1400px;
+    margin: 0 auto;
+}
+
+.header {
+    background: white;
+    padding: 20px 30px;
+    border-radius: 15px;
+    margin-bottom: 20px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.header-left h1 {
+    color: #667eea;
+    margin-bottom: 5px;
+    font-size: 24px;
+}
+
+.header-left p {
+    color: #666;
+    font-size: 14px;
+}
+
+.mode-switcher {
+    display: flex;
+    gap: 10px;
+}
+
+.mode-btn {
+    padding: 10px 20px;
+    border: 2px solid #667eea;
+    background: white;
+    color: #667eea;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: all 0.2s;
+}
+
+.mode-btn.active {
+    background: #667eea;
+    color: white;
+}
+
+.mode-btn:hover {
+    transform: translateY(-2px);
+}
+
+.main-grid {
+    display: grid;
+    grid-template-columns: 300px 1fr;
+    gap: 20px;
+}
+
+/* =============================================================================
+   3. SIDEBAR STYLES
+   ============================================================================= */
+
+.sidebar {
+    background: white;
+    padding: 20px;
+    border-radius: 15px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+    height: fit-content;
+}
+
+.sidebar h3 {
+    color: #667eea;
+    margin-bottom: 15px;
+    font-size: 16px;
+}
+
+.project-info {
+    background: #f8f9fa;
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    display: none;
+}
+
+.project-info.active {
+    display: block;
+}
+
+.project-info label {
+    display: block;
+    font-size: 12px;
+    color: #666;
+    margin-bottom: 5px;
+}
+
+.project-info span {
+    display: block;
+    font-weight: 600;
+    color: #333;
+    margin-bottom: 10px;
+}
+
+.phase-indicator {
+    background: #667eea;
+    color: white;
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 11px;
+    display: inline-block;
+}
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.stat-card {
+    background: #f8f9fa;
+    padding: 10px;
+    border-radius: 8px;
+    text-align: center;
+}
+
+.stat-value {
+    font-size: 20px;
+    font-weight: 700;
+    color: #667eea;
+}
+
+.stat-label {
+    font-size: 11px;
+    color: #666;
+    margin-top: 2px;
+}
+
+.quick-actions {
+    list-style: none;
+}
+
+.quick-actions li {
+    padding: 10px;
+    margin: 5px 0;
+    background: #f8f9fa;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-size: 13px;
+}
+
+.quick-actions li:hover {
+    background: #667eea;
+    color: white;
+    transform: translateX(5px);
+}
+
+/* =============================================================================
+   4. MAIN CONTENT & CONVERSATION
+   ============================================================================= */
+
+.main-content {
+    background: white;
+    padding: 30px;
+    border-radius: 15px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+}
+
+.conversation {
+    height: 500px;
+    overflow-y: auto;
+    border: 2px solid #e0e0e0;
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 20px;
+    background: #f8f9fa;
+}
+
+/* =============================================================================
+   5. MESSAGES & FORMATTING
+   ============================================================================= */
+
+.message {
+    margin-bottom: 20px;
+    padding: 15px;
+    border-radius: 10px;
+    max-width: 80%;
+}
+
+.message.user {
+    background: #667eea;
+    color: white;
+    margin-left: auto;
+}
+
+.message.assistant {
+    background: white;
+    border: 2px solid #e0e0e0;
+}
+
+.message-header {
+    font-weight: 600;
+    margin-bottom: 8px;
+    font-size: 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.message-content {
+    line-height: 1.6;
+}
+
+.message-actions {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid #e0e0e0;
+}
+
+/* =============================================================================
+   6. FEEDBACK SYSTEM
+   ============================================================================= */
+
+.feedback-section {
+    display: none;
+    margin-top: 15px;
+    padding: 15px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    border: 2px solid #e0e0e0;
+}
+
+.feedback-section.active {
+    display: block;
+}
+
+.feedback-header {
+    font-weight: 600;
+    color: #667eea;
+    margin-bottom: 15px;
+    font-size: 14px;
+}
+
+.rating-row {
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.rating-label {
+    font-size: 13px;
+    font-weight: 500;
+    color: #333;
+    min-width: 120px;
+}
+
+.star-rating {
+    display: flex;
+    gap: 5px;
+}
+
+.star {
+    font-size: 24px;
+    cursor: pointer;
+    color: #ddd;
+    transition: all 0.2s;
+    user-select: none;
+}
+
+.star:hover,
+.star.active {
+    color: #ffd700;
+    transform: scale(1.1);
+}
+
+.improvement-checks {
+    margin: 15px 0;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.improvement-check {
+    display: flex;
+    align-items: center;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.improvement-check input {
+    margin-right: 6px;
+    cursor: pointer;
+}
+
+.feedback-input {
+    width: 100%;
+    padding: 10px;
+    border: 2px solid #e0e0e0;
+    border-radius: 5px;
+    font-size: 13px;
+    font-family: inherit;
+    resize: vertical;
+    min-height: 70px;
+    margin-top: 10px;
+}
+
+.feedback-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 15px;
+}
+
+.btn-feedback {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    transition: all 0.2s;
+}
+
+.btn-feedback.primary {
+    background: #667eea;
+    color: white;
+}
+
+.btn-feedback.primary:hover {
+    background: #5568d3;
+    transform: translateY(-1px);
+}
+
+.btn-feedback.secondary {
+    background: #e0e0e0;
+    color: #333;
+}
+
+.btn-feedback.secondary:hover {
+    background: #d0d0d0;
+}
+
+.feedback-success {
+    background: #e8f5e9;
+    color: #388e3c;
+    padding: 12px;
+    border-radius: 5px;
+    font-weight: 600;
+    text-align: center;
+    margin-top: 10px;
+}
+
+.btn-link {
+    background: none;
+    border: none;
+    color: #667eea;
+    cursor: pointer;
+    font-size: 12px;
+    text-decoration: underline;
+    padding: 5px;
+}
+
+.btn-link:hover {
+    color: #5568d3;
+}
+
+/* =============================================================================
+   7. LOADING STATES
+   ============================================================================= */
+
+.loading {
+    display: none;
+    padding: 20px;
+    text-align: center;
+    background: #f8f9fa;
+    border-radius: 10px;
+    margin-bottom: 20px;
+}
+
+.loading.active {
+    display: block;
+}
+
+.loading-spinner {
+    display: inline-block;
+    width: 40px;
+    height: 40px;
+    border: 4px solid #f3f3f3;
+    border-top: 4px solid #667eea;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.loading-text {
+    margin-top: 10px;
+    color: #666;
+    font-size: 14px;
+}
+
+/* =============================================================================
+   8. INPUT AREA
+   ============================================================================= */
+
+.input-area {
+    display: flex;
+    gap: 10px;
+}
+
+.input-area textarea {
+    flex: 1;
+    padding: 15px;
+    border: 2px solid #e0e0e0;
+    border-radius: 10px;
+    font-family: inherit;
+    font-size: 14px;
+    resize: none;
+    height: 80px;
+}
+
+.input-area button {
+    padding: 15px 30px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    border-radius: 10px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.2s;
+}
+
+.input-area button:hover {
+    transform: translateY(-2px);
+}
+
+/* =============================================================================
+   9. BADGES & INDICATORS
+   ============================================================================= */
+
+.badge {
+    display: inline-block;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    margin: 2px;
+}
+
+.badge.knowledge {
+    background: #e3f2fd;
+    color: #1976d2;
+}
+
+.badge.workflow {
+    background: #f3e5f5;
+    color: #7b1fa2;
+}
+
+.badge.formatted {
+    background: #e8f5e9;
+    color: #388e3c;
+}
+
+.mode-indicator {
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    display: inline-block;
+    margin-left: 10px;
+}
+
+.mode-indicator.quick {
+    background: #e3f2fd;
+    color: #1976d2;
+}
+
+.mode-indicator.project {
+    background: #f3e5f5;
+    color: #7b1fa2;
+}
+
+/* =============================================================================
+   10. AI RESPONSE FORMATTING (Beautiful Markdown-style Rendering)
+   ============================================================================= */
+
+.message-content h1 {
+    color: #667eea;
+    font-size: 24px;
+    margin: 15px 0 10px 0;
+    border-bottom: 2px solid #667eea;
+    padding-bottom: 5px;
+}
+
+.message-content h2 {
+    color: #764ba2;
+    font-size: 20px;
+    margin: 12px 0 8px 0;
+}
+
+.message-content h3 {
+    color: #333;
+    font-size: 16px;
+    margin: 10px 0 6px 0;
+}
+
+.message-content ul, 
+.message-content ol {
+    margin: 10px 0 10px 20px;
+    line-height: 1.8;
+}
+
+.message-content li {
+    margin: 5px 0;
+}
+
+.message-content p {
+    margin: 8px 0;
+    line-height: 1.7;
+}
+
+.message-content strong {
+    color: #667eea;
+    font-weight: 600;
+}
+
+.message-content code {
+    background: #f5f5f5;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+}
+
+.message-content blockquote {
+    border-left: 4px solid #667eea;
+    padding-left: 15px;
+    margin: 10px 0;
+    color: #666;
+    font-style: italic;
+}
+
+/* =============================================================================
+   11. UTILITY CLASSES
+   ============================================================================= */
+
+/* File upload label styling */
+.file-upload-label {
+    padding: 10px 20px;
+    background: #e0e0e0;
+    color: #333;
+    border: none;
+    border-radius: 10px;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: center;
+    transition: background 0.2s;
+}
+
+.file-upload-label:hover {
+    background: #d0d0d0;
+}
+
+/* Sidebar panel common styles */
+.sidebar-panel {
+    background: #f8f9fa;
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+}
+
+.sidebar-panel h4 {
+    font-size: 14px;
+    margin-bottom: 8px;
+    color: #333;
+}
+
+/* Common button styles for sidebar */
+.sidebar-btn {
+    width: 100%;
+    padding: 8px;
+    margin-bottom: 8px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.sidebar-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+
+.sidebar-btn.primary {
+    background: #667eea;
+    color: white;
+}
+
+.sidebar-btn.secondary {
+    background: #764ba2;
+    color: white;
+}
+
+.sidebar-btn.linkedin {
+    background: #0077b5;
+    color: white;
+}
+
+/* Document created section styling */
+.document-created {
+    margin-top: 15px;
+    padding: 12px;
+    background: #e8f5e9;
+    border-left: 4px solid #4caf50;
+    border-radius: 4px;
+}
+
+.document-created .title {
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: #2e7d32;
+}
+
+.document-created .download-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background: #4caf50;
+    color: white;
+    text-decoration: none;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 14px;
+    transition: background 0.2s;
+}
+
+.document-created .download-btn:hover {
+    background: #43a047;
+}
+
+.document-created .info {
+    font-size: 11px;
+    color: #666;
+    margin-top: 8px;
+}
+
+/* Consensus validation styling */
+.consensus-section {
+    margin-top: 15px;
+    padding: 12px;
+    background: #f8f9fa;
+    border-radius: 4px;
+}
+
+.consensus-section.high-agreement {
+    border-left: 4px solid #4caf50;
+}
+
+.consensus-section.low-agreement {
+    border-left: 4px solid #ff9800;
+}
+
+.consensus-bar {
+    flex: 1;
+    background: #e0e0e0;
+    height: 8px;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.consensus-bar-fill {
+    height: 100%;
+    transition: width 0.3s;
+}
+
+.consensus-bar-fill.high {
+    background: #4caf50;
+}
+
+.consensus-bar-fill.low {
+    background: #ff9800;
+}
+
+/* Responsive adjustments */
+@media (max-width: 1024px) {
+    .main-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .sidebar {
+        order: 2;
+    }
+    
+    .main-content {
+        order: 1;
+    }
+    
+    .mode-switcher {
+        flex-wrap: wrap;
+    }
+}
+
+@media (max-width: 768px) {
+    .header {
+        flex-direction: column;
+        gap: 15px;
+        text-align: center;
+    }
+    
+    .mode-switcher {
+        justify-content: center;
+    }
+    
+    .message {
+        max-width: 95%;
+    }
+    
+    .input-area {
+        flex-direction: column;
+    }
+    
+    .input-area button {
+        width: 100%;
+    }
+}
+
+/* I did no harm and this file is not truncated */
