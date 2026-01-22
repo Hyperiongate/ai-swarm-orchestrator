@@ -1,18 +1,27 @@
 """
 Task Analysis Module
 Created: January 21, 2026
-Last Updated: January 21, 2026 - FIXED: Made learning_records table optional
+Last Updated: January 22, 2026 - CRITICAL FIX: AI client returns dict, not string
+
+CHANGES IN THIS VERSION:
+- January 22, 2026: CRITICAL BUG FIX
+  * call_claude_sonnet() and call_claude_opus() return DICT with 'content' key
+  * Previous code treated response as string, causing "Error: undefined"
+  * Fixed all functions to extract response['content'] before processing
+  * Added proper error handling for API failures
+  * Fixed execute_specialist_task to handle dict response
 
 Sonnet analyzes tasks, Opus handles complex cases.
 Clean separation of concerns.
 
-CRITICAL FIX: Wrapped get_learning_context() in try-catch to handle missing table gracefully
+Author: Jim @ Shiftwork Solutions LLC
 """
 
 import json
 import time
 from orchestration.ai_clients import call_claude_sonnet, call_claude_opus
 from database import get_db
+
 
 def get_learning_context():
     """Retrieve learning patterns to inform orchestration decisions"""
@@ -56,6 +65,7 @@ def get_learning_context():
         # If anything goes wrong with learning, just return empty context
         print(f"⚠️ Learning context unavailable: {e}")
         return ""
+
 
 def analyze_task_with_sonnet(user_request, knowledge_base=None):
     """
@@ -106,32 +116,63 @@ Respond ONLY with valid JSON:
 }}"""
 
     start_time = time.time()
-    response = call_claude_sonnet(analysis_prompt)
+    
+    # CRITICAL FIX: call_claude_sonnet returns a DICT, not a string!
+    api_response = call_claude_sonnet(analysis_prompt)
     execution_time = time.time() - start_time
+    
+    # Extract the content from the response dict
+    if isinstance(api_response, dict):
+        # Check for API error
+        if api_response.get('error'):
+            print(f"⚠️ Sonnet API error: {api_response.get('content')}")
+            return {
+                "task_type": "unknown",
+                "confidence": 0.5,
+                "specialists_needed": [],
+                "escalate_to_opus": True,
+                "reasoning": f"API error: {api_response.get('content')}",
+                "execution_time": execution_time,
+                "knowledge_sources": knowledge_sources,
+                "knowledge_applied": bool(knowledge_context)
+            }
+        response_text = api_response.get('content', '')
+    else:
+        # Fallback if somehow it's a string
+        response_text = str(api_response)
     
     # Parse JSON response
     try:
-        if "```json" in response:
-            response = response.split("```json")[1].split("```")[0].strip()
-        elif "```" in response:
-            response = response.split("```")[1].split("```")[0].strip()
+        # Clean up the response text
+        if "```json" in response_text:
+            response_text = response_text.split("```json")[1].split("```")[0].strip()
+        elif "```" in response_text:
+            response_text = response_text.split("```")[1].split("```")[0].strip()
             
-        analysis = json.loads(response)
+        analysis = json.loads(response_text)
         analysis['execution_time'] = execution_time
         analysis['knowledge_sources'] = knowledge_sources
+        
+        # Ensure knowledge_applied is set
+        if 'knowledge_applied' not in analysis:
+            analysis['knowledge_applied'] = bool(knowledge_context)
+            
         return analysis
-    except:
+    except json.JSONDecodeError as e:
+        print(f"⚠️ JSON parse error: {e}")
+        print(f"⚠️ Raw response: {response_text[:500]}...")
         return {
             "task_type": "unknown",
             "confidence": 0.5,
             "specialists_needed": [],
             "escalate_to_opus": True,
             "reasoning": "Failed to parse Sonnet response, escalating to Opus",
-            "raw_response": response,
+            "raw_response": response_text,
             "execution_time": execution_time,
             "knowledge_sources": knowledge_sources,
             "knowledge_applied": bool(knowledge_context)
         }
+
 
 def handle_with_opus(user_request, sonnet_analysis, knowledge_base=None):
     """
@@ -177,29 +218,52 @@ Respond in JSON format:
 }}"""
 
     start_time = time.time()
-    response = call_claude_opus(opus_prompt)
+    
+    # CRITICAL FIX: call_claude_opus returns a DICT, not a string!
+    api_response = call_claude_opus(opus_prompt)
     execution_time = time.time() - start_time
     
+    # Extract the content from the response dict
+    if isinstance(api_response, dict):
+        # Check for API error
+        if api_response.get('error'):
+            print(f"⚠️ Opus API error: {api_response.get('content')}")
+            return {
+                "strategic_analysis": f"API error: {api_response.get('content')}",
+                "specialist_assignments": [],
+                "workflow": ["Manual handling required due to API error"],
+                "learning_for_sonnet": "API error occurred",
+                "execution_time": execution_time,
+                "knowledge_applied": bool(knowledge_context)
+            }
+        response_text = api_response.get('content', '')
+    else:
+        # Fallback if somehow it's a string
+        response_text = str(api_response)
+    
     try:
-        if "```json" in response:
-            response = response.split("```json")[1].split("```")[0].strip()
-        elif "```" in response:
-            response = response.split("```")[1].split("```")[0].strip()
+        # Clean up the response text
+        if "```json" in response_text:
+            response_text = response_text.split("```json")[1].split("```")[0].strip()
+        elif "```" in response_text:
+            response_text = response_text.split("```")[1].split("```")[0].strip()
             
-        opus_plan = json.loads(response)
+        opus_plan = json.loads(response_text)
         opus_plan['execution_time'] = execution_time
         opus_plan['knowledge_applied'] = bool(knowledge_context)
         return opus_plan
-    except:
+    except json.JSONDecodeError as e:
+        print(f"⚠️ Opus JSON parse error: {e}")
         return {
-            "strategic_analysis": response,
+            "strategic_analysis": response_text,
             "specialist_assignments": [],
             "workflow": ["Manual handling required"],
             "learning_for_sonnet": "Complex case - needs human review",
-            "raw_response": response,
+            "raw_response": response_text,
             "execution_time": execution_time,
             "knowledge_applied": bool(knowledge_context)
         }
+
 
 def execute_specialist_task(specialist_ai, task_description):
     """Execute task with specified specialist AI"""
@@ -215,17 +279,36 @@ def execute_specialist_task(specialist_ai, task_description):
     
     ai_function = specialist_map.get(specialist_ai.lower())
     if not ai_function:
-        return {"error": f"Unknown specialist: {specialist_ai}"}
+        return {
+            "specialist": specialist_ai,
+            "output": f"ERROR: Unknown specialist: {specialist_ai}",
+            "execution_time": 0,
+            "success": False,
+            "error": f"Unknown specialist: {specialist_ai}"
+        }
     
     start_time = time.time()
-    result = ai_function(task_description)
+    
+    # CRITICAL FIX: All AI functions return a DICT with 'content' key!
+    api_response = ai_function(task_description)
     execution_time = time.time() - start_time
+    
+    # Extract the content from the response dict
+    if isinstance(api_response, dict):
+        output_text = api_response.get('content', '')
+        has_error = api_response.get('error', False)
+    else:
+        # Fallback if somehow it's a string
+        output_text = str(api_response)
+        has_error = output_text.startswith("ERROR")
     
     return {
         "specialist": specialist_ai,
-        "output": result,
+        "output": output_text,
         "execution_time": execution_time,
-        "success": not result.startswith("ERROR")
+        "success": not has_error,
+        "usage": api_response.get('usage', {}) if isinstance(api_response, dict) else {}
     }
+
 
 # I did no harm and this file is not truncated
