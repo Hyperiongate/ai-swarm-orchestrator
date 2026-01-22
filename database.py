@@ -1,12 +1,22 @@
 """
 Database Module
 Created: January 21, 2026
-Last Updated: January 22, 2026 - ADDED PROACTIVE INTELLIGENCE TABLES
+Last Updated: January 22, 2026 - ADDED PERSISTENT CONVERSATION MEMORY
 
 All database operations isolated here.
 No more SQL scattered across 2,500 lines.
 
-SPRINT 1 UPDATE: Added tables for pattern tracking, suggestions, and clarifications.
+CHANGELOG:
+- January 22, 2026: ADDED PERSISTENT CONVERSATION MEMORY
+  * Added 'conversations' table - stores conversation metadata
+  * Added 'conversation_messages' table - stores each message
+  * Added conversation CRUD functions
+  * Added indexes for fast lookups
+  * Phase 1 of memory system (Phase 2 will add project-specific memory)
+
+- January 22, 2026: Added proactive intelligence tables (Sprint 1)
+
+Author: Jim @ Shiftwork Solutions LLC (managed by Claude)
 """
 
 import sqlite3
@@ -40,7 +50,8 @@ def init_db():
             confidence REAL,
             execution_time_seconds REAL,
             knowledge_used BOOLEAN DEFAULT 0,
-            knowledge_sources TEXT
+            knowledge_sources TEXT,
+            conversation_id TEXT
         )
     ''')
     
@@ -119,6 +130,21 @@ def init_db():
         )
     ''')
     
+    # Learning records (alternate table name used by feedback)
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS learning_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_used TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            task_type TEXT,
+            pattern_type TEXT,
+            pattern_data TEXT,
+            success_rate REAL,
+            times_used INTEGER DEFAULT 1,
+            times_applied INTEGER DEFAULT 1
+        )
+    ''')
+    
     # Escalations
     db.execute('''
         CREATE TABLE IF NOT EXISTS escalations (
@@ -141,7 +167,7 @@ def init_db():
             submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             overall_rating INTEGER CHECK(overall_rating >= 1 AND overall_rating <= 5),
             quality_rating INTEGER CHECK(quality_rating >= 1 AND quality_rating <= 5),
-            accuracy_rating INTEGER CHECK(accuracy_rating >= 1 AND overall_rating <= 5),
+            accuracy_rating INTEGER CHECK(accuracy_rating >= 1 AND accuracy_rating <= 5),
             usefulness_rating INTEGER CHECK(usefulness_rating >= 1 AND usefulness_rating <= 5),
             consensus_was_accurate BOOLEAN,
             improvement_categories TEXT,
@@ -198,16 +224,248 @@ def init_db():
         )
     ''')
     
-    # Indexes for performance
+    # ============================================================================
+    # PERSISTENT CONVERSATION MEMORY TABLES (Added January 22, 2026)
+    # ============================================================================
+    
+    # Conversations table - stores conversation metadata
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS conversations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id TEXT UNIQUE NOT NULL,
+            title TEXT DEFAULT 'New Conversation',
+            mode TEXT DEFAULT 'quick',
+            project_id TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            message_count INTEGER DEFAULT 0,
+            is_archived BOOLEAN DEFAULT 0,
+            metadata TEXT,
+            FOREIGN KEY (project_id) REFERENCES projects(project_id)
+        )
+    ''')
+    
+    # Conversation messages table - stores each message
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS conversation_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id TEXT NOT NULL,
+            role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
+            content TEXT NOT NULL,
+            task_id INTEGER,
+            metadata TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (conversation_id) REFERENCES conversations(conversation_id),
+            FOREIGN KEY (task_id) REFERENCES tasks(id)
+        )
+    ''')
+    
+    # ============================================================================
+    # INDEXES FOR PERFORMANCE
+    # ============================================================================
+    
+    # Proactive intelligence indexes
     db.execute('CREATE INDEX IF NOT EXISTS idx_patterns_type ON user_patterns(pattern_type)')
     db.execute('CREATE INDEX IF NOT EXISTS idx_patterns_last_seen ON user_patterns(last_seen)')
     db.execute('CREATE INDEX IF NOT EXISTS idx_suggestions_task ON proactive_suggestions(task_id)')
     db.execute('CREATE INDEX IF NOT EXISTS idx_suggestions_type ON proactive_suggestions(suggestion_type)')
     db.execute('CREATE INDEX IF NOT EXISTS idx_clarifications_task ON clarification_history(task_id)')
     
+    # Conversation memory indexes
+    db.execute('CREATE INDEX IF NOT EXISTS idx_conversations_updated ON conversations(updated_at DESC)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_conversations_project ON conversations(project_id)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_conv_messages_conv_id ON conversation_messages(conversation_id)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_conv_messages_created ON conversation_messages(created_at)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_tasks_conversation ON tasks(conversation_id)')
+    
     db.commit()
     db.close()
-    print("✅ Database initialized (with proactive intelligence tables)")
+    print("✅ Database initialized (with persistent conversation memory)")
+
+
+# ============================================================================
+# CONVERSATION MEMORY FUNCTIONS (Added January 22, 2026)
+# ============================================================================
+
+def create_conversation(mode='quick', project_id=None, title=None):
+    """Create a new conversation and return its ID"""
+    import uuid
+    
+    conversation_id = str(uuid.uuid4())
+    
+    if not title:
+        title = f"New Conversation - {datetime.now().strftime('%b %d, %Y %I:%M %p')}"
+    
+    db = get_db()
+    db.execute('''
+        INSERT INTO conversations (conversation_id, title, mode, project_id)
+        VALUES (?, ?, ?, ?)
+    ''', (conversation_id, title, mode, project_id))
+    db.commit()
+    db.close()
+    
+    return conversation_id
+
+
+def get_conversation(conversation_id):
+    """Get a conversation by ID"""
+    db = get_db()
+    conversation = db.execute('''
+        SELECT * FROM conversations WHERE conversation_id = ?
+    ''', (conversation_id,)).fetchone()
+    db.close()
+    
+    return dict(conversation) if conversation else None
+
+
+def get_conversations(limit=20, project_id=None, include_archived=False):
+    """Get recent conversations, optionally filtered by project"""
+    db = get_db()
+    
+    if project_id:
+        if include_archived:
+            rows = db.execute('''
+                SELECT * FROM conversations 
+                WHERE project_id = ?
+                ORDER BY updated_at DESC
+                LIMIT ?
+            ''', (project_id, limit)).fetchall()
+        else:
+            rows = db.execute('''
+                SELECT * FROM conversations 
+                WHERE project_id = ? AND is_archived = 0
+                ORDER BY updated_at DESC
+                LIMIT ?
+            ''', (project_id, limit)).fetchall()
+    else:
+        if include_archived:
+            rows = db.execute('''
+                SELECT * FROM conversations 
+                ORDER BY updated_at DESC
+                LIMIT ?
+            ''', (limit,)).fetchall()
+        else:
+            rows = db.execute('''
+                SELECT * FROM conversations 
+                WHERE is_archived = 0
+                ORDER BY updated_at DESC
+                LIMIT ?
+            ''', (limit,)).fetchall()
+    
+    db.close()
+    return [dict(row) for row in rows]
+
+
+def update_conversation(conversation_id, title=None, mode=None, project_id=None, is_archived=None):
+    """Update conversation metadata"""
+    db = get_db()
+    
+    updates = ['updated_at = CURRENT_TIMESTAMP']
+    params = []
+    
+    if title is not None:
+        updates.append('title = ?')
+        params.append(title)
+    
+    if mode is not None:
+        updates.append('mode = ?')
+        params.append(mode)
+    
+    if project_id is not None:
+        updates.append('project_id = ?')
+        params.append(project_id)
+    
+    if is_archived is not None:
+        updates.append('is_archived = ?')
+        params.append(is_archived)
+    
+    params.append(conversation_id)
+    
+    db.execute(f'''
+        UPDATE conversations 
+        SET {', '.join(updates)}
+        WHERE conversation_id = ?
+    ''', params)
+    db.commit()
+    db.close()
+
+
+def delete_conversation(conversation_id):
+    """Delete a conversation and all its messages"""
+    db = get_db()
+    
+    # Delete messages first (foreign key constraint)
+    db.execute('DELETE FROM conversation_messages WHERE conversation_id = ?', (conversation_id,))
+    
+    # Delete conversation
+    db.execute('DELETE FROM conversations WHERE conversation_id = ?', (conversation_id,))
+    
+    db.commit()
+    db.close()
+
+
+def add_message(conversation_id, role, content, task_id=None, metadata=None):
+    """Add a message to a conversation"""
+    db = get_db()
+    
+    # Insert message
+    db.execute('''
+        INSERT INTO conversation_messages (conversation_id, role, content, task_id, metadata)
+        VALUES (?, ?, ?, ?, ?)
+    ''', (conversation_id, role, content, task_id, json.dumps(metadata) if metadata else None))
+    
+    # Update conversation's updated_at and message_count
+    db.execute('''
+        UPDATE conversations 
+        SET updated_at = CURRENT_TIMESTAMP,
+            message_count = message_count + 1
+        WHERE conversation_id = ?
+    ''', (conversation_id,))
+    
+    # Auto-generate title from first user message if title is default
+    if role == 'user':
+        conv = db.execute('''
+            SELECT title, message_count FROM conversations WHERE conversation_id = ?
+        ''', (conversation_id,)).fetchone()
+        
+        if conv and conv['message_count'] == 1 and conv['title'].startswith('New Conversation'):
+            # Generate title from first message (first 50 chars)
+            new_title = content[:50] + ('...' if len(content) > 50 else '')
+            db.execute('''
+                UPDATE conversations SET title = ? WHERE conversation_id = ?
+            ''', (new_title, conversation_id))
+    
+    db.commit()
+    db.close()
+
+
+def get_messages(conversation_id, limit=100):
+    """Get messages for a conversation"""
+    db = get_db()
+    rows = db.execute('''
+        SELECT * FROM conversation_messages 
+        WHERE conversation_id = ?
+        ORDER BY created_at ASC
+        LIMIT ?
+    ''', (conversation_id, limit)).fetchall()
+    db.close()
+    
+    return [dict(row) for row in rows]
+
+
+def get_conversation_context(conversation_id, max_messages=20):
+    """Get recent messages formatted for AI context"""
+    messages = get_messages(conversation_id, limit=max_messages)
+    
+    context = []
+    for msg in messages:
+        context.append({
+            'role': msg['role'],
+            'content': msg['content']
+        })
+    
+    return context
+
 
 # ============================================================================
 # TASK FUNCTIONS (needed by routes/core.py)
@@ -322,6 +580,10 @@ def get_statistics():
     successful_consensus = db.execute('SELECT COUNT(*) FROM consensus_validations WHERE consensus_achieved = 1').fetchone()[0]
     total_consensus = stats['consensus_validations']
     stats['consensus_success_rate'] = round(successful_consensus / total_consensus, 3) if total_consensus > 0 else 0
+    
+    # Conversation stats
+    stats['total_conversations'] = db.execute('SELECT COUNT(*) FROM conversations').fetchone()[0]
+    stats['total_messages'] = db.execute('SELECT COUNT(*) FROM conversation_messages').fetchone()[0]
     
     db.close()
     return stats
@@ -481,5 +743,6 @@ def save_project_to_db(workflow):
     
     db.commit()
     db.close()
+
 
 # I did no harm and this file is not truncated
