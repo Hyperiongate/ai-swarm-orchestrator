@@ -1,22 +1,28 @@
 """
 Core Routes
 Created: January 21, 2026
-Last Updated: January 22, 2026 - PROACTIVE INTELLIGENCE ADDED (Sprint 1)
+Last Updated: January 22, 2026 - CRITICAL FIX: AI now completes tasks instead of meta-commentary
 
-UPDATES IN THIS VERSION:
+CHANGES IN THIS VERSION:
+- January 22, 2026: CRITICAL BUG FIX
+  * Fixed orchestration logic - AI now actually completes tasks
+  * Previously: Opus meta-commentary was displayed instead of actual work
+  * Now: When analysis succeeds, AI is called to complete the actual request
+  * Fixed: specialists_needed = ["none"] is now handled correctly
+  * Added: Better error messages and logging
+  * Added: Knowledge context passed to task completion
+
 - January 22, 2026: Added proactive intelligence (smart questioning + suggestions)
 - January 21, 2026: Added feedback endpoint and learning stats
-- Returns 'result' field (not 'actual_output') for frontend compatibility
-- Converts markdown to HTML for beautiful display
-- Triggers document generation for appropriate requests
-- Always returns proper structure for feedback forms
-- Ensures download buttons appear when documents created
 
-Sprint 1 Features:
-- Smart questioning when requests are ambiguous
-- Post-task suggestions for next steps
-- Pattern tracking for automation opportunities
-- Project detection for new client work
+ARCHITECTURE:
+- Sonnet analyzes the task and decides routing
+- If escalate_to_opus=false and confidence is high, Sonnet completes the task
+- If escalate_to_opus=true, Opus provides strategy, then AI completes the task
+- Specialists are called only when specifically needed
+- Knowledge base context is included in task completion prompts
+
+Author: Jim @ Shiftwork Solutions LLC
 """
 
 from flask import Blueprint, request, jsonify, send_file, current_app
@@ -36,6 +42,7 @@ from orchestration.proactive_agent import ProactiveAgent
 
 core_bp = Blueprint('core', __name__)
 
+
 def convert_markdown_to_html(text):
     """Convert markdown text to styled HTML"""
     if not text:
@@ -51,6 +58,7 @@ def convert_markdown_to_html(text):
 </div>
 """
     return styled_html
+
 
 def should_create_document(user_request):
     """Determine if we should create a downloadable document"""
@@ -68,7 +76,7 @@ def should_create_document(user_request):
             # Determine document type
             if 'presentation' in request_lower or 'powerpoint' in request_lower or 'slides' in request_lower:
                 return True, 'pptx'
-            elif 'spreadsheet' in request_lower or 'excel' in request_lower or 'schedule' in request_lower:
+            elif 'spreadsheet' in request_lower or 'excel' in request_lower:
                 return True, 'xlsx'
             elif 'pdf' in request_lower:
                 return True, 'pdf'
@@ -77,11 +85,46 @@ def should_create_document(user_request):
     
     return False, None
 
+
+def get_knowledge_context_for_prompt(knowledge_base, user_request, max_context=3000):
+    """Get knowledge context to include in completion prompts"""
+    if not knowledge_base:
+        return ""
+    
+    try:
+        context = knowledge_base.get_context_for_task(user_request, max_context=max_context)
+        if context:
+            return f"""
+
+=== SHIFTWORK SOLUTIONS KNOWLEDGE BASE ===
+Use this information from our 30+ years of expertise to inform your response:
+
+{context}
+
+=== END KNOWLEDGE BASE ===
+
+"""
+        return ""
+    except Exception as e:
+        print(f"⚠️ Knowledge context retrieval failed: {e}")
+        return ""
+
+
 @core_bp.route('/api/orchestrate', methods=['POST'])
 def orchestrate():
     """
     Main orchestration endpoint with proactive intelligence
     Now includes smart questioning and post-task suggestions
+    
+    FLOW:
+    1. Proactive pre-check (questions, project detection)
+    2. Schedule generator intercept (for specific schedule types)
+    3. Sonnet analyzes task and decides routing
+    4. AI completes the actual task (Sonnet or Opus based on analysis)
+    5. Specialists called only if specifically needed
+    6. Document creation if appropriate
+    7. Consensus validation
+    8. Post-task suggestions
     """
     try:
         # Parse request
@@ -96,40 +139,48 @@ def orchestrate():
             project_id = request.form.get('project_id')
         
         if not user_request:
-            return jsonify({'error': 'Request text required'}), 400
+            return jsonify({'success': False, 'error': 'Request text required'}), 400
         
         overall_start = time.time()
         
-        # ============ NEW: PROACTIVE PRE-CHECK ============
+        # Initialize proactive agent
+        proactive = None
         try:
             proactive = ProactiveAgent()
-            pre_check = proactive.pre_process_request(user_request)
-            
-            if pre_check['action'] == 'ask_questions':
-                # Create task for tracking
-                db = get_db()
-                cursor = db.execute(
-                    'INSERT INTO tasks (user_request, status) VALUES (?, ?)',
-                    (user_request, 'needs_clarification')
-                )
-                task_id = cursor.lastrowid
-                db.commit()
-                db.close()
+        except Exception as proactive_init_error:
+            print(f"⚠️ Proactive agent init failed: {proactive_init_error}")
+        
+        # ============ PROACTIVE PRE-CHECK ============
+        if proactive:
+            try:
+                pre_check = proactive.pre_process_request(user_request)
                 
-                return jsonify({
-                    'needs_clarification': True,
-                    'clarification_data': pre_check['data'],
-                    'task_id': task_id
-                })
-            
-            if pre_check['action'] == 'detect_project':
-                return jsonify({
-                    'project_detected': True,
-                    'project_data': pre_check['data']
-                })
-        except Exception as proactive_error:
-            print(f"⚠️ Proactive check failed: {proactive_error}")
-            # Continue with normal processing if proactive check fails
+                if pre_check['action'] == 'ask_questions':
+                    # Create task for tracking
+                    db = get_db()
+                    cursor = db.execute(
+                        'INSERT INTO tasks (user_request, status) VALUES (?, ?)',
+                        (user_request, 'needs_clarification')
+                    )
+                    task_id = cursor.lastrowid
+                    db.commit()
+                    db.close()
+                    
+                    return jsonify({
+                        'success': True,
+                        'needs_clarification': True,
+                        'clarification_data': pre_check['data'],
+                        'task_id': task_id
+                    })
+                
+                if pre_check['action'] == 'detect_project':
+                    return jsonify({
+                        'success': True,
+                        'project_detected': True,
+                        'project_data': pre_check['data']
+                    })
+            except Exception as proactive_error:
+                print(f"⚠️ Proactive check failed: {proactive_error}")
         # ============ END PROACTIVE PRE-CHECK ============
         
         # Get knowledge base from app
@@ -187,17 +238,13 @@ Your professional {schedule_type.replace('_', ' ')} schedule has been generated 
                         )
                         db.commit()
                         
-                        # ============ NEW: GENERATE SUGGESTIONS FOR SCHEDULE ============
+                        # Generate suggestions
                         suggestions = []
-                        try:
-                            suggestions = proactive.post_process_result(
-                                task_id, 
-                                user_request, 
-                                response_text
-                            )
-                        except Exception as suggest_error:
-                            print(f"⚠️ Suggestion generation failed: {suggest_error}")
-                        # ============ END SUGGESTIONS ============
+                        if proactive:
+                            try:
+                                suggestions = proactive.post_process_result(task_id, user_request, response_text)
+                            except Exception as suggest_error:
+                                print(f"⚠️ Suggestion generation failed: {suggest_error}")
                         
                         db.close()
                         
@@ -217,33 +264,53 @@ Your professional {schedule_type.replace('_', ' ')} schedule has been generated 
                             'suggestions': suggestions
                         })
             except Exception as schedule_error:
-                print(f"Schedule generation failed: {schedule_error}")
+                print(f"⚠️ Schedule generation failed: {schedule_error}")
         
         # ==================== REGULAR AI ORCHESTRATION ====================
         try:
-            # Step 1: Analyze with Sonnet
+            # Step 1: Analyze with Sonnet (decides routing, NOT the actual work)
+            print(f"📊 Analyzing task: {user_request[:100]}...")
             analysis = analyze_task_with_sonnet(user_request, knowledge_base=knowledge_base)
             
-            orchestrator = analysis.get('orchestrator', 'sonnet')
-            specialists_needed = analysis.get('specialists_needed', [])
+            task_type = analysis.get('task_type', 'general')
             confidence = analysis.get('confidence', 0.5)
             escalate = analysis.get('escalate_to_opus', False)
+            specialists_needed = analysis.get('specialists_needed', [])
+            knowledge_applied = analysis.get('knowledge_applied', False)
+            knowledge_sources = analysis.get('knowledge_sources', [])
             
-            # Step 2: Escalate to Opus if needed
-            if escalate or orchestrator == "opus":
-                opus_result = handle_with_opus(user_request, analysis, knowledge_base=knowledge_base)
-                actual_output = opus_result.get('strategic_analysis', 'Task analyzed by Opus')
+            print(f"📊 Analysis: type={task_type}, confidence={confidence}, escalate={escalate}, specialists={specialists_needed}")
+            
+            # Clean up specialists_needed - remove "none" entries
+            if specialists_needed:
+                specialists_needed = [s for s in specialists_needed if s and s.lower() != 'none']
+            
+            # Step 2: Determine which AI will complete the task
+            orchestrator = 'sonnet'
+            opus_guidance = None
+            
+            if escalate:
+                print(f"📊 Escalating to Opus for strategic guidance...")
                 orchestrator = 'opus'
-                
-                if opus_result.get('specialist_assignments'):
-                    specialists_needed = [s.get('ai') for s in opus_result.get('specialist_assignments', [])]
-            else:
-                actual_output = None
+                try:
+                    opus_result = handle_with_opus(user_request, analysis, knowledge_base=knowledge_base)
+                    opus_guidance = opus_result.get('strategic_analysis', '')
+                    
+                    # Check if Opus assigned specialists
+                    if opus_result.get('specialist_assignments'):
+                        for assignment in opus_result.get('specialist_assignments', []):
+                            specialist = assignment.get('ai') or assignment.get('specialist')
+                            if specialist and specialist.lower() != 'none':
+                                specialists_needed.append(specialist)
+                except Exception as opus_error:
+                    print(f"⚠️ Opus guidance failed: {opus_error}")
             
-            # Step 3: Execute with specialists if needed
+            # Step 3: Execute with specialists if specifically needed
             specialist_results = []
+            specialist_output = None
             
             if specialists_needed:
+                print(f"📊 Calling specialists: {specialists_needed}")
                 for specialist_info in specialists_needed:
                     if isinstance(specialist_info, dict):
                         specialist = specialist_info.get('specialist') or specialist_info.get('ai')
@@ -252,33 +319,79 @@ Your professional {schedule_type.replace('_', ' ')} schedule has been generated 
                         specialist = specialist_info
                         specialist_task = user_request
                     
-                    result = execute_specialist_task(specialist, specialist_task)
-                    specialist_results.append(result)
-                    
-                    if not actual_output and result.get('output'):
-                        actual_output = result.get('output')
-            else:
-                # No specialists - use orchestrator directly
-                from orchestration.ai_clients import call_claude_opus, call_claude_sonnet
-                if orchestrator == "opus":
-                    opus_response = call_claude_opus(f"Complete this request:\n\n{user_request}")
-                    actual_output = opus_response.get('content') if isinstance(opus_response, dict) else opus_response
-                else:
-                    sonnet_response = call_claude_sonnet(f"Complete this request:\n\n{user_request}")
-                    actual_output = sonnet_response.get('content') if isinstance(sonnet_response, dict) else sonnet_response
+                    if specialist and specialist.lower() != 'none':
+                        result = execute_specialist_task(specialist, specialist_task)
+                        specialist_results.append(result)
+                        
+                        # Use specialist output if it succeeded
+                        if result.get('success') and result.get('output'):
+                            specialist_output = result.get('output')
             
-            # Step 4: Check if we should create a document
+            # Step 4: ACTUALLY COMPLETE THE TASK
+            # This is where the real work happens - NOT in the analysis step!
+            print(f"📊 Completing task with {orchestrator}...")
+            
+            from orchestration.ai_clients import call_claude_opus, call_claude_sonnet
+            
+            # Build the completion prompt with knowledge context
+            knowledge_context = get_knowledge_context_for_prompt(knowledge_base, user_request)
+            
+            # If we have specialist output, use that
+            if specialist_output:
+                actual_output = specialist_output
+            else:
+                # Build a proper completion prompt
+                completion_prompt = f"""{knowledge_context}
+
+USER REQUEST: {user_request}
+
+Please complete this request fully. Provide the actual deliverable the user is asking for.
+Do not describe what you would do - actually do it.
+Do not provide meta-commentary about the task - provide the actual content requested.
+
+If the user asks for a checklist, provide the checklist.
+If the user asks for a document, write the document.
+If the user asks for analysis, provide the analysis.
+
+Be comprehensive and professional in your response."""
+
+                # Add Opus guidance if available
+                if opus_guidance:
+                    completion_prompt += f"""
+
+STRATEGIC GUIDANCE (from senior AI):
+{opus_guidance}
+
+Use this guidance to inform your response, but focus on delivering the actual content requested."""
+
+                # Call the appropriate AI to complete the task
+                if orchestrator == 'opus':
+                    response = call_claude_opus(completion_prompt)
+                else:
+                    response = call_claude_sonnet(completion_prompt)
+                
+                # Extract content from response dict
+                if isinstance(response, dict):
+                    if response.get('error'):
+                        actual_output = f"Error completing task: {response.get('content', 'Unknown error')}"
+                    else:
+                        actual_output = response.get('content', '')
+                else:
+                    actual_output = str(response)
+            
+            print(f"📊 Task completed. Output length: {len(actual_output) if actual_output else 0} chars")
+            
+            # Step 5: Check if we should create a document
             document_created = False
             document_url = None
             document_type = None
             
             should_create, doc_type = should_create_document(user_request)
             
-            if should_create and actual_output:
+            if should_create and actual_output and not actual_output.startswith('Error'):
                 try:
-                    import tempfile
                     from docx import Document
-                    from docx.shared import Pt, RGBColor
+                    from docx.shared import Pt
                     
                     # Create Word document
                     doc = Document()
@@ -304,33 +417,48 @@ Your professional {schedule_type.replace('_', ' ')} schedule has been generated 
                     # Save document
                     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                     filename = f'shiftwork_document_{timestamp}.docx'
-                    filepath = f'/mnt/user-data/outputs/{filename}'
                     
-                    doc.save(filepath)
+                    # Try multiple paths for saving
+                    save_paths = [
+                        f'/mnt/user-data/outputs/{filename}',
+                        f'/tmp/{filename}',
+                        f'./{filename}'
+                    ]
                     
-                    document_created = True
-                    document_url = f'/api/download/{filename}'
-                    document_type = 'docx'
+                    saved = False
+                    for filepath in save_paths:
+                        try:
+                            # Ensure directory exists
+                            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+                            doc.save(filepath)
+                            saved = True
+                            print(f"✅ Document created: {filepath}")
+                            break
+                        except Exception as save_error:
+                            print(f"⚠️ Could not save to {filepath}: {save_error}")
                     
-                    print(f"✅ Document created: {filename}")
+                    if saved:
+                        document_created = True
+                        document_url = f'/api/download/{filename}'
+                        document_type = 'docx'
                     
                 except Exception as doc_error:
                     print(f"⚠️ Document creation failed: {doc_error}")
             
-            # Step 5: Convert markdown to HTML for beautiful display
+            # Step 6: Convert markdown to HTML for beautiful display
             formatted_output = convert_markdown_to_html(actual_output)
             
-            # Step 6: Consensus validation if enabled
+            # Step 7: Consensus validation if enabled
             consensus_result = None
-            if enable_consensus and actual_output:
+            if enable_consensus and actual_output and not actual_output.startswith('Error'):
                 try:
                     consensus_result = validate_with_consensus(actual_output)
                 except Exception as consensus_error:
-                    print(f"Consensus validation failed: {consensus_error}")
+                    print(f"⚠️ Consensus validation failed: {consensus_error}")
             
             total_time = time.time() - overall_start
             
-            # Update task
+            # Update task in database
             db.execute(
                 '''UPDATE tasks SET status = ?, assigned_orchestrator = ?, 
                    execution_time_seconds = ? WHERE id = ?''',
@@ -339,19 +467,19 @@ Your professional {schedule_type.replace('_', ' ')} schedule has been generated 
             db.commit()
             db.close()
             
-            # ============ NEW: POST-TASK SUGGESTIONS ============
+            # Step 8: Generate post-task suggestions
             suggestions = []
-            try:
-                suggestions = proactive.post_process_result(
-                    task_id, 
-                    user_request, 
-                    actual_output if actual_output else ''
-                )
-            except Exception as suggest_error:
-                print(f"⚠️ Suggestion generation failed: {suggest_error}")
-            # ============ END POST-TASK SUGGESTIONS ============
+            if proactive:
+                try:
+                    suggestions = proactive.post_process_result(
+                        task_id, 
+                        user_request, 
+                        actual_output if actual_output else ''
+                    )
+                except Exception as suggest_error:
+                    print(f"⚠️ Suggestion generation failed: {suggest_error}")
             
-            # ==================== RETURN PROPER STRUCTURE ====================
+            # ==================== RETURN RESPONSE ====================
             return jsonify({
                 'success': True,
                 'task_id': task_id,
@@ -360,8 +488,9 @@ Your professional {schedule_type.replace('_', ' ')} schedule has been generated 
                 'specialists_used': [s.get('specialist') for s in specialist_results] if specialist_results else [],
                 'consensus': consensus_result,
                 'execution_time': total_time,
-                'knowledge_applied': analysis.get('knowledge_applied', False),
-                'knowledge_used': analysis.get('knowledge_applied', False),
+                'knowledge_applied': knowledge_applied,
+                'knowledge_used': knowledge_applied,
+                'knowledge_sources': knowledge_sources,
                 'formatting_applied': True,
                 'document_created': document_created,
                 'document_url': document_url,
@@ -372,7 +501,7 @@ Your professional {schedule_type.replace('_', ' ')} schedule has been generated 
         except Exception as orchestration_error:
             import traceback
             error_trace = traceback.format_exc()
-            print(f"Orchestration error: {error_trace}")
+            print(f"❌ Orchestration error: {error_trace}")
             
             db.execute(
                 '''UPDATE tasks SET status = ? WHERE id = ?''',
@@ -390,7 +519,7 @@ Your professional {schedule_type.replace('_', ' ')} schedule has been generated 
     except Exception as e:
         import traceback
         error_trace = traceback.format_exc()
-        print(f"CRITICAL ERROR: {error_trace}")
+        print(f"❌ CRITICAL ERROR: {error_trace}")
         
         return jsonify({
             'success': False,
@@ -554,7 +683,7 @@ def submit_feedback():
             ).fetchone()
             
             if existing_pattern:
-                # Update existing pattern (using times_applied field)
+                # Update existing pattern
                 new_avg = (existing_pattern['success_rate'] * existing_pattern['times_applied'] + avg_rating / 5.0) / (existing_pattern['times_applied'] + 1)
                 db.execute('''
                     UPDATE learning_records 
@@ -636,13 +765,20 @@ def get_learning_stats():
 def download_file(filename):
     """Download generated files"""
     try:
-        file_path = f'/mnt/user-data/outputs/{filename}'
+        # Try multiple paths
+        possible_paths = [
+            f'/mnt/user-data/outputs/{filename}',
+            f'/tmp/{filename}',
+            f'./{filename}'
+        ]
         
-        if not os.path.exists(file_path):
-            return jsonify({'error': 'File not found'}), 404
+        for file_path in possible_paths:
+            if os.path.exists(file_path):
+                return send_file(file_path, as_attachment=True, download_name=filename)
         
-        return send_file(file_path, as_attachment=True, download_name=filename)
+        return jsonify({'error': 'File not found'}), 404
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
 
 # I did no harm and this file is not truncated
