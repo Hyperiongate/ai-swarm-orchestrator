@@ -1,25 +1,39 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: January 22, 2026 - SPRINT 2: Auto-Migration Added
+Last Updated: January 22, 2026 - SPRINT 3: Complete System Integration
 
 CHANGES IN THIS VERSION:
-- January 22, 2026: SPRINT 2 AUTO-MIGRATIONS
-  * Database upgrades run automatically on startup
-  * No manual migration commands needed
-  * Safe to run multiple times (checks before adding)
+- January 22, 2026: SPRINT 3 - ALL 5 ADVANCED FEATURES
+  * Enhanced Intelligence (learning & memory)
+  * Project Dashboard (visual management)
+  * Analytics Dashboard (data visualization)
+  * Smart Workflows (multi-step automation)
+  * Integration Hub (external services)
 
-- January 22, 2026: PROACTIVE INTELLIGENCE FULLY INTEGRATED
+- January 22, 2026: SPRINT 2 - PROACTIVE INTELLIGENCE
+  * Project auto-detection
+  * Resource finder (auto web search)
+  * Improvement engine (weekly reports)
+
+- January 22, 2026: SPRINT 1 - PROACTIVE INTELLIGENCE
   * Smart questioning before task execution
   * Post-task suggestions for next steps
   * Pattern tracking for automation opportunities
-  * Seamless integration with routes/core.py
 
 ARCHITECTURE:
 - config.py: All configuration
-- database.py: All database operations (now includes proactive tables)
-- orchestration/: All AI logic + NEW proactive_agent.py
-- routes/: All Flask endpoints (core.py uses ProactiveAgent)
+- database.py: All database operations
+- orchestration/: All AI logic + proactive_agent.py
+- routes/: All Flask endpoints
+- project_manager.py: Project detection & management
+- resource_finder.py: Automatic web search
+- improvement_engine.py: Efficiency analysis
+- enhanced_intelligence.py: Learning & memory
+- project_dashboard.py: Project API
+- analytics_engine.py: Analytics API
+- workflow_engine.py: Automation engine
+- integration_hub.py: External integrations
 - app.py (this file): Bootstrap and initialization
 
 AUTHOR: Jim @ Shiftwork Solutions LLC
@@ -32,28 +46,38 @@ import os
 # Initialize Flask
 app = Flask(__name__)
 
-# Initialize database (includes proactive intelligence tables)
+# Initialize database (includes all tables from all sprints)
 init_db()
 
 # ============================================================================
-# SPRINT 2: AUTO-RUN DATABASE MIGRATIONS
+# AUTO-RUN ALL DATABASE MIGRATIONS (SPRINTS 2 & 3)
 # ============================================================================
-print("🔄 Checking for Sprint 2 database upgrades...")
+print("🔄 Running database migrations...")
 try:
+    # Sprint 2 migrations
     from upgrade_database_sprint2 import upgrade_database_sprint2
     from add_resource_searches_table import add_resource_searches_table
     from add_improvement_reports_table import add_improvement_reports_table
     
-    # Run migrations automatically
     upgrade_database_sprint2()
     add_resource_searches_table()
     add_improvement_reports_table()
-    print("✅ Sprint 2 database migrations complete!")
+    print("✅ Sprint 2 migrations complete!")
+    
+    # Sprint 3 migrations
+    from add_user_profiles_table import add_user_profiles_table
+    from add_workflow_tables import add_workflow_tables
+    from add_integration_logs_table import add_integration_logs_table
+    
+    add_user_profiles_table()
+    add_workflow_tables()
+    add_integration_logs_table()
+    print("✅ Sprint 3 migrations complete!")
     
 except ImportError as e:
-    print(f"ℹ️  Sprint 2 migrations not found yet: {e}")
+    print(f"ℹ️  Some migrations not found: {e}")
 except Exception as e:
-    print(f"⚠️  Sprint 2 migration warning: {e}")
+    print(f"⚠️  Migration warning: {e}")
 # ============================================================================
 
 # Initialize knowledge base
@@ -142,7 +166,7 @@ def health():
     
     return jsonify({
         'status': 'healthy',
-        'version': 'Sprint 2 - Project Auto-Detection + Resource Finder + Improvement Engine',
+        'version': 'Sprint 3 Complete - Enhanced Intelligence + All Features',
         'orchestrators': {
             'sonnet': 'configured' if ANTHROPIC_API_KEY else 'missing',
             'opus': 'configured' if ANTHROPIC_API_KEY else 'missing'
@@ -162,23 +186,59 @@ def health():
         'output_formatter': {
             'status': 'enabled' if OUTPUT_FORMATTER_AVAILABLE else 'disabled'
         },
-        'proactive_intelligence': {
-            'status': 'enabled',
-            'features': [
-                'smart_questioning',
-                'suggestions', 
-                'pattern_tracking',
-                'project_auto_detection',      # Sprint 2
-                'resource_finder',              # Sprint 2
-                'improvement_engine'            # Sprint 2
-            ]
+        'features': {
+            'sprint_1': {
+                'smart_questioning': 'enabled',
+                'suggestions': 'enabled', 
+                'pattern_tracking': 'enabled'
+            },
+            'sprint_2': {
+                'project_auto_detection': 'enabled',
+                'resource_finder': 'enabled',
+                'improvement_engine': 'enabled'
+            },
+            'sprint_3': {
+                'enhanced_intelligence': 'enabled',
+                'project_dashboard': 'enabled',
+                'analytics_dashboard': 'enabled',
+                'smart_workflows': 'enabled',
+                'integration_hub': 'enabled'
+            }
         }
     })
 
 # Register blueprints (CRITICAL - THIS MAKES THE API WORK)
-# Now includes proactive intelligence in routes/core.py
 from routes.core import core_bp
 app.register_blueprint(core_bp)
+
+# Sprint 3 blueprints
+try:
+    from project_dashboard import dashboard_bp
+    app.register_blueprint(dashboard_bp)
+    print("✅ Project Dashboard API registered")
+except ImportError:
+    print("ℹ️  Project Dashboard not found")
+
+try:
+    from analytics_engine import analytics_bp
+    app.register_blueprint(analytics_bp)
+    print("✅ Analytics API registered")
+except ImportError:
+    print("ℹ️  Analytics Engine not found")
+
+try:
+    from workflow_engine import workflow_bp
+    app.register_blueprint(workflow_bp)
+    print("✅ Workflow Engine API registered")
+except ImportError:
+    print("ℹ️  Workflow Engine not found")
+
+try:
+    from integration_hub import integration_bp
+    app.register_blueprint(integration_bp)
+    print("✅ Integration Hub API registered")
+except ImportError:
+    print("ℹ️  Integration Hub not found")
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
