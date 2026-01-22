@@ -8,6 +8,16 @@
     =============================================================================
     
     CHANGE LOG:
+    - January 22, 2026: Added Persistent Conversation Memory System
+      * Added conversation sidebar section with past conversations list
+      * Added "New Conversation" button
+      * Added memory status indicator above conversation area
+      * Added conversation loading, deletion, and management
+      * Messages now persist across sessions via backend API
+      * Conversations show title, date, message count
+      * Active conversation is highlighted in sidebar
+      * Integrated with existing /api/orchestrate endpoint
+    
     - January 22, 2026: Refactored from single 2000+ line file into 3 files
       * CSS moved to: css/swarm-styles.css
       * JavaScript moved to: js/swarm-app.js
@@ -27,9 +37,18 @@
       * Added "Used Output" vs "Didn't Use" submission buttons
     
     FILE STRUCTURE:
-    /index.html          - This file (HTML structure)
-    /css/swarm-styles.css - All CSS styles
-    /js/swarm-app.js      - All JavaScript functionality
+    /templates/index.html     - This file (HTML structure)
+    /static/css/swarm-styles.css - All CSS styles
+    /static/js/swarm-app.js   - All JavaScript functionality
+    
+    API ENDPOINTS USED:
+    GET  /api/conversations              - List recent conversations
+    POST /api/conversations              - Create new conversation
+    GET  /api/conversations/<id>         - Get conversation with messages
+    PUT  /api/conversations/<id>         - Update conversation metadata
+    DELETE /api/conversations/<id>       - Delete conversation
+    POST /api/conversations/<id>/messages - Add message manually
+    POST /api/orchestrate                - Now accepts/returns conversation_id
     
     =============================================================================
     -->
@@ -38,7 +57,7 @@
     <title>AI Swarm - Unified Interface | Shiftwork Solutions</title>
     
     <!-- External CSS -->
-    <link rel="stylesheet" href="css/swarm-styles.css">
+    <link rel="stylesheet" href="/static/css/swarm-styles.css">
 </head>
 <body>
     <div class="container">
@@ -81,6 +100,22 @@
                  SIDEBAR
                  ============================================================ -->
             <div class="sidebar">
+                
+                <!-- ========================================================
+                     CONVERSATIONS SECTION (NEW - Memory Feature)
+                     ======================================================== -->
+                <div class="conversations-section">
+                    <div class="conversations-header">
+                        <h3>💬 Conversations</h3>
+                        <button class="new-conversation-btn" onclick="startNewConversation()" title="Start new conversation">
+                            ➕ New
+                        </button>
+                    </div>
+                    <div class="conversations-list" id="conversationsList">
+                        <!-- Dynamically populated with past conversations -->
+                        <div class="conversations-loading">Loading conversations...</div>
+                    </div>
+                </div>
                 
                 <!-- Stats Section (always visible) -->
                 <h3>📊 System Stats</h3>
@@ -236,6 +271,16 @@
                  ============================================================ -->
             <div class="main-content">
                 
+                <!-- ========================================================
+                     MEMORY STATUS INDICATOR (NEW - Memory Feature)
+                     ======================================================== -->
+                <div class="memory-indicator" id="memoryIndicator">
+                    <div class="memory-status warning" id="memoryStatus">
+                        <span class="memory-icon">⚠️</span>
+                        <span class="memory-text">Initializing conversation memory...</span>
+                    </div>
+                </div>
+                
                 <!-- Conversation Display -->
                 <div class="conversation" id="conversation">
                     <div class="message assistant">
@@ -258,6 +303,7 @@
                                 <li>✅ Professional formatting</li>
                                 <li>✅ Feedback & learning on every response</li>
                                 <li>✅ Multi-AI consensus validation</li>
+                                <li>✅ Conversation memory across sessions</li>
                             </ul>
                         </div>
                     </div>
@@ -291,7 +337,7 @@
     </div>
     
     <!-- External JavaScript -->
-    <script src="js/swarm-app.js"></script>
+    <script src="/static/js/swarm-app.js"></script>
 </body>
 </html>
 
