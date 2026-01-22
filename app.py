@@ -1,9 +1,14 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: January 22, 2026 - SPRINT 1: Proactive Intelligence Integration
+Last Updated: January 22, 2026 - SPRINT 2: Auto-Migration Added
 
 CHANGES IN THIS VERSION:
+- January 22, 2026: SPRINT 2 AUTO-MIGRATIONS
+  * Database upgrades run automatically on startup
+  * No manual migration commands needed
+  * Safe to run multiple times (checks before adding)
+
 - January 22, 2026: PROACTIVE INTELLIGENCE FULLY INTEGRATED
   * Smart questioning before task execution
   * Post-task suggestions for next steps
@@ -29,6 +34,27 @@ app = Flask(__name__)
 
 # Initialize database (includes proactive intelligence tables)
 init_db()
+
+# ============================================================================
+# SPRINT 2: AUTO-RUN DATABASE MIGRATIONS
+# ============================================================================
+print("🔄 Checking for Sprint 2 database upgrades...")
+try:
+    from upgrade_database_sprint2 import upgrade_database_sprint2
+    from add_resource_searches_table import add_resource_searches_table
+    from add_improvement_reports_table import add_improvement_reports_table
+    
+    # Run migrations automatically
+    upgrade_database_sprint2()
+    add_resource_searches_table()
+    add_improvement_reports_table()
+    print("✅ Sprint 2 database migrations complete!")
+    
+except ImportError as e:
+    print(f"ℹ️  Sprint 2 migrations not found yet: {e}")
+except Exception as e:
+    print(f"⚠️  Sprint 2 migration warning: {e}")
+# ============================================================================
 
 # Initialize knowledge base
 print("🔍 Initializing Project Knowledge Base...")
@@ -116,7 +142,7 @@ def health():
     
     return jsonify({
         'status': 'healthy',
-        'version': 'Sprint 1 - Proactive Intelligence',
+        'version': 'Sprint 2 - Project Auto-Detection + Resource Finder + Improvement Engine',
         'orchestrators': {
             'sonnet': 'configured' if ANTHROPIC_API_KEY else 'missing',
             'opus': 'configured' if ANTHROPIC_API_KEY else 'missing'
@@ -138,7 +164,14 @@ def health():
         },
         'proactive_intelligence': {
             'status': 'enabled',
-            'features': ['smart_questioning', 'suggestions', 'pattern_tracking']
+            'features': [
+                'smart_questioning',
+                'suggestions', 
+                'pattern_tracking',
+                'project_auto_detection',      # Sprint 2
+                'resource_finder',              # Sprint 2
+                'improvement_engine'            # Sprint 2
+            ]
         }
     })
 
