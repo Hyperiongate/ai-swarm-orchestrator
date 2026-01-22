@@ -942,7 +942,7 @@
         
         function quickAction(action) {
             document.getElementById('userInput').value = action;
-            sendMessage();  // <-- ADD THIS
+            sendMessage();
         }
         
         // Project management
@@ -1081,7 +1081,7 @@
                     if (data.formatting_applied) badges += '<span class="badge formatted">🎨 Formatted</span>';
                     if (filesCount > 0) badges += `<span class="badge" style="background: #fff3e0; color: #f57c00;">📎 ${filesCount} file${filesCount > 1 ? 's' : ''}</span>`;
                     
-                    // Add download button if document was created
+                    // Add download button if document was created - IMPROVED
                     let downloadSection = '';
                     const hasDocument = data.document_created || (data.document_url && data.document_url !== null);
                     if (hasDocument && data.document_url) {
@@ -1262,7 +1262,7 @@
             messageDiv.innerHTML = `
                 <div class="message-header">
                     ${header} ${modeIndicator}
-                    ${role === 'assistant' ? `<button onclick="copyToClipboard('${msgId}')" style="background: none; border: 1px solid #e0e0e0; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; color: #666; margin-left: auto;">📋 Copy</button>` : ''}
+                    ${role === 'assistant' ? `<button onclick="copyToClipboard(event, '${msgId}')" style="background: none; border: 1px solid #e0e0e0; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; color: #666; margin-left: auto;">📋 Copy</button>` : ''}
                 </div>
                 <div class="message-content" id="content_${msgId}">${content}</div>
                 ${consensusSection}
@@ -1478,7 +1478,6 @@
                     addMessage('assistant', `❌ Error: ${err.message}`);
                 });
         }
-                      
         
         function generateSocialPost() {
             const topic = prompt('What topic should the post be about?');
@@ -1861,27 +1860,7 @@ Use the Export function to download full data for detailed analysis.
                 });
         }
         
-        // Initialize
-        updateQuickActions();
-        loadStats();
-        loadDocuments();
-        
-        // Allow Enter to send (Shift+Enter for new line)
-        document.getElementById('userInput').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                sendMessage();
-            }
-        });
-        
-        // Refresh stats and documents every 30 seconds
-        setInterval(() => {
-            loadStats();
-            loadDocuments();
-        }, 30000);
-
-// ==================== OPPORTUNITIES FUNCTIONS ====================
-        
+        // Opportunities functions
         function loadNormativeStatus() {
             fetch('/api/opportunities/status')
                 .then(r => r.json())
@@ -2028,14 +2007,37 @@ Use the Export function to download full data for detailed analysis.
                 });
         }
         
-        // ==================== END OPPORTUNITIES FUNCTIONS ====================
+        // Initialize
+        updateQuickActions();
+        loadStats();
+        loadDocuments();
         
+        // Allow Enter to send (Shift+Enter for new line)
+        document.getElementById('userInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+        
+        // Refresh stats and documents every 30 seconds
+        setInterval(() => {
+            loadStats();
+            loadDocuments();
+        }, 30000);
     </script>
 </body>
 </html>
 
 <!-- 
 CHANGE LOG:
+- January 21, 2026: APPLIED ALL 5 FIXES FROM SWARM10
+  * FIX #1: Added Beautiful CSS Formatting for message content (h1, h2, h3, ul, ol, p, strong, code, blockquote)
+  * FIX #2: Fixed Copy Button Function - added event parameter to copyToClipboard(event, msgId)
+  * FIX #3: Changed API Response Field - data.actual_output → data.result
+  * FIX #4: Improved Document Detection - added hasDocument check for document_url
+  * FIX #5: Fixed Copy Button onClick - now passes event parameter onclick="copyToClipboard(event, '${msgId}')"
+
 - January 19, 2026: ENHANCED FEEDBACK SYSTEM
   * Added 4 separate star ratings (Overall, Accuracy, Usefulness, Clarity)
   * Added 6 improvement checkboxes matching backend expectations
