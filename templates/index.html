@@ -8,116 +8,106 @@
     =============================================================================
     
     CHANGE LOG:
+    - January 23, 2026: Added Voice Control System
+      * Added voice control section in sidebar with activation button
+      * Added voice status indicator with animated dot
+      * Added waveform animation for visual feedback
+      * Added voice response toggle switch
+      * Added voice input button (mic) next to Send button
+      * Added swarm-voice.js script reference
+      * Voice features: "Hey Swarm" wake word, text-to-speech responses
+    
     - January 22, 2026: Added Persistent Conversation Memory System
       * Added conversation sidebar section with past conversations list
       * Added "New Conversation" button
       * Added memory status indicator above conversation area
       * Added conversation loading, deletion, and management
       * Messages now persist across sessions via backend API
-      * Conversations show title, date, message count
-      * Active conversation is highlighted in sidebar
-      * Integrated with existing /api/orchestrate endpoint
     
     - January 22, 2026: Refactored from single 2000+ line file into 3 files
-      * CSS moved to: css/swarm-styles.css
-      * JavaScript moved to: js/swarm-app.js
-      * This file contains HTML structure only
-      * All functionality preserved - no harm done
-    
     - January 21, 2026: APPLIED ALL 5 FIXES FROM SWARM10
-      * FIX #1: Added Beautiful CSS Formatting for message content
-      * FIX #2: Fixed Copy Button Function
-      * FIX #3: Changed API Response Field - data.actual_output → data.result
-      * FIX #4: Improved Document Detection
-      * FIX #5: Fixed Copy Button onClick
-    
     - January 19, 2026: ENHANCED FEEDBACK SYSTEM
-      * Added 4 separate star ratings
-      * Added 6 improvement checkboxes
-      * Added "Used Output" vs "Didn't Use" submission buttons
     
     FILE STRUCTURE:
-    /templates/index.html     - This file (HTML structure)
-    /static/css/swarm-styles.css - All CSS styles
-    /static/js/swarm-app.js   - All JavaScript functionality
-    
-    API ENDPOINTS USED:
-    GET  /api/conversations              - List recent conversations
-    POST /api/conversations              - Create new conversation
-    GET  /api/conversations/<id>         - Get conversation with messages
-    PUT  /api/conversations/<id>         - Update conversation metadata
-    DELETE /api/conversations/<id>       - Delete conversation
-    POST /api/conversations/<id>/messages - Add message manually
-    POST /api/orchestrate                - Now accepts/returns conversation_id
+    /templates/index.html              - This file (HTML structure)
+    /static/css/swarm-styles.css       - All CSS styles (includes voice styles)
+    /static/js/swarm-app.js            - Core JavaScript functionality
+    /static/js/swarm-voice.js          - Voice control module (NEW)
     
     =============================================================================
     -->
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Swarm - Unified Interface | Shiftwork Solutions</title>
-    
-    <!-- External CSS -->
     <link rel="stylesheet" href="/static/css/swarm-styles.css">
 </head>
 <body>
     <div class="container">
-        <!-- ================================================================
-             HEADER SECTION
-             ================================================================ -->
+        <!-- HEADER SECTION -->
         <div class="header">
             <div class="header-left">
                 <h1>🤖 AI Swarm - Unified Interface</h1>
                 <p>Quick tasks + Project workflows with learning feedback</p>
             </div>
             <div class="mode-switcher">
-                <button class="mode-btn active" onclick="switchMode('quick')" id="quickModeBtn">
-                    ⚡ Quick Task
-                </button>
-                <button class="mode-btn" onclick="switchMode('project')" id="projectModeBtn">
-                    📁 Project
-                </button>
-                <button class="mode-btn" onclick="switchMode('calculator')" id="calculatorModeBtn">
-                    🧮 Calculator
-                </button>
-                <button class="mode-btn" onclick="switchMode('survey')" id="surveyModeBtn">
-                    📋 Survey
-                </button>
-                <button class="mode-btn" onclick="switchMode('marketing')" id="marketingModeBtn">
-                    📢 Marketing
-                </button>
-                <button class="mode-btn" onclick="switchMode('opportunities')" id="opportunitiesModeBtn">
-                    🎯 Opportunities
-                </button>
+                <button class="mode-btn active" onclick="switchMode('quick')" id="quickModeBtn">⚡ Quick Task</button>
+                <button class="mode-btn" onclick="switchMode('project')" id="projectModeBtn">📁 Project</button>
+                <button class="mode-btn" onclick="switchMode('calculator')" id="calculatorModeBtn">🧮 Calculator</button>
+                <button class="mode-btn" onclick="switchMode('survey')" id="surveyModeBtn">📋 Survey</button>
+                <button class="mode-btn" onclick="switchMode('marketing')" id="marketingModeBtn">📢 Marketing</button>
+                <button class="mode-btn" onclick="switchMode('opportunities')" id="opportunitiesModeBtn">🎯 Opportunities</button>
             </div>
         </div>
         
-        <!-- ================================================================
-             MAIN GRID LAYOUT
-             ================================================================ -->
+        <!-- MAIN GRID LAYOUT -->
         <div class="main-grid">
             
-            <!-- ============================================================
-                 SIDEBAR
-                 ============================================================ -->
+            <!-- SIDEBAR -->
             <div class="sidebar">
                 
-                <!-- ========================================================
-                     CONVERSATIONS SECTION (NEW - Memory Feature)
-                     ======================================================== -->
+                <!-- VOICE CONTROL SECTION (NEW) -->
+                <div class="voice-control-section" id="voiceControlSection">
+                    <div class="voice-control-header">
+                        <h3>🎤 Voice Control</h3>
+                    </div>
+                    <button class="voice-activate-btn" id="voiceActivateBtn" onclick="toggleVoiceMode()">
+                        🎤 Activate Voice
+                    </button>
+                    <div class="voice-status-indicator">
+                        <span class="voice-status-dot" id="voiceStatusDot"></span>
+                        <span class="voice-status-text" id="voiceStatusText">Voice inactive - Click to activate</span>
+                    </div>
+                    <div class="voice-waveform" id="voiceWaveform">
+                        <span class="wave-bar"></span>
+                        <span class="wave-bar"></span>
+                        <span class="wave-bar"></span>
+                        <span class="wave-bar"></span>
+                        <span class="wave-bar"></span>
+                    </div>
+                    <div class="voice-response-toggle-container">
+                        <span class="voice-response-label" id="voiceResponseLabel">Voice responses ON</span>
+                        <label class="voice-toggle-switch">
+                            <input type="checkbox" id="voiceResponseToggle" checked onchange="toggleVoiceResponse()">
+                            <span class="voice-toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="voice-hint" id="voiceHint">
+                        Click <strong>Activate Voice</strong> to start
+                    </div>
+                </div>
+                
+                <!-- CONVERSATIONS SECTION (Memory Feature) -->
                 <div class="conversations-section">
                     <div class="conversations-header">
                         <h3>💬 Conversations</h3>
-                        <button class="new-conversation-btn" onclick="startNewConversation()" title="Start new conversation">
-                            ➕ New
-                        </button>
+                        <button class="new-conversation-btn" onclick="startNewConversation()" title="Start new conversation">➕ New</button>
                     </div>
                     <div class="conversations-list" id="conversationsList">
-                        <!-- Dynamically populated with past conversations -->
                         <div class="conversations-loading">Loading conversations...</div>
                     </div>
                 </div>
                 
-                <!-- Stats Section (always visible) -->
+                <!-- Stats Section -->
                 <h3>📊 System Stats</h3>
                 <div class="stats-grid">
                     <div class="stat-card">
@@ -141,139 +131,83 @@
                 <!-- Project Info Panel (project mode only) -->
                 <div class="project-info" id="projectInfo">
                     <h3 style="margin-bottom: 10px;">Current Project</h3>
-                    
                     <label>Select Existing Project</label>
                     <select id="existingProjects" onchange="loadExistingProject()" style="width: 100%; padding: 8px; margin-bottom: 10px; border: 2px solid #e0e0e0; border-radius: 6px;">
                         <option value="">-- Select Project --</option>
                     </select>
-                    
                     <label>Client</label>
                     <span id="clientName">No active project</span>
-                    
                     <label>Phase</label>
-                    <span id="projectPhase">
-                        <div class="phase-indicator">Not started</div>
-                    </span>
-                    
-                    <button onclick="startNewProject()" style="width: 100%; padding: 10px; margin-top: 10px; background: #667eea; color: white; border: none; border-radius: 8px; cursor: pointer;">
-                        + New Project
-                    </button>
+                    <span id="projectPhase"><div class="phase-indicator">Not started</div></span>
+                    <button onclick="startNewProject()" style="width: 100%; padding: 10px; margin-top: 10px; background: #667eea; color: white; border: none; border-radius: 8px; cursor: pointer;">+ New Project</button>
                 </div>
                 
                 <!-- Marketing Info Panel (marketing mode only) -->
                 <div class="marketing-info" id="marketingInfo" style="display: none;">
                     <h3 style="margin-bottom: 10px;">Marketing Hub</h3>
-                    
                     <div style="font-size: 12px; margin-bottom: 15px;">
                         <div style="font-weight: 600; margin-bottom: 5px;">Platform Status:</div>
-                        <div id="platformStatus" style="padding: 10px; background: #f0f0f0; border-radius: 6px;">
-                            Loading...
-                        </div>
+                        <div id="platformStatus" style="padding: 10px; background: #f0f0f0; border-radius: 6px;">Loading...</div>
                     </div>
-                    
                     <h4 style="font-size: 14px; margin-bottom: 8px;">💡 AI Initiative</h4>
-                    <button onclick="generateMarketingIdea()" style="width: 100%; padding: 12px; margin-bottom: 15px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 10px; cursor: pointer; font-weight: 700; font-size: 14px; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4); transition: transform 0.2s;">
-                        🚀 "Hey Jim, I have an idea!"
-                    </button>
-                    
+                    <button onclick="generateMarketingIdea()" style="width: 100%; padding: 12px; margin-bottom: 15px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 10px; cursor: pointer; font-weight: 700; font-size: 14px; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);">🚀 "Hey Jim, I have an idea!"</button>
                     <h4 style="font-size: 14px; margin-bottom: 8px;">Quick Actions</h4>
-                    <button onclick="generateSocialPost()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #0077b5; color: white; border: none; border-radius: 6px; cursor: pointer;">
-                        📝 Generate LinkedIn Post
-                    </button>
-                    <button onclick="conductResearch()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #764ba2; color: white; border: none; border-radius: 6px; cursor: pointer;">
-                        🔍 Market Research
-                    </button>
-                    <button onclick="analyzeCompetitors()" style="width: 100%; padding: 8px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer;">
-                        📊 Competitive Analysis
-                    </button>
+                    <button onclick="generateSocialPost()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #0077b5; color: white; border: none; border-radius: 6px; cursor: pointer;">📝 Generate LinkedIn Post</button>
+                    <button onclick="conductResearch()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #764ba2; color: white; border: none; border-radius: 6px; cursor: pointer;">🔍 Market Research</button>
+                    <button onclick="analyzeCompetitors()" style="width: 100%; padding: 8px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer;">📊 Competitive Analysis</button>
                 </div>
                 
                 <!-- Calculator Panel (calculator mode only) -->
                 <div class="calculator-info" id="calculatorInfo" style="display: none;">
                     <h3 style="margin-bottom: 10px;">Cost Calculator</h3>
-                    
                     <h4 style="font-size: 14px; margin-bottom: 8px;">Quick Calculations</h4>
-                    <button onclick="calculateOvertimeCost()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer;">
-                        💰 Overtime Cost
-                    </button>
-                    <button onclick="compareHireVsOT()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #764ba2; color: white; border: none; border-radius: 6px; cursor: pointer;">
-                        👥 Hire vs OT
-                    </button>
-                    <button onclick="scheduleImpact()" style="width: 100%; padding: 8px; background: #0077b5; color: white; border: none; border-radius: 6px; cursor: pointer;">
-                        📊 Schedule Impact
-                    </button>
+                    <button onclick="calculateOvertimeCost()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer;">💰 Overtime Cost</button>
+                    <button onclick="compareHireVsOT()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #764ba2; color: white; border: none; border-radius: 6px; cursor: pointer;">👥 Hire vs OT</button>
+                    <button onclick="scheduleImpact()" style="width: 100%; padding: 8px; background: #0077b5; color: white; border: none; border-radius: 6px; cursor: pointer;">📊 Schedule Impact</button>
                 </div>
                 
                 <!-- Survey Panel (survey mode only) -->
                 <div class="survey-info" id="surveyInfo" style="display: none;">
                     <h3 style="margin-bottom: 10px;">Survey Builder</h3>
-                    
                     <div style="font-size: 12px; margin-bottom: 15px;">
                         <div style="font-weight: 600; margin-bottom: 5px;">Question Bank:</div>
-                        <div id="questionBankStatus" style="padding: 10px; background: #f0f0f0; border-radius: 6px;">
-                            Loading...
-                        </div>
+                        <div id="questionBankStatus" style="padding: 10px; background: #f0f0f0; border-radius: 6px;">Loading...</div>
                     </div>
-                    
                     <h4 style="font-size: 14px; margin-bottom: 8px;">Quick Actions</h4>
-                    <button onclick="createNewSurvey()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer;">
-                        ➕ Create Survey
-                    </button>
-                    <button onclick="viewSurveyResults()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #0077b5; color: white; border: none; border-radius: 6px; cursor: pointer;">
-                        📊 View Results
-                    </button>
-                    <button onclick="exportSurveyData()" style="width: 100%; padding: 8px; background: #764ba2; color: white; border: none; border-radius: 6px; cursor: pointer;">
-                        📤 Export Data
-                    </button>
+                    <button onclick="createNewSurvey()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer;">➕ Create Survey</button>
+                    <button onclick="viewSurveyResults()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #0077b5; color: white; border: none; border-radius: 6px; cursor: pointer;">📊 View Results</button>
+                    <button onclick="exportSurveyData()" style="width: 100%; padding: 8px; background: #764ba2; color: white; border: none; border-radius: 6px; cursor: pointer;">📤 Export Data</button>
                 </div>
                 
                 <!-- Opportunities Panel (opportunities mode only) -->
                 <div class="opportunities-info" id="opportunitiesInfo" style="display: none;">
                     <h3 style="margin-bottom: 10px;">🎯 Opportunity Finder</h3>
-                    
                     <div style="font-size: 12px; margin-bottom: 15px;">
                         <div style="font-weight: 600; margin-bottom: 5px;">Database Status:</div>
-                        <div id="normativeStatus" style="padding: 10px; background: #f0f0f0; border-radius: 6px;">
-                            Loading...
-                        </div>
+                        <div id="normativeStatus" style="padding: 10px; background: #f0f0f0; border-radius: 6px;">Loading...</div>
                     </div>
-                    
                     <h4 style="font-size: 14px; margin-bottom: 8px;">Quick Analysis</h4>
-                    <button onclick="analyzeScheduleOpportunities()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer;">
-                        📊 Analyze Current Schedule
-                    </button>
-                    <button onclick="compareToNorms()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #764ba2; color: white; border: none; border-radius: 6px; cursor: pointer;">
-                        📈 Compare to Industry
-                    </button>
-                    <button onclick="findImprovements()" style="width: 100%; padding: 8px; background: #0077b5; color: white; border: none; border-radius: 6px; cursor: pointer;">
-                        💡 Find Improvements
-                    </button>
+                    <button onclick="analyzeScheduleOpportunities()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer;">📊 Analyze Current Schedule</button>
+                    <button onclick="compareToNorms()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #764ba2; color: white; border: none; border-radius: 6px; cursor: pointer;">📈 Compare to Industry</button>
+                    <button onclick="findImprovements()" style="width: 100%; padding: 8px; background: #0077b5; color: white; border: none; border-radius: 6px; cursor: pointer;">💡 Find Improvements</button>
                 </div>
                 
                 <!-- Quick Actions Section -->
                 <h3 style="margin-top: 20px;">Quick Actions</h3>
-                <ul class="quick-actions" id="quickActions">
-                    <!-- Dynamically populated based on mode -->
-                </ul>
+                <ul class="quick-actions" id="quickActions"></ul>
                 
                 <!-- Generated Documents Section -->
                 <h3 style="margin-top: 20px;">📄 Documents</h3>
                 <div id="documentsList" style="font-size: 12px; max-height: 200px; overflow-y: auto;">
                     <div style="color: #999; padding: 10px; text-align: center;">No documents yet</div>
                 </div>
-                <button onclick="refreshDocuments()" style="width: 100%; padding: 8px; margin-top: 10px; background: #f0f0f0; border: 1px solid #e0e0e0; border-radius: 6px; cursor: pointer; font-size: 12px; color: #666;">
-                    🔄 Refresh
-                </button>
+                <button onclick="refreshDocuments()" style="width: 100%; padding: 8px; margin-top: 10px; background: #f0f0f0; border: 1px solid #e0e0e0; border-radius: 6px; cursor: pointer; font-size: 12px; color: #666;">🔄 Refresh</button>
             </div>
             
-            <!-- ============================================================
-                 MAIN CONTENT AREA
-                 ============================================================ -->
+            <!-- MAIN CONTENT AREA -->
             <div class="main-content">
                 
-                <!-- ========================================================
-                     MEMORY STATUS INDICATOR (NEW - Memory Feature)
-                     ======================================================== -->
+                <!-- MEMORY STATUS INDICATOR (Memory Feature) -->
                 <div class="memory-indicator" id="memoryIndicator">
                     <div class="memory-status warning" id="memoryStatus">
                         <span class="memory-icon">⚠️</span>
@@ -290,13 +224,11 @@
                         </div>
                         <div class="message-content">
                             <strong>Welcome to the unified AI Swarm interface!</strong>
-                            
                             <p style="margin-top: 10px;">Choose your mode:</p>
                             <ul style="margin-top: 10px; margin-left: 20px;">
                                 <li><strong>⚡ Quick Task Mode:</strong> One-off requests, document creation, analysis</li>
                                 <li><strong>📁 Project Mode:</strong> Full consulting engagements with context tracking</li>
                             </ul>
-                            
                             <p style="margin-top: 15px;"><strong>Features:</strong></p>
                             <ul style="margin-top: 5px; margin-left: 20px;">
                                 <li>✅ 22 knowledge documents (30+ years expertise)</li>
@@ -304,6 +236,7 @@
                                 <li>✅ Feedback & learning on every response</li>
                                 <li>✅ Multi-AI consensus validation</li>
                                 <li>✅ Conversation memory across sessions</li>
+                                <li>✅ Voice control - say "Hey Swarm" to command</li>
                             </ul>
                         </div>
                     </div>
@@ -317,12 +250,11 @@
                 
                 <!-- Input Area -->
                 <div class="input-area">
-                    <textarea id="userInput" placeholder="Type your request here..."></textarea>
+                    <textarea id="userInput" placeholder="Type your request here... or say 'Hey Swarm'"></textarea>
                     <div style="display: flex; flex-direction: column; gap: 10px;">
                         <button onclick="sendMessage()">Send</button>
-                        <label for="fileUpload" style="padding: 10px 20px; background: #e0e0e0; color: #333; border: none; border-radius: 10px; font-weight: 600; cursor: pointer; text-align: center; transition: background 0.2s;">
-                            📎 Upload Files
-                        </label>
+                        <button class="voice-input-btn" id="voiceInputBtn" onclick="startVoiceInput()" title="Click to speak your message">🎤</button>
+                        <label for="fileUpload" style="padding: 10px 20px; background: #e0e0e0; color: #333; border: none; border-radius: 10px; font-weight: 600; cursor: pointer; text-align: center; transition: background 0.2s;">📎 Upload Files</label>
                         <input type="file" id="fileUpload" multiple accept=".pdf,.docx,.xlsx,.csv,.txt,.png,.jpg,.jpeg" style="display: none;" onchange="handleFileUpload(event)">
                     </div>
                 </div>
@@ -336,8 +268,9 @@
         </div>
     </div>
     
-    <!-- External JavaScript -->
+    <!-- External JavaScript - Order matters! swarm-app.js must load first -->
     <script src="/static/js/swarm-app.js"></script>
+    <script src="/static/js/swarm-voice.js"></script>
 </body>
 </html>
 
