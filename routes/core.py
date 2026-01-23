@@ -1,9 +1,15 @@
 """
 Core Routes
 Created: January 21, 2026
-Last Updated: January 23, 2026 - ADDED MISSING API ENDPOINTS
+Last Updated: January 23, 2026 - FIXED CLARIFICATION LOOP BUG
 
 CHANGES IN THIS VERSION:
+- January 23, 2026: FIXED CLARIFICATION ANSWERS NOT BEING PROCESSED
+  * Added clarification_answers parsing from request (JSON and form data)
+  * Modified proactive pre-check to SKIP when clarification_answers provided
+  * This fixes the infinite loop where AI kept asking same questions
+  * User answers now bypass the SmartQuestioner and go straight to task execution
+
 - January 23, 2026: ADDED MISSING API ENDPOINTS TO FIX FRONTEND ERRORS
   * Added /api/projects - List projects (was causing 404)
   * Added /api/projects/<id> - Get single project
@@ -304,7 +310,6 @@ def get_project(project_id):
     try:
         db = get_db()
         
-        # Try both id and project_id columns
         project = db.execute('''
             SELECT * FROM projects WHERE project_id = ? OR id = ?
         ''', (project_id, project_id)).fetchone()
@@ -330,7 +335,6 @@ def update_project(project_id):
         
         db = get_db()
         
-        # Build dynamic update query based on provided fields
         updates = []
         values = []
         
@@ -380,10 +384,10 @@ def get_survey_questions():
                 'success': True,
                 'questions': [],
                 'categories': [],
+                'total_count': 0,
                 'message': 'Survey Builder not available'
             })
         
-        # Get questions from the survey builder
         questions = []
         categories = set()
         
@@ -402,7 +406,7 @@ def get_survey_questions():
             'success': True,
             'questions': questions,
             'categories': list(categories),
-            'total': len(questions)
+            'total_count': len(questions)
         })
     except Exception as e:
         print(f"Error getting survey questions: {e}")
@@ -410,6 +414,7 @@ def get_survey_questions():
             'success': True,
             'questions': [],
             'categories': [],
+            'total_count': 0,
             'message': 'Could not load survey questions'
         })
 
@@ -559,7 +564,6 @@ def generate_marketing_content():
         if not topic:
             return jsonify({'success': False, 'error': 'Topic is required'}), 400
         
-        # Get AI function for content generation
         from orchestration.ai_clients import call_claude_sonnet
         
         result = marketing_hub.generate_social_content(topic, platform, call_claude_sonnet)
@@ -663,6 +667,8 @@ def get_opportunities_status():
                 'available': False,
                 'total_opportunities': 0,
                 'capabilities_analyzed': 0,
+                'schedules_count': 0,
+                'metrics_count': 0,
                 'message': 'Opportunity Finder not available'
             })
         
@@ -674,6 +680,8 @@ def get_opportunities_status():
             'total_opportunities': stats.get('total_opportunities', 0),
             'capabilities_analyzed': stats.get('capabilities_analyzed', 0),
             'market_trends_tracked': stats.get('market_trends_tracked', 0),
+            'schedules_count': stats.get('schedules_count', 0),
+            'metrics_count': stats.get('metrics_count', 0),
             'top_opportunities': stats.get('top_opportunities', [])
         })
     except Exception as e:
@@ -682,6 +690,8 @@ def get_opportunities_status():
             'success': True,
             'available': False,
             'total_opportunities': 0,
+            'schedules_count': 0,
+            'metrics_count': 0,
             'message': 'Could not get opportunities status'
         })
 
@@ -738,7 +748,6 @@ def analyze_opportunity():
         if not opportunity_name:
             return jsonify({'success': False, 'error': 'Opportunity name required'}), 400
         
-        # Find the opportunity
         opportunity = next(
             (o for o in opportunity_finder.opportunity_templates 
              if o['name'].lower() == opportunity_name.lower()),
@@ -1088,12 +1097,19 @@ def add_conversation_message(conversation_id):
 
 
 # ============================================================================
-# MAIN ORCHESTRATION ENDPOINT
+# MAIN ORCHESTRATION ENDPOINT - FIXED January 23, 2026
 # ============================================================================
 
 @core_bp.route('/api/orchestrate', methods=['POST'])
 def orchestrate():
-    """Main orchestration endpoint with proactive intelligence and conversation memory"""
+    """
+    Main orchestration endpoint with proactive intelligence and conversation memory.
+    
+    FIXED January 23, 2026: Added clarification_answers handling
+    - Now checks if clarification_answers were provided in the request
+    - If answers exist, SKIPS the proactive pre-check to prevent infinite loop
+    - User answers go straight to task execution
+    """
     try:
         if request.is_json:
             data = request.json
@@ -1114,6 +1130,39 @@ def orchestrate():
         
         overall_start = time.time()
         
+        # =====================================================================
+        # FIXED: Check for clarification answers (January 23, 2026)
+        # If user provided answers to clarifying questions, skip proactive check
+        # =====================================================================
+        clarification_answers = None
+        if request.is_json:
+            clarification_answers_raw = request.json.get('clarification_answers')
+            if clarification_answers_raw:
+                if isinstance(clarification_answers_raw, str):
+                    try:
+                        clarification_answers = json.loads(clarification_answers_raw)
+                    except:
+                        clarification_answers = None
+                else:
+                    clarification_answers = clarification_answers_raw
+        else:
+            clarification_answers_str = request.form.get('clarification_answers')
+            if clarification_answers_str:
+                try:
+                    clarification_answers = json.loads(clarification_answers_str)
+                except:
+                    clarification_answers = None
+        
+        if clarification_answers:
+            print(f"✅ Clarification answers received: {clarification_answers}")
+            # Enhance the user request with the clarification context
+            context_additions = []
+            for field, value in clarification_answers.items():
+                context_additions.append(f"{field}: {value}")
+            if context_additions:
+                user_request = f"{user_request}\n\nAdditional context from user:\n" + "\n".join(context_additions)
+                print(f"Enhanced request with clarification: {user_request[:200]}...")
+        
         # Create conversation if not provided
         if not conversation_id:
             conversation_id = create_conversation(mode=mode, project_id=project_id)
@@ -1128,8 +1177,11 @@ def orchestrate():
         except Exception as proactive_init_error:
             print(f"Proactive agent init failed: {proactive_init_error}")
         
-        # Proactive pre-check
-        if proactive:
+        # =====================================================================
+        # FIXED: Proactive pre-check - SKIP if clarification answers provided
+        # This prevents the infinite loop of asking the same questions
+        # =====================================================================
+        if proactive and not clarification_answers:
             try:
                 pre_check = proactive.pre_process_request(user_request)
                 if pre_check['action'] == 'ask_questions':
@@ -1146,6 +1198,8 @@ def orchestrate():
                                    'conversation_id': conversation_id})
             except Exception as proactive_error:
                 print(f"Proactive check failed: {proactive_error}")
+        elif clarification_answers:
+            print("Skipping proactive check - user provided clarification answers")
         
         import sys
         app_module = sys.modules.get('app')
