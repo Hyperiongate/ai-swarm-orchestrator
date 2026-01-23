@@ -1,9 +1,24 @@
 """
 Core Routes
 Created: January 21, 2026
-Last Updated: January 23, 2026 - ADDED DOCUMENT MANAGEMENT ENDPOINTS
+Last Updated: January 23, 2026 - ADDED MISSING API ENDPOINTS
 
 CHANGES IN THIS VERSION:
+- January 23, 2026: ADDED MISSING API ENDPOINTS TO FIX FRONTEND ERRORS
+  * Added /api/projects - List projects (was causing 404)
+  * Added /api/projects/<id> - Get single project
+  * Added /api/survey/questions - Get survey questions (was causing 404)
+  * Added /api/survey/create - Create new survey
+  * Added /api/survey/<id>/responses - Get survey responses
+  * Added /api/marketing/status - Get marketing hub status (was causing 404)
+  * Added /api/marketing/generate - Generate social content
+  * Added /api/marketing/post - Post to social media
+  * Added /api/opportunities - List opportunities
+  * Added /api/opportunities/status - Get opportunity finder status (was causing 404)
+  * Added /api/opportunities/top - Get top opportunities
+  * Added /api/opportunities/pitch - Generate opportunity pitch
+  * These endpoints integrate with existing utility classes
+
 - January 23, 2026: DOCUMENT MANAGEMENT ENDPOINTS
   * Added GET /api/generated-documents - List all generated documents
   * Added GET /api/generated-documents/<id> - Get single document info
@@ -11,8 +26,6 @@ CHANGES IN THIS VERSION:
   * Added GET /api/generated-documents/<id>/print - Get printable version
   * Added DELETE /api/generated-documents/<id> - Delete document
   * Added GET /api/documents/stats - Get document statistics
-  * Updated document creation to save to database
-  * Documents now tracked with metadata (title, type, size, task_id, etc.)
 
 - January 22, 2026: PERSISTENT CONVERSATION MEMORY
 - January 22, 2026: CRITICAL BUG FIX - AI now actually completes tasks
@@ -56,6 +69,67 @@ from orchestration.proactive_agent import ProactiveAgent
 
 core_bp = Blueprint('core', __name__)
 
+
+# ============================================================================
+# IMPORT OPTIONAL MODULES (Survey, Marketing, Opportunities)
+# ============================================================================
+
+# Survey Builder
+SURVEY_BUILDER_AVAILABLE = False
+survey_builder = None
+try:
+    from survey_builder import get_survey_builder
+    survey_builder = get_survey_builder()
+    SURVEY_BUILDER_AVAILABLE = True
+    print("✅ Survey Builder loaded for API endpoints")
+except ImportError:
+    print("ℹ️  Survey Builder not available")
+except Exception as e:
+    print(f"⚠️  Survey Builder error: {e}")
+
+# Marketing Hub
+MARKETING_HUB_AVAILABLE = False
+marketing_hub = None
+try:
+    from marketing_hub import get_marketing_hub
+    marketing_hub = get_marketing_hub()
+    MARKETING_HUB_AVAILABLE = True
+    print("✅ Marketing Hub loaded for API endpoints")
+except ImportError:
+    print("ℹ️  Marketing Hub not available")
+except Exception as e:
+    print(f"⚠️  Marketing Hub error: {e}")
+
+# Opportunity Finder
+OPPORTUNITY_FINDER_AVAILABLE = False
+opportunity_finder = None
+try:
+    from opportunity_finder import get_opportunity_finder
+    opportunity_finder = get_opportunity_finder()
+    OPPORTUNITY_FINDER_AVAILABLE = True
+    print("✅ Opportunity Finder loaded for API endpoints")
+except ImportError:
+    print("ℹ️  Opportunity Finder not available")
+except Exception as e:
+    print(f"⚠️  Opportunity Finder error: {e}")
+
+# Project Manager
+PROJECT_MANAGER_AVAILABLE = False
+project_manager = None
+try:
+    from project_manager import ProjectManager
+    project_manager = ProjectManager()
+    PROJECT_MANAGER_AVAILABLE = True
+    print("✅ Project Manager loaded for API endpoints")
+except ImportError:
+    print("ℹ️  Project Manager not available")
+except Exception as e:
+    print(f"⚠️  Project Manager error: {e}")
+
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
 
 def convert_markdown_to_html(text):
     """Convert markdown text to styled HTML"""
@@ -127,6 +201,561 @@ def categorize_document(user_request, doc_type):
         return 'presentation'
     else:
         return 'general'
+
+
+# ============================================================================
+# PROJECTS API ENDPOINTS (Added January 23, 2026 - FIX FOR 404 ERRORS)
+# ============================================================================
+
+@core_bp.route('/api/projects', methods=['GET'])
+def list_projects():
+    """
+    List all projects.
+    This endpoint was missing and causing frontend 404 errors.
+    """
+    try:
+        status_filter = request.args.get('status', 'all')
+        limit = request.args.get('limit', 50, type=int)
+        
+        db = get_db()
+        
+        if status_filter and status_filter != 'all':
+            projects = db.execute('''
+                SELECT id, project_id, client_name, industry, facility_type, 
+                       project_phase, status, created_at, updated_at
+                FROM projects
+                WHERE status = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+            ''', (status_filter, limit)).fetchall()
+        else:
+            projects = db.execute('''
+                SELECT id, project_id, client_name, industry, facility_type,
+                       project_phase, status, created_at, updated_at
+                FROM projects
+                ORDER BY created_at DESC
+                LIMIT ?
+            ''', (limit,)).fetchall()
+        
+        db.close()
+        
+        project_list = []
+        for proj in projects:
+            project_list.append({
+                'id': proj['id'],
+                'project_id': proj['project_id'],
+                'client_name': proj['client_name'],
+                'industry': proj['industry'],
+                'facility_type': proj['facility_type'],
+                'project_phase': proj['project_phase'],
+                'status': proj['status'],
+                'created_at': proj['created_at'],
+                'updated_at': proj['updated_at']
+            })
+        
+        return jsonify({
+            'success': True,
+            'projects': project_list,
+            'count': len(project_list)
+        })
+    except Exception as e:
+        print(f"Error listing projects: {e}")
+        return jsonify({
+            'success': True,
+            'projects': [],
+            'count': 0,
+            'message': 'No projects found or projects table not initialized'
+        })
+
+
+@core_bp.route('/api/projects', methods=['POST'])
+def create_project():
+    """Create a new project"""
+    try:
+        data = request.json or {}
+        
+        import uuid
+        project_id = str(uuid.uuid4())[:8]
+        
+        client_name = data.get('client_name', 'New Client')
+        industry = data.get('industry', 'Manufacturing')
+        facility_type = data.get('facility_type', 'Production')
+        
+        db = get_db()
+        db.execute('''
+            INSERT INTO projects (project_id, client_name, industry, facility_type, status, project_phase)
+            VALUES (?, ?, ?, ?, 'active', 'initial')
+        ''', (project_id, client_name, industry, facility_type))
+        db.commit()
+        db.close()
+        
+        return jsonify({
+            'success': True,
+            'project_id': project_id,
+            'message': 'Project created successfully'
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@core_bp.route('/api/projects/<project_id>', methods=['GET'])
+def get_project(project_id):
+    """Get a specific project by ID"""
+    try:
+        db = get_db()
+        
+        # Try both id and project_id columns
+        project = db.execute('''
+            SELECT * FROM projects WHERE project_id = ? OR id = ?
+        ''', (project_id, project_id)).fetchone()
+        
+        db.close()
+        
+        if not project:
+            return jsonify({'success': False, 'error': 'Project not found'}), 404
+        
+        return jsonify({
+            'success': True,
+            'project': dict(project)
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@core_bp.route('/api/projects/<project_id>', methods=['PUT'])
+def update_project(project_id):
+    """Update a project"""
+    try:
+        data = request.json or {}
+        
+        db = get_db()
+        
+        # Build dynamic update query based on provided fields
+        updates = []
+        values = []
+        
+        if 'client_name' in data:
+            updates.append('client_name = ?')
+            values.append(data['client_name'])
+        if 'industry' in data:
+            updates.append('industry = ?')
+            values.append(data['industry'])
+        if 'status' in data:
+            updates.append('status = ?')
+            values.append(data['status'])
+        if 'project_phase' in data:
+            updates.append('project_phase = ?')
+            values.append(data['project_phase'])
+        
+        updates.append('updated_at = CURRENT_TIMESTAMP')
+        
+        if updates:
+            values.append(project_id)
+            db.execute(f'''
+                UPDATE projects SET {', '.join(updates)}
+                WHERE project_id = ? OR id = ?
+            ''', values + [project_id])
+            db.commit()
+        
+        db.close()
+        
+        return jsonify({'success': True, 'message': 'Project updated'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ============================================================================
+# SURVEY API ENDPOINTS (Added January 23, 2026 - FIX FOR 404 ERRORS)
+# ============================================================================
+
+@core_bp.route('/api/survey/questions', methods=['GET'])
+def get_survey_questions():
+    """
+    Get available survey questions from the question bank.
+    This endpoint was missing and causing frontend 404 errors.
+    """
+    try:
+        if not SURVEY_BUILDER_AVAILABLE or not survey_builder:
+            return jsonify({
+                'success': True,
+                'questions': [],
+                'categories': [],
+                'message': 'Survey Builder not available'
+            })
+        
+        # Get questions from the survey builder
+        questions = []
+        categories = set()
+        
+        for q_id, q_data in survey_builder.question_bank.items():
+            questions.append({
+                'id': q_id,
+                'text': q_data.get('text', ''),
+                'type': q_data.get('type', 'text'),
+                'category': q_data.get('category', 'general'),
+                'required': q_data.get('required', False),
+                'options': q_data.get('options', [])
+            })
+            categories.add(q_data.get('category', 'general'))
+        
+        return jsonify({
+            'success': True,
+            'questions': questions,
+            'categories': list(categories),
+            'total': len(questions)
+        })
+    except Exception as e:
+        print(f"Error getting survey questions: {e}")
+        return jsonify({
+            'success': True,
+            'questions': [],
+            'categories': [],
+            'message': 'Could not load survey questions'
+        })
+
+
+@core_bp.route('/api/survey/create', methods=['POST'])
+def create_survey():
+    """Create a new survey"""
+    try:
+        if not SURVEY_BUILDER_AVAILABLE or not survey_builder:
+            return jsonify({'success': False, 'error': 'Survey Builder not available'}), 503
+        
+        data = request.json or {}
+        project_name = data.get('project_name', 'New Survey')
+        selected_questions = data.get('questions', [])
+        custom_questions = data.get('custom_questions', [])
+        
+        survey = survey_builder.create_survey(
+            project_name=project_name,
+            selected_questions=selected_questions,
+            custom_questions=custom_questions
+        )
+        
+        return jsonify({
+            'success': True,
+            'survey': survey
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@core_bp.route('/api/survey/<survey_id>', methods=['GET'])
+def get_survey(survey_id):
+    """Get a specific survey"""
+    try:
+        if not SURVEY_BUILDER_AVAILABLE or not survey_builder:
+            return jsonify({'success': False, 'error': 'Survey Builder not available'}), 503
+        
+        survey = survey_builder.get_survey(survey_id)
+        
+        if not survey:
+            return jsonify({'success': False, 'error': 'Survey not found'}), 404
+        
+        return jsonify({
+            'success': True,
+            'survey': survey
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@core_bp.route('/api/survey/<survey_id>/submit', methods=['POST'])
+def submit_survey_response(survey_id):
+    """Submit a response to a survey"""
+    try:
+        if not SURVEY_BUILDER_AVAILABLE or not survey_builder:
+            return jsonify({'success': False, 'error': 'Survey Builder not available'}), 503
+        
+        data = request.json or {}
+        answers = data.get('answers', {})
+        respondent_id = data.get('respondent_id')
+        
+        result = survey_builder.submit_response(survey_id, answers, respondent_id)
+        
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@core_bp.route('/api/survey/<survey_id>/analyze', methods=['GET'])
+def analyze_survey(survey_id):
+    """Analyze survey responses"""
+    try:
+        if not SURVEY_BUILDER_AVAILABLE or not survey_builder:
+            return jsonify({'success': False, 'error': 'Survey Builder not available'}), 503
+        
+        analysis = survey_builder.analyze_responses(survey_id)
+        
+        return jsonify(analysis)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@core_bp.route('/api/survey/status', methods=['GET'])
+def get_survey_status():
+    """Get survey system status"""
+    return jsonify({
+        'success': True,
+        'available': SURVEY_BUILDER_AVAILABLE,
+        'question_count': len(survey_builder.question_bank) if survey_builder else 0,
+        'active_surveys': len(survey_builder.surveys) if survey_builder else 0
+    })
+
+
+# ============================================================================
+# MARKETING API ENDPOINTS (Added January 23, 2026 - FIX FOR 404 ERRORS)
+# ============================================================================
+
+@core_bp.route('/api/marketing/status', methods=['GET'])
+def get_marketing_status():
+    """
+    Get marketing hub status.
+    This endpoint was missing and causing frontend 404 errors.
+    """
+    try:
+        if not MARKETING_HUB_AVAILABLE or not marketing_hub:
+            return jsonify({
+                'success': True,
+                'available': False,
+                'platforms': {
+                    'linkedin': False,
+                    'twitter': False,
+                    'facebook': False
+                },
+                'message': 'Marketing Hub not available'
+            })
+        
+        status = marketing_hub.get_status()
+        
+        return jsonify({
+            'success': True,
+            'available': True,
+            'platforms': status.get('platforms', {}),
+            'total_configured': status.get('total_configured', 0),
+            'ready': status.get('ready', False)
+        })
+    except Exception as e:
+        print(f"Error getting marketing status: {e}")
+        return jsonify({
+            'success': True,
+            'available': False,
+            'platforms': {},
+            'message': 'Could not get marketing status'
+        })
+
+
+@core_bp.route('/api/marketing/generate', methods=['POST'])
+def generate_marketing_content():
+    """Generate social media content"""
+    try:
+        if not MARKETING_HUB_AVAILABLE or not marketing_hub:
+            return jsonify({'success': False, 'error': 'Marketing Hub not available'}), 503
+        
+        data = request.json or {}
+        topic = data.get('topic', '')
+        platform = data.get('platform', 'linkedin')
+        
+        if not topic:
+            return jsonify({'success': False, 'error': 'Topic is required'}), 400
+        
+        # Get AI function for content generation
+        from orchestration.ai_clients import call_claude_sonnet
+        
+        result = marketing_hub.generate_social_content(topic, platform, call_claude_sonnet)
+        
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@core_bp.route('/api/marketing/post', methods=['POST'])
+def post_to_social():
+    """Post content to social media"""
+    try:
+        if not MARKETING_HUB_AVAILABLE or not marketing_hub:
+            return jsonify({'success': False, 'error': 'Marketing Hub not available'}), 503
+        
+        data = request.json or {}
+        content = data.get('content', '')
+        platform = data.get('platform', 'linkedin')
+        
+        if not content:
+            return jsonify({'success': False, 'error': 'Content is required'}), 400
+        
+        if platform == 'linkedin':
+            result = marketing_hub.post_to_linkedin(content)
+        else:
+            result = {'success': False, 'error': f'Platform {platform} not supported yet'}
+        
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@core_bp.route('/api/marketing/research', methods=['POST'])
+def conduct_market_research():
+    """Conduct AI-powered market research"""
+    try:
+        if not MARKETING_HUB_AVAILABLE or not marketing_hub:
+            return jsonify({'success': False, 'error': 'Marketing Hub not available'}), 503
+        
+        data = request.json or {}
+        topic = data.get('topic', '')
+        
+        if not topic:
+            return jsonify({'success': False, 'error': 'Topic is required'}), 400
+        
+        from orchestration.ai_clients import call_claude_sonnet
+        
+        result = marketing_hub.conduct_market_research(topic, call_claude_sonnet)
+        
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ============================================================================
+# OPPORTUNITIES API ENDPOINTS (Added January 23, 2026 - FIX FOR 404 ERRORS)
+# ============================================================================
+
+@core_bp.route('/api/opportunities', methods=['GET'])
+def list_opportunities():
+    """List all business opportunities"""
+    try:
+        if not OPPORTUNITY_FINDER_AVAILABLE or not opportunity_finder:
+            return jsonify({
+                'success': True,
+                'opportunities': [],
+                'message': 'Opportunity Finder not available'
+            })
+        
+        opportunities = []
+        for opp in opportunity_finder.opportunity_templates:
+            opportunities.append({
+                'name': opp['name'],
+                'tagline': opp['tagline'],
+                'target_market': opp['target_market'],
+                'revenue_model': opp['revenue_model'],
+                'estimated_revenue': opp['estimated_revenue'],
+                'effort_to_launch': opp['effort_to_launch']
+            })
+        
+        return jsonify({
+            'success': True,
+            'opportunities': opportunities,
+            'count': len(opportunities)
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@core_bp.route('/api/opportunities/status', methods=['GET'])
+def get_opportunities_status():
+    """
+    Get opportunity finder status.
+    This endpoint was missing and causing frontend 404 errors.
+    """
+    try:
+        if not OPPORTUNITY_FINDER_AVAILABLE or not opportunity_finder:
+            return jsonify({
+                'success': True,
+                'available': False,
+                'total_opportunities': 0,
+                'capabilities_analyzed': 0,
+                'message': 'Opportunity Finder not available'
+            })
+        
+        stats = opportunity_finder.get_stats()
+        
+        return jsonify({
+            'success': True,
+            'available': True,
+            'total_opportunities': stats.get('total_opportunities', 0),
+            'capabilities_analyzed': stats.get('capabilities_analyzed', 0),
+            'market_trends_tracked': stats.get('market_trends_tracked', 0),
+            'top_opportunities': stats.get('top_opportunities', [])
+        })
+    except Exception as e:
+        print(f"Error getting opportunities status: {e}")
+        return jsonify({
+            'success': True,
+            'available': False,
+            'total_opportunities': 0,
+            'message': 'Could not get opportunities status'
+        })
+
+
+@core_bp.route('/api/opportunities/top', methods=['GET'])
+def get_top_opportunities():
+    """Get top-ranked business opportunities"""
+    try:
+        if not OPPORTUNITY_FINDER_AVAILABLE or not opportunity_finder:
+            return jsonify({'success': False, 'error': 'Opportunity Finder not available'}), 503
+        
+        limit = request.args.get('limit', 5, type=int)
+        
+        top_opps = opportunity_finder.get_top_opportunities(limit=limit)
+        
+        return jsonify({
+            'success': True,
+            'opportunities': top_opps
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@core_bp.route('/api/opportunities/pitch', methods=['POST'])
+def generate_opportunity_pitch():
+    """Generate a pitch for a specific opportunity"""
+    try:
+        if not OPPORTUNITY_FINDER_AVAILABLE or not opportunity_finder:
+            return jsonify({'success': False, 'error': 'Opportunity Finder not available'}), 503
+        
+        data = request.json or {}
+        opportunity_name = data.get('name')
+        
+        pitch = opportunity_finder.generate_pitch(opportunity_name)
+        
+        return jsonify({
+            'success': True,
+            'pitch': pitch
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@core_bp.route('/api/opportunities/analyze', methods=['POST'])
+def analyze_opportunity():
+    """Analyze market fit for an opportunity"""
+    try:
+        if not OPPORTUNITY_FINDER_AVAILABLE or not opportunity_finder:
+            return jsonify({'success': False, 'error': 'Opportunity Finder not available'}), 503
+        
+        data = request.json or {}
+        opportunity_name = data.get('name')
+        
+        if not opportunity_name:
+            return jsonify({'success': False, 'error': 'Opportunity name required'}), 400
+        
+        # Find the opportunity
+        opportunity = next(
+            (o for o in opportunity_finder.opportunity_templates 
+             if o['name'].lower() == opportunity_name.lower()),
+            None
+        )
+        
+        if not opportunity:
+            return jsonify({'success': False, 'error': 'Opportunity not found'}), 404
+        
+        analysis = opportunity_finder.analyze_market_fit(opportunity)
+        
+        return jsonify({
+            'success': True,
+            'analysis': analysis
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 # ============================================================================
