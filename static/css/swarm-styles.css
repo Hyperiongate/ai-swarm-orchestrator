@@ -1460,5 +1460,239 @@ body {
         font-size: 16px;
     }
 }
+/* =============================================================================
+   DOCUMENTS SECTION STYLES (Added January 23, 2026)
+   Add these styles to swarm-styles.css
+   ============================================================================= */
 
+/* Documents Section Header */
+.docs-section-header {
+    font-size: 12px;
+    font-weight: 600;
+    color: #667eea;
+    padding: 8px 0 4px 0;
+    margin-top: 10px;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.docs-section-header:first-child {
+    margin-top: 0;
+}
+
+/* Date Group Headers */
+.docs-date-group {
+    font-size: 10px;
+    font-weight: 600;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 8px 0 4px 0;
+    margin-top: 8px;
+}
+
+.docs-date-group:first-of-type {
+    margin-top: 4px;
+}
+
+/* Individual Document Item */
+.doc-item {
+    display: flex;
+    flex-direction: column;
+    padding: 10px;
+    margin: 4px 0;
+    background: white;
+    border-radius: 8px;
+    border: 1px solid #e0e0e0;
+    transition: all 0.2s ease;
+}
+
+.doc-item:hover {
+    border-color: #667eea;
+    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.15);
+}
+
+.doc-item-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.doc-icon {
+    font-size: 20px;
+    flex-shrink: 0;
+}
+
+.doc-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.doc-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #333;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 2px;
+}
+
+.doc-meta {
+    font-size: 10px;
+    color: #888;
+}
+
+/* Document Action Buttons */
+.doc-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid #f0f0f0;
+}
+
+.doc-action-btn {
+    flex: 1;
+    padding: 6px 8px;
+    border: 1px solid #e0e0e0;
+    background: #f8f9fa;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.doc-action-btn:hover {
+    background: #667eea;
+    border-color: #667eea;
+    transform: translateY(-1px);
+}
+
+.doc-action-btn.download:hover {
+    background: #4caf50;
+    border-color: #4caf50;
+}
+
+.doc-action-btn.print:hover {
+    background: #2196f3;
+    border-color: #2196f3;
+}
+
+.doc-action-btn.delete:hover {
+    background: #f44336;
+    border-color: #f44336;
+}
+
+/* Documents List Container */
+#documentsList {
+    max-height: 300px;
+    overflow-y: auto;
+    padding-right: 4px;
+    position: relative;
+}
+
+#documentsList::-webkit-scrollbar {
+    width: 6px;
+}
+
+#documentsList::-webkit-scrollbar-track {
+    background: #f0f0f0;
+    border-radius: 3px;
+}
+
+#documentsList::-webkit-scrollbar-thumb {
+    background: #667eea;
+    border-radius: 3px;
+}
+
+/* Empty State */
+.docs-empty {
+    text-align: center;
+    padding: 20px;
+    color: #999;
+    font-size: 12px;
+    font-style: italic;
+}
+
+/* Loading State */
+.docs-loading {
+    text-align: center;
+    padding: 20px;
+    color: #666;
+    font-size: 12px;
+}
+
+/* Refresh Button */
+.docs-refresh-btn {
+    width: 100%;
+    padding: 8px;
+    margin-top: 10px;
+    background: #f0f0f0;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    color: #666;
+    transition: all 0.2s;
+}
+
+.docs-refresh-btn:hover {
+    background: #e0e0e0;
+    border-color: #667eea;
+    color: #667eea;
+}
+
+/* Notification Toast */
+.doc-notification {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    background: #4caf50;
+    color: white;
+    padding: 12px 20px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+    z-index: 10000;
+    animation: slideIn 0.3s ease;
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+/* Responsive adjustments for documents */
+@media (max-width: 768px) {
+    .doc-item {
+        padding: 8px;
+    }
+    
+    .doc-icon {
+        font-size: 16px;
+    }
+    
+    .doc-title {
+        font-size: 11px;
+    }
+    
+    .doc-actions {
+        gap: 4px;
+    }
+    
+    .doc-action-btn {
+        padding: 4px 6px;
+        font-size: 11px;
+    }
+}
 /* I did no harm and this file is not truncated */
