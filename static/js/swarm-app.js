@@ -5,6 +5,17 @@ Shiftwork Solutions LLC
 =============================================================================
 
 CHANGE LOG:
+- January 23, 2026: Added Enhanced Documents Management System
+  * Updated loadDocuments() to show generated documents with actions
+  * Added renderDocumentItem() - renders document with download/print/delete buttons
+  * Added downloadDocument(docId) - downloads document by ID
+  * Added printDocument(docId) - opens printable view with browser print dialog
+  * Added deleteDocument(event, docId) - deletes document with confirmation
+  * Added getDocTypeIcon(docType) - returns icon for document type
+  * Added formatDocDate(dateString) - formats document dates
+  * Documents now organized by date (Today, Yesterday, Older)
+  * Documents tracked in database with full metadata
+
 - January 22, 2026: Added Persistent Conversation Memory System
   * Added currentConversationId variable to track active conversation
   * Added conversations array to store conversation list from API
@@ -31,7 +42,7 @@ CHANGE LOG:
 
 SECTIONS:
 1. Global State Variables
-2. Conversation Memory Functions (NEW)
+2. Conversation Memory Functions
 3. File Upload Handling
 4. Clipboard Functions
 5. Mode Switching
@@ -39,7 +50,7 @@ SECTIONS:
 7. Project Management
 8. Message Handling (Core)
 9. Feedback System
-10. Statistics & Documents
+10. Statistics & Documents (ENHANCED)
 11. Marketing Functions
 12. Calculator Functions
 13. Survey Functions
@@ -53,18 +64,18 @@ SECTIONS:
 // 1. GLOBAL STATE VARIABLES
 // =============================================================================
 
-let currentMode = 'quick';  // 'quick', 'project', 'calculator', 'survey', 'marketing', 'opportunities'
-let currentProjectId = null;
-let messageCounter = 0;
-let feedbackRatings = {};  // Store ratings for each message
-let uploadedFiles = [];    // Store uploaded files
+var currentMode = 'quick';  // 'quick', 'project', 'calculator', 'survey', 'marketing', 'opportunities'
+var currentProjectId = null;
+var messageCounter = 0;
+var feedbackRatings = {};  // Store ratings for each message
+var uploadedFiles = [];    // Store uploaded files
 
-// Conversation Memory Variables (NEW)
-let currentConversationId = null;  // Tracks the active conversation
-let conversations = [];             // Array of conversation objects from API
+// Conversation Memory Variables
+var currentConversationId = null;  // Tracks the active conversation
+var conversations = [];             // Array of conversation objects from API
 
 // =============================================================================
-// 2. CONVERSATION MEMORY FUNCTIONS (NEW)
+// 2. CONVERSATION MEMORY FUNCTIONS
 // =============================================================================
 
 /**
@@ -73,18 +84,17 @@ let conversations = [];             // Array of conversation objects from API
  */
 function loadConversations() {
     fetch('/api/conversations?limit=20')
-        .then(r => r.json())
-        .then(data => {
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
             if (data.success && data.conversations) {
                 conversations = data.conversations;
                 renderConversationList();
             } else {
-                // API might not be ready yet, show empty state
                 conversations = [];
                 renderConversationList();
             }
         })
-        .catch(err => {
+        .catch(function(err) {
             console.error('Error loading conversations:', err);
             conversations = [];
             renderConversationList();
@@ -95,7 +105,7 @@ function loadConversations() {
  * Render the conversation list in the sidebar
  */
 function renderConversationList() {
-    const listContainer = document.getElementById('conversationsList');
+    var listContainer = document.getElementById('conversationsList');
     if (!listContainer) return;
     
     if (conversations.length === 0) {
@@ -103,12 +113,12 @@ function renderConversationList() {
         return;
     }
     
-    let html = '';
-    conversations.forEach(conv => {
-        const isActive = conv.conversation_id === currentConversationId;
-        const title = truncateTitle(conv.title || 'New Conversation', 50);
-        const dateStr = formatConversationDate(conv.updated_at);
-        const messageCount = conv.message_count || 0;
+    var html = '';
+    conversations.forEach(function(conv) {
+        var isActive = conv.conversation_id === currentConversationId;
+        var title = truncateTitle(conv.title || 'New Conversation', 50);
+        var dateStr = formatConversationDate(conv.updated_at);
+        var messageCount = conv.message_count || 0;
         
         html += '<div class="conversation-item ' + (isActive ? 'active' : '') + '" ';
         html += 'onclick="loadConversation(\'' + conv.conversation_id + '\')" ';
@@ -136,7 +146,6 @@ function renderConversationList() {
  * Creates a new conversation via API and clears the chat area
  */
 function startNewConversation() {
-    // Show loading state
     updateMemoryIndicator(false, 0, 'Creating new conversation...');
     
     fetch('/api/conversations', {
@@ -147,33 +156,22 @@ function startNewConversation() {
             title: 'New Conversation'
         })
     })
-    .then(r => r.json())
-    .then(data => {
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
         if (data.success && data.conversation_id) {
             currentConversationId = data.conversation_id;
-            
-            // Save to localStorage
             localStorage.setItem('currentConversationId', currentConversationId);
-            
-            // Clear the conversation area
             clearConversationArea();
-            
-            // Update memory indicator
             updateMemoryIndicator(true, 0);
-            
-            // Reload conversations list to show the new one
             loadConversations();
-            
-            // Update URL without reloading
             updateUrlWithConversation(currentConversationId);
-            
             console.log('New conversation started:', currentConversationId);
         } else {
             console.error('Failed to create conversation:', data.error);
             updateMemoryIndicator(false, 0, 'Failed to create conversation');
         }
     })
-    .catch(err => {
+    .catch(function(err) {
         console.error('Error creating conversation:', err);
         updateMemoryIndicator(false, 0, 'Error creating conversation');
     });
@@ -186,52 +184,38 @@ function startNewConversation() {
 function loadConversation(conversationId) {
     if (!conversationId) return;
     
-    // Show loading state
     updateMemoryIndicator(false, 0, 'Loading conversation...');
     
     fetch('/api/conversations/' + conversationId)
-        .then(r => r.json())
-        .then(data => {
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
             if (data.success) {
                 currentConversationId = conversationId;
-                
-                // Save to localStorage
                 localStorage.setItem('currentConversationId', currentConversationId);
-                
-                // Update URL without reloading
                 updateUrlWithConversation(currentConversationId);
-                
-                // Clear and render messages
                 clearConversationArea();
                 
-                // Render the messages from this conversation
                 if (data.messages && data.messages.length > 0) {
-                    data.messages.forEach(msg => {
+                    data.messages.forEach(function(msg) {
                         addMessageFromHistory(msg.role, msg.content, msg.created_at);
                     });
-                    
-                    // Update memory indicator with message count
                     updateMemoryIndicator(true, data.messages.length);
                 } else {
-                    // Empty conversation
                     updateMemoryIndicator(true, 0);
                 }
                 
-                // Update the mode if the conversation has one
                 if (data.conversation && data.conversation.mode) {
                     switchMode(data.conversation.mode);
                 }
                 
-                // Re-render the conversation list to highlight active
                 renderConversationList();
-                
                 console.log('Loaded conversation:', conversationId);
             } else {
                 console.error('Failed to load conversation:', data.error);
                 updateMemoryIndicator(false, 0, 'Failed to load conversation');
             }
         })
-        .catch(err => {
+        .catch(function(err) {
             console.error('Error loading conversation:', err);
             updateMemoryIndicator(false, 0, 'Error loading conversation');
         });
@@ -242,7 +226,6 @@ function loadConversation(conversationId) {
  * Shows confirmation dialog before deleting
  */
 function deleteConversation(event, conversationId) {
-    // Prevent the click from bubbling to loadConversation
     event.stopPropagation();
     
     if (!confirm('Are you sure you want to delete this conversation? This cannot be undone.')) {
@@ -252,25 +235,23 @@ function deleteConversation(event, conversationId) {
     fetch('/api/conversations/' + conversationId, {
         method: 'DELETE'
     })
-    .then(r => r.json())
-    .then(data => {
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
         if (data.success) {
-            // Remove from local array
-            conversations = conversations.filter(c => c.conversation_id !== conversationId);
+            conversations = conversations.filter(function(c) { 
+                return c.conversation_id !== conversationId; 
+            });
             
-            // If we deleted the current conversation, start a new one
             if (currentConversationId === conversationId) {
                 currentConversationId = null;
                 localStorage.removeItem('currentConversationId');
                 
-                // Start a new conversation or show empty state
                 if (conversations.length > 0) {
                     loadConversation(conversations[0].conversation_id);
                 } else {
                     startNewConversation();
                 }
             } else {
-                // Just re-render the list
                 renderConversationList();
             }
             
@@ -279,7 +260,7 @@ function deleteConversation(event, conversationId) {
             alert('Failed to delete conversation: ' + (data.error || 'Unknown error'));
         }
     })
-    .catch(err => {
+    .catch(function(err) {
         console.error('Error deleting conversation:', err);
         alert('Error deleting conversation');
     });
@@ -289,7 +270,7 @@ function deleteConversation(event, conversationId) {
  * Update the memory status indicator
  */
 function updateMemoryIndicator(hasMemory, count, customMessage) {
-    const indicator = document.getElementById('memoryStatus');
+    var indicator = document.getElementById('memoryStatus');
     if (!indicator) return;
     
     if (customMessage) {
@@ -321,7 +302,6 @@ function copyConversationLink() {
     var url = window.location.origin + window.location.pathname + '?conversation=' + currentConversationId;
     
     navigator.clipboard.writeText(url).then(function() {
-        // Brief visual feedback
         var indicator = document.getElementById('memoryStatus');
         var textSpan = indicator.querySelector('.memory-text');
         var originalText = textSpan.textContent;
@@ -361,7 +341,6 @@ function clearConversationArea() {
         '<li>✅ Conversation memory across sessions</li>' +
         '</ul></div></div>';
     
-    // Reset message counter
     messageCounter = 0;
 }
 
@@ -786,7 +765,6 @@ function sendMessage() {
     formData.append('request', message || 'Please analyze the uploaded files');
     formData.append('enable_consensus', 'true');
     
-    // Include conversation_id if we have one (Memory Feature)
     if (currentConversationId) {
         formData.append('conversation_id', currentConversationId);
     }
@@ -803,7 +781,6 @@ function sendMessage() {
     uploadedFiles = [];
     displayFilePreview();
     
-    // Track if this is the first message (for title generation)
     var currentConv = null;
     for (var i = 0; i < conversations.length; i++) {
         if (conversations[i].conversation_id === currentConversationId) {
@@ -822,7 +799,6 @@ function sendMessage() {
         loading.classList.remove('active');
         
         if (data.success) {
-            // Update conversation_id from response if provided (Memory Feature)
             if (data.conversation_id) {
                 var previousId = currentConversationId;
                 currentConversationId = data.conversation_id;
@@ -833,7 +809,6 @@ function sendMessage() {
                 }
             }
             
-            // Generate title from first message if needed (Memory Feature)
             if (isFirstMessage && currentConversationId && message) {
                 var title = generateConversationTitle(message);
                 updateConversationTitle(currentConversationId, title);
@@ -861,7 +836,6 @@ function sendMessage() {
             
             addMessage('assistant', data.result + '<div style="margin-top: 10px;">' + badges + '</div>' + downloadSection, data.task_id, currentMode, data);
             
-            // Update memory indicator (Memory Feature)
             var conv = null;
             for (var j = 0; j < conversations.length; j++) {
                 if (conversations[j].conversation_id === currentConversationId) {
@@ -872,10 +846,9 @@ function sendMessage() {
             var estimatedCount = conv ? (conv.message_count || 0) + 2 : 2;
             updateMemoryIndicator(true, estimatedCount);
             
-            // Refresh conversations list (Memory Feature)
             loadConversations();
-            
             loadStats();
+            loadDocuments();
         } else {
             addMessage('assistant', '❌ Error: ' + data.error);
         }
@@ -1056,7 +1029,7 @@ function submitFeedback(msgId, taskId, outputUsed) {
 }
 
 // =============================================================================
-// 10. STATISTICS & DOCUMENTS
+// 10. STATISTICS & DOCUMENTS (ENHANCED - January 23, 2026)
 // =============================================================================
 
 function loadStats() {
@@ -1078,41 +1051,228 @@ function loadStats() {
         });
 }
 
+/**
+ * Load documents from the API - Now shows GENERATED documents with actions
+ * Fetches from /api/documents which returns both knowledge base and generated docs
+ */
 function loadDocuments() {
     fetch('/api/documents')
         .then(function(r) { return r.json(); })
         .then(function(data) {
             var docsList = document.getElementById('documentsList');
             
-            if (!data.success || data.documents.length === 0) {
+            if (!data.success) {
+                docsList.innerHTML = '<div style="color: #d32f2f; padding: 10px; text-align: center;">Error loading documents</div>';
+                return;
+            }
+            
+            var generatedDocs = data.generated_documents || [];
+            var kbDocs = data.knowledge_base_documents || [];
+            
+            if (generatedDocs.length === 0 && kbDocs.length === 0) {
                 docsList.innerHTML = '<div style="color: #999; padding: 10px; text-align: center;">No documents yet</div>';
                 return;
             }
             
-            docsList.innerHTML = '';
+            var html = '';
             
-            data.documents.forEach(function(doc) {
-                var docItem = document.createElement('div');
-                docItem.style.cssText = 'padding: 8px; margin: 4px 0; background: #f8f9fa; border-radius: 6px; border: 1px solid #e0e0e0;';
+            // Show generated documents first (these are downloadable)
+            if (generatedDocs.length > 0) {
+                html += '<div class="docs-section-header">📄 Your Documents (' + generatedDocs.length + ')</div>';
                 
-                var icon = doc.type === 'pdf' ? '📄' : doc.type === 'docx' ? '📝' : doc.type === 'xlsx' ? '📊' : '📎';
-                var size = formatFileSize(doc.size);
-                var date = new Date(doc.modified).toLocaleDateString();
+                // Group by date
+                var today = new Date();
+                var todayStr = today.toDateString();
+                var yesterdayStr = new Date(today - 86400000).toDateString();
                 
-                docItem.innerHTML = '<div style="display: flex; align-items: start; gap: 6px;">' +
-                    '<span style="font-size: 16px;">' + icon + '</span>' +
-                    '<div style="flex: 1; min-width: 0;">' +
-                    '<div style="font-weight: 600; font-size: 11px; color: #333; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="' + doc.filename + '">' + doc.filename + '</div>' +
-                    '<div style="font-size: 10px; color: #999; margin-top: 2px;">' + size + ' • ' + date + '</div>' +
-                    '<a href="' + doc.download_url + '" download style="display: inline-block; margin-top: 4px; padding: 4px 8px; background: #667eea; color: white; text-decoration: none; border-radius: 4px; font-size: 10px; font-weight: 600;">⬇️ Download</a>' +
-                    '</div></div>';
+                var todayDocs = [];
+                var yesterdayDocs = [];
+                var olderDocs = [];
                 
-                docsList.appendChild(docItem);
-            });
+                generatedDocs.forEach(function(doc) {
+                    var docDate = new Date(doc.created_at);
+                    var docDateStr = docDate.toDateString();
+                    
+                    if (docDateStr === todayStr) {
+                        todayDocs.push(doc);
+                    } else if (docDateStr === yesterdayStr) {
+                        yesterdayDocs.push(doc);
+                    } else {
+                        olderDocs.push(doc);
+                    }
+                });
+                
+                if (todayDocs.length > 0) {
+                    html += '<div class="docs-date-group">Today</div>';
+                    todayDocs.forEach(function(doc) {
+                        html += renderDocumentItem(doc);
+                    });
+                }
+                
+                if (yesterdayDocs.length > 0) {
+                    html += '<div class="docs-date-group">Yesterday</div>';
+                    yesterdayDocs.forEach(function(doc) {
+                        html += renderDocumentItem(doc);
+                    });
+                }
+                
+                if (olderDocs.length > 0) {
+                    html += '<div class="docs-date-group">Older</div>';
+                    olderDocs.forEach(function(doc) {
+                        html += renderDocumentItem(doc);
+                    });
+                }
+            }
+            
+            // Show knowledge base count (not individual files)
+            if (kbDocs.length > 0) {
+                html += '<div class="docs-section-header" style="margin-top: 15px;">📚 Knowledge Base</div>';
+                html += '<div style="padding: 8px; background: #e3f2fd; border-radius: 6px; font-size: 11px; color: #1976d2;">';
+                html += '✅ ' + kbDocs.length + ' reference documents loaded<br>';
+                html += '<span style="color: #666;">Used automatically by AI</span>';
+                html += '</div>';
+            }
+            
+            docsList.innerHTML = html;
+        })
+        .catch(function(err) {
+            console.error('Error loading documents:', err);
+            var docsList = document.getElementById('documentsList');
+            docsList.innerHTML = '<div style="color: #d32f2f; padding: 10px; text-align: center;">Error loading documents</div>';
         });
 }
 
+/**
+ * Render a single document item with action buttons
+ */
+function renderDocumentItem(doc) {
+    var icon = getDocTypeIcon(doc.type);
+    var size = formatFileSize(doc.size || 0);
+    var date = formatDocDate(doc.created_at);
+    var title = doc.title || doc.filename;
+    
+    // Truncate title if too long
+    if (title.length > 40) {
+        title = title.substring(0, 37) + '...';
+    }
+    
+    var html = '<div class="doc-item" data-doc-id="' + doc.id + '">';
+    html += '<div class="doc-item-header">';
+    html += '<span class="doc-icon">' + icon + '</span>';
+    html += '<div class="doc-info">';
+    html += '<div class="doc-title" title="' + escapeHtml(doc.title || doc.filename) + '">' + escapeHtml(title) + '</div>';
+    html += '<div class="doc-meta">' + size + ' • ' + date + '</div>';
+    html += '</div>';
+    html += '</div>';
+    html += '<div class="doc-actions">';
+    html += '<button class="doc-action-btn download" onclick="downloadDocument(' + doc.id + ')" title="Download">';
+    html += '⬇️</button>';
+    html += '<button class="doc-action-btn print" onclick="printDocument(' + doc.id + ')" title="Print">';
+    html += '🖨️</button>';
+    html += '<button class="doc-action-btn delete" onclick="deleteGeneratedDocument(event, ' + doc.id + ')" title="Delete">';
+    html += '🗑️</button>';
+    html += '</div>';
+    html += '</div>';
+    
+    return html;
+}
+
+/**
+ * Download a document
+ */
+function downloadDocument(docId) {
+    window.location.href = '/api/generated-documents/' + docId + '/download';
+}
+
+/**
+ * Print a document - opens in new window with print dialog
+ */
+function printDocument(docId) {
+    var printWindow = window.open('/api/generated-documents/' + docId + '/print', '_blank', 
+        'width=800,height=600,menubar=no,toolbar=no,location=no,status=no');
+    
+    if (!printWindow) {
+        alert('Please allow popups to print documents');
+        return;
+    }
+}
+
+/**
+ * Delete a generated document with confirmation
+ */
+function deleteGeneratedDocument(event, docId) {
+    event.stopPropagation();
+    
+    if (!confirm('Are you sure you want to delete this document? This cannot be undone.')) {
+        return;
+    }
+    
+    fetch('/api/generated-documents/' + docId, {
+        method: 'DELETE'
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.success) {
+            loadDocuments();
+            console.log('Document deleted:', docId);
+        } else {
+            alert('Failed to delete document: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(function(err) {
+        console.error('Error deleting document:', err);
+        alert('Error deleting document');
+    });
+}
+
+/**
+ * Get icon for document type
+ */
+function getDocTypeIcon(docType) {
+    var icons = {
+        'docx': '📝',
+        'pdf': '📄',
+        'xlsx': '📊',
+        'pptx': '📽️',
+        'txt': '📃',
+        'csv': '📊',
+        'knowledge': '📚'
+    };
+    return icons[docType] || '📎';
+}
+
+/**
+ * Format document date for display
+ */
+function formatDocDate(dateString) {
+    if (!dateString) return '';
+    
+    var date = new Date(dateString);
+    var now = new Date();
+    var diffMs = now - date;
+    var diffMins = Math.floor(diffMs / 60000);
+    var diffHours = Math.floor(diffMs / 3600000);
+    var diffDays = Math.floor(diffMs / 86400000);
+    
+    if (diffMins < 1) {
+        return 'Just now';
+    } else if (diffMins < 60) {
+        return diffMins + 'm ago';
+    } else if (diffHours < 24) {
+        return diffHours + 'h ago';
+    } else if (diffDays < 7) {
+        return diffDays + 'd ago';
+    } else {
+        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    }
+}
+
+/**
+ * Refresh documents list
+ */
 function refreshDocuments() {
+    var docsList = document.getElementById('documentsList');
+    docsList.innerHTML = '<div style="color: #666; padding: 10px; text-align: center;">Loading...</div>';
     loadDocuments();
 }
 
@@ -1666,13 +1826,10 @@ function initializeApp() {
     var storedConversationId = localStorage.getItem('currentConversationId');
     
     if (urlConversationId) {
-        // URL takes priority
         loadConversation(urlConversationId);
     } else if (storedConversationId) {
-        // Fall back to localStorage
         loadConversation(storedConversationId);
     } else {
-        // Start a new conversation
         startNewConversation();
     }
     
@@ -1690,7 +1847,7 @@ function initializeApp() {
         loadDocuments();
     }, 30000);
     
-    console.log('AI Swarm Interface initialized successfully with conversation memory');
+    console.log('AI Swarm Interface initialized successfully with conversation memory and enhanced documents');
 }
 
 // Initialize when DOM is ready
