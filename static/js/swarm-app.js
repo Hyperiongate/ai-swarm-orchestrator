@@ -1721,7 +1721,255 @@ function scheduleImpact() {
     addMessage('user', 'Calculate schedule change financial impact');
     addMessage('assistant', '🔧 Schedule impact calculator coming soon! For now, use the AI to analyze schedule changes by describing your current and proposed schedules.', null, 'calculator');
 }
-impact + '\n   Difficulty: ' + sugg.difficulty + '\n\n';
+
+// =============================================================================
+// 14. SURVEY FUNCTIONS
+// =============================================================================
+
+function loadQuestionBank() {
+    fetch('/api/survey/questions')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var statusDiv = document.getElementById('questionBankStatus');
+            if (data.success) {
+                statusDiv.innerHTML = '<div style="font-size: 11px;">✅ ' + data.total_count + ' validated questions<br>Ready to build surveys</div>';
+            }
+        });
+}
+
+function createNewSurvey() {
+    var projectName = prompt('Enter project/client name:');
+    if (!projectName) return;
+    
+    addMessage('user', 'Create new survey for: ' + projectName);
+    
+    var loading = document.getElementById('loadingIndicator');
+    loading.classList.add('active');
+    
+    fetch('/api/survey/create', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            project_name: projectName,
+            selected_questions: ['dept', 'shift', 'time_off_importance', 'current_satisfaction', 'overtime_willing']
+        })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        loading.classList.remove('active');
+        
+        if (data.success) {
+            var survey = data.survey;
+            var questionsList = survey.questions.map(function(q) { return '• ' + q.text; }).join('\n');
+            var response = '✅ SURVEY CREATED\n\n' +
+                'Project: ' + survey.project_name + '\n' +
+                'Survey ID: ' + survey.id + '\n' +
+                'Questions: ' + survey.questions.length + '\n' +
+                'Survey Link: ' + survey.link + '\n\n' +
+                '📋 Included Questions:\n' + questionsList + '\n\n' +
+                '🔗 Share this link with employees to collect responses.';
+            addMessage('assistant', response, null, 'survey');
+        } else {
+            addMessage('assistant', '❌ Error: ' + data.error);
+        }
+    })
+    .catch(function(err) {
+        loading.classList.remove('active');
+        addMessage('assistant', '❌ Error: ' + err.message);
+    });
+}
+
+function viewSurveyResults() {
+    var surveyId = prompt('Enter Survey ID:');
+    if (!surveyId) return;
+    
+    addMessage('user', 'View results for survey: ' + surveyId);
+    
+    var loading = document.getElementById('loadingIndicator');
+    loading.classList.add('active');
+    
+    fetch('/api/survey/' + surveyId + '/analyze')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            loading.classList.remove('active');
+            
+            if (data.success || data.response_count !== undefined) {
+                if (data.response_count === 0) {
+                    addMessage('assistant', '📊 No responses yet. Share the survey link with employees.', null, 'survey');
+                } else {
+                    var insights = data.key_insights ? data.key_insights.join('\n') : 'Analysis complete';
+                    var response = '📊 SURVEY RESULTS ANALYSIS\n\n' +
+                        'Project: ' + data.project_name + '\n' +
+                        'Responses: ' + data.response_count + '\n\n' +
+                        '🔍 KEY INSIGHTS:\n' + insights + '\n\n' +
+                        'Questions Analyzed: ' + Object.keys(data.questions_analyzed || {}).length + '\n\n' +
+                        'Use the Export function to download full data for detailed analysis.';
+                    addMessage('assistant', response, null, 'survey');
+                }
+            } else {
+                addMessage('assistant', '❌ Error: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(function(err) {
+            loading.classList.remove('active');
+            addMessage('assistant', '❌ Error: ' + err.message);
+        });
+}
+
+function exportSurveyData() {
+    var surveyId = prompt('Enter Survey ID to export:');
+    if (!surveyId) return;
+    
+    addMessage('user', 'Export survey data: ' + surveyId);
+    
+    var loading = document.getElementById('loadingIndicator');
+    loading.classList.add('active');
+    
+    fetch('/api/survey/' + surveyId + '/export')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            loading.classList.remove('active');
+            
+            if (data.success) {
+                var blob = new Blob([data.csv_data], { type: 'text/csv' });
+                var url = window.URL.createObjectURL(blob);
+                var a = document.createElement('a');
+                a.href = url;
+                a.download = 'survey_' + surveyId + '_export.csv';
+                a.click();
+                
+                addMessage('assistant', '✅ Survey data exported successfully! Check your downloads for survey_' + surveyId + '_export.csv (Remark-compatible format)', null, 'survey');
+            } else {
+                addMessage('assistant', '❌ Error: ' + data.error);
+            }
+        })
+        .catch(function(err) {
+            loading.classList.remove('active');
+            addMessage('assistant', '❌ Error: ' + err.message);
+        });
+}
+
+// =============================================================================
+// 15. OPPORTUNITIES FUNCTIONS
+// =============================================================================
+
+function loadNormativeStatus() {
+    fetch('/api/opportunities/status')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var statusDiv = document.getElementById('normativeStatus');
+            if (data.success) {
+                statusDiv.innerHTML = '<div style="font-size: 11px;">✅ ' + (data.schedules_count || 0) + ' companies<br>✅ ' + (data.metrics_count || 0) + ' metrics<br>Ready for analysis</div>';
+            } else {
+                statusDiv.innerHTML = '<div style="font-size: 11px; color: #d32f2f;">⚠️ Database loading...</div>';
+            }
+        })
+        .catch(function(err) {
+            document.getElementById('normativeStatus').innerHTML = '<div style="font-size: 11px; color: #d32f2f;">⚠️ Database loading...</div>';
+        });
+}
+
+function analyzeScheduleOpportunities() {
+    var scheduleInfo = prompt('Describe your current schedule (e.g., "12-hour rotating DuPont, 4 crews, 24/7"):');
+    if (!scheduleInfo) return;
+    
+    addMessage('user', 'Analyze opportunities for: ' + scheduleInfo);
+    
+    var loading = document.getElementById('loadingIndicator');
+    loading.classList.add('active');
+    
+    fetch('/api/opportunities/analyze', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ schedule_description: scheduleInfo })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        loading.classList.remove('active');
+        
+        if (data.success) {
+            var response = '🎯 OPPORTUNITY ANALYSIS\n\n' +
+                'Current Schedule: ' + data.analysis.schedule_type + '\n\n' +
+                '📊 KEY FINDINGS:\n';
+            
+            data.analysis.opportunities.forEach(function(opp) {
+                response += '\n• ' + opp.finding + '\n  Impact: ' + opp.impact + '\n  Priority: ' + opp.priority + '\n';
+            });
+            
+            if (data.analysis.recommendations) {
+                response += '\n💡 RECOMMENDATIONS:\n';
+                data.analysis.recommendations.forEach(function(rec) {
+                    response += '\n• ' + rec + '\n';
+                });
+            }
+            
+            addMessage('assistant', response, null, 'opportunities');
+        } else {
+            addMessage('assistant', '❌ Error: ' + data.error);
+        }
+    })
+    .catch(function(err) {
+        loading.classList.remove('active');
+        addMessage('assistant', '❌ Error: ' + err.message);
+    });
+}
+
+function compareToNorms() {
+    var metrics = prompt('Enter your current metrics (e.g., "15% turnover, 12% overtime, 85% coverage"):');
+    if (!metrics) return;
+    
+    addMessage('user', 'Compare to industry norms: ' + metrics);
+    
+    var loading = document.getElementById('loadingIndicator');
+    loading.classList.add('active');
+    
+    fetch('/api/opportunities/compare', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ current_metrics: metrics })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        loading.classList.remove('active');
+        
+        if (data.success) {
+            var response = '📈 INDUSTRY COMPARISON\n\nYour Performance vs Industry Norms:\n\n';
+            
+            data.comparison.forEach(function(item) {
+                response += item.metric + ':\n  You: ' + item.your_value + '\n  Industry: ' + item.norm_value + '\n  Status: ' + item.status + ' (' + item.variance + ')\n\n';
+            });
+            
+            if (data.gap_analysis) {
+                response += '🎯 GAP ANALYSIS:\n' + data.gap_analysis + '\n';
+            }
+            
+            addMessage('assistant', response, null, 'opportunities');
+        } else {
+            addMessage('assistant', '❌ Error: ' + data.error);
+        }
+    })
+    .catch(function(err) {
+        loading.classList.remove('active');
+        addMessage('assistant', '❌ Error: ' + err.message);
+    });
+}
+
+function findImprovements() {
+    addMessage('user', 'Find improvement opportunities');
+    
+    var loading = document.getElementById('loadingIndicator');
+    loading.classList.add('active');
+    
+    fetch('/api/opportunities/suggest')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            loading.classList.remove('active');
+            
+            if (data.success) {
+                var response = '💡 IMPROVEMENT OPPORTUNITIES\n\nTop Recommendations:\n\n';
+                
+                data.suggestions.forEach(function(sugg, idx) {
+                    response += (idx + 1) + '. ' + sugg.title + '\n   ' + sugg.description + '\n   Expected Impact: ' + sugg.impact + '\n   Difficulty: ' + sugg.difficulty + '\n\n';
                 });
                 
                 addMessage('assistant', response, null, 'opportunities');
