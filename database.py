@@ -1,12 +1,20 @@
 """
 Database Module
 Created: January 21, 2026
-Last Updated: January 22, 2026 - ADDED PERSISTENT CONVERSATION MEMORY
+Last Updated: January 23, 2026 - ADDED GENERATED DOCUMENTS TABLE
 
 All database operations isolated here.
 No more SQL scattered across 2,500 lines.
 
 CHANGELOG:
+- January 23, 2026: ADDED GENERATED DOCUMENTS TABLE
+  * Added 'generated_documents' table - tracks all system-created documents
+  * Added save_generated_document() - saves document metadata after creation
+  * Added get_generated_documents() - retrieves document list for UI
+  * Added get_generated_document() - retrieves single document by ID
+  * Added delete_generated_document() - removes document record
+  * Added index on generated_documents for fast queries
+
 - January 22, 2026: ADDED PERSISTENT CONVERSATION MEMORY
   * Added 'conversations' table - stores conversation metadata
   * Added 'conversation_messages' table - stores each message
@@ -21,6 +29,7 @@ Author: Jim @ Shiftwork Solutions LLC (managed by Claude)
 
 import sqlite3
 import json
+import os
 from datetime import datetime
 from config import DATABASE
 
@@ -261,6 +270,36 @@ def init_db():
     ''')
     
     # ============================================================================
+    # GENERATED DOCUMENTS TABLE (Added January 23, 2026)
+    # Tracks all documents created by the AI Swarm for download/print/management
+    # ============================================================================
+    
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS generated_documents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            filename TEXT NOT NULL,
+            original_name TEXT NOT NULL,
+            document_type TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            file_size INTEGER DEFAULT 0,
+            task_id INTEGER,
+            conversation_id TEXT,
+            project_id TEXT,
+            title TEXT,
+            description TEXT,
+            category TEXT DEFAULT 'general',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_accessed TIMESTAMP,
+            download_count INTEGER DEFAULT 0,
+            is_deleted BOOLEAN DEFAULT 0,
+            metadata TEXT,
+            FOREIGN KEY (task_id) REFERENCES tasks(id),
+            FOREIGN KEY (conversation_id) REFERENCES conversations(conversation_id),
+            FOREIGN KEY (project_id) REFERENCES projects(project_id)
+        )
+    ''')
+    
+    # ============================================================================
     # INDEXES FOR PERFORMANCE
     # ============================================================================
     
@@ -278,9 +317,264 @@ def init_db():
     db.execute('CREATE INDEX IF NOT EXISTS idx_conv_messages_created ON conversation_messages(created_at)')
     db.execute('CREATE INDEX IF NOT EXISTS idx_tasks_conversation ON tasks(conversation_id)')
     
+    # Generated documents indexes
+    db.execute('CREATE INDEX IF NOT EXISTS idx_gen_docs_created ON generated_documents(created_at DESC)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_gen_docs_type ON generated_documents(document_type)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_gen_docs_task ON generated_documents(task_id)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_gen_docs_conversation ON generated_documents(conversation_id)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_gen_docs_project ON generated_documents(project_id)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_gen_docs_deleted ON generated_documents(is_deleted)')
+    
     db.commit()
     db.close()
-    print("✅ Database initialized (with persistent conversation memory)")
+    print("✅ Database initialized (with generated documents table)")
+
+
+# ============================================================================
+# GENERATED DOCUMENTS FUNCTIONS (Added January 23, 2026)
+# ============================================================================
+
+def save_generated_document(filename, original_name, document_type, file_path, file_size=0,
+                           task_id=None, conversation_id=None, project_id=None,
+                           title=None, description=None, category='general', metadata=None):
+    """
+    Save a generated document to the database for tracking.
+    Called whenever the system creates a downloadable document.
+    
+    Args:
+        filename: The unique filename (e.g., 'shiftwork_document_20260123_143052.docx')
+        original_name: User-friendly name (e.g., 'DuPont Schedule Analysis')
+        document_type: File extension (e.g., 'docx', 'pdf', 'xlsx')
+        file_path: Full path where the file is stored
+        file_size: Size in bytes
+        task_id: Associated task ID (optional)
+        conversation_id: Associated conversation ID (optional)
+        project_id: Associated project ID (optional)
+        title: Display title for the document
+        description: Brief description of contents
+        category: Category for organization (e.g., 'schedule', 'report', 'proposal')
+        metadata: JSON metadata (optional)
+    
+    Returns:
+        document_id: The ID of the saved document record
+    """
+    db = get_db()
+    
+    # Use original_name as title if not provided
+    if not title:
+        title = original_name
+    
+    cursor = db.execute('''
+        INSERT INTO generated_documents 
+        (filename, original_name, document_type, file_path, file_size,
+         task_id, conversation_id, project_id, title, description, category, metadata)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        filename, original_name, document_type, file_path, file_size,
+        task_id, conversation_id, project_id, title, description, category,
+        json.dumps(metadata) if metadata else None
+    ))
+    
+    document_id = cursor.lastrowid
+    db.commit()
+    db.close()
+    
+    print(f"📄 Document saved to database: {filename} (ID: {document_id})")
+    return document_id
+
+
+def get_generated_documents(limit=50, document_type=None, project_id=None, 
+                           conversation_id=None, include_deleted=False):
+    """
+    Get list of generated documents for display in UI.
+    
+    Args:
+        limit: Maximum number of documents to return
+        document_type: Filter by type (e.g., 'docx', 'pdf')
+        project_id: Filter by project
+        conversation_id: Filter by conversation
+        include_deleted: Whether to include soft-deleted documents
+    
+    Returns:
+        List of document dictionaries
+    """
+    db = get_db()
+    
+    query = 'SELECT * FROM generated_documents WHERE 1=1'
+    params = []
+    
+    if not include_deleted:
+        query += ' AND is_deleted = 0'
+    
+    if document_type:
+        query += ' AND document_type = ?'
+        params.append(document_type)
+    
+    if project_id:
+        query += ' AND project_id = ?'
+        params.append(project_id)
+    
+    if conversation_id:
+        query += ' AND conversation_id = ?'
+        params.append(conversation_id)
+    
+    query += ' ORDER BY created_at DESC LIMIT ?'
+    params.append(limit)
+    
+    rows = db.execute(query, params).fetchall()
+    db.close()
+    
+    documents = []
+    for row in rows:
+        doc = dict(row)
+        # Parse metadata if present
+        if doc.get('metadata'):
+            try:
+                doc['metadata'] = json.loads(doc['metadata'])
+            except:
+                pass
+        documents.append(doc)
+    
+    return documents
+
+
+def get_generated_document(document_id):
+    """Get a single document by ID"""
+    db = get_db()
+    row = db.execute(
+        'SELECT * FROM generated_documents WHERE id = ?', 
+        (document_id,)
+    ).fetchone()
+    db.close()
+    
+    if row:
+        doc = dict(row)
+        if doc.get('metadata'):
+            try:
+                doc['metadata'] = json.loads(doc['metadata'])
+            except:
+                pass
+        return doc
+    return None
+
+
+def get_generated_document_by_filename(filename):
+    """Get a document by its filename"""
+    db = get_db()
+    row = db.execute(
+        'SELECT * FROM generated_documents WHERE filename = ? AND is_deleted = 0', 
+        (filename,)
+    ).fetchone()
+    db.close()
+    
+    if row:
+        doc = dict(row)
+        if doc.get('metadata'):
+            try:
+                doc['metadata'] = json.loads(doc['metadata'])
+            except:
+                pass
+        return doc
+    return None
+
+
+def update_document_access(document_id):
+    """Update last_accessed and increment download_count"""
+    db = get_db()
+    db.execute('''
+        UPDATE generated_documents 
+        SET last_accessed = CURRENT_TIMESTAMP,
+            download_count = download_count + 1
+        WHERE id = ?
+    ''', (document_id,))
+    db.commit()
+    db.close()
+
+
+def delete_generated_document(document_id, hard_delete=False):
+    """
+    Delete a generated document.
+    
+    Args:
+        document_id: The document ID to delete
+        hard_delete: If True, permanently delete. If False, soft delete (mark as deleted)
+    
+    Returns:
+        True if successful, False otherwise
+    """
+    db = get_db()
+    
+    # Get the document first to find the file path
+    doc = db.execute(
+        'SELECT file_path FROM generated_documents WHERE id = ?',
+        (document_id,)
+    ).fetchone()
+    
+    if not doc:
+        db.close()
+        return False
+    
+    if hard_delete:
+        # Delete the actual file
+        try:
+            if doc['file_path'] and os.path.exists(doc['file_path']):
+                os.remove(doc['file_path'])
+        except Exception as e:
+            print(f"⚠️ Could not delete file: {e}")
+        
+        # Delete from database
+        db.execute('DELETE FROM generated_documents WHERE id = ?', (document_id,))
+    else:
+        # Soft delete - just mark as deleted
+        db.execute(
+            'UPDATE generated_documents SET is_deleted = 1 WHERE id = ?',
+            (document_id,)
+        )
+    
+    db.commit()
+    db.close()
+    return True
+
+
+def get_document_stats():
+    """Get statistics about generated documents"""
+    db = get_db()
+    
+    stats = {}
+    
+    # Total documents (not deleted)
+    stats['total_documents'] = db.execute(
+        'SELECT COUNT(*) FROM generated_documents WHERE is_deleted = 0'
+    ).fetchone()[0]
+    
+    # Documents by type
+    type_counts = db.execute('''
+        SELECT document_type, COUNT(*) as count 
+        FROM generated_documents 
+        WHERE is_deleted = 0 
+        GROUP BY document_type
+    ''').fetchall()
+    stats['by_type'] = {row['document_type']: row['count'] for row in type_counts}
+    
+    # Total downloads
+    stats['total_downloads'] = db.execute(
+        'SELECT SUM(download_count) FROM generated_documents WHERE is_deleted = 0'
+    ).fetchone()[0] or 0
+    
+    # Total size
+    stats['total_size_bytes'] = db.execute(
+        'SELECT SUM(file_size) FROM generated_documents WHERE is_deleted = 0'
+    ).fetchone()[0] or 0
+    
+    # Recent documents (last 7 days)
+    stats['recent_count'] = db.execute('''
+        SELECT COUNT(*) FROM generated_documents 
+        WHERE is_deleted = 0 
+        AND created_at >= datetime('now', '-7 days')
+    ''').fetchone()[0]
+    
+    db.close()
+    return stats
 
 
 # ============================================================================
@@ -584,6 +878,9 @@ def get_statistics():
     # Conversation stats
     stats['total_conversations'] = db.execute('SELECT COUNT(*) FROM conversations').fetchone()[0]
     stats['total_messages'] = db.execute('SELECT COUNT(*) FROM conversation_messages').fetchone()[0]
+    
+    # Document stats
+    stats['total_documents'] = db.execute('SELECT COUNT(*) FROM generated_documents WHERE is_deleted = 0').fetchone()[0]
     
     db.close()
     return stats
