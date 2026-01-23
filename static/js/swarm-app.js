@@ -5,6 +5,16 @@ Shiftwork Solutions LLC
 =============================================================================
 
 CHANGE LOG:
+- January 23, 2026: FIXED needs_clarification handling
+  * Added handleClarificationResponse() - displays clarification questions
+  * Added buildClarificationUI() - builds interactive question form
+  * Added submitClarificationAnswers() - submits answers back to API
+  * Added pendingClarification object to track state
+  * Modified sendMessage() to check for needs_clarification BEFORE data.result
+  * Clarification questions now display properly with selectable options
+  * Users can select answers and resubmit for complete response
+  * Fixed "undefined" error when proactive agent asks questions
+
 - January 23, 2026: Added Enhanced Documents Management System
   * Updated loadDocuments() to show generated documents with actions
   * Added renderDocumentItem() - renders document with download/print/delete buttons
@@ -43,19 +53,20 @@ CHANGE LOG:
 SECTIONS:
 1. Global State Variables
 2. Conversation Memory Functions
-3. File Upload Handling
-4. Clipboard Functions
-5. Mode Switching
-6. Quick Actions
-7. Project Management
-8. Message Handling (Core)
-9. Feedback System
-10. Statistics & Documents (ENHANCED)
-11. Marketing Functions
-12. Calculator Functions
-13. Survey Functions
-14. Opportunities Functions
-15. Initialization
+3. Clarification Handling Functions (NEW)
+4. File Upload Handling
+5. Clipboard Functions
+6. Mode Switching
+7. Quick Actions
+8. Project Management
+9. Message Handling (Core)
+10. Feedback System
+11. Statistics & Documents (ENHANCED)
+12. Marketing Functions
+13. Calculator Functions
+14. Survey Functions
+15. Opportunities Functions
+16. Initialization
 
 =============================================================================
 */
@@ -64,24 +75,23 @@ SECTIONS:
 // 1. GLOBAL STATE VARIABLES
 // =============================================================================
 
-var currentMode = 'quick';  // 'quick', 'project', 'calculator', 'survey', 'marketing', 'opportunities'
+var currentMode = 'quick';
 var currentProjectId = null;
 var messageCounter = 0;
-var feedbackRatings = {};  // Store ratings for each message
-var uploadedFiles = [];    // Store uploaded files
+var feedbackRatings = {};
+var uploadedFiles = [];
 
 // Conversation Memory Variables
-var currentConversationId = null;  // Tracks the active conversation
-var conversations = [];             // Array of conversation objects from API
+var currentConversationId = null;
+var conversations = [];
+
+// Clarification State Variables (NEW - January 23, 2026)
+var pendingClarification = null;
 
 // =============================================================================
 // 2. CONVERSATION MEMORY FUNCTIONS
 // =============================================================================
 
-/**
- * Load conversations from the API
- * Fetches the most recent 20 conversations
- */
 function loadConversations() {
     fetch('/api/conversations?limit=20')
         .then(function(r) { return r.json(); })
@@ -101,9 +111,6 @@ function loadConversations() {
         });
 }
 
-/**
- * Render the conversation list in the sidebar
- */
 function renderConversationList() {
     var listContainer = document.getElementById('conversationsList');
     if (!listContainer) return;
@@ -141,10 +148,6 @@ function renderConversationList() {
     listContainer.innerHTML = html;
 }
 
-/**
- * Start a new conversation
- * Creates a new conversation via API and clears the chat area
- */
 function startNewConversation() {
     updateMemoryIndicator(false, 0, 'Creating new conversation...');
     
@@ -177,10 +180,6 @@ function startNewConversation() {
     });
 }
 
-/**
- * Load a specific conversation by ID
- * Fetches the conversation and its messages from the API
- */
 function loadConversation(conversationId) {
     if (!conversationId) return;
     
@@ -221,10 +220,6 @@ function loadConversation(conversationId) {
         });
 }
 
-/**
- * Delete a conversation
- * Shows confirmation dialog before deleting
- */
 function deleteConversation(event, conversationId) {
     event.stopPropagation();
     
@@ -266,9 +261,6 @@ function deleteConversation(event, conversationId) {
     });
 }
 
-/**
- * Update the memory status indicator
- */
 function updateMemoryIndicator(hasMemory, count, customMessage) {
     var indicator = document.getElementById('memoryStatus');
     if (!indicator) return;
@@ -290,9 +282,6 @@ function updateMemoryIndicator(hasMemory, count, customMessage) {
     }
 }
 
-/**
- * Copy a shareable link to the current conversation
- */
 function copyConversationLink() {
     if (!currentConversationId) {
         alert('No active conversation to share');
@@ -315,9 +304,6 @@ function copyConversationLink() {
     });
 }
 
-/**
- * Clear the conversation area and show welcome message
- */
 function clearConversationArea() {
     var conversation = document.getElementById('conversation');
     if (!conversation) return;
@@ -344,9 +330,6 @@ function clearConversationArea() {
     messageCounter = 0;
 }
 
-/**
- * Add a message from conversation history (without feedback section)
- */
 function addMessageFromHistory(role, content, timestamp) {
     var conversation = document.getElementById('conversation');
     var messageDiv = document.createElement('div');
@@ -370,9 +353,6 @@ function addMessageFromHistory(role, content, timestamp) {
     conversation.scrollTop = conversation.scrollHeight;
 }
 
-/**
- * Format a conversation date for display
- */
 function formatConversationDate(dateString) {
     if (!dateString) return '';
     
@@ -398,27 +378,18 @@ function formatConversationDate(dateString) {
     }
 }
 
-/**
- * Format a message timestamp for display
- */
 function formatMessageTime(dateString) {
     if (!dateString) return '';
     var date = new Date(dateString);
     return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 }
 
-/**
- * Truncate a title to a maximum length
- */
 function truncateTitle(title, maxLength) {
     if (!title) return 'New Conversation';
     if (title.length <= maxLength) return title;
     return title.substring(0, maxLength - 3) + '...';
 }
 
-/**
- * Generate a conversation title from the first message
- */
 function generateConversationTitle(message) {
     if (!message) return 'New Conversation';
     
@@ -436,9 +407,6 @@ function generateConversationTitle(message) {
     return truncateTitle(title, 50);
 }
 
-/**
- * Update URL with conversation ID without reloading
- */
 function updateUrlWithConversation(conversationId) {
     var url = new URL(window.location);
     if (conversationId) {
@@ -449,26 +417,17 @@ function updateUrlWithConversation(conversationId) {
     window.history.replaceState({}, '', url);
 }
 
-/**
- * Get conversation ID from URL parameter
- */
 function getConversationIdFromUrl() {
     var urlParams = new URLSearchParams(window.location.search);
     return urlParams.get('conversation');
 }
 
-/**
- * Escape HTML to prevent XSS
- */
 function escapeHtml(text) {
     var div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
 }
 
-/**
- * Update conversation title after first message
- */
 function updateConversationTitle(conversationId, title) {
     if (!conversationId || !title) return;
     
@@ -495,7 +454,244 @@ function updateConversationTitle(conversationId, title) {
 }
 
 // =============================================================================
-// 3. FILE UPLOAD HANDLING
+// 3. CLARIFICATION HANDLING FUNCTIONS (NEW - January 23, 2026)
+// =============================================================================
+
+function handleClarificationResponse(data) {
+    pendingClarification = {
+        task_id: data.task_id,
+        conversation_id: data.conversation_id,
+        clarification_data: data.clarification_data,
+        original_request: document.getElementById('userInput').dataset.lastRequest || ''
+    };
+    
+    var clarificationUI = buildClarificationUI(data.clarification_data);
+    addMessage('assistant', clarificationUI, null, currentMode);
+    
+    console.log('Clarification requested:', data.clarification_data);
+}
+
+function buildClarificationUI(clarificationData) {
+    var html = '<div class="clarification-container" style="background: linear-gradient(135deg, #e8f5e9 0%, #f3e5f5 100%); border-radius: 12px; padding: 20px; margin: 10px 0;">';
+    
+    html += '<div style="font-weight: 600; font-size: 16px; color: #333; margin-bottom: 15px;">';
+    html += '🤔 ' + (clarificationData.message || 'I need a few details to give you the best result:');
+    html += '</div>';
+    
+    if (clarificationData.required_questions && clarificationData.required_questions.length > 0) {
+        html += '<div style="margin-bottom: 20px;">';
+        html += '<div style="font-size: 12px; color: #d32f2f; font-weight: 600; margin-bottom: 10px;">⚡ Required</div>';
+        
+        clarificationData.required_questions.forEach(function(q, idx) {
+            html += buildQuestionElement(q, 'required_' + idx, true);
+        });
+        
+        html += '</div>';
+    }
+    
+    if (clarificationData.optional_questions && clarificationData.optional_questions.length > 0) {
+        html += '<div style="margin-bottom: 20px;">';
+        html += '<div style="font-size: 12px; color: #666; font-weight: 600; margin-bottom: 10px;">📝 Optional (helps improve results)</div>';
+        
+        clarificationData.optional_questions.forEach(function(q, idx) {
+            html += buildQuestionElement(q, 'optional_' + idx, false);
+        });
+        
+        html += '</div>';
+    }
+    
+    html += '<div style="margin-top: 20px; text-align: center;">';
+    html += '<button onclick="submitClarificationAnswers()" style="';
+    html += 'background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); ';
+    html += 'color: white; border: none; padding: 12px 30px; border-radius: 8px; ';
+    html += 'font-weight: 600; font-size: 14px; cursor: pointer; ';
+    html += 'box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4); ';
+    html += 'transition: transform 0.2s, box-shadow 0.2s;">';
+    html += '✨ Get My Answer</button>';
+    html += '</div>';
+    
+    html += '</div>';
+    
+    return html;
+}
+
+function buildQuestionElement(question, fieldId, isRequired) {
+    var html = '<div class="clarification-question" style="background: white; border-radius: 8px; padding: 15px; margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">';
+    
+    html += '<div style="font-weight: 500; color: #333; margin-bottom: 8px;">';
+    html += escapeHtml(question.question);
+    if (isRequired) {
+        html += ' <span style="color: #d32f2f;">*</span>';
+    }
+    html += '</div>';
+    
+    if (question.why) {
+        html += '<div style="font-size: 11px; color: #888; margin-bottom: 10px; font-style: italic;">';
+        html += '💡 ' + escapeHtml(question.why);
+        html += '</div>';
+    }
+    
+    if (question.options && question.options.length > 0) {
+        html += '<div class="clarification-options" style="display: flex; flex-wrap: wrap; gap: 8px;">';
+        
+        question.options.forEach(function(option) {
+            html += '<button type="button" ';
+            html += 'class="clarification-option" ';
+            html += 'data-field="' + escapeHtml(question.field) + '" ';
+            html += 'data-value="' + escapeHtml(option) + '" ';
+            html += 'onclick="selectClarificationOption(this)" ';
+            html += 'style="';
+            html += 'background: #f5f5f5; border: 2px solid #e0e0e0; ';
+            html += 'padding: 8px 16px; border-radius: 20px; ';
+            html += 'font-size: 13px; cursor: pointer; ';
+            html += 'transition: all 0.2s; color: #333;">';
+            html += escapeHtml(option);
+            html += '</button>';
+        });
+        
+        html += '</div>';
+    }
+    
+    html += '<input type="hidden" class="clarification-field" data-field="' + escapeHtml(question.field) + '" data-required="' + isRequired + '" value="">';
+    
+    html += '</div>';
+    
+    return html;
+}
+
+function selectClarificationOption(button) {
+    var field = button.getAttribute('data-field');
+    var value = button.getAttribute('data-value');
+    
+    var allButtons = document.querySelectorAll('.clarification-option[data-field="' + field + '"]');
+    allButtons.forEach(function(btn) {
+        btn.style.background = '#f5f5f5';
+        btn.style.borderColor = '#e0e0e0';
+        btn.style.color = '#333';
+    });
+    
+    button.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
+    button.style.borderColor = '#667eea';
+    button.style.color = 'white';
+    
+    var hiddenInput = document.querySelector('.clarification-field[data-field="' + field + '"]');
+    if (hiddenInput) {
+        hiddenInput.value = value;
+    }
+    
+    console.log('Selected:', field, '=', value);
+}
+
+function submitClarificationAnswers() {
+    if (!pendingClarification) {
+        console.error('No pending clarification to submit');
+        return;
+    }
+    
+    var answers = {};
+    var missingRequired = [];
+    
+    var fields = document.querySelectorAll('.clarification-field');
+    fields.forEach(function(field) {
+        var fieldName = field.getAttribute('data-field');
+        var isRequired = field.getAttribute('data-required') === 'true';
+        var value = field.value;
+        
+        if (value) {
+            answers[fieldName] = value;
+        } else if (isRequired) {
+            missingRequired.push(fieldName);
+        }
+    });
+    
+    if (missingRequired.length > 0) {
+        alert('Please answer the required questions: ' + missingRequired.join(', '));
+        return;
+    }
+    
+    var loading = document.getElementById('loadingIndicator');
+    loading.classList.add('active');
+    
+    var formData = new FormData();
+    formData.append('request', pendingClarification.original_request || 'Please provide the answer');
+    formData.append('enable_consensus', 'true');
+    formData.append('clarification_answers', JSON.stringify(answers));
+    formData.append('task_id', pendingClarification.task_id);
+    
+    if (pendingClarification.conversation_id) {
+        formData.append('conversation_id', pendingClarification.conversation_id);
+    } else if (currentConversationId) {
+        formData.append('conversation_id', currentConversationId);
+    }
+    
+    if (currentMode === 'project' && currentProjectId) {
+        formData.append('project_id', currentProjectId);
+    }
+    
+    var taskId = pendingClarification.task_id;
+    pendingClarification = null;
+    
+    var selectionSummary = Object.keys(answers).map(function(key) {
+        return key + ': ' + answers[key];
+    }).join(', ');
+    addMessage('user', '📝 ' + selectionSummary);
+    
+    fetch('/api/orchestrate', {
+        method: 'POST',
+        body: formData
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        loading.classList.remove('active');
+        
+        if (data.success) {
+            if (data.needs_clarification) {
+                handleClarificationResponse(data);
+                return;
+            }
+            
+            if (data.conversation_id) {
+                currentConversationId = data.conversation_id;
+                localStorage.setItem('currentConversationId', currentConversationId);
+            }
+            
+            var badges = '';
+            if (data.knowledge_used) badges += '<span class="badge knowledge">📚 Knowledge</span>';
+            if (data.project_workflow && data.project_workflow.active) badges += '<span class="badge workflow">📁 Project</span>';
+            if (data.formatting_applied) badges += '<span class="badge formatted">🎨 Formatted</span>';
+            if (currentConversationId) badges += '<span class="badge memory">🧠 Memory</span>';
+            badges += '<span class="badge" style="background: #e8f5e9; color: #2e7d32;">✅ Clarified</span>';
+            
+            var downloadSection = '';
+            var hasDocument = data.document_created || (data.document_url && data.document_url !== null);
+            if (hasDocument && data.document_url) {
+                var docType = (data.document_type || 'docx').toUpperCase();
+                var icon = docType === 'PDF' ? '📄' : docType === 'DOCX' ? '📝' : docType === 'XLSX' ? '📊' : '📄';
+                
+                downloadSection = '<div style="margin-top: 15px; padding: 12px; background: #e8f5e9; border-left: 4px solid #4caf50; border-radius: 4px;">' +
+                    '<div style="font-weight: 600; margin-bottom: 8px; color: #2e7d32;">' + icon + ' Document Created</div>' +
+                    '<a href="' + data.document_url + '" download style="display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; background: #4caf50; color: white; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 14px; transition: background 0.2s;">' +
+                    '<span>⬇️</span><span>Download ' + docType + '</span></a>' +
+                    '<div style="font-size: 11px; color: #666; margin-top: 8px;">Professional ' + docType + ' document ready for download</div></div>';
+            }
+            
+            addMessage('assistant', data.result + '<div style="margin-top: 10px;">' + badges + '</div>' + downloadSection, data.task_id, currentMode, data);
+            
+            loadConversations();
+            loadStats();
+            loadDocuments();
+        } else {
+            addMessage('assistant', '❌ Error: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(function(err) {
+        loading.classList.remove('active');
+        addMessage('assistant', '❌ Error: ' + err.message);
+    });
+}
+
+// =============================================================================
+// 4. FILE UPLOAD HANDLING
 // =============================================================================
 
 function handleFileUpload(event) {
@@ -557,7 +753,7 @@ function formatFileSize(bytes) {
 }
 
 // =============================================================================
-// 4. CLIPBOARD FUNCTIONS
+// 5. CLIPBOARD FUNCTIONS
 // =============================================================================
 
 function copyToClipboard(event, msgId) {
@@ -586,7 +782,7 @@ function copyToClipboard(event, msgId) {
 }
 
 // =============================================================================
-// 5. MODE SWITCHING
+// 6. MODE SWITCHING
 // =============================================================================
 
 function switchMode(mode) {
@@ -630,7 +826,7 @@ function switchMode(mode) {
 }
 
 // =============================================================================
-// 6. QUICK ACTIONS
+// 7. QUICK ACTIONS
 // =============================================================================
 
 function updateQuickActions() {
@@ -660,7 +856,7 @@ function quickAction(action) {
 }
 
 // =============================================================================
-// 7. PROJECT MANAGEMENT
+// 8. PROJECT MANAGEMENT
 // =============================================================================
 
 function loadSavedProjects() {
@@ -742,13 +938,15 @@ function startNewProject() {
 }
 
 // =============================================================================
-// 8. MESSAGE HANDLING (CORE)
+// 9. MESSAGE HANDLING (CORE) - UPDATED January 23, 2026
 // =============================================================================
 
 function sendMessage() {
     var input = document.getElementById('userInput');
     var message = input.value.trim();
     if (!message && uploadedFiles.length === 0) return;
+    
+    input.dataset.lastRequest = message;
     
     var displayMessage = message || 'Uploaded files for analysis';
     if (uploadedFiles.length > 0) {
@@ -799,6 +997,16 @@ function sendMessage() {
         loading.classList.remove('active');
         
         if (data.success) {
+            // CHECK FOR CLARIFICATION FIRST - This fixes the "undefined" error
+            if (data.needs_clarification && data.clarification_data) {
+                if (data.conversation_id) {
+                    currentConversationId = data.conversation_id;
+                    localStorage.setItem('currentConversationId', currentConversationId);
+                }
+                handleClarificationResponse(data);
+                return;
+            }
+            
             if (data.conversation_id) {
                 var previousId = currentConversationId;
                 currentConversationId = data.conversation_id;
@@ -954,7 +1162,7 @@ function buildFeedbackSection(msgId, taskId) {
 }
 
 // =============================================================================
-// 9. FEEDBACK SYSTEM
+// 10. FEEDBACK SYSTEM
 // =============================================================================
 
 function toggleFeedback(msgId) {
@@ -1029,7 +1237,7 @@ function submitFeedback(msgId, taskId, outputUsed) {
 }
 
 // =============================================================================
-// 10. STATISTICS & DOCUMENTS (ENHANCED - January 23, 2026)
+// 11. STATISTICS & DOCUMENTS (ENHANCED - January 23, 2026)
 // =============================================================================
 
 function loadStats() {
@@ -1051,10 +1259,6 @@ function loadStats() {
         });
 }
 
-/**
- * Load documents from the API - Now shows GENERATED documents with actions
- * Fetches from /api/documents which returns both knowledge base and generated docs
- */
 function loadDocuments() {
     fetch('/api/documents')
         .then(function(r) { return r.json(); })
@@ -1076,11 +1280,9 @@ function loadDocuments() {
             
             var html = '';
             
-            // Show generated documents first (these are downloadable)
             if (generatedDocs.length > 0) {
                 html += '<div class="docs-section-header">📄 Your Documents (' + generatedDocs.length + ')</div>';
                 
-                // Group by date
                 var today = new Date();
                 var todayStr = today.toDateString();
                 var yesterdayStr = new Date(today - 86400000).toDateString();
@@ -1124,7 +1326,6 @@ function loadDocuments() {
                 }
             }
             
-            // Show knowledge base count (not individual files)
             if (kbDocs.length > 0) {
                 html += '<div class="docs-section-header" style="margin-top: 15px;">📚 Knowledge Base</div>';
                 html += '<div style="padding: 8px; background: #e3f2fd; border-radius: 6px; font-size: 11px; color: #1976d2;">';
@@ -1142,16 +1343,12 @@ function loadDocuments() {
         });
 }
 
-/**
- * Render a single document item with action buttons
- */
 function renderDocumentItem(doc) {
     var icon = getDocTypeIcon(doc.type);
     var size = formatFileSize(doc.size || 0);
     var date = formatDocDate(doc.created_at);
     var title = doc.title || doc.filename;
     
-    // Truncate title if too long
     if (title.length > 40) {
         title = title.substring(0, 37) + '...';
     }
@@ -1177,16 +1374,10 @@ function renderDocumentItem(doc) {
     return html;
 }
 
-/**
- * Download a document
- */
 function downloadDocument(docId) {
     window.location.href = '/api/generated-documents/' + docId + '/download';
 }
 
-/**
- * Print a document - opens in new window with print dialog
- */
 function printDocument(docId) {
     var printWindow = window.open('/api/generated-documents/' + docId + '/print', '_blank', 
         'width=800,height=600,menubar=no,toolbar=no,location=no,status=no');
@@ -1197,9 +1388,6 @@ function printDocument(docId) {
     }
 }
 
-/**
- * Delete a generated document with confirmation
- */
 function deleteGeneratedDocument(event, docId) {
     event.stopPropagation();
     
@@ -1225,9 +1413,6 @@ function deleteGeneratedDocument(event, docId) {
     });
 }
 
-/**
- * Get icon for document type
- */
 function getDocTypeIcon(docType) {
     var icons = {
         'docx': '📝',
@@ -1241,9 +1426,6 @@ function getDocTypeIcon(docType) {
     return icons[docType] || '📎';
 }
 
-/**
- * Format document date for display
- */
 function formatDocDate(dateString) {
     if (!dateString) return '';
     
@@ -1267,9 +1449,6 @@ function formatDocDate(dateString) {
     }
 }
 
-/**
- * Refresh documents list
- */
 function refreshDocuments() {
     var docsList = document.getElementById('documentsList');
     docsList.innerHTML = '<div style="color: #666; padding: 10px; text-align: center;">Loading...</div>';
@@ -1277,7 +1456,7 @@ function refreshDocuments() {
 }
 
 // =============================================================================
-// 11. MARKETING FUNCTIONS
+// 12. MARKETING FUNCTIONS
 // =============================================================================
 
 function loadMarketingStatus() {
@@ -1441,7 +1620,7 @@ function analyzeCompetitors() {
 }
 
 // =============================================================================
-// 12. CALCULATOR FUNCTIONS
+// 13. CALCULATOR FUNCTIONS
 // =============================================================================
 
 function calculateOvertimeCost() {
@@ -1542,255 +1721,7 @@ function scheduleImpact() {
     addMessage('user', 'Calculate schedule change financial impact');
     addMessage('assistant', '🔧 Schedule impact calculator coming soon! For now, use the AI to analyze schedule changes by describing your current and proposed schedules.', null, 'calculator');
 }
-
-// =============================================================================
-// 13. SURVEY FUNCTIONS
-// =============================================================================
-
-function loadQuestionBank() {
-    fetch('/api/survey/questions')
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            var statusDiv = document.getElementById('questionBankStatus');
-            if (data.success) {
-                statusDiv.innerHTML = '<div style="font-size: 11px;">✅ ' + data.total_count + ' validated questions<br>Ready to build surveys</div>';
-            }
-        });
-}
-
-function createNewSurvey() {
-    var projectName = prompt('Enter project/client name:');
-    if (!projectName) return;
-    
-    addMessage('user', 'Create new survey for: ' + projectName);
-    
-    var loading = document.getElementById('loadingIndicator');
-    loading.classList.add('active');
-    
-    fetch('/api/survey/create', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-            project_name: projectName,
-            selected_questions: ['dept', 'shift', 'time_off_importance', 'current_satisfaction', 'overtime_willing']
-        })
-    })
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-        loading.classList.remove('active');
-        
-        if (data.success) {
-            var survey = data.survey;
-            var questionsList = survey.questions.map(function(q) { return '• ' + q.text; }).join('\n');
-            var response = '✅ SURVEY CREATED\n\n' +
-                'Project: ' + survey.project_name + '\n' +
-                'Survey ID: ' + survey.id + '\n' +
-                'Questions: ' + survey.questions.length + '\n' +
-                'Survey Link: ' + survey.link + '\n\n' +
-                '📋 Included Questions:\n' + questionsList + '\n\n' +
-                '🔗 Share this link with employees to collect responses.';
-            addMessage('assistant', response, null, 'survey');
-        } else {
-            addMessage('assistant', '❌ Error: ' + data.error);
-        }
-    })
-    .catch(function(err) {
-        loading.classList.remove('active');
-        addMessage('assistant', '❌ Error: ' + err.message);
-    });
-}
-
-function viewSurveyResults() {
-    var surveyId = prompt('Enter Survey ID:');
-    if (!surveyId) return;
-    
-    addMessage('user', 'View results for survey: ' + surveyId);
-    
-    var loading = document.getElementById('loadingIndicator');
-    loading.classList.add('active');
-    
-    fetch('/api/survey/' + surveyId + '/analyze')
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            loading.classList.remove('active');
-            
-            if (data.success || data.response_count !== undefined) {
-                if (data.response_count === 0) {
-                    addMessage('assistant', '📊 No responses yet. Share the survey link with employees.', null, 'survey');
-                } else {
-                    var insights = data.key_insights ? data.key_insights.join('\n') : 'Analysis complete';
-                    var response = '📊 SURVEY RESULTS ANALYSIS\n\n' +
-                        'Project: ' + data.project_name + '\n' +
-                        'Responses: ' + data.response_count + '\n\n' +
-                        '🔍 KEY INSIGHTS:\n' + insights + '\n\n' +
-                        'Questions Analyzed: ' + Object.keys(data.questions_analyzed || {}).length + '\n\n' +
-                        'Use the Export function to download full data for detailed analysis.';
-                    addMessage('assistant', response, null, 'survey');
-                }
-            } else {
-                addMessage('assistant', '❌ Error: ' + (data.error || 'Unknown error'));
-            }
-        })
-        .catch(function(err) {
-            loading.classList.remove('active');
-            addMessage('assistant', '❌ Error: ' + err.message);
-        });
-}
-
-function exportSurveyData() {
-    var surveyId = prompt('Enter Survey ID to export:');
-    if (!surveyId) return;
-    
-    addMessage('user', 'Export survey data: ' + surveyId);
-    
-    var loading = document.getElementById('loadingIndicator');
-    loading.classList.add('active');
-    
-    fetch('/api/survey/' + surveyId + '/export')
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            loading.classList.remove('active');
-            
-            if (data.success) {
-                var blob = new Blob([data.csv_data], { type: 'text/csv' });
-                var url = window.URL.createObjectURL(blob);
-                var a = document.createElement('a');
-                a.href = url;
-                a.download = 'survey_' + surveyId + '_export.csv';
-                a.click();
-                
-                addMessage('assistant', '✅ Survey data exported successfully! Check your downloads for survey_' + surveyId + '_export.csv (Remark-compatible format)', null, 'survey');
-            } else {
-                addMessage('assistant', '❌ Error: ' + data.error);
-            }
-        })
-        .catch(function(err) {
-            loading.classList.remove('active');
-            addMessage('assistant', '❌ Error: ' + err.message);
-        });
-}
-
-// =============================================================================
-// 14. OPPORTUNITIES FUNCTIONS
-// =============================================================================
-
-function loadNormativeStatus() {
-    fetch('/api/opportunities/status')
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            var statusDiv = document.getElementById('normativeStatus');
-            if (data.success) {
-                statusDiv.innerHTML = '<div style="font-size: 11px;">✅ ' + (data.schedules_count || 0) + ' companies<br>✅ ' + (data.metrics_count || 0) + ' metrics<br>Ready for analysis</div>';
-            } else {
-                statusDiv.innerHTML = '<div style="font-size: 11px; color: #d32f2f;">⚠️ Database loading...</div>';
-            }
-        })
-        .catch(function(err) {
-            document.getElementById('normativeStatus').innerHTML = '<div style="font-size: 11px; color: #d32f2f;">⚠️ Database loading...</div>';
-        });
-}
-
-function analyzeScheduleOpportunities() {
-    var scheduleInfo = prompt('Describe your current schedule (e.g., "12-hour rotating DuPont, 4 crews, 24/7"):');
-    if (!scheduleInfo) return;
-    
-    addMessage('user', 'Analyze opportunities for: ' + scheduleInfo);
-    
-    var loading = document.getElementById('loadingIndicator');
-    loading.classList.add('active');
-    
-    fetch('/api/opportunities/analyze', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ schedule_description: scheduleInfo })
-    })
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-        loading.classList.remove('active');
-        
-        if (data.success) {
-            var response = '🎯 OPPORTUNITY ANALYSIS\n\n' +
-                'Current Schedule: ' + data.analysis.schedule_type + '\n\n' +
-                '📊 KEY FINDINGS:\n';
-            
-            data.analysis.opportunities.forEach(function(opp) {
-                response += '\n• ' + opp.finding + '\n  Impact: ' + opp.impact + '\n  Priority: ' + opp.priority + '\n';
-            });
-            
-            if (data.analysis.recommendations) {
-                response += '\n💡 RECOMMENDATIONS:\n';
-                data.analysis.recommendations.forEach(function(rec) {
-                    response += '\n• ' + rec + '\n';
-                });
-            }
-            
-            addMessage('assistant', response, null, 'opportunities');
-        } else {
-            addMessage('assistant', '❌ Error: ' + data.error);
-        }
-    })
-    .catch(function(err) {
-        loading.classList.remove('active');
-        addMessage('assistant', '❌ Error: ' + err.message);
-    });
-}
-
-function compareToNorms() {
-    var metrics = prompt('Enter your current metrics (e.g., "15% turnover, 12% overtime, 85% coverage"):');
-    if (!metrics) return;
-    
-    addMessage('user', 'Compare to industry norms: ' + metrics);
-    
-    var loading = document.getElementById('loadingIndicator');
-    loading.classList.add('active');
-    
-    fetch('/api/opportunities/compare', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ current_metrics: metrics })
-    })
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-        loading.classList.remove('active');
-        
-        if (data.success) {
-            var response = '📈 INDUSTRY COMPARISON\n\nYour Performance vs Industry Norms:\n\n';
-            
-            data.comparison.forEach(function(item) {
-                response += item.metric + ':\n  You: ' + item.your_value + '\n  Industry: ' + item.norm_value + '\n  Status: ' + item.status + ' (' + item.variance + ')\n\n';
-            });
-            
-            if (data.gap_analysis) {
-                response += '🎯 GAP ANALYSIS:\n' + data.gap_analysis + '\n';
-            }
-            
-            addMessage('assistant', response, null, 'opportunities');
-        } else {
-            addMessage('assistant', '❌ Error: ' + data.error);
-        }
-    })
-    .catch(function(err) {
-        loading.classList.remove('active');
-        addMessage('assistant', '❌ Error: ' + err.message);
-    });
-}
-
-function findImprovements() {
-    addMessage('user', 'Find improvement opportunities');
-    
-    var loading = document.getElementById('loadingIndicator');
-    loading.classList.add('active');
-    
-    fetch('/api/opportunities/suggest')
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            loading.classList.remove('active');
-            
-            if (data.success) {
-                var response = '💡 IMPROVEMENT OPPORTUNITIES\n\nTop Recommendations:\n\n';
-                
-                data.suggestions.forEach(function(sugg, idx) {
-                    response += (idx + 1) + '. ' + sugg.title + '\n   ' + sugg.description + '\n   Expected Impact: ' + sugg.impact + '\n   Difficulty: ' + sugg.difficulty + '\n\n';
+impact + '\n   Difficulty: ' + sugg.difficulty + '\n\n';
                 });
                 
                 addMessage('assistant', response, null, 'opportunities');
@@ -1805,23 +1736,15 @@ function findImprovements() {
 }
 
 // =============================================================================
-// 15. INITIALIZATION
+// 16. INITIALIZATION
 // =============================================================================
 
 function initializeApp() {
-    // Initialize quick actions
     updateQuickActions();
-    
-    // Load initial stats
     loadStats();
-    
-    // Load documents
     loadDocuments();
-    
-    // Load conversations (Memory Feature)
     loadConversations();
     
-    // Check for conversation ID in URL or localStorage (Memory Feature)
     var urlConversationId = getConversationIdFromUrl();
     var storedConversationId = localStorage.getItem('currentConversationId');
     
@@ -1833,7 +1756,6 @@ function initializeApp() {
         startNewConversation();
     }
     
-    // Set up Enter key handler for input
     document.getElementById('userInput').addEventListener('keypress', function(e) {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
@@ -1841,16 +1763,14 @@ function initializeApp() {
         }
     });
     
-    // Set up periodic refresh (every 30 seconds)
     setInterval(function() {
         loadStats();
         loadDocuments();
     }, 30000);
     
-    console.log('AI Swarm Interface initialized successfully with conversation memory and enhanced documents');
+    console.log('AI Swarm Interface initialized successfully with conversation memory, enhanced documents, and clarification handling');
 }
 
-// Initialize when DOM is ready
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initializeApp);
 } else {
