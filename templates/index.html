@@ -8,24 +8,20 @@
     =============================================================================
     
     CHANGE LOG:
+    - January 23, 2026: Added Client Intelligence Dashboard (Pipeline Mode)
+      * Added "📊 Pipeline" mode button in header
+      * Added Pipeline Info Panel in sidebar with:
+        - Pipeline summary (leads by stage, high priority count)
+        - Kanban-style pipeline view
+        - Lead cards with scores and actions
+        - Quick actions: Add Lead, Import from Alerts, View All
+      * Lead scoring based on 202-company normative database
+      * Actions: Draft Email, Draft Proposal, Research Deeper
+    
     - January 23, 2026: Added Alert System Panel
-      * Added "🔔 Alerts" mode button in header
-      * Added Alerts Info Panel in sidebar with:
-        - Alert counts by priority (critical/high badge)
-        - Unread alert list with quick actions
-        - Scheduled jobs management
-        - Monitored entities configuration
-      * Alert System provides autonomous monitoring and notifications
-    
     - January 23, 2026: Added Research Agent Panel
-      * Added "🔬 Research" mode button in header
-      * Research Agent provides real-time web intelligence
-    
     - January 23, 2026: Added Voice Control System
-      * Voice features: "Hey Swarm" wake word, text-to-speech responses
-    
     - January 22, 2026: Added Persistent Conversation Memory System
-    - January 22, 2026: Refactored from single 2000+ line file into 3 files
     
     FILE STRUCTURE:
     /templates/index.html              - This file (HTML structure)
@@ -151,6 +147,119 @@
         .alert-item-actions .dismiss-btn { background: #f0f0f0; color: #666; }
         .alert-item-actions .action-btn { background: #667eea; color: white; }
         .section-title { font-size: 13px; font-weight: 600; color: #555; margin: 15px 0 8px 0; padding-bottom: 5px; border-bottom: 1px solid #e0e0e0; }
+        
+        /* Pipeline Dashboard Styles - Added January 23, 2026 */
+        .pipeline-info {
+            display: none;
+            padding: 15px;
+            background: linear-gradient(135deg, #e3f2fd 0%, #f3e5f5 100%);
+            border-radius: 10px;
+            margin-bottom: 15px;
+        }
+        .pipeline-info h3 { margin-bottom: 10px; color: #1565c0; }
+        .pipeline-status {
+            padding: 10px;
+            background: white;
+            border-radius: 6px;
+            font-size: 12px;
+            margin-bottom: 15px;
+            border-left: 3px solid #2196f3;
+        }
+        .pipeline-status.error { border-left-color: #f44336; background: #ffebee; }
+        .pipeline-summary { display: flex; gap: 8px; margin-bottom: 15px; flex-wrap: wrap; }
+        .pipeline-stage-badge {
+            flex: 1;
+            min-width: 60px;
+            text-align: center;
+            padding: 8px 4px;
+            border-radius: 6px;
+            color: white;
+            font-weight: 600;
+        }
+        .pipeline-stage-badge.detected { background: #9e9e9e; }
+        .pipeline-stage-badge.qualified { background: #2196f3; }
+        .pipeline-stage-badge.contacted { background: #ff9800; }
+        .pipeline-stage-badge.proposal { background: #9c27b0; }
+        .pipeline-stage-badge .stage-count { font-size: 20px; display: block; }
+        .pipeline-stage-badge .stage-name { font-size: 9px; opacity: 0.9; text-transform: uppercase; }
+        .pipeline-btn {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 8px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+        .pipeline-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+        .pipeline-btn.add-lead { background: linear-gradient(135deg, #4caf50 0%, #81c784 100%); color: white; }
+        .pipeline-btn.import-alerts { background: linear-gradient(135deg, #ff9800 0%, #ffb74d 100%); color: white; }
+        .pipeline-btn.view-all { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+        .lead-list { max-height: 300px; overflow-y: auto; margin-top: 10px; }
+        .lead-card {
+            padding: 12px;
+            background: white;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            border-left: 4px solid #667eea;
+            cursor: pointer;
+            transition: all 0.2s;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .lead-card:hover { transform: translateX(3px); box-shadow: 0 3px 10px rgba(0,0,0,0.15); }
+        .lead-card.grade-a { border-left-color: #4caf50; }
+        .lead-card.grade-b { border-left-color: #2196f3; }
+        .lead-card.grade-c { border-left-color: #ff9800; }
+        .lead-card.grade-d { border-left-color: #f44336; }
+        .lead-card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px; }
+        .lead-card-company { font-size: 13px; font-weight: 600; color: #333; }
+        .lead-card-score { 
+            font-size: 11px; 
+            font-weight: 700; 
+            padding: 2px 8px; 
+            border-radius: 12px; 
+            color: white;
+        }
+        .lead-card-score.high { background: #4caf50; }
+        .lead-card-score.medium { background: #ff9800; }
+        .lead-card-score.low { background: #9e9e9e; }
+        .lead-card-industry { font-size: 11px; color: #666; margin-bottom: 4px; }
+        .lead-card-stage { 
+            display: inline-block;
+            font-size: 10px; 
+            padding: 2px 6px; 
+            border-radius: 4px; 
+            background: #e0e0e0;
+            color: #555;
+            text-transform: uppercase;
+        }
+        .lead-card-actions { display: flex; gap: 4px; margin-top: 8px; }
+        .lead-card-actions button { 
+            flex: 1;
+            padding: 5px; 
+            font-size: 10px; 
+            border: none; 
+            border-radius: 4px; 
+            cursor: pointer;
+            background: #f0f0f0;
+            color: #555;
+            transition: all 0.2s;
+        }
+        .lead-card-actions button:hover { background: #667eea; color: white; }
+        .high-priority-banner {
+            background: linear-gradient(135deg, #4caf50 0%, #81c784 100%);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            margin-bottom: 12px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .high-priority-banner .count { font-size: 18px; font-weight: 700; }
     </style>
 </head>
 <body>
@@ -170,6 +279,7 @@
                 <button class="mode-btn" onclick="switchMode('opportunities')" id="opportunitiesModeBtn">🎯 Opportunities</button>
                 <button class="mode-btn" onclick="switchMode('research')" id="researchModeBtn">🔬 Research</button>
                 <button class="mode-btn" onclick="switchMode('alerts')" id="alertsModeBtn">🔔 Alerts</button>
+                <button class="mode-btn" onclick="switchMode('pipeline')" id="pipelineModeBtn">📊 Pipeline</button>
             </div>
         </div>
         
@@ -330,7 +440,7 @@
                     <button class="research-btn" style="background: linear-gradient(135deg, #455a64 0%, #78909c 100%); color: white;" onclick="customResearch()">🔍 Research Topic</button>
                 </div>
                 
-                <!-- Alerts Panel (alerts mode only) - NEW January 23, 2026 -->
+                <!-- Alerts Panel (alerts mode only) -->
                 <div class="alerts-info" id="alertsInfo" style="display: none;">
                     <h3>🔔 Alert System</h3>
                     <div class="alerts-status" id="alertsStatus">
@@ -360,6 +470,48 @@
                     <div class="section-title">📋 Recent Alerts</div>
                     <div class="alert-list" id="alertList">
                         <div style="text-align: center; color: #999; padding: 20px;">Loading alerts...</div>
+                    </div>
+                </div>
+                
+                <!-- Pipeline Dashboard Panel (pipeline mode only) - NEW January 23, 2026 -->
+                <div class="pipeline-info" id="pipelineInfo" style="display: none;">
+                    <h3>📊 Lead Pipeline</h3>
+                    <div class="pipeline-status" id="pipelineStatus">
+                        <strong>Status:</strong> Checking...
+                    </div>
+                    
+                    <div class="high-priority-banner" id="highPriorityBanner" style="display: none;">
+                        <span class="count" id="highPriorityCount">0</span>
+                        <span>High-Priority Leads (Score ≥70)</span>
+                    </div>
+                    
+                    <div class="pipeline-summary" id="pipelineSummary">
+                        <div class="pipeline-stage-badge detected">
+                            <span class="stage-count" id="detectedCount">0</span>
+                            <span class="stage-name">Detected</span>
+                        </div>
+                        <div class="pipeline-stage-badge qualified">
+                            <span class="stage-count" id="qualifiedCount">0</span>
+                            <span class="stage-name">Qualified</span>
+                        </div>
+                        <div class="pipeline-stage-badge contacted">
+                            <span class="stage-count" id="contactedCount">0</span>
+                            <span class="stage-name">Contacted</span>
+                        </div>
+                        <div class="pipeline-stage-badge proposal">
+                            <span class="stage-count" id="proposalCount">0</span>
+                            <span class="stage-name">Proposal</span>
+                        </div>
+                    </div>
+                    
+                    <div class="section-title">⚡ Quick Actions</div>
+                    <button class="pipeline-btn add-lead" onclick="addNewLead()">➕ Add New Lead</button>
+                    <button class="pipeline-btn import-alerts" onclick="importLeadsFromAlerts()">📥 Import from Alerts</button>
+                    <button class="pipeline-btn view-all" onclick="viewAllLeads()">👁️ View All Leads</button>
+                    
+                    <div class="section-title">🔥 Top Leads</div>
+                    <div class="lead-list" id="topLeadsList">
+                        <div style="text-align: center; color: #999; padding: 20px;">Loading leads...</div>
                     </div>
                 </div>
                 
@@ -401,6 +553,7 @@
                                 <li><strong>📁 Project Mode:</strong> Full consulting engagements with context tracking</li>
                                 <li><strong>🔬 Research Mode:</strong> Real-time industry intelligence and news</li>
                                 <li><strong>🔔 Alerts Mode:</strong> Autonomous monitoring and notifications</li>
+                                <li><strong>📊 Pipeline Mode:</strong> Lead scoring and sales pipeline management</li>
                             </ul>
                             <p style="margin-top: 15px;"><strong>Features:</strong></p>
                             <ul style="margin-top: 5px; margin-left: 20px;">
@@ -412,6 +565,7 @@
                                 <li>✅ Voice control - say "Hey Swarm" to command</li>
                                 <li>✅ Research Agent - real-time web intelligence</li>
                                 <li>✅ Alert System - automated lead & competitor monitoring</li>
+                                <li>✅ Pipeline Dashboard - lead scoring based on 202 past clients</li>
                             </ul>
                         </div>
                     </div>
@@ -447,7 +601,7 @@
     <script src="/static/js/swarm-app.js"></script>
     <script src="/static/js/swarm-voice.js"></script>
     
-    <!-- Research Agent & Alert System JavaScript -->
+    <!-- Research Agent, Alert System & Pipeline Dashboard JavaScript -->
     <script>
     // =============================================================================
     // RESEARCH AGENT FUNCTIONS
@@ -597,7 +751,7 @@
     }
     
     // =============================================================================
-    // ALERT SYSTEM FUNCTIONS - Added January 23, 2026
+    // ALERT SYSTEM FUNCTIONS
     // =============================================================================
     
     function checkAlertStatus() {
@@ -683,8 +837,8 @@
                     content += '<p>' + (alert.summary || '') + '</p>';
                     if (alert.details) content += '<div style="padding: 10px; background: white; border: 1px solid #e0e0e0; border-radius: 6px; margin: 10px 0;">' + alert.details + '</div>';
                     if (alert.source_url) content += '<p><a href="' + alert.source_url + '" target="_blank" style="color: #667eea;">🔗 View Source</a></p>';
+                    content += '<div style="margin-top: 15px;"><button onclick="convertAlertToLead(' + alert.id + ')" style="padding: 10px 20px; background: linear-gradient(135deg, #4caf50 0%, #81c784 100%); color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">📊 Convert to Lead</button></div>';
                     addMessage('assistant', content, null, 'alerts');
-                    // Mark as read
                     fetch('/api/alerts/' + alertId + '/read', { method: 'POST' });
                     loadAlertCounts();
                     loadRecentAlerts();
@@ -709,7 +863,6 @@
         loading.classList.add('active');
         document.querySelector('.loading-text').textContent = 'Running lead scan... This may take a minute...';
         
-        // Find the lead scan job and run it
         fetch('/api/alerts/jobs')
             .then(function(r) { return r.json(); })
             .then(function(data) {
@@ -758,7 +911,6 @@
                         content += '</div>';
                     });
                     content += '</div>';
-                    content += '<p style="margin-top: 15px; font-size: 12px; color: #666;">💡 To enable automated jobs, set ENABLE_SCHEDULED_JOBS=true in Render environment variables.</p>';
                     addMessage('assistant', content, null, 'alerts');
                 }
             });
@@ -785,15 +937,443 @@
     }
     
     // =============================================================================
-    // MODE SWITCHING - Updated for Alerts
+    // PIPELINE DASHBOARD FUNCTIONS - Added January 23, 2026
     // =============================================================================
     
-    var originalSwitchMode = typeof switchMode === 'function' ? switchMode : null;
+    function checkPipelineStatus() {
+        fetch('/api/intelligence/status')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var statusDiv = document.getElementById('pipelineStatus');
+                if (data.available) {
+                    statusDiv.innerHTML = '<strong>✅ Status:</strong> Online<br><small>' + data.past_clients_in_database + ' past clients in scoring database</small>';
+                    statusDiv.className = 'pipeline-status';
+                    loadPipelineSummary();
+                    loadTopLeads();
+                } else {
+                    statusDiv.innerHTML = '<strong>⚠️ Status:</strong> Not initialized';
+                    statusDiv.className = 'pipeline-status error';
+                }
+            })
+            .catch(function(err) {
+                var statusDiv = document.getElementById('pipelineStatus');
+                statusDiv.innerHTML = '<strong>❌ Status:</strong> Error connecting';
+                statusDiv.className = 'pipeline-status error';
+            });
+    }
+    
+    function loadPipelineSummary() {
+        fetch('/api/intelligence/pipeline')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.success) {
+                    var byStage = data.by_stage || {};
+                    document.getElementById('detectedCount').textContent = (byStage.detected || {}).count || 0;
+                    document.getElementById('qualifiedCount').textContent = (byStage.qualified || {}).count || 0;
+                    document.getElementById('contactedCount').textContent = (byStage.contacted || {}).count || 0;
+                    document.getElementById('proposalCount').textContent = (byStage.proposal || {}).count || 0;
+                    
+                    // High priority banner
+                    var highPriority = data.high_priority || 0;
+                    var banner = document.getElementById('highPriorityBanner');
+                    if (highPriority > 0) {
+                        document.getElementById('highPriorityCount').textContent = highPriority;
+                        banner.style.display = 'flex';
+                    } else {
+                        banner.style.display = 'none';
+                    }
+                }
+            });
+    }
+    
+    function loadTopLeads() {
+        fetch('/api/intelligence/leads?limit=5&min_score=0')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var listDiv = document.getElementById('topLeadsList');
+                if (data.success && data.leads && data.leads.length > 0) {
+                    var html = '';
+                    data.leads.forEach(function(lead) {
+                        var gradeClass = getGradeClass(lead.score);
+                        var scoreClass = lead.score >= 70 ? 'high' : (lead.score >= 40 ? 'medium' : 'low');
+                        html += '<div class="lead-card ' + gradeClass + '" onclick="viewLead(' + lead.id + ')">';
+                        html += '<div class="lead-card-header">';
+                        html += '<span class="lead-card-company">' + escapeHtmlPipeline(lead.company_name) + '</span>';
+                        html += '<span class="lead-card-score ' + scoreClass + '">' + lead.score + '</span>';
+                        html += '</div>';
+                        if (lead.industry) html += '<div class="lead-card-industry">' + escapeHtmlPipeline(lead.industry) + '</div>';
+                        html += '<span class="lead-card-stage">' + lead.pipeline_stage + '</span>';
+                        html += '<div class="lead-card-actions">';
+                        html += '<button onclick="event.stopPropagation(); draftEmail(' + lead.id + ')">📧 Email</button>';
+                        html += '<button onclick="event.stopPropagation(); moveLeadStage(' + lead.id + ')">➡️ Move</button>';
+                        html += '</div>';
+                        html += '</div>';
+                    });
+                    listDiv.innerHTML = html;
+                } else {
+                    listDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No leads yet. Import from alerts or add manually.</div>';
+                }
+            });
+    }
+    
+    function getGradeClass(score) {
+        if (score >= 80) return 'grade-a';
+        if (score >= 65) return 'grade-b';
+        if (score >= 50) return 'grade-c';
+        return 'grade-d';
+    }
+    
+    function escapeHtmlPipeline(text) {
+        if (!text) return '';
+        var div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+    
+    function addNewLead() {
+        var company = prompt('Enter company name:', '');
+        if (!company) return;
+        var industry = prompt('Enter industry (e.g., pharmaceutical, food processing, manufacturing):', '');
+        var headcount = prompt('Estimated employee count (optional):', '');
+        
+        fetch('/api/intelligence/leads', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                company_name: company,
+                industry: industry || null,
+                headcount: headcount ? parseInt(headcount) : null,
+                source: 'manual'
+            })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                addMessage('assistant', '✅ Lead created: ' + company + '\n\n**Score:** ' + data.score + '/100 (Grade: ' + data.grade + ')\n\nThe lead has been added to your pipeline.');
+                loadPipelineSummary();
+                loadTopLeads();
+            } else {
+                addMessage('assistant', '❌ Error: ' + data.error);
+            }
+        });
+    }
+    
+    function importLeadsFromAlerts() {
+        addMessage('user', '📥 Import Leads from Alerts');
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        
+        fetch('/api/intelligence/leads/import-alerts', { method: 'POST' })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                loading.classList.remove('active');
+                if (data.success) {
+                    var msg = '✅ Import complete!\n\n';
+                    msg += '• **Imported:** ' + data.imported + ' new leads\n';
+                    msg += '• **Skipped:** ' + data.skipped + ' (already in pipeline)\n';
+                    if (data.errors && data.errors.length > 0) {
+                        msg += '• **Errors:** ' + data.errors.length;
+                    }
+                    addMessage('assistant', msg);
+                    loadPipelineSummary();
+                    loadTopLeads();
+                } else {
+                    addMessage('assistant', '❌ Import failed: ' + data.error);
+                }
+            })
+            .catch(function(err) {
+                loading.classList.remove('active');
+                addMessage('assistant', '❌ Error: ' + err.message);
+            });
+    }
+    
+    function viewAllLeads() {
+        addMessage('user', '👁️ View All Leads');
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        
+        fetch('/api/intelligence/dashboard')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                loading.classList.remove('active');
+                if (data.success) {
+                    var content = '<h3>📊 Pipeline Dashboard</h3>';
+                    
+                    // Summary
+                    content += '<div style="display: flex; gap: 15px; margin: 15px 0; flex-wrap: wrap;">';
+                    data.stages.forEach(function(stage) {
+                        var stageData = data.summary.by_stage[stage.id] || { count: 0, avg_score: 0 };
+                        content += '<div style="flex: 1; min-width: 100px; padding: 15px; background: ' + stage.color + '20; border-left: 4px solid ' + stage.color + '; border-radius: 6px;">';
+                        content += '<div style="font-size: 24px; font-weight: 700; color: ' + stage.color + ';">' + stageData.count + '</div>';
+                        content += '<div style="font-size: 12px; color: #666;">' + stage.name + '</div>';
+                        content += '</div>';
+                    });
+                    content += '</div>';
+                    
+                    // Kanban-style view
+                    content += '<div style="margin-top: 20px;">';
+                    ['detected', 'qualified', 'contacted', 'proposal'].forEach(function(stageId) {
+                        var leads = data.kanban[stageId] || [];
+                        var stageInfo = data.stages.find(function(s) { return s.id === stageId; });
+                        content += '<div style="margin-bottom: 20px;">';
+                        content += '<h4 style="color: ' + stageInfo.color + '; border-bottom: 2px solid ' + stageInfo.color + '; padding-bottom: 5px;">' + stageInfo.name + ' (' + leads.length + ')</h4>';
+                        if (leads.length > 0) {
+                            leads.slice(0, 5).forEach(function(lead) {
+                                content += '<div style="padding: 10px; background: #f9f9f9; border-radius: 6px; margin: 8px 0; border-left: 3px solid ' + stageInfo.color + ';">';
+                                content += '<strong>' + lead.company_name + '</strong> ';
+                                content += '<span style="background: ' + (lead.score >= 70 ? '#4caf50' : (lead.score >= 40 ? '#ff9800' : '#9e9e9e')) + '; color: white; padding: 2px 8px; border-radius: 10px; font-size: 11px;">' + lead.score + '</span>';
+                                if (lead.industry) content += '<br><span style="font-size: 11px; color: #666;">' + lead.industry + '</span>';
+                                content += '</div>';
+                            });
+                            if (leads.length > 5) {
+                                content += '<div style="font-size: 11px; color: #999; text-align: center;">+' + (leads.length - 5) + ' more</div>';
+                            }
+                        } else {
+                            content += '<div style="color: #999; font-size: 12px; padding: 10px;">No leads in this stage</div>';
+                        }
+                        content += '</div>';
+                    });
+                    content += '</div>';
+                    
+                    addMessage('assistant', content, null, 'pipeline');
+                }
+            })
+            .catch(function(err) {
+                loading.classList.remove('active');
+                addMessage('assistant', '❌ Error: ' + err.message);
+            });
+    }
+    
+    function viewLead(leadId) {
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        
+        fetch('/api/intelligence/leads/' + leadId)
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                loading.classList.remove('active');
+                if (data.success && data.lead) {
+                    var lead = data.lead;
+                    var content = '<h3>🎯 Lead Details</h3>';
+                    
+                    // Header with score
+                    content += '<div style="padding: 15px; background: linear-gradient(135deg, #e3f2fd 0%, #f3e5f5 100%); border-radius: 8px; margin: 10px 0;">';
+                    content += '<div style="display: flex; justify-content: space-between; align-items: center;">';
+                    content += '<strong style="font-size: 18px;">' + lead.company_name + '</strong>';
+                    var scoreColor = lead.score >= 70 ? '#4caf50' : (lead.score >= 40 ? '#ff9800' : '#9e9e9e');
+                    content += '<span style="background: ' + scoreColor + '; color: white; padding: 5px 15px; border-radius: 20px; font-weight: 700;">' + lead.score + '/100</span>';
+                    content += '</div>';
+                    if (lead.industry) content += '<div style="margin-top: 5px; color: #666;">' + lead.industry + '</div>';
+                    content += '<div style="margin-top: 5px;"><span style="background: #e0e0e0; padding: 3px 10px; border-radius: 4px; font-size: 12px; text-transform: uppercase;">' + lead.pipeline_stage + '</span></div>';
+                    content += '</div>';
+                    
+                    // Similar past clients
+                    if (lead.similar_clients && lead.similar_clients.talking_point) {
+                        content += '<div style="padding: 12px; background: #e8f5e9; border-radius: 6px; margin: 10px 0;">';
+                        content += '<strong style="color: #2e7d32;">💡 Talking Point:</strong><br>';
+                        content += '<span style="font-size: 13px;">' + lead.similar_clients.talking_point + '</span>';
+                        content += '</div>';
+                    }
+                    
+                    // Score breakdown
+                    if (lead.score_breakdown && lead.score_breakdown.breakdown) {
+                        content += '<div style="margin: 15px 0;">';
+                        content += '<strong>Score Breakdown:</strong>';
+                        content += '<div style="display: flex; gap: 10px; margin-top: 8px; flex-wrap: wrap;">';
+                        var breakdown = lead.score_breakdown.breakdown;
+                        var factors = [
+                            { key: 'industry_match', label: 'Industry', max: 40 },
+                            { key: 'size_match', label: 'Size', max: 20 },
+                            { key: 'signal_strength', label: 'Signal', max: 20 },
+                            { key: 'recency', label: 'Recency', max: 10 },
+                            { key: 'engagement', label: 'Engagement', max: 10 }
+                        ];
+                        factors.forEach(function(f) {
+                            var val = breakdown[f.key] || 0;
+                            var pct = Math.round(val / f.max * 100);
+                            content += '<div style="flex: 1; min-width: 80px; text-align: center; padding: 8px; background: #f5f5f5; border-radius: 6px;">';
+                            content += '<div style="font-size: 16px; font-weight: 600;">' + val + '/' + f.max + '</div>';
+                            content += '<div style="font-size: 10px; color: #666;">' + f.label + '</div>';
+                            content += '</div>';
+                        });
+                        content += '</div></div>';
+                    }
+                    
+                    // Actions
+                    content += '<div style="display: flex; gap: 10px; margin-top: 15px; flex-wrap: wrap;">';
+                    content += '<button onclick="draftEmail(' + lead.id + ')" style="flex: 1; padding: 10px; background: linear-gradient(135deg, #1976d2 0%, #42a5f5 100%); color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">📧 Draft Email</button>';
+                    content += '<button onclick="draftProposal(' + lead.id + ')" style="flex: 1; padding: 10px; background: linear-gradient(135deg, #9c27b0 0%, #ba68c8 100%); color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">📄 Draft Proposal</button>';
+                    content += '<button onclick="researchLead(' + lead.id + ')" style="flex: 1; padding: 10px; background: linear-gradient(135deg, #388e3c 0%, #66bb6a 100%); color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">🔍 Research</button>';
+                    content += '</div>';
+                    
+                    // Stage change
+                    content += '<div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #e0e0e0;">';
+                    content += '<strong>Move to Stage:</strong>';
+                    content += '<div style="display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap;">';
+                    ['detected', 'qualified', 'contacted', 'proposal', 'won', 'lost'].forEach(function(stage) {
+                        var isActive = stage === lead.pipeline_stage;
+                        content += '<button onclick="changeLeadStage(' + lead.id + ', \'' + stage + '\')" style="padding: 6px 12px; background: ' + (isActive ? '#667eea' : '#f0f0f0') + '; color: ' + (isActive ? 'white' : '#555') + '; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; text-transform: uppercase;">' + stage + '</button>';
+                    });
+                    content += '</div></div>';
+                    
+                    addMessage('assistant', content, null, 'pipeline');
+                }
+            })
+            .catch(function(err) {
+                loading.classList.remove('active');
+                addMessage('assistant', '❌ Error: ' + err.message);
+            });
+    }
+    
+    function draftEmail(leadId) {
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        document.querySelector('.loading-text').textContent = 'Drafting email...';
+        
+        fetch('/api/intelligence/leads/' + leadId + '/draft-email', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ email_type: 'initial' })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            loading.classList.remove('active');
+            if (data.success && data.email) {
+                var content = '<h3>📧 Draft Email</h3>';
+                content += '<div style="padding: 15px; background: #f9f9f9; border-radius: 8px; margin: 10px 0;">';
+                content += '<strong>Subject:</strong> ' + data.email.subject + '<br><br>';
+                content += '<pre style="white-space: pre-wrap; font-family: inherit; background: white; padding: 15px; border-radius: 6px; border: 1px solid #e0e0e0;">' + data.email.body + '</pre>';
+                content += '</div>';
+                content += '<button onclick="copyEmailToClipboard()" style="padding: 10px 20px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer;">📋 Copy to Clipboard</button>';
+                addMessage('assistant', content, null, 'pipeline');
+            } else {
+                addMessage('assistant', '❌ Error drafting email');
+            }
+        });
+    }
+    
+    function draftProposal(leadId) {
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        document.querySelector('.loading-text').textContent = 'Drafting proposal outline...';
+        
+        fetch('/api/intelligence/leads/' + leadId + '/draft-proposal', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ proposal_type: 'assessment' })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            loading.classList.remove('active');
+            if (data.success && data.proposal) {
+                var content = '<h3>📄 Proposal Outline</h3>';
+                content += '<h4>' + data.proposal.title + '</h4>';
+                data.proposal.sections.forEach(function(section) {
+                    content += '<div style="padding: 12px; background: #f9f9f9; border-radius: 6px; margin: 10px 0; border-left: 3px solid #667eea;">';
+                    content += '<strong>' + section.title + '</strong><br>';
+                    content += '<span style="font-size: 13px; color: #555;">' + section.content + '</span>';
+                    content += '</div>';
+                });
+                addMessage('assistant', content, null, 'pipeline');
+            } else {
+                addMessage('assistant', '❌ Error drafting proposal');
+            }
+        });
+    }
+    
+    function researchLead(leadId) {
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        document.querySelector('.loading-text').textContent = 'Researching lead...';
+        
+        fetch('/api/intelligence/leads/' + leadId + '/research', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ focus: 'all' })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            loading.classList.remove('active');
+            if (data.success) {
+                var content = '<h3>🔍 Research Results</h3>';
+                if (data.research && data.research.length > 0) {
+                    data.research.forEach(function(section) {
+                        content += '<div style="margin: 15px 0;">';
+                        content += '<h4>' + section.type.replace('_', ' ').toUpperCase() + '</h4>';
+                        if (section.results && section.results.length > 0) {
+                            section.results.forEach(function(item) {
+                                content += '<div style="padding: 10px; background: #f9f9f9; border-radius: 6px; margin: 8px 0;">';
+                                content += '<strong>' + item.title + '</strong><br>';
+                                content += '<span style="font-size: 12px; color: #555;">' + (item.content || '').substring(0, 150) + '...</span><br>';
+                                content += '<a href="' + item.url + '" target="_blank" style="font-size: 11px; color: #667eea;">🔗 Read more</a>';
+                                content += '</div>';
+                            });
+                        } else {
+                            content += '<div style="color: #999;">No results found</div>';
+                        }
+                        content += '</div>';
+                    });
+                } else {
+                    content += '<p>No research results found. This may be because the Research Agent is not configured.</p>';
+                }
+                addMessage('assistant', content, null, 'pipeline');
+            }
+        });
+    }
+    
+    function changeLeadStage(leadId, newStage) {
+        fetch('/api/intelligence/leads/' + leadId + '/stage', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ stage: newStage })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                addMessage('assistant', '✅ Lead moved to **' + newStage.toUpperCase() + '** stage.');
+                loadPipelineSummary();
+                loadTopLeads();
+            } else {
+                addMessage('assistant', '❌ Error: ' + data.error);
+            }
+        });
+    }
+    
+    function moveLeadStage(leadId) {
+        var stages = ['detected', 'qualified', 'contacted', 'proposal', 'won', 'lost'];
+        var newStage = prompt('Enter new stage (' + stages.join(', ') + '):', 'qualified');
+        if (newStage && stages.includes(newStage.toLowerCase())) {
+            changeLeadStage(leadId, newStage.toLowerCase());
+        }
+    }
+    
+    function convertAlertToLead(alertId) {
+        fetch('/api/intelligence/leads/from-alert', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ alert_id: alertId })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                addMessage('assistant', '✅ Alert converted to lead!\n\n**Score:** ' + data.score + '/100 (Grade: ' + data.grade + ')\n\nView it in the Pipeline dashboard.');
+                loadPipelineSummary();
+                loadTopLeads();
+            } else {
+                addMessage('assistant', '❌ Error: ' + data.error);
+            }
+        });
+    }
+    
+    // =============================================================================
+    // INITIALIZATION
+    // =============================================================================
     
     document.addEventListener('DOMContentLoaded', function() {
         setTimeout(function() {
             checkResearchStatus();
             checkAlertStatus();
+            checkPipelineStatus();
         }, 500);
     });
     </script>
