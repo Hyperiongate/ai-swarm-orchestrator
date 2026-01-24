@@ -1334,6 +1334,19 @@
                 addMessage('assistant', '❌ Error: ' + err.message);
             });
     }
+    
+    function changeLeadStage(leadId, newStage) {
+        fetch('/api/intelligence/leads/' + leadId + '/stage', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ stage: newStage })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                addMessage('assistant', '✅ Lead moved to **' + newStage.toUpperCase() + '** stage.');
+                loadPipelineSummary();
+                loadTopLeads();
             } else {
                 addMessage('assistant', '❌ Error: ' + data.error);
             }
