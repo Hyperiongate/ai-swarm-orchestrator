@@ -1,12 +1,18 @@
 """
 Database Module
 Created: January 21, 2026
-Last Updated: January 23, 2026 - ADDED GENERATED DOCUMENTS TABLE
+Last Updated: January 23, 2026 - ADDED RESEARCH AGENT TABLES
 
 All database operations isolated here.
 No more SQL scattered across 2,500 lines.
 
 CHANGELOG:
+- January 23, 2026: ADDED RESEARCH AGENT TABLES
+  * Added 'research_logs' table - tracks all web searches
+  * Added 'research_briefings' table - stores daily briefings
+  * Added 'research_findings' table - tracks interesting findings
+  * Added indexes for research tables
+
 - January 23, 2026: ADDED GENERATED DOCUMENTS TABLE
   * Added 'generated_documents' table - tracks all system-created documents
   * Added save_generated_document() - saves document metadata after creation
@@ -300,6 +306,50 @@ def init_db():
     ''')
     
     # ============================================================================
+    # RESEARCH AGENT TABLES (Added January 23, 2026)
+    # Tracks web research, briefings, and findings
+    # ============================================================================
+    
+    # Research logs - tracks all web searches
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS research_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            query TEXT NOT NULL,
+            result_count INTEGER DEFAULT 0,
+            searched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            search_type TEXT,
+            user_initiated BOOLEAN DEFAULT 0
+        )
+    ''')
+    
+    # Research briefings - stores daily briefings
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS research_briefings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            briefing_data TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            was_read BOOLEAN DEFAULT 0,
+            read_at TIMESTAMP
+        )
+    ''')
+    
+    # Research findings - tracks interesting findings for follow-up
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS research_findings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            category TEXT,
+            title TEXT,
+            url TEXT,
+            summary TEXT,
+            relevance_score REAL,
+            found_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            actioned BOOLEAN DEFAULT 0,
+            action_taken TEXT,
+            actioned_at TIMESTAMP
+        )
+    ''')
+    
+    # ============================================================================
     # INDEXES FOR PERFORMANCE
     # ============================================================================
     
@@ -325,9 +375,14 @@ def init_db():
     db.execute('CREATE INDEX IF NOT EXISTS idx_gen_docs_project ON generated_documents(project_id)')
     db.execute('CREATE INDEX IF NOT EXISTS idx_gen_docs_deleted ON generated_documents(is_deleted)')
     
+    # Research agent indexes
+    db.execute('CREATE INDEX IF NOT EXISTS idx_research_logs_date ON research_logs(searched_at)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_research_briefings_date ON research_briefings(created_at)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_research_findings_category ON research_findings(category)')
+    
     db.commit()
     db.close()
-    print("✅ Database initialized (with generated documents table)")
+    print("✅ Database initialized (with research agent tables)")
 
 
 # ============================================================================
