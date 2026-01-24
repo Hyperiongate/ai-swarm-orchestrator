@@ -1,9 +1,18 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: January 23, 2026 - ADDED RESEARCH AGENT
+Last Updated: January 23, 2026 - ADDED ALERT SYSTEM
 
 CHANGES IN THIS VERSION:
+- January 23, 2026: ADDED ALERT SYSTEM (Autonomous Monitoring)
+  * Added alerts_bp blueprint for automated monitoring and notifications
+  * Alert System provides scheduled monitoring jobs
+  * Lead alerts, competitor tracking, regulatory updates
+  * Email notifications for high-priority alerts
+  * Requires SMTP configuration for email delivery (optional)
+  * New environment variables: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD,
+    ALERT_FROM_EMAIL, ALERT_TO_EMAIL, ENABLE_EMAIL_ALERTS, ENABLE_SCHEDULED_JOBS
+
 - January 23, 2026: ADDED RESEARCH AGENT
   * Added research_bp blueprint for web research capabilities
   * Research Agent provides real-time industry news, regulations, studies
@@ -32,8 +41,10 @@ ARCHITECTURE:
 - database.py: All database operations
 - orchestration/: All AI logic + proactive_agent.py
 - routes/: All Flask endpoints
-- research_agent.py: Web research capabilities (NEW)
-- routes/research.py: Research API endpoints (NEW)
+- alert_system.py: Automated monitoring & alerts (NEW)
+- routes/alerts.py: Alert API endpoints (NEW)
+- research_agent.py: Web research capabilities
+- routes/research.py: Research API endpoints
 - project_manager.py: Project detection & management
 - resource_finder.py: Automatic web search
 - improvement_engine.py: Efficiency analysis
@@ -181,9 +192,20 @@ def health():
     except:
         research_status = 'not_installed'
     
+    # Check Alert System status
+    alert_status = 'disabled'
+    alert_email_enabled = False
+    try:
+        from alert_system import get_alert_manager, ENABLE_EMAIL_ALERTS
+        am = get_alert_manager()
+        alert_status = 'enabled'
+        alert_email_enabled = ENABLE_EMAIL_ALERTS
+    except:
+        alert_status = 'not_installed'
+    
     return jsonify({
         'status': 'healthy',
-        'version': 'Sprint 3 Complete + Research Agent',
+        'version': 'Sprint 3 Complete + Research Agent + Alert System',
         'orchestrators': {
             'sonnet': 'configured' if ANTHROPIC_API_KEY else 'missing',
             'opus': 'configured' if ANTHROPIC_API_KEY else 'missing'
@@ -205,6 +227,10 @@ def health():
         },
         'research_agent': {
             'status': research_status
+        },
+        'alert_system': {
+            'status': alert_status,
+            'email_enabled': alert_email_enabled
         },
         'features': {
             'sprint_1': {
@@ -230,6 +256,13 @@ def health():
                 'studies': research_status,
                 'competitor_analysis': research_status,
                 'lead_finder': research_status
+            },
+            'alerts': {
+                'lead_alerts': alert_status,
+                'competitor_alerts': alert_status,
+                'regulatory_alerts': alert_status,
+                'email_notifications': 'enabled' if alert_email_enabled else 'disabled',
+                'scheduled_jobs': alert_status
             }
         }
     })
@@ -249,6 +282,18 @@ except ImportError:
     print("ℹ️  Research Agent routes not found - research features disabled")
 except Exception as e:
     print(f"⚠️  Research Agent registration failed: {e}")
+
+# ============================================================================
+# ALERT SYSTEM BLUEPRINT (Added January 23, 2026)
+# ============================================================================
+try:
+    from routes.alerts import alerts_bp
+    app.register_blueprint(alerts_bp)
+    print("✅ Alert System API registered")
+except ImportError:
+    print("ℹ️  Alert System routes not found - alert features disabled")
+except Exception as e:
+    print(f"⚠️  Alert System registration failed: {e}")
 
 # Sprint 3 blueprints
 try:
