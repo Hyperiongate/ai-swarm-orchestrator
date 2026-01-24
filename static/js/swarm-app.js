@@ -5,6 +5,13 @@ Shiftwork Solutions LLC
 =============================================================================
 
 CHANGE LOG:
+- January 24, 2026: Added Pipeline Dashboard Mode
+  * Added pipeline mode button handling in switchMode()
+  * Added pipelineInfo panel show/hide logic
+  * Added pipeline mode placeholder text
+  * Added pipeline quick actions
+  * Updated mode button active state for pipeline
+
 - January 23, 2026: Added Alert System Mode
   * Added alerts mode button handling in switchMode()
   * Added alertsInfo panel show/hide logic
@@ -28,8 +35,8 @@ SECTIONS:
 3. Clarification Handling Functions
 4. File Upload Handling
 5. Clipboard Functions
-6. Mode Switching (UPDATED for alerts)
-7. Quick Actions (UPDATED for alerts)
+6. Mode Switching (UPDATED for pipeline)
+7. Quick Actions (UPDATED for pipeline)
 8. Project Management
 9. Message Handling (Core)
 10. Feedback System
@@ -273,6 +280,7 @@ function clearConversationArea() {
         '<li><strong>📁 Project Mode:</strong> Full consulting engagements with context tracking</li>' +
         '<li><strong>🔬 Research Mode:</strong> Real-time industry intelligence and news</li>' +
         '<li><strong>🔔 Alerts Mode:</strong> Autonomous monitoring and notifications</li>' +
+        '<li><strong>📊 Pipeline Mode:</strong> Lead scoring and sales pipeline management</li>' +
         '</ul></div></div>';
     
     messageCounter = 0;
@@ -618,7 +626,7 @@ function copyToClipboard(event, msgId) {
 }
 
 // =============================================================================
-// 6. MODE SWITCHING - UPDATED January 23, 2026 for Alerts
+// 6. MODE SWITCHING - UPDATED January 24, 2026 for Pipeline
 // =============================================================================
 
 function switchMode(mode) {
@@ -640,6 +648,10 @@ function switchMode(mode) {
     var alertsBtn = document.getElementById('alertsModeBtn');
     if (alertsBtn) alertsBtn.classList.toggle('active', mode === 'alerts');
     
+    // Pipeline mode button (added January 24, 2026)
+    var pipelineBtn = document.getElementById('pipelineModeBtn');
+    if (pipelineBtn) pipelineBtn.classList.toggle('active', mode === 'pipeline');
+    
     // Show/hide mode-specific panels
     document.getElementById('projectInfo').style.display = mode === 'project' ? 'block' : 'none';
     document.getElementById('calculatorInfo').style.display = mode === 'calculator' ? 'block' : 'none';
@@ -655,6 +667,10 @@ function switchMode(mode) {
     var alertsInfo = document.getElementById('alertsInfo');
     if (alertsInfo) alertsInfo.style.display = mode === 'alerts' ? 'block' : 'none';
     
+    // Pipeline panel (added January 24, 2026)
+    var pipelineInfo = document.getElementById('pipelineInfo');
+    if (pipelineInfo) pipelineInfo.style.display = mode === 'pipeline' ? 'block' : 'none';
+    
     // Load mode-specific data
     if (mode === 'project') loadSavedProjects();
     else if (mode === 'survey') loadQuestionBank();
@@ -662,6 +678,7 @@ function switchMode(mode) {
     else if (mode === 'opportunities') loadNormativeStatus();
     else if (mode === 'research' && typeof checkResearchStatus === 'function') checkResearchStatus();
     else if (mode === 'alerts' && typeof checkAlertStatus === 'function') checkAlertStatus();
+    else if (mode === 'pipeline' && typeof checkPipelineStatus === 'function') checkPipelineStatus();
     
     updateQuickActions();
     
@@ -674,13 +691,14 @@ function switchMode(mode) {
         'marketing': "Type your request... (e.g., 'Generate a LinkedIn post')",
         'opportunities': "Type your request... (e.g., 'Analyze my current schedule')",
         'research': "Type your research topic... (e.g., 'Latest OSHA fatigue regulations')",
-        'alerts': "Type your request... (e.g., 'Add ABC Manufacturing to monitored clients')"
+        'alerts': "Type your request... (e.g., 'Add ABC Manufacturing to monitored clients')",
+        'pipeline': "Type your request... (e.g., 'Show me high priority leads')"
     };
     input.placeholder = placeholders[mode] || placeholders['quick'];
 }
 
 // =============================================================================
-// 7. QUICK ACTIONS - UPDATED January 23, 2026 for Alerts
+// 7. QUICK ACTIONS - UPDATED January 24, 2026 for Pipeline
 // =============================================================================
 
 function updateQuickActions() {
@@ -699,6 +717,10 @@ function updateQuickActions() {
             '<li onclick="if(typeof viewScheduledJobs===\'function\')viewScheduledJobs()">📅 View Jobs</li>' +
             '<li onclick="if(typeof addMonitoredClient===\'function\')addMonitoredClient()">➕ Add Client</li>' +
             '<li onclick="if(typeof loadRecentAlerts===\'function\')loadRecentAlerts()">🔄 Refresh Alerts</li>',
+        'pipeline': '<li onclick="if(typeof addNewLead===\'function\')addNewLead()">➕ Add Lead</li>' +
+            '<li onclick="if(typeof importLeadsFromAlerts===\'function\')importLeadsFromAlerts()">📥 Import Alerts</li>' +
+            '<li onclick="if(typeof viewAllLeads===\'function\')viewAllLeads()">👁️ View Pipeline</li>' +
+            '<li onclick="quickAction(\'Show me high priority leads with score above 70\')">🔥 High Priority</li>',
         'default': '<li onclick="quickAction(\'data collection\')">📋 Data Collection Doc</li>' +
             '<li onclick="quickAction(\'proposal\')">📄 Create Proposal</li>' +
             '<li onclick="quickAction(\'analyze files\')">📊 Analyze Files</li>' +
@@ -1074,7 +1096,7 @@ function initializeApp() {
     
     setInterval(function() { loadStats(); loadDocuments(); }, 30000);
     
-    console.log('AI Swarm Interface initialized with Alert System support');
+    console.log('AI Swarm Interface initialized with Pipeline Dashboard support');
 }
 
 if (document.readyState === 'loading') {
