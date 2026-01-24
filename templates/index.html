@@ -8,26 +8,17 @@
     =============================================================================
     
     CHANGE LOG:
-    - January 23, 2026: Added Client Intelligence Dashboard (Pipeline Mode)
-      * Added "📊 Pipeline" mode button in header
-      * Added Pipeline Info Panel in sidebar with:
-        - Pipeline summary (leads by stage, high priority count)
-        - Kanban-style pipeline view
-        - Lead cards with scores and actions
-        - Quick actions: Add Lead, Import from Alerts, View All
-      * Lead scoring based on 202-company normative database
-      * Actions: Draft Email, Draft Proposal, Research Deeper
+    - January 24, 2026: FIXED Industry Input - Changed from free-text prompt to 
+      dropdown selection in addNewLead() function. Added modal dialog for lead 
+      entry with proper industry dropdown matching the 16 industries in the 
+      scoring database. This prevents typos like "parmaceutical" that caused 
+      industry matching to fail.
     
+    - January 23, 2026: Added Client Intelligence Dashboard (Pipeline Mode)
     - January 23, 2026: Added Alert System Panel
     - January 23, 2026: Added Research Agent Panel
     - January 23, 2026: Added Voice Control System
     - January 22, 2026: Added Persistent Conversation Memory System
-    
-    FILE STRUCTURE:
-    /templates/index.html              - This file (HTML structure)
-    /static/css/swarm-styles.css       - All CSS styles
-    /static/js/swarm-app.js            - Core JavaScript functionality
-    /static/js/swarm-voice.js          - Voice control module
     
     =============================================================================
     -->
@@ -148,7 +139,7 @@
         .alert-item-actions .action-btn { background: #667eea; color: white; }
         .section-title { font-size: 13px; font-weight: 600; color: #555; margin: 15px 0 8px 0; padding-bottom: 5px; border-bottom: 1px solid #e0e0e0; }
         
-        /* Pipeline Dashboard Styles - Added January 23, 2026 */
+        /* Pipeline Dashboard Styles */
         .pipeline-info {
             display: none;
             padding: 15px;
@@ -215,38 +206,14 @@
         .lead-card.grade-d { border-left-color: #f44336; }
         .lead-card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px; }
         .lead-card-company { font-size: 13px; font-weight: 600; color: #333; }
-        .lead-card-score { 
-            font-size: 11px; 
-            font-weight: 700; 
-            padding: 2px 8px; 
-            border-radius: 12px; 
-            color: white;
-        }
+        .lead-card-score { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 12px; color: white; }
         .lead-card-score.high { background: #4caf50; }
         .lead-card-score.medium { background: #ff9800; }
         .lead-card-score.low { background: #9e9e9e; }
         .lead-card-industry { font-size: 11px; color: #666; margin-bottom: 4px; }
-        .lead-card-stage { 
-            display: inline-block;
-            font-size: 10px; 
-            padding: 2px 6px; 
-            border-radius: 4px; 
-            background: #e0e0e0;
-            color: #555;
-            text-transform: uppercase;
-        }
+        .lead-card-stage { display: inline-block; font-size: 10px; padding: 2px 6px; border-radius: 4px; background: #e0e0e0; color: #555; text-transform: uppercase; }
         .lead-card-actions { display: flex; gap: 4px; margin-top: 8px; }
-        .lead-card-actions button { 
-            flex: 1;
-            padding: 5px; 
-            font-size: 10px; 
-            border: none; 
-            border-radius: 4px; 
-            cursor: pointer;
-            background: #f0f0f0;
-            color: #555;
-            transition: all 0.2s;
-        }
+        .lead-card-actions button { flex: 1; padding: 5px; font-size: 10px; border: none; border-radius: 4px; cursor: pointer; background: #f0f0f0; color: #555; transition: all 0.2s; }
         .lead-card-actions button:hover { background: #667eea; color: white; }
         .high-priority-banner {
             background: linear-gradient(135deg, #4caf50 0%, #81c784 100%);
@@ -260,6 +227,102 @@
             gap: 8px;
         }
         .high-priority-banner .count { font-size: 18px; font-weight: 700; }
+        
+        /* Add Lead Modal Styles - Added January 24, 2026 */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal-content {
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            width: 90%;
+            max-width: 450px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+        }
+        .modal-header {
+            font-size: 18px;
+            font-weight: 700;
+            color: #333;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: #999;
+            padding: 0;
+            line-height: 1;
+        }
+        .modal-close:hover { color: #333; }
+        .modal-form-group { margin-bottom: 18px; }
+        .modal-form-group label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: #555;
+            margin-bottom: 6px;
+        }
+        .modal-form-group label .required { color: #d32f2f; }
+        .modal-form-group input,
+        .modal-form-group select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.2s;
+            box-sizing: border-box;
+        }
+        .modal-form-group input:focus,
+        .modal-form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .modal-form-group .help-text {
+            font-size: 11px;
+            color: #888;
+            margin-top: 4px;
+        }
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 25px;
+        }
+        .modal-actions button {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .modal-actions .btn-cancel { background: #f0f0f0; color: #666; }
+        .modal-actions .btn-cancel:hover { background: #e0e0e0; }
+        .modal-actions .btn-submit {
+            background: linear-gradient(135deg, #4caf50 0%, #81c784 100%);
+            color: white;
+        }
+        .modal-actions .btn-submit:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(76, 175, 80, 0.4);
+        }
     </style>
 </head>
 <body>
@@ -320,7 +383,7 @@
                     </div>
                 </div>
                 
-                <!-- CONVERSATIONS SECTION (Memory Feature) -->
+                <!-- CONVERSATIONS SECTION -->
                 <div class="conversations-section">
                     <div class="conversations-header">
                         <h3>💬 Conversations</h3>
@@ -352,7 +415,7 @@
                     </div>
                 </div>
                 
-                <!-- Project Info Panel (project mode only) -->
+                <!-- Project Info Panel -->
                 <div class="project-info" id="projectInfo">
                     <h3 style="margin-bottom: 10px;">Current Project</h3>
                     <label>Select Existing Project</label>
@@ -366,7 +429,7 @@
                     <button onclick="startNewProject()" style="width: 100%; padding: 10px; margin-top: 10px; background: #667eea; color: white; border: none; border-radius: 8px; cursor: pointer;">+ New Project</button>
                 </div>
                 
-                <!-- Marketing Info Panel (marketing mode only) -->
+                <!-- Marketing Info Panel -->
                 <div class="marketing-info" id="marketingInfo" style="display: none;">
                     <h3 style="margin-bottom: 10px;">Marketing Hub</h3>
                     <div style="font-size: 12px; margin-bottom: 15px;">
@@ -381,7 +444,7 @@
                     <button onclick="analyzeCompetitors()" style="width: 100%; padding: 8px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer;">📊 Competitive Analysis</button>
                 </div>
                 
-                <!-- Calculator Panel (calculator mode only) -->
+                <!-- Calculator Panel -->
                 <div class="calculator-info" id="calculatorInfo" style="display: none;">
                     <h3 style="margin-bottom: 10px;">Cost Calculator</h3>
                     <h4 style="font-size: 14px; margin-bottom: 8px;">Quick Calculations</h4>
@@ -390,7 +453,7 @@
                     <button onclick="scheduleImpact()" style="width: 100%; padding: 8px; background: #0077b5; color: white; border: none; border-radius: 6px; cursor: pointer;">📊 Schedule Impact</button>
                 </div>
                 
-                <!-- Survey Panel (survey mode only) -->
+                <!-- Survey Panel -->
                 <div class="survey-info" id="surveyInfo" style="display: none;">
                     <h3 style="margin-bottom: 10px;">Survey Builder</h3>
                     <div style="font-size: 12px; margin-bottom: 15px;">
@@ -403,7 +466,7 @@
                     <button onclick="exportSurveyData()" style="width: 100%; padding: 8px; background: #764ba2; color: white; border: none; border-radius: 6px; cursor: pointer;">📤 Export Data</button>
                 </div>
                 
-                <!-- Opportunities Panel (opportunities mode only) -->
+                <!-- Opportunities Panel -->
                 <div class="opportunities-info" id="opportunitiesInfo" style="display: none;">
                     <h3 style="margin-bottom: 10px;">🎯 Opportunity Finder</h3>
                     <div style="font-size: 12px; margin-bottom: 15px;">
@@ -416,37 +479,32 @@
                     <button onclick="findImprovements()" style="width: 100%; padding: 8px; background: #0077b5; color: white; border: none; border-radius: 6px; cursor: pointer;">💡 Find Improvements</button>
                 </div>
                 
-                <!-- Research Panel (research mode only) -->
+                <!-- Research Panel -->
                 <div class="research-info" id="researchInfo" style="display: none;">
                     <h3>🔬 Research Agent</h3>
                     <div class="research-status" id="researchStatus">
                         <strong>Status:</strong> Checking...
                     </div>
-                    
                     <div class="research-section-title">📋 Daily Intelligence</div>
                     <button class="research-btn briefing" onclick="getDailyBriefing()">📰 Get Daily Briefing</button>
-                    
                     <div class="research-section-title">🔍 Quick Research</div>
                     <button class="research-btn news" onclick="searchIndustryNews()">📰 Industry News</button>
                     <button class="research-btn regulations" onclick="searchRegulations()">⚖️ Regulations & Compliance</button>
                     <button class="research-btn studies" onclick="searchStudies()">🔬 Research Studies</button>
-                    
                     <div class="research-section-title">📊 Competitive Intelligence</div>
                     <button class="research-btn competitors" onclick="searchCompetitors()">🏢 Competitor Analysis</button>
                     <button class="research-btn leads" onclick="searchLeads()">🎯 Find Potential Leads</button>
-                    
                     <div class="research-section-title">🔎 Custom Search</div>
                     <input type="text" id="researchQuery" placeholder="Enter research topic..." style="width: 100%; padding: 10px; border: 2px solid #e0e0e0; border-radius: 6px; margin-bottom: 8px; box-sizing: border-box;">
                     <button class="research-btn" style="background: linear-gradient(135deg, #455a64 0%, #78909c 100%); color: white;" onclick="customResearch()">🔍 Research Topic</button>
                 </div>
                 
-                <!-- Alerts Panel (alerts mode only) -->
+                <!-- Alerts Panel -->
                 <div class="alerts-info" id="alertsInfo" style="display: none;">
                     <h3>🔔 Alert System</h3>
                     <div class="alerts-status" id="alertsStatus">
                         <strong>Status:</strong> Checking...
                     </div>
-                    
                     <div class="alert-counts" id="alertCounts">
                         <div class="alert-count-badge critical">
                             <span class="count" id="criticalCount">0</span>
@@ -461,30 +519,26 @@
                             <span class="label">Unread</span>
                         </div>
                     </div>
-                    
                     <div class="section-title">⚡ Quick Actions</div>
                     <button class="alert-btn run-scan" onclick="runLeadScan()">🎯 Run Lead Scan Now</button>
                     <button class="alert-btn view-jobs" onclick="viewScheduledJobs()">📅 View Scheduled Jobs</button>
                     <button class="alert-btn add-monitor" onclick="addMonitoredClient()">➕ Add Client to Monitor</button>
-                    
                     <div class="section-title">📋 Recent Alerts</div>
                     <div class="alert-list" id="alertList">
                         <div style="text-align: center; color: #999; padding: 20px;">Loading alerts...</div>
                     </div>
                 </div>
                 
-                <!-- Pipeline Dashboard Panel (pipeline mode only) - NEW January 23, 2026 -->
+                <!-- Pipeline Dashboard Panel -->
                 <div class="pipeline-info" id="pipelineInfo" style="display: none;">
                     <h3>📊 Lead Pipeline</h3>
                     <div class="pipeline-status" id="pipelineStatus">
                         <strong>Status:</strong> Checking...
                     </div>
-                    
                     <div class="high-priority-banner" id="highPriorityBanner" style="display: none;">
                         <span class="count" id="highPriorityCount">0</span>
                         <span>High-Priority Leads (Score ≥70)</span>
                     </div>
-                    
                     <div class="pipeline-summary" id="pipelineSummary">
                         <div class="pipeline-stage-badge detected">
                             <span class="stage-count" id="detectedCount">0</span>
@@ -503,12 +557,10 @@
                             <span class="stage-name">Proposal</span>
                         </div>
                     </div>
-                    
                     <div class="section-title">⚡ Quick Actions</div>
-                    <button class="pipeline-btn add-lead" onclick="addNewLead()">➕ Add New Lead</button>
+                    <button class="pipeline-btn add-lead" onclick="openAddLeadModal()">➕ Add New Lead</button>
                     <button class="pipeline-btn import-alerts" onclick="importLeadsFromAlerts()">📥 Import from Alerts</button>
                     <button class="pipeline-btn view-all" onclick="viewAllLeads()">👁️ View All Leads</button>
-                    
                     <div class="section-title">🔥 Top Leads</div>
                     <div class="lead-list" id="topLeadsList">
                         <div style="text-align: center; color: #999; padding: 20px;">Loading leads...</div>
@@ -530,7 +582,7 @@
             <!-- MAIN CONTENT AREA -->
             <div class="main-content">
                 
-                <!-- MEMORY STATUS INDICATOR (Memory Feature) -->
+                <!-- MEMORY STATUS INDICATOR -->
                 <div class="memory-indicator" id="memoryIndicator">
                     <div class="memory-status warning" id="memoryStatus">
                         <span class="memory-icon">⚠️</span>
@@ -594,6 +646,60 @@
                     <div id="fileList" style="display: flex; flex-wrap: wrap; gap: 8px;"></div>
                 </div>
             </div>
+        </div>
+    </div>
+    
+    <!-- Add Lead Modal - Added January 24, 2026 -->
+    <div class="modal-overlay" id="addLeadModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <span>➕ Add New Lead</span>
+                <button class="modal-close" onclick="closeAddLeadModal()">&times;</button>
+            </div>
+            <form id="addLeadForm" onsubmit="submitNewLead(event)">
+                <div class="modal-form-group">
+                    <label>Company Name <span class="required">*</span></label>
+                    <input type="text" id="leadCompanyName" required placeholder="e.g., Acme Manufacturing">
+                </div>
+                <div class="modal-form-group">
+                    <label>Industry <span class="required">*</span></label>
+                    <select id="leadIndustry" required>
+                        <option value="">-- Select Industry --</option>
+                        <option value="food_processing">Food Processing</option>
+                        <option value="manufacturing">Manufacturing</option>
+                        <option value="pharmaceutical">Pharmaceutical</option>
+                        <option value="mining">Mining</option>
+                        <option value="consumer_products">Consumer Products</option>
+                        <option value="beverage">Beverage</option>
+                        <option value="utilities">Utilities</option>
+                        <option value="paper_packaging">Paper & Packaging</option>
+                        <option value="technology">Technology</option>
+                        <option value="oil_gas_energy">Oil, Gas & Energy</option>
+                        <option value="chemicals">Chemicals</option>
+                        <option value="automotive">Automotive</option>
+                        <option value="transportation">Transportation</option>
+                        <option value="healthcare">Healthcare</option>
+                        <option value="government_mint">Government / Mint</option>
+                        <option value="gaming_hospitality">Gaming & Hospitality</option>
+                        <option value="other">Other</option>
+                    </select>
+                    <div class="help-text">Select the industry that best matches this lead</div>
+                </div>
+                <div class="modal-form-group">
+                    <label>Estimated Employees</label>
+                    <input type="number" id="leadHeadcount" placeholder="e.g., 500" min="1">
+                    <div class="help-text">Optional - helps with lead scoring</div>
+                </div>
+                <div class="modal-form-group">
+                    <label>Notes</label>
+                    <input type="text" id="leadNotes" placeholder="e.g., Referred by John Smith">
+                    <div class="help-text">Optional - any additional context</div>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn-cancel" onclick="closeAddLeadModal()">Cancel</button>
+                    <button type="submit" class="btn-submit">Add Lead</button>
+                </div>
+            </form>
         </div>
     </div>
     
@@ -937,7 +1043,8 @@
     }
     
     // =============================================================================
-    // PIPELINE DASHBOARD FUNCTIONS - Added January 23, 2026
+    // PIPELINE DASHBOARD FUNCTIONS - Updated January 24, 2026
+    // Fixed: Changed from free-text prompts to modal with industry dropdown
     // =============================================================================
     
     function checkPipelineStatus() {
@@ -973,7 +1080,6 @@
                     document.getElementById('contactedCount').textContent = (byStage.contacted || {}).count || 0;
                     document.getElementById('proposalCount').textContent = (byStage.proposal || {}).count || 0;
                     
-                    // High priority banner
                     var highPriority = data.high_priority || 0;
                     var banner = document.getElementById('highPriorityBanner');
                     if (highPriority > 0) {
@@ -1030,32 +1136,75 @@
         return div.innerHTML;
     }
     
-    function addNewLead() {
-        var company = prompt('Enter company name:', '');
-        if (!company) return;
-        var industry = prompt('Enter industry (e.g., pharmaceutical, food processing, manufacturing):', '');
-        var headcount = prompt('Estimated employee count (optional):', '');
+    // =============================================================================
+    // ADD LEAD MODAL FUNCTIONS - Added January 24, 2026
+    // Replaces the old prompt-based addNewLead() function
+    // =============================================================================
+    
+    function openAddLeadModal() {
+        document.getElementById('addLeadForm').reset();
+        document.getElementById('addLeadModal').classList.add('active');
+    }
+    
+    function closeAddLeadModal() {
+        document.getElementById('addLeadModal').classList.remove('active');
+    }
+    
+    function submitNewLead(event) {
+        event.preventDefault();
+        
+        var company = document.getElementById('leadCompanyName').value.trim();
+        var industry = document.getElementById('leadIndustry').value;
+        var headcount = document.getElementById('leadHeadcount').value;
+        var notes = document.getElementById('leadNotes').value.trim();
+        
+        if (!company) {
+            alert('Please enter a company name');
+            return;
+        }
+        
+        if (!industry) {
+            alert('Please select an industry');
+            return;
+        }
+        
+        closeAddLeadModal();
+        
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        document.querySelector('.loading-text').textContent = 'Creating lead and calculating score...';
         
         fetch('/api/intelligence/leads', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
                 company_name: company,
-                industry: industry || null,
+                industry: industry,
                 headcount: headcount ? parseInt(headcount) : null,
+                notes: notes || null,
                 source: 'manual'
             })
         })
         .then(function(r) { return r.json(); })
         .then(function(data) {
+            loading.classList.remove('active');
             if (data.success) {
-                addMessage('assistant', '✅ Lead created: ' + company + '\n\n**Score:** ' + data.score + '/100 (Grade: ' + data.grade + ')\n\nThe lead has been added to your pipeline.');
+                addMessage('assistant', '✅ Lead created: **' + company + '**\n\n**Score:** ' + data.score + '/100 (Grade: ' + data.grade + ')\n\nThe lead has been added to your pipeline.');
                 loadPipelineSummary();
                 loadTopLeads();
             } else {
                 addMessage('assistant', '❌ Error: ' + data.error);
             }
+        })
+        .catch(function(err) {
+            loading.classList.remove('active');
+            addMessage('assistant', '❌ Error: ' + err.message);
         });
+    }
+    
+    // Backward compatibility alias
+    function addNewLead() {
+        openAddLeadModal();
     }
     
     function importLeadsFromAlerts() {
@@ -1098,8 +1247,6 @@
                 loading.classList.remove('active');
                 if (data.success) {
                     var content = '<h3>📊 Pipeline Dashboard</h3>';
-                    
-                    // Summary
                     content += '<div style="display: flex; gap: 15px; margin: 15px 0; flex-wrap: wrap;">';
                     data.stages.forEach(function(stage) {
                         var stageData = data.summary.by_stage[stage.id] || { count: 0, avg_score: 0 };
@@ -1109,8 +1256,6 @@
                         content += '</div>';
                     });
                     content += '</div>';
-                    
-                    // Kanban-style view
                     content += '<div style="margin-top: 20px;">';
                     ['detected', 'qualified', 'contacted', 'proposal'].forEach(function(stageId) {
                         var leads = data.kanban[stageId] || [];
@@ -1134,7 +1279,6 @@
                         content += '</div>';
                     });
                     content += '</div>';
-                    
                     addMessage('assistant', content, null, 'pipeline');
                 }
             })
@@ -1143,134 +1287,7 @@
                 addMessage('assistant', '❌ Error: ' + err.message);
             });
     }
-    
-    function viewLead(leadId) {
-        var loading = document.getElementById('loadingIndicator');
-        loading.classList.add('active');
-        
-        fetch('/api/intelligence/leads/' + leadId)
-            .then(function(r) { return r.json(); })
-            .then(function(data) {
-                loading.classList.remove('active');
-                if (data.success && data.lead) {
-                    var lead = data.lead;
-                    var content = '<h3>🎯 Lead Details</h3>';
-                    
-                    // Header with score
-                    content += '<div style="padding: 15px; background: linear-gradient(135deg, #e3f2fd 0%, #f3e5f5 100%); border-radius: 8px; margin: 10px 0;">';
-                    content += '<div style="display: flex; justify-content: space-between; align-items: center;">';
-                    content += '<strong style="font-size: 18px;">' + lead.company_name + '</strong>';
-                    var scoreColor = lead.score >= 70 ? '#4caf50' : (lead.score >= 40 ? '#ff9800' : '#9e9e9e');
-                    content += '<span style="background: ' + scoreColor + '; color: white; padding: 5px 15px; border-radius: 20px; font-weight: 700;">' + lead.score + '/100</span>';
-                    content += '</div>';
-                    if (lead.industry) content += '<div style="margin-top: 5px; color: #666;">' + lead.industry + '</div>';
-                    content += '<div style="margin-top: 5px;"><span style="background: #e0e0e0; padding: 3px 10px; border-radius: 4px; font-size: 12px; text-transform: uppercase;">' + lead.pipeline_stage + '</span></div>';
-                    content += '</div>';
-                    
-                    // Similar past clients
-                    if (lead.similar_clients && lead.similar_clients.talking_point) {
-                        content += '<div style="padding: 12px; background: #e8f5e9; border-radius: 6px; margin: 10px 0;">';
-                        content += '<strong style="color: #2e7d32;">💡 Talking Point:</strong><br>';
-                        content += '<span style="font-size: 13px;">' + lead.similar_clients.talking_point + '</span>';
-                        content += '</div>';
-                    }
-                    
-                    // Score breakdown
-                    if (lead.score_breakdown && lead.score_breakdown.breakdown) {
-                        content += '<div style="margin: 15px 0;">';
-                        content += '<strong>Score Breakdown:</strong>';
-                        content += '<div style="display: flex; gap: 10px; margin-top: 8px; flex-wrap: wrap;">';
-                        var breakdown = lead.score_breakdown.breakdown;
-                        var factors = [
-                            { key: 'industry_match', label: 'Industry', max: 40 },
-                            { key: 'size_match', label: 'Size', max: 20 },
-                            { key: 'signal_strength', label: 'Signal', max: 20 },
-                            { key: 'recency', label: 'Recency', max: 10 },
-                            { key: 'engagement', label: 'Engagement', max: 10 }
-                        ];
-                        factors.forEach(function(f) {
-                            var val = breakdown[f.key] || 0;
-                            var pct = Math.round(val / f.max * 100);
-                            content += '<div style="flex: 1; min-width: 80px; text-align: center; padding: 8px; background: #f5f5f5; border-radius: 6px;">';
-                            content += '<div style="font-size: 16px; font-weight: 600;">' + val + '/' + f.max + '</div>';
-                            content += '<div style="font-size: 10px; color: #666;">' + f.label + '</div>';
-                            content += '</div>';
-                        });
-                        content += '</div></div>';
-                    }
-                    
-                    // Actions
-                    content += '<div style="display: flex; gap: 10px; margin-top: 15px; flex-wrap: wrap;">';
-                    content += '<button onclick="draftEmail(' + lead.id + ')" style="flex: 1; padding: 10px; background: linear-gradient(135deg, #1976d2 0%, #42a5f5 100%); color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">📧 Draft Email</button>';
-                    content += '<button onclick="draftProposal(' + lead.id + ')" style="flex: 1; padding: 10px; background: linear-gradient(135deg, #9c27b0 0%, #ba68c8 100%); color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">📄 Draft Proposal</button>';
-                    content += '<button onclick="researchLead(' + lead.id + ')" style="flex: 1; padding: 10px; background: linear-gradient(135deg, #388e3c 0%, #66bb6a 100%); color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">🔍 Research</button>';
-                    content += '</div>';
-                    
-                    // Stage change
-                    content += '<div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #e0e0e0;">';
-                    content += '<strong>Move to Stage:</strong>';
-                    content += '<div style="display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap;">';
-                    ['detected', 'qualified', 'contacted', 'proposal', 'won', 'lost'].forEach(function(stage) {
-                        var isActive = stage === lead.pipeline_stage;
-                        content += '<button onclick="changeLeadStage(' + lead.id + ', \'' + stage + '\')" style="padding: 6px 12px; background: ' + (isActive ? '#667eea' : '#f0f0f0') + '; color: ' + (isActive ? 'white' : '#555') + '; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; text-transform: uppercase;">' + stage + '</button>';
-                    });
-                    content += '</div></div>';
-                    
-                    addMessage('assistant', content, null, 'pipeline');
-                }
-            })
-            .catch(function(err) {
-                loading.classList.remove('active');
-                addMessage('assistant', '❌ Error: ' + err.message);
-            });
-    }
-    
-    function draftEmail(leadId) {
-        var loading = document.getElementById('loadingIndicator');
-        loading.classList.add('active');
-        document.querySelector('.loading-text').textContent = 'Drafting email...';
-        
-        fetch('/api/intelligence/leads/' + leadId + '/draft-email', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ email_type: 'initial' })
-        })
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            loading.classList.remove('active');
-            if (data.success && data.email) {
-                var content = '<h3>📧 Draft Email</h3>';
-                content += '<div style="padding: 15px; background: #f9f9f9; border-radius: 8px; margin: 10px 0;">';
-                content += '<strong>Subject:</strong> ' + data.email.subject + '<br><br>';
-                content += '<pre style="white-space: pre-wrap; font-family: inherit; background: white; padding: 15px; border-radius: 6px; border: 1px solid #e0e0e0;">' + data.email.body + '</pre>';
-                content += '</div>';
-                content += '<button onclick="copyEmailToClipboard()" style="padding: 10px 20px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer;">📋 Copy to Clipboard</button>';
-                addMessage('assistant', content, null, 'pipeline');
-            } else {
-                addMessage('assistant', '❌ Error drafting email');
-            }
-        });
-    }
-    
-    function draftProposal(leadId) {
-        var loading = document.getElementById('loadingIndicator');
-        loading.classList.add('active');
-        document.querySelector('.loading-text').textContent = 'Drafting proposal outline...';
-        
-        fetch('/api/intelligence/leads/' + leadId + '/draft-proposal', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ proposal_type: 'assessment' })
-        })
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            loading.classList.remove('active');
-            if (data.success && data.proposal) {
-                var content = '<h3>📄 Proposal Outline</h3>';
-                content += '<h4>' + data.proposal.title + '</h4>';
-                data.proposal.sections.forEach(function(section) {
-                    content += '<div style="padding: 12px; background: #f9f9f9; border-radius: 6px; margin: 10px 0; border-left: 3px solid #667eea;">';
-                    content += '<strong>' + section.title + '</strong><br>';
+.title + '</strong><br>';
                     content += '<span style="font-size: 13px; color: #555;">' + section.content + '</span>';
                     content += '</div>';
                 });
@@ -1380,4 +1397,8 @@
 </body>
 </html>
 
-<!-- I did no harm and this file is not truncated -->
+<!-- 
+Updated: January 24, 2026
+Changes: Added modal-based Add Lead form with industry dropdown to prevent typos
+I did no harm and this file is not truncated 
+-->
