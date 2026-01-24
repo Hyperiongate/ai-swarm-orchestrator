@@ -788,6 +788,7 @@ function copyToClipboard(event, msgId) {
 function switchMode(mode) {
     currentMode = mode;
     
+    // Update mode button active states
     document.getElementById('quickModeBtn').classList.toggle('active', mode === 'quick');
     document.getElementById('projectModeBtn').classList.toggle('active', mode === 'project');
     document.getElementById('calculatorModeBtn').classList.toggle('active', mode === 'calculator');
@@ -795,12 +796,26 @@ function switchMode(mode) {
     document.getElementById('marketingModeBtn').classList.toggle('active', mode === 'marketing');
     document.getElementById('opportunitiesModeBtn').classList.toggle('active', mode === 'opportunities');
     
+    // Research mode button (added January 23, 2026)
+    var researchBtn = document.getElementById('researchModeBtn');
+    if (researchBtn) {
+        researchBtn.classList.toggle('active', mode === 'research');
+    }
+    
+    // Show/hide mode-specific panels
     document.getElementById('projectInfo').style.display = mode === 'project' ? 'block' : 'none';
     document.getElementById('calculatorInfo').style.display = mode === 'calculator' ? 'block' : 'none';
     document.getElementById('surveyInfo').style.display = mode === 'survey' ? 'block' : 'none';
     document.getElementById('marketingInfo').style.display = mode === 'marketing' ? 'block' : 'none';
     document.getElementById('opportunitiesInfo').style.display = mode === 'opportunities' ? 'block' : 'none';
     
+    // Research panel (added January 23, 2026)
+    var researchInfo = document.getElementById('researchInfo');
+    if (researchInfo) {
+        researchInfo.style.display = mode === 'research' ? 'block' : 'none';
+    }
+    
+    // Load mode-specific data
     if (mode === 'project') {
         loadSavedProjects();
     } else if (mode === 'survey') {
@@ -809,6 +824,11 @@ function switchMode(mode) {
         loadMarketingStatus();
     } else if (mode === 'opportunities') {
         loadNormativeStatus();
+    } else if (mode === 'research') {
+        // Check research status when entering research mode
+        if (typeof checkResearchStatus === 'function') {
+            checkResearchStatus();
+        }
     }
     
     updateQuickActions();
@@ -820,7 +840,8 @@ function switchMode(mode) {
         'calculator': "Type your request... (e.g., 'Calculate overtime cost for $25/hr with 10 hours OT weekly')",
         'survey': "Type your request... (e.g., 'Create a survey about weekend preferences')",
         'marketing': "Type your request... (e.g., 'Generate a LinkedIn post about 12-hour schedules')",
-        'opportunities': "Type your request... (e.g., 'Analyze my current schedule for improvements')"
+        'opportunities': "Type your request... (e.g., 'Analyze my current schedule for improvements')",
+        'research': "Type your research topic... (e.g., 'Latest OSHA fatigue regulations')"
     };
     input.placeholder = placeholders[mode] || placeholders['quick'];
 }
@@ -841,6 +862,10 @@ function updateQuickActions() {
             '<li onclick="quickAction(\'Compare my metrics to norms\')">📈 Industry Comparison</li>' +
             '<li onclick="quickAction(\'Find cost reduction opportunities\')">💰 Cost Savings</li>' +
             '<li onclick="quickAction(\'Evaluate schedule alternatives\')">🔄 Alternative Schedules</li>',
+        'research': '<li onclick="if(typeof searchIndustryNews===\'function\')searchIndustryNews()">📰 Industry News</li>' +
+            '<li onclick="if(typeof searchRegulations===\'function\')searchRegulations()">⚖️ Regulations</li>' +
+            '<li onclick="if(typeof searchStudies===\'function\')searchStudies()">🔬 Studies</li>' +
+            '<li onclick="if(typeof getDailyBriefing===\'function\')getDailyBriefing()">📋 Daily Briefing</li>',
         'default': '<li onclick="quickAction(\'data collection\')">📋 Data Collection Doc</li>' +
             '<li onclick="quickAction(\'proposal\')">📄 Create Proposal</li>' +
             '<li onclick="quickAction(\'analyze files\')">📊 Analyze Files</li>' +
