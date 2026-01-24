@@ -8,6 +8,18 @@
     =============================================================================
     
     CHANGE LOG:
+    - January 23, 2026: Added Research Agent Panel
+      * Added "🔬 Research" mode button in header
+      * Added Research Info Panel in sidebar with:
+        - Research status indicator
+        - Industry News button
+        - Regulations button
+        - Research Studies button
+        - Competitor Analysis button
+        - Find Leads button
+        - Daily Briefing button
+      * Research Agent provides real-time web intelligence
+    
     - January 23, 2026: Added Voice Control System
       * Added voice control section in sidebar with activation button
       * Added voice status indicator with animated dot
@@ -32,7 +44,7 @@
     /templates/index.html              - This file (HTML structure)
     /static/css/swarm-styles.css       - All CSS styles (includes voice styles)
     /static/js/swarm-app.js            - Core JavaScript functionality
-    /static/js/swarm-voice.js          - Voice control module (NEW)
+    /static/js/swarm-voice.js          - Voice control module
     
     =============================================================================
     -->
@@ -40,6 +52,112 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Swarm - Unified Interface | Shiftwork Solutions</title>
     <link rel="stylesheet" href="/static/css/swarm-styles.css">
+    <style>
+        /* Research Panel Styles - Added January 23, 2026 */
+        .research-info {
+            display: none;
+            padding: 15px;
+            background: linear-gradient(135deg, #e8f5e9 0%, #e3f2fd 100%);
+            border-radius: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .research-info h3 {
+            margin-bottom: 10px;
+            color: #2e7d32;
+        }
+        
+        .research-status {
+            padding: 10px;
+            background: white;
+            border-radius: 6px;
+            font-size: 12px;
+            margin-bottom: 15px;
+            border-left: 3px solid #4caf50;
+        }
+        
+        .research-status.error {
+            border-left-color: #f44336;
+            background: #ffebee;
+        }
+        
+        .research-btn {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 8px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 13px;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .research-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        
+        .research-btn.news { background: linear-gradient(135deg, #1976d2 0%, #42a5f5 100%); color: white; }
+        .research-btn.regulations { background: linear-gradient(135deg, #7b1fa2 0%, #ab47bc 100%); color: white; }
+        .research-btn.studies { background: linear-gradient(135deg, #388e3c 0%, #66bb6a 100%); color: white; }
+        .research-btn.competitors { background: linear-gradient(135deg, #f57c00 0%, #ffb74d 100%); color: white; }
+        .research-btn.leads { background: linear-gradient(135deg, #d32f2f 0%, #ef5350 100%); color: white; }
+        .research-btn.briefing { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            color: white;
+            padding: 12px;
+            font-size: 14px;
+        }
+        
+        .research-section-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: #555;
+            margin: 15px 0 8px 0;
+            padding-bottom: 5px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        
+        .research-results {
+            max-height: 300px;
+            overflow-y: auto;
+            margin-top: 10px;
+        }
+        
+        .research-result-item {
+            padding: 10px;
+            background: white;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            border-left: 3px solid #667eea;
+        }
+        
+        .research-result-item h4 {
+            font-size: 13px;
+            margin-bottom: 5px;
+            color: #333;
+        }
+        
+        .research-result-item p {
+            font-size: 11px;
+            color: #666;
+            margin-bottom: 5px;
+        }
+        
+        .research-result-item a {
+            font-size: 11px;
+            color: #667eea;
+            text-decoration: none;
+        }
+        
+        .research-result-item a:hover {
+            text-decoration: underline;
+        }
+    </style>
 </head>
 <body>
     <div class="container">
@@ -56,6 +174,7 @@
                 <button class="mode-btn" onclick="switchMode('survey')" id="surveyModeBtn">📋 Survey</button>
                 <button class="mode-btn" onclick="switchMode('marketing')" id="marketingModeBtn">📢 Marketing</button>
                 <button class="mode-btn" onclick="switchMode('opportunities')" id="opportunitiesModeBtn">🎯 Opportunities</button>
+                <button class="mode-btn" onclick="switchMode('research')" id="researchModeBtn">🔬 Research</button>
             </div>
         </div>
         
@@ -192,6 +311,44 @@
                     <button onclick="findImprovements()" style="width: 100%; padding: 8px; background: #0077b5; color: white; border: none; border-radius: 6px; cursor: pointer;">💡 Find Improvements</button>
                 </div>
                 
+                <!-- Research Panel (research mode only) - NEW January 23, 2026 -->
+                <div class="research-info" id="researchInfo" style="display: none;">
+                    <h3>🔬 Research Agent</h3>
+                    <div class="research-status" id="researchStatus">
+                        <strong>Status:</strong> Checking...
+                    </div>
+                    
+                    <div class="research-section-title">📋 Daily Intelligence</div>
+                    <button class="research-btn briefing" onclick="getDailyBriefing()">
+                        📰 Get Daily Briefing
+                    </button>
+                    
+                    <div class="research-section-title">🔍 Quick Research</div>
+                    <button class="research-btn news" onclick="searchIndustryNews()">
+                        📰 Industry News
+                    </button>
+                    <button class="research-btn regulations" onclick="searchRegulations()">
+                        ⚖️ Regulations & Compliance
+                    </button>
+                    <button class="research-btn studies" onclick="searchStudies()">
+                        🔬 Research Studies
+                    </button>
+                    
+                    <div class="research-section-title">📊 Competitive Intelligence</div>
+                    <button class="research-btn competitors" onclick="searchCompetitors()">
+                        🏢 Competitor Analysis
+                    </button>
+                    <button class="research-btn leads" onclick="searchLeads()">
+                        🎯 Find Potential Leads
+                    </button>
+                    
+                    <div class="research-section-title">🔎 Custom Search</div>
+                    <input type="text" id="researchQuery" placeholder="Enter research topic..." style="width: 100%; padding: 10px; border: 2px solid #e0e0e0; border-radius: 6px; margin-bottom: 8px; box-sizing: border-box;">
+                    <button class="research-btn" style="background: linear-gradient(135deg, #455a64 0%, #78909c 100%); color: white;" onclick="customResearch()">
+                        🔍 Research Topic
+                    </button>
+                </div>
+                
                 <!-- Quick Actions Section -->
                 <h3 style="margin-top: 20px;">Quick Actions</h3>
                 <ul class="quick-actions" id="quickActions"></ul>
@@ -228,6 +385,7 @@
                             <ul style="margin-top: 10px; margin-left: 20px;">
                                 <li><strong>⚡ Quick Task Mode:</strong> One-off requests, document creation, analysis</li>
                                 <li><strong>📁 Project Mode:</strong> Full consulting engagements with context tracking</li>
+                                <li><strong>🔬 Research Mode:</strong> Real-time industry intelligence and news</li>
                             </ul>
                             <p style="margin-top: 15px;"><strong>Features:</strong></p>
                             <ul style="margin-top: 5px; margin-left: 20px;">
@@ -237,6 +395,7 @@
                                 <li>✅ Multi-AI consensus validation</li>
                                 <li>✅ Conversation memory across sessions</li>
                                 <li>✅ Voice control - say "Hey Swarm" to command</li>
+                                <li>✅ Research Agent - real-time web intelligence</li>
                             </ul>
                         </div>
                     </div>
@@ -271,6 +430,271 @@
     <!-- External JavaScript - Order matters! swarm-app.js must load first -->
     <script src="/static/js/swarm-app.js"></script>
     <script src="/static/js/swarm-voice.js"></script>
+    
+    <!-- Research Agent JavaScript Functions - Added January 23, 2026 -->
+    <script>
+    // =============================================================================
+    // RESEARCH AGENT FUNCTIONS - Added January 23, 2026
+    // =============================================================================
+    
+    // Check research status on page load
+    function checkResearchStatus() {
+        fetch('/api/research/status')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var statusDiv = document.getElementById('researchStatus');
+                if (data.available) {
+                    statusDiv.innerHTML = '<strong>✅ Status:</strong> Online<br><small>' + 
+                        data.capabilities.length + ' research capabilities available</small>';
+                    statusDiv.className = 'research-status';
+                } else {
+                    statusDiv.innerHTML = '<strong>⚠️ Status:</strong> Offline<br><small>TAVILY_API_KEY not configured</small>';
+                    statusDiv.className = 'research-status error';
+                }
+            })
+            .catch(function(err) {
+                var statusDiv = document.getElementById('researchStatus');
+                statusDiv.innerHTML = '<strong>❌ Status:</strong> Error connecting';
+                statusDiv.className = 'research-status error';
+            });
+    }
+    
+    // Display research results in conversation
+    function displayResearchResults(title, data) {
+        var content = '<h3>' + title + '</h3>';
+        
+        if (data.summary) {
+            content += '<p style="margin: 10px 0; padding: 10px; background: #f5f5f5; border-radius: 6px;"><strong>Summary:</strong> ' + data.summary + '</p>';
+        }
+        
+        if (data.results && data.results.length > 0) {
+            content += '<div style="margin-top: 15px;">';
+            data.results.forEach(function(result, idx) {
+                content += '<div style="padding: 12px; background: white; border-left: 3px solid #667eea; margin-bottom: 10px; border-radius: 0 6px 6px 0;">';
+                content += '<strong>' + (idx + 1) + '. ' + result.title + '</strong><br>';
+                content += '<p style="font-size: 13px; color: #555; margin: 5px 0;">' + result.content.substring(0, 200) + '...</p>';
+                content += '<a href="' + result.url + '" target="_blank" style="font-size: 12px; color: #667eea;">🔗 Read more</a>';
+                content += '</div>';
+            });
+            content += '</div>';
+        } else {
+            content += '<p style="color: #999;">No results found.</p>';
+        }
+        
+        addMessage('assistant', content, null, 'research');
+    }
+    
+    // Get Daily Briefing
+    function getDailyBriefing() {
+        addMessage('user', '📰 Get Daily Intelligence Briefing');
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        document.querySelector('.loading-text').textContent = 'Generating daily briefing... This may take a moment...';
+        
+        fetch('/api/research/briefing')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                loading.classList.remove('active');
+                
+                if (data.success && data.briefing) {
+                    var content = '<h3>📰 Daily Intelligence Briefing</h3>';
+                    content += '<p style="font-size: 12px; color: #666;">Generated: ' + data.briefing.generated_at + '</p>';
+                    
+                    data.briefing.sections.forEach(function(section) {
+                        content += '<div style="margin-top: 15px;">';
+                        content += '<h4>' + section.title + '</h4>';
+                        if (section.summary) {
+                            content += '<p style="font-size: 13px; color: #555; margin: 5px 0;">' + section.summary + '</p>';
+                        }
+                        if (section.items && section.items.length > 0) {
+                            section.items.forEach(function(item) {
+                                content += '<div style="padding: 10px; background: #f9f9f9; margin: 5px 0; border-radius: 6px;">';
+                                content += '<strong style="font-size: 13px;">' + item.title + '</strong><br>';
+                                content += '<a href="' + item.url + '" target="_blank" style="font-size: 11px; color: #667eea;">🔗 Read more</a>';
+                                content += '</div>';
+                            });
+                        }
+                        content += '</div>';
+                    });
+                    
+                    addMessage('assistant', content, null, 'research');
+                } else {
+                    addMessage('assistant', '❌ Could not generate briefing: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(function(err) {
+                loading.classList.remove('active');
+                addMessage('assistant', '❌ Error: ' + err.message);
+            });
+    }
+    
+    // Search Industry News
+    function searchIndustryNews() {
+        addMessage('user', '📰 Search Industry News');
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        document.querySelector('.loading-text').textContent = 'Searching for industry news...';
+        
+        fetch('/api/research/industry-news')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                loading.classList.remove('active');
+                if (data.success) {
+                    displayResearchResults('📰 Industry News', data);
+                } else {
+                    addMessage('assistant', '❌ Error: ' + data.error);
+                }
+            })
+            .catch(function(err) {
+                loading.classList.remove('active');
+                addMessage('assistant', '❌ Error: ' + err.message);
+            });
+    }
+    
+    // Search Regulations
+    function searchRegulations() {
+        addMessage('user', '⚖️ Search Regulations & Compliance');
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        document.querySelector('.loading-text').textContent = 'Searching for regulatory updates...';
+        
+        fetch('/api/research/regulations')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                loading.classList.remove('active');
+                if (data.success) {
+                    displayResearchResults('⚖️ Regulatory Updates', data);
+                } else {
+                    addMessage('assistant', '❌ Error: ' + data.error);
+                }
+            })
+            .catch(function(err) {
+                loading.classList.remove('active');
+                addMessage('assistant', '❌ Error: ' + err.message);
+            });
+    }
+    
+    // Search Studies
+    function searchStudies() {
+        addMessage('user', '🔬 Search Research Studies');
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        document.querySelector('.loading-text').textContent = 'Searching for research studies...';
+        
+        fetch('/api/research/studies')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                loading.classList.remove('active');
+                if (data.success) {
+                    displayResearchResults('🔬 Research Studies', data);
+                } else {
+                    addMessage('assistant', '❌ Error: ' + data.error);
+                }
+            })
+            .catch(function(err) {
+                loading.classList.remove('active');
+                addMessage('assistant', '❌ Error: ' + err.message);
+            });
+    }
+    
+    // Search Competitors
+    function searchCompetitors() {
+        addMessage('user', '🏢 Competitor Analysis');
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        document.querySelector('.loading-text').textContent = 'Analyzing competitors...';
+        
+        fetch('/api/research/competitors')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                loading.classList.remove('active');
+                if (data.success) {
+                    displayResearchResults('🏢 Competitor Analysis', data);
+                } else {
+                    addMessage('assistant', '❌ Error: ' + data.error);
+                }
+            })
+            .catch(function(err) {
+                loading.classList.remove('active');
+                addMessage('assistant', '❌ Error: ' + err.message);
+            });
+    }
+    
+    // Search Leads
+    function searchLeads() {
+        var industry = prompt('Enter industry to search (or leave blank for general):', '');
+        
+        addMessage('user', '🎯 Find Potential Leads' + (industry ? ' in ' + industry : ''));
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        document.querySelector('.loading-text').textContent = 'Searching for potential leads...';
+        
+        var url = '/api/research/leads';
+        if (industry) {
+            url += '?industry=' + encodeURIComponent(industry);
+        }
+        
+        fetch(url)
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                loading.classList.remove('active');
+                if (data.success) {
+                    displayResearchResults('🎯 Potential Leads', data);
+                } else {
+                    addMessage('assistant', '❌ Error: ' + data.error);
+                }
+            })
+            .catch(function(err) {
+                loading.classList.remove('active');
+                addMessage('assistant', '❌ Error: ' + err.message);
+            });
+    }
+    
+    // Custom Research
+    function customResearch() {
+        var query = document.getElementById('researchQuery').value.trim();
+        if (!query) {
+            alert('Please enter a research topic');
+            return;
+        }
+        
+        addMessage('user', '🔍 Research: ' + query);
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        document.querySelector('.loading-text').textContent = 'Researching "' + query + '"...';
+        
+        fetch('/api/research/topic', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ topic: query })
+        })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                loading.classList.remove('active');
+                if (data.success) {
+                    displayResearchResults('🔍 Research: ' + query, data);
+                    document.getElementById('researchQuery').value = '';
+                } else {
+                    addMessage('assistant', '❌ Error: ' + data.error);
+                }
+            })
+            .catch(function(err) {
+                loading.classList.remove('active');
+                addMessage('assistant', '❌ Error: ' + err.message);
+            });
+    }
+    
+    // Update switchMode to handle research mode
+    var originalSwitchMode = typeof switchMode === 'function' ? switchMode : null;
+    
+    // Override switchMode after swarm-app.js loads
+    document.addEventListener('DOMContentLoaded', function() {
+        // Wait a bit for swarm-app.js to fully initialize
+        setTimeout(function() {
+            checkResearchStatus();
+        }, 500);
+    });
+    </script>
 </body>
 </html>
 
