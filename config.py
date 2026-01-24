@@ -1,7 +1,16 @@
 """
 AI SWARM ORCHESTRATOR - Configuration
 Created: January 18, 2026
-Last Updated: January 21, 2026 - FIXED: Updated to Claude Opus 4.5 model name
+Last Updated: January 23, 2026 - ADDED ALERT SYSTEM CONFIGURATION
+
+CHANGES IN THIS VERSION:
+- January 23, 2026: ADDED ALERT SYSTEM CONFIGURATION
+  * Added SMTP configuration for email alerts (SendGrid, Gmail, custom)
+  * Added alert recipient email configuration
+  * Added enable flags for email alerts and scheduled jobs
+  * Added alert check interval configuration
+
+- January 21, 2026: FIXED - Updated to Claude Opus 4.5 model name
 
 CRITICAL FIX: Changed CLAUDE_OPUS_MODEL from claude-opus-4-20241229 (doesn't exist) 
 to claude-opus-4-5-20251101 (Opus 4.5)
@@ -22,6 +31,9 @@ DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY')
 GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY')
 GROQ_API_KEY = os.environ.get('GROQ_API_KEY')
 
+# Tavily API (Research Agent)
+TAVILY_API_KEY = os.environ.get('TAVILY_API_KEY')
+
 # Microsoft 365
 MS365_CLIENT_ID = os.environ.get('MS365_CLIENT_ID')
 MS365_CLIENT_SECRET = os.environ.get('MS365_CLIENT_SECRET')
@@ -29,6 +41,30 @@ MS365_TENANT_ID = os.environ.get('MS365_TENANT_ID')
 
 # LinkedIn
 LINKEDIN_ACCESS_TOKEN = os.environ.get('LINKEDIN_ACCESS_TOKEN')
+
+# ============================================================================
+# EMAIL / SMTP CONFIGURATION (Alert System)
+# ============================================================================
+
+# SMTP Server Configuration
+# For SendGrid: smtp.sendgrid.net, port 587, user='apikey', password=SENDGRID_API_KEY
+# For Gmail: smtp.gmail.com, port 587, use app password
+# For custom SMTP: set appropriate values
+SMTP_HOST = os.environ.get('SMTP_HOST', 'smtp.sendgrid.net')
+SMTP_PORT = int(os.environ.get('SMTP_PORT', 587))
+SMTP_USER = os.environ.get('SMTP_USER', 'apikey')
+SMTP_PASSWORD = os.environ.get('SMTP_PASSWORD') or os.environ.get('SENDGRID_API_KEY')
+
+# Alert Email Configuration
+ALERT_FROM_EMAIL = os.environ.get('ALERT_FROM_EMAIL', 'alerts@shiftworksolutions.com')
+ALERT_TO_EMAIL = os.environ.get('ALERT_TO_EMAIL', '')  # Set to Jim's email
+
+# Alert System Feature Flags
+ENABLE_EMAIL_ALERTS = os.environ.get('ENABLE_EMAIL_ALERTS', 'false').lower() == 'true'
+ENABLE_SCHEDULED_JOBS = os.environ.get('ENABLE_SCHEDULED_JOBS', 'false').lower() == 'true'
+
+# Alert Check Interval (in minutes)
+ALERT_CHECK_INTERVAL = int(os.environ.get('ALERT_CHECK_INTERVAL', 60))
 
 # ============================================================================
 # DATABASE
@@ -122,5 +158,25 @@ MICROSOFT_365_ENABLED = False
 SOCIAL_MEDIA_ENABLED = False
 CALCULATOR_ENABLED = True
 SURVEY_BUILDER_ENABLED = False
+
+# ============================================================================
+# ALERT SYSTEM DEFAULTS
+# ============================================================================
+
+# Default scheduled job times (24-hour format, server timezone)
+DEFAULT_LEAD_SCAN_TIME = '07:00'
+DEFAULT_REGULATORY_SCAN_TIME = '06:00'
+DEFAULT_COMPETITOR_SCAN_TIME = '08:00'  # Weekly (Monday)
+DEFAULT_BRIEFING_TIME = '07:30'
+
+# Alert priority thresholds for email notification
+# Alerts at or above this priority will trigger immediate email
+EMAIL_PRIORITY_THRESHOLD = 'high'  # 'critical', 'high', 'medium', 'low'
+
+# Maximum alerts per category in daily briefing
+MAX_ALERTS_PER_CATEGORY = 5
+
+# Days to keep dismissed alerts before cleanup
+DISMISSED_ALERT_RETENTION_DAYS = 30
 
 # I did no harm and this file is not truncated
