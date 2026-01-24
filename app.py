@@ -1,9 +1,15 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: January 22, 2026 - SPRINT 3: Complete System Integration
+Last Updated: January 23, 2026 - ADDED RESEARCH AGENT
 
 CHANGES IN THIS VERSION:
+- January 23, 2026: ADDED RESEARCH AGENT
+  * Added research_bp blueprint for web research capabilities
+  * Research Agent provides real-time industry news, regulations, studies
+  * Proactive intelligence for monitoring shift work industry
+  * Requires TAVILY_API_KEY environment variable
+
 - January 22, 2026: SPRINT 3 - ALL 5 ADVANCED FEATURES
   * Enhanced Intelligence (learning & memory)
   * Project Dashboard (visual management)
@@ -26,6 +32,8 @@ ARCHITECTURE:
 - database.py: All database operations
 - orchestration/: All AI logic + proactive_agent.py
 - routes/: All Flask endpoints
+- research_agent.py: Web research capabilities (NEW)
+- routes/research.py: Research API endpoints (NEW)
 - project_manager.py: Project detection & management
 - resource_finder.py: Automatic web search
 - improvement_engine.py: Efficiency analysis
@@ -164,9 +172,18 @@ def health():
     kb_status = 'initialized' if knowledge_base and len(knowledge_base.knowledge_index) > 0 else 'not_initialized'
     kb_doc_count = len(knowledge_base.knowledge_index) if knowledge_base else 0
     
+    # Check Research Agent status
+    research_status = 'disabled'
+    try:
+        from research_agent import get_research_agent
+        ra = get_research_agent()
+        research_status = 'enabled' if ra.is_available else 'api_key_missing'
+    except:
+        research_status = 'not_installed'
+    
     return jsonify({
         'status': 'healthy',
-        'version': 'Sprint 3 Complete - Enhanced Intelligence + All Features',
+        'version': 'Sprint 3 Complete + Research Agent',
         'orchestrators': {
             'sonnet': 'configured' if ANTHROPIC_API_KEY else 'missing',
             'opus': 'configured' if ANTHROPIC_API_KEY else 'missing'
@@ -186,6 +203,9 @@ def health():
         'output_formatter': {
             'status': 'enabled' if OUTPUT_FORMATTER_AVAILABLE else 'disabled'
         },
+        'research_agent': {
+            'status': research_status
+        },
         'features': {
             'sprint_1': {
                 'smart_questioning': 'enabled',
@@ -203,6 +223,13 @@ def health():
                 'analytics_dashboard': 'enabled',
                 'smart_workflows': 'enabled',
                 'integration_hub': 'enabled'
+            },
+            'research': {
+                'industry_news': research_status,
+                'regulations': research_status,
+                'studies': research_status,
+                'competitor_analysis': research_status,
+                'lead_finder': research_status
             }
         }
     })
@@ -210,6 +237,18 @@ def health():
 # Register blueprints (CRITICAL - THIS MAKES THE API WORK)
 from routes.core import core_bp
 app.register_blueprint(core_bp)
+
+# ============================================================================
+# RESEARCH AGENT BLUEPRINT (Added January 23, 2026)
+# ============================================================================
+try:
+    from routes.research import research_bp
+    app.register_blueprint(research_bp)
+    print("✅ Research Agent API registered")
+except ImportError:
+    print("ℹ️  Research Agent routes not found - research features disabled")
+except Exception as e:
+    print(f"⚠️  Research Agent registration failed: {e}")
 
 # Sprint 3 blueprints
 try:
