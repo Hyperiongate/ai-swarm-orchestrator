@@ -1,9 +1,16 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: January 23, 2026 - ADDED CLIENT INTELLIGENCE DASHBOARD
+Last Updated: January 25, 2026 - ADDED CONTENT MARKETING ENGINE
 
 CHANGES IN THIS VERSION:
+- January 25, 2026: ADDED CONTENT MARKETING ENGINE
+  * Added marketing_bp blueprint for autonomous content generation
+  * Auto-generates LinkedIn posts from consulting work
+  * Creates weekly "This Week in Shiftwork" newsletters
+  * Approval workflow for one-click content publishing
+  * Learns what content performs well over time
+
 - January 23, 2026: ADDED CLIENT INTELLIGENCE DASHBOARD
   * Added intelligence_bp blueprint for lead pipeline management
   * Lead scoring based on 202-company normative database
@@ -48,8 +55,10 @@ ARCHITECTURE:
 - database.py: All database operations
 - orchestration/: All AI logic + proactive_agent.py
 - routes/: All Flask endpoints
-- intelligence.py: Lead scoring & pipeline management (NEW)
-- routes/intelligence.py: Intelligence API endpoints (NEW)
+- content_marketing_engine.py: Autonomous content generation (NEW)
+- routes/marketing.py: Marketing API endpoints (NEW)
+- intelligence.py: Lead scoring & pipeline management
+- routes/intelligence.py: Intelligence API endpoints
 - alert_system.py: Automated monitoring & alerts
 - routes/alerts.py: Alert API endpoints
 - research_agent.py: Web research capabilities
@@ -223,9 +232,18 @@ def health():
     except:
         intelligence_status = 'not_installed'
     
+    # Check Marketing Engine status
+    marketing_status = 'disabled'
+    try:
+        from content_marketing_engine import get_content_engine
+        ce = get_content_engine()
+        marketing_status = 'enabled'
+    except:
+        marketing_status = 'not_installed'
+    
     return jsonify({
         'status': 'healthy',
-        'version': 'Sprint 3 Complete + Research Agent + Alert System + Intelligence Dashboard',
+        'version': 'Sprint 3 Complete + Research + Alerts + Intelligence + Marketing',
         'orchestrators': {
             'sonnet': 'configured' if ANTHROPIC_API_KEY else 'missing',
             'opus': 'configured' if ANTHROPIC_API_KEY else 'missing'
@@ -255,6 +273,9 @@ def health():
         'intelligence_dashboard': {
             'status': intelligence_status,
             'past_clients_indexed': intelligence_companies
+        },
+        'content_marketing': {
+            'status': marketing_status
         },
         'features': {
             'sprint_1': {
@@ -293,6 +314,12 @@ def health():
                 'pipeline_management': intelligence_status,
                 'industry_matching': intelligence_status,
                 'ai_actions': intelligence_status
+            },
+            'marketing': {
+                'linkedin_posts': marketing_status,
+                'newsletters': marketing_status,
+                'content_extraction': marketing_status,
+                'approval_workflow': marketing_status
             }
         }
     })
@@ -336,6 +363,18 @@ except ImportError as e:
     print(f"ℹ️  Intelligence Dashboard routes not found: {e}")
 except Exception as e:
     print(f"⚠️  Intelligence Dashboard registration failed: {e}")
+
+# ============================================================================
+# CONTENT MARKETING ENGINE BLUEPRINT (Added January 25, 2026)
+# ============================================================================
+try:
+    from routes.marketing import marketing_bp
+    app.register_blueprint(marketing_bp)
+    print("✅ Content Marketing Engine API registered")
+except ImportError as e:
+    print(f"ℹ️  Content Marketing Engine routes not found: {e}")
+except Exception as e:
+    print(f"⚠️  Content Marketing Engine registration failed: {e}")
 
 # Sprint 3 blueprints
 try:
