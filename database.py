@@ -1,12 +1,17 @@
 """
 Database Module
 Created: January 21, 2026
-Last Updated: January 25, 2026 - ADDED MARKETING TABLES
+Last Updated: January 25, 2026 - ADDED SWARM EVALUATION TABLES
 
 All database operations isolated here.
 No more SQL scattered across 2,500 lines.
 
 CHANGELOG:
+- January 25, 2026: ADDED SWARM SELF-EVALUATION TABLES
+  * Added 'swarm_evaluations' table - stores weekly evaluation reports
+  * Added indexes for evaluation queries
+  * This supports the Weekly Swarm Self-Evaluation System
+
 - January 25, 2026: ADDED CONTENT MARKETING ENGINE TABLES
   * Added 'marketing_content' table - stores generated posts and newsletters
   * Added 'marketing_activity_log' table - tracks approval workflow
@@ -198,10 +203,6 @@ def init_db():
         )
     ''')
     
-    # ============================================================================
-    # PROACTIVE INTELLIGENCE TABLES (Added January 22, 2026 - Sprint 1)
-    # ============================================================================
-    
     # Pattern tracking - learns user behavior
     db.execute('''
         CREATE TABLE IF NOT EXISTS user_patterns (
@@ -245,10 +246,6 @@ def init_db():
         )
     ''')
     
-    # ============================================================================
-    # PERSISTENT CONVERSATION MEMORY TABLES (Added January 22, 2026)
-    # ============================================================================
-    
     # Conversations table - stores conversation metadata
     db.execute('''
         CREATE TABLE IF NOT EXISTS conversations (
@@ -281,11 +278,7 @@ def init_db():
         )
     ''')
     
-    # ============================================================================
-    # GENERATED DOCUMENTS TABLE (Added January 23, 2026)
-    # Tracks all documents created by the AI Swarm for download/print/management
-    # ============================================================================
-    
+    # Generated documents table
     db.execute('''
         CREATE TABLE IF NOT EXISTS generated_documents (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -310,11 +303,6 @@ def init_db():
             FOREIGN KEY (project_id) REFERENCES projects(project_id)
         )
     ''')
-    
-    # ============================================================================
-    # RESEARCH AGENT TABLES (Added January 23, 2026)
-    # Tracks web research, briefings, and findings
-    # ============================================================================
     
     # Research logs - tracks all web searches
     db.execute('''
@@ -354,11 +342,6 @@ def init_db():
             actioned_at TIMESTAMP
         )
     ''')
-    
-    # ============================================================================
-    # CONTENT MARKETING ENGINE TABLES (Added January 25, 2026)
-    # Tracks generated marketing content (LinkedIn posts, newsletters)
-    # ============================================================================
     
     # Marketing Content table - stores all generated marketing content
     db.execute('''
@@ -408,11 +391,6 @@ def init_db():
         )
     ''')
     
-    # ============================================================================
-    # AVATAR CONSULTATION SYSTEM TABLES (Added January 25, 2026)
-    # Tracks David & Sarah AI avatar consultations on shift-work.com
-    # ============================================================================
-    
     # Avatar Conversations table - stores each consultation session
     db.execute('''
         CREATE TABLE IF NOT EXISTS avatar_conversations (
@@ -441,6 +419,30 @@ def init_db():
             content TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (conversation_id) REFERENCES avatar_conversations(conversation_id)
+        )
+    ''')
+    
+    # ============================================================================
+    # SWARM SELF-EVALUATION TABLES (Added January 25, 2026)
+    # Tracks weekly self-evaluations and AI market landscape assessments
+    # ============================================================================
+    
+    # Swarm Evaluations table - stores weekly evaluation reports
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS swarm_evaluations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            evaluation_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            period_days INTEGER DEFAULT 7,
+            health_score INTEGER,
+            trend TEXT,
+            tasks_processed INTEGER,
+            success_rate TEXT,
+            executive_summary TEXT,
+            gaps_count INTEGER DEFAULT 0,
+            high_priority_gaps_count INTEGER DEFAULT 0,
+            recommendations_count INTEGER DEFAULT 0,
+            full_report_json TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
     
@@ -489,25 +491,25 @@ def init_db():
     db.execute('CREATE INDEX IF NOT EXISTS idx_avatar_messages_conv ON avatar_messages(conversation_id)')
     db.execute('CREATE INDEX IF NOT EXISTS idx_avatar_messages_created ON avatar_messages(created_at)')
     
+    # Swarm evaluation indexes
+    db.execute('CREATE INDEX IF NOT EXISTS idx_swarm_eval_date ON swarm_evaluations(evaluation_date DESC)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_swarm_eval_health ON swarm_evaluations(health_score)')
+    
     db.commit()
     db.close()
-    print("✅ Database initialized (with marketing + avatar tables)")
+    print("✅ Database initialized (with swarm evaluation tables)")
 
 
 # ============================================================================
-# GENERATED DOCUMENTS FUNCTIONS (Added January 23, 2026)
+# GENERATED DOCUMENTS FUNCTIONS
 # ============================================================================
 
 def save_generated_document(filename, original_name, document_type, file_path, file_size=0,
                            task_id=None, conversation_id=None, project_id=None,
                            title=None, description=None, category='general', metadata=None):
-    """
-    Save a generated document to the database for tracking.
-    Called whenever the system creates a downloadable document.
-    """
+    """Save a generated document to the database for tracking."""
     db = get_db()
     
-    # Use original_name as title if not provided
     if not title:
         title = original_name
     
@@ -562,7 +564,6 @@ def get_generated_documents(limit=50, document_type=None, project_id=None,
     documents = []
     for row in rows:
         doc = dict(row)
-        # Parse metadata if present
         if doc.get('metadata'):
             try:
                 doc['metadata'] = json.loads(doc['metadata'])
@@ -630,7 +631,6 @@ def delete_generated_document(document_id, hard_delete=False):
     """Delete a generated document."""
     db = get_db()
     
-    # Get the document first to find the file path
     doc = db.execute(
         'SELECT file_path FROM generated_documents WHERE id = ?',
         (document_id,)
@@ -641,17 +641,14 @@ def delete_generated_document(document_id, hard_delete=False):
         return False
     
     if hard_delete:
-        # Delete the actual file
         try:
             if doc['file_path'] and os.path.exists(doc['file_path']):
                 os.remove(doc['file_path'])
         except Exception as e:
             print(f"⚠️ Could not delete file: {e}")
         
-        # Delete from database
         db.execute('DELETE FROM generated_documents WHERE id = ?', (document_id,))
     else:
-        # Soft delete - just mark as deleted
         db.execute(
             'UPDATE generated_documents SET is_deleted = 1 WHERE id = ?',
             (document_id,)
@@ -668,12 +665,10 @@ def get_document_stats():
     
     stats = {}
     
-    # Total documents (not deleted)
     stats['total_documents'] = db.execute(
         'SELECT COUNT(*) FROM generated_documents WHERE is_deleted = 0'
     ).fetchone()[0]
     
-    # Documents by type
     type_counts = db.execute('''
         SELECT document_type, COUNT(*) as count 
         FROM generated_documents 
@@ -682,17 +677,14 @@ def get_document_stats():
     ''').fetchall()
     stats['by_type'] = {row['document_type']: row['count'] for row in type_counts}
     
-    # Total downloads
     stats['total_downloads'] = db.execute(
         'SELECT SUM(download_count) FROM generated_documents WHERE is_deleted = 0'
     ).fetchone()[0] or 0
     
-    # Total size
     stats['total_size_bytes'] = db.execute(
         'SELECT SUM(file_size) FROM generated_documents WHERE is_deleted = 0'
     ).fetchone()[0] or 0
     
-    # Recent documents (last 7 days)
     stats['recent_count'] = db.execute('''
         SELECT COUNT(*) FROM generated_documents 
         WHERE is_deleted = 0 
@@ -704,7 +696,7 @@ def get_document_stats():
 
 
 # ============================================================================
-# CONVERSATION MEMORY FUNCTIONS (Added January 22, 2026)
+# CONVERSATION MEMORY FUNCTIONS
 # ============================================================================
 
 def create_conversation(mode='quick', project_id=None, title=None):
@@ -814,10 +806,7 @@ def delete_conversation(conversation_id):
     """Delete a conversation and all its messages"""
     db = get_db()
     
-    # Delete messages first (foreign key constraint)
     db.execute('DELETE FROM conversation_messages WHERE conversation_id = ?', (conversation_id,))
-    
-    # Delete conversation
     db.execute('DELETE FROM conversations WHERE conversation_id = ?', (conversation_id,))
     
     db.commit()
@@ -828,13 +817,11 @@ def add_message(conversation_id, role, content, task_id=None, metadata=None):
     """Add a message to a conversation"""
     db = get_db()
     
-    # Insert message
     db.execute('''
         INSERT INTO conversation_messages (conversation_id, role, content, task_id, metadata)
         VALUES (?, ?, ?, ?, ?)
     ''', (conversation_id, role, content, task_id, json.dumps(metadata) if metadata else None))
     
-    # Update conversation's updated_at and message_count
     db.execute('''
         UPDATE conversations 
         SET updated_at = CURRENT_TIMESTAMP,
@@ -842,14 +829,12 @@ def add_message(conversation_id, role, content, task_id=None, metadata=None):
         WHERE conversation_id = ?
     ''', (conversation_id,))
     
-    # Auto-generate title from first user message if title is default
     if role == 'user':
         conv = db.execute('''
             SELECT title, message_count FROM conversations WHERE conversation_id = ?
         ''', (conversation_id,)).fetchone()
         
         if conv and conv['message_count'] == 1 and conv['title'].startswith('New Conversation'):
-            # Generate title from first message (first 50 chars)
             new_title = content[:50] + ('...' if len(content) > 50 else '')
             db.execute('''
                 UPDATE conversations SET title = ? WHERE conversation_id = ?
@@ -888,7 +873,7 @@ def get_conversation_context(conversation_id, max_messages=20):
 
 
 # ============================================================================
-# TASK FUNCTIONS (needed by routes/core.py)
+# TASK FUNCTIONS
 # ============================================================================
 
 def record_task_completion(task_id, orchestrator, result, confidence):
@@ -947,19 +932,13 @@ def get_task_details(task_id):
     """Get detailed information about a task"""
     db = get_db()
     
-    # Get task
     task = db.execute('SELECT * FROM tasks WHERE id = ?', (task_id,)).fetchone()
     if not task:
         db.close()
         return None
     
-    # Get escalation if exists
     escalation = db.execute('SELECT * FROM escalations WHERE task_id = ?', (task_id,)).fetchone()
-    
-    # Get specialist calls
     specialists = db.execute('SELECT * FROM specialist_calls WHERE task_id = ?', (task_id,)).fetchall()
-    
-    # Get consensus validation if exists
     consensus = db.execute('SELECT * FROM consensus_validations WHERE task_id = ?', (task_id,)).fetchone()
     
     db.close()
@@ -977,35 +956,22 @@ def get_statistics():
     
     stats = {}
     
-    # Total tasks
     stats['total_tasks'] = db.execute('SELECT COUNT(*) FROM tasks').fetchone()[0]
-    
-    # Completed tasks
     stats['completed_tasks'] = db.execute("SELECT COUNT(*) FROM tasks WHERE status = 'completed'").fetchone()[0]
-    
-    # Escalations
     stats['total_escalations'] = db.execute('SELECT COUNT(*) FROM escalations').fetchone()[0]
     
-    # Average confidence
     avg_conf = db.execute('SELECT AVG(confidence) FROM tasks WHERE confidence IS NOT NULL').fetchone()[0]
     stats['average_confidence'] = round(avg_conf, 3) if avg_conf else 0
     
-    # Specialist usage
     stats['specialist_calls'] = db.execute('SELECT COUNT(*) FROM specialist_calls').fetchone()[0]
-    
-    # Consensus validations
     stats['consensus_validations'] = db.execute('SELECT COUNT(*) FROM consensus_validations').fetchone()[0]
     
-    # Success rate
     successful_consensus = db.execute('SELECT COUNT(*) FROM consensus_validations WHERE consensus_achieved = 1').fetchone()[0]
     total_consensus = stats['consensus_validations']
     stats['consensus_success_rate'] = round(successful_consensus / total_consensus, 3) if total_consensus > 0 else 0
     
-    # Conversation stats
     stats['total_conversations'] = db.execute('SELECT COUNT(*) FROM conversations').fetchone()[0]
     stats['total_messages'] = db.execute('SELECT COUNT(*) FROM conversation_messages').fetchone()[0]
-    
-    # Document stats
     stats['total_documents'] = db.execute('SELECT COUNT(*) FROM generated_documents WHERE is_deleted = 0').fetchone()[0]
     
     db.close()
@@ -1015,14 +981,12 @@ def store_learning_pattern(task_type, pattern_data, success_rate):
     """Store a learning pattern"""
     db = get_db()
     
-    # Check if pattern exists
     existing = db.execute('''
         SELECT id, times_used FROM learning_patterns 
         WHERE task_type = ? AND pattern_data = ?
     ''', (task_type, pattern_data)).fetchone()
     
     if existing:
-        # Update existing pattern
         db.execute('''
             UPDATE learning_patterns 
             SET success_rate = ?,
@@ -1031,7 +995,6 @@ def store_learning_pattern(task_type, pattern_data, success_rate):
             WHERE id = ?
         ''', (success_rate, datetime.now(), existing[0]))
     else:
-        # Insert new pattern
         db.execute('''
             INSERT INTO learning_patterns (task_type, pattern_data, success_rate)
             VALUES (?, ?, ?)
@@ -1061,8 +1024,9 @@ def get_learning_patterns(task_type=None, limit=10):
     db.close()
     return [dict(row) for row in rows]
 
+
 # ============================================================================
-# PROJECT FUNCTIONS (for workflow management)
+# PROJECT FUNCTIONS
 # ============================================================================
 
 def load_project_from_db(project_id):
@@ -1089,7 +1053,6 @@ def load_project_from_db(project_id):
     workflow.facility_type = project_row['facility_type']
     workflow.project_phase = project_row['project_phase']
     
-    # Load JSON data
     if project_row['context_data']:
         workflow.context_history = json.loads(project_row['context_data'])
     if project_row['uploaded_files']:
@@ -1110,14 +1073,12 @@ def save_project_to_db(workflow):
     
     db = get_db()
     
-    # Check if project exists
     existing = db.execute(
         'SELECT id FROM projects WHERE project_id = ?',
         (workflow.project_id,)
     ).fetchone()
     
     if existing:
-        # Update existing
         db.execute('''
             UPDATE projects SET
                 updated_at = CURRENT_TIMESTAMP,
@@ -1144,7 +1105,6 @@ def save_project_to_db(workflow):
             workflow.project_id
         ))
     else:
-        # Insert new
         db.execute('''
             INSERT INTO projects (
                 project_id, client_name, industry, facility_type, 
