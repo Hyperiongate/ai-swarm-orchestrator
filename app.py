@@ -241,9 +241,18 @@ def health():
     except:
         marketing_status = 'not_installed'
     
+    # Check Avatar Consultation status
+    avatar_status = 'disabled'
+    try:
+        from avatar_consultation_engine import get_avatar_engine
+        ae = get_avatar_engine()
+        avatar_status = 'enabled'
+    except:
+        avatar_status = 'not_installed'
+    
     return jsonify({
         'status': 'healthy',
-        'version': 'Sprint 3 Complete + Research + Alerts + Intelligence + Marketing',
+        'version': 'Sprint 3 Complete + Research + Alerts + Intelligence + Marketing + Avatars',
         'orchestrators': {
             'sonnet': 'configured' if ANTHROPIC_API_KEY else 'missing',
             'opus': 'configured' if ANTHROPIC_API_KEY else 'missing'
@@ -276,6 +285,10 @@ def health():
         },
         'content_marketing': {
             'status': marketing_status
+        },
+        'avatar_consultation': {
+            'status': avatar_status,
+            'avatars': ['david', 'sarah']
         },
         'features': {
             'sprint_1': {
@@ -320,6 +333,13 @@ def health():
                 'newsletters': marketing_status,
                 'content_extraction': marketing_status,
                 'approval_workflow': marketing_status
+            },
+            'avatar_consultation': {
+                'tag_team_avatars': avatar_status,
+                'voice_text_input': avatar_status,
+                'smart_questioning': avatar_status,
+                'lead_capture': avatar_status,
+                'conversation_logging': avatar_status
             }
         }
     })
@@ -375,6 +395,18 @@ except ImportError as e:
     print(f"ℹ️  Content Marketing Engine routes not found: {e}")
 except Exception as e:
     print(f"⚠️  Content Marketing Engine registration failed: {e}")
+
+# ============================================================================
+# AVATAR CONSULTATION SYSTEM BLUEPRINT (Added January 25, 2026)
+# ============================================================================
+try:
+    from routes.avatar import avatar_bp
+    app.register_blueprint(avatar_bp)
+    print("✅ Avatar Consultation System API registered")
+except ImportError as e:
+    print(f"ℹ️  Avatar Consultation routes not found: {e}")
+except Exception as e:
+    print(f"⚠️  Avatar Consultation registration failed: {e}")
 
 # Sprint 3 blueprints
 try:
