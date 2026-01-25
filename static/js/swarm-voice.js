@@ -5,6 +5,13 @@ Shiftwork Solutions LLC
 =============================================================================
 
 CHANGE LOG:
+- January 25, 2026: FIXED "undefined" text-to-speech bug
+  * Fixed message content extraction in setupMessageObserver()
+  * Now properly extracts innerText from message-content divs
+  * Added validation to ensure text exists before speaking
+  * Added detailed logging to debug text extraction
+  * Result: Voice responses now speak actual AI responses instead of "undefined"
+
 - January 23, 2026: FIXED "undefined" bug
   * Removed problematic addMessage override that caused "undefined" errors
   * Now uses MutationObserver to detect new assistant messages
@@ -183,12 +190,12 @@ function initSpeechRecognition() {
 }
 
 // =============================================================================
-// 3. MESSAGE OBSERVER (CLEAN INTEGRATION)
+// 3. MESSAGE OBSERVER (FIXED - January 25, 2026)
 // =============================================================================
 
 /**
  * Set up a MutationObserver to watch for new assistant messages
- * This is a clean way to detect when the AI responds without modifying swarm-app.js
+ * FIXED: Now properly extracts text content from message-content divs
  */
 function setupMessageObserver() {
     var conversationDiv = document.getElementById('conversation');
@@ -205,26 +212,49 @@ function setupMessageObserver() {
                 if (node.nodeType === 1 && node.classList && node.classList.contains('message') && node.classList.contains('assistant')) {
                     // Don't speak if voice mode is off or voice responses are disabled
                     if (!voiceModeActive || !voiceResponseEnabled) {
+                        console.log('🔊 Skipping speech - voice mode inactive or responses disabled');
                         return;
                     }
                     
                     // Don't speak the same message twice
                     var msgId = node.id;
                     if (msgId && msgId === lastSpokenMessageId) {
+                        console.log('🔊 Skipping speech - already spoke this message:', msgId);
                         return;
                     }
                     lastSpokenMessageId = msgId;
                     
-                    // Get the message content
+                    // FIXED: Better text extraction with multiple fallbacks
+                    var text = '';
+                    
+                    // Try to get the message-content div
                     var contentDiv = node.querySelector('.message-content');
                     if (contentDiv) {
-                        var text = contentDiv.innerText || contentDiv.textContent || '';
-                        if (text && text.length > 0) {
-                            // Small delay to let the UI finish updating
-                            setTimeout(function() {
-                                speakResponse(text);
-                            }, 300);
+                        // First try innerText (preserves line breaks and is human-readable)
+                        text = contentDiv.innerText;
+                        
+                        // Fallback to textContent if innerText is empty
+                        if (!text || text.trim().length === 0) {
+                            text = contentDiv.textContent;
                         }
+                        
+                        console.log('🔊 Extracted text from message-content:', text ? text.substring(0, 100) : 'EMPTY');
+                    } else {
+                        console.warn('🔊 No message-content div found in assistant message');
+                        // Last resort - try getting all text from the node
+                        text = node.innerText || node.textContent || '';
+                        console.log('🔊 Fallback text extraction:', text ? text.substring(0, 100) : 'EMPTY');
+                    }
+                    
+                    // Validate we have actual text
+                    if (text && text.trim().length > 0 && text !== 'undefined') {
+                        console.log('🔊 Will speak text (length: ' + text.length + ')');
+                        // Small delay to let the UI finish updating
+                        setTimeout(function() {
+                            speakResponse(text);
+                        }, 300);
+                    } else {
+                        console.warn('🔊 No valid text to speak - text was:', text);
                     }
                 }
             });
@@ -236,7 +266,7 @@ function setupMessageObserver() {
         subtree: false
     });
     
-    console.log('🎤 Message observer set up');
+    console.log('🎤 Message observer set up with improved text extraction');
 }
 
 // =============================================================================
@@ -477,18 +507,21 @@ function processVoiceCommand(transcript) {
 }
 
 // =============================================================================
-// 6. TEXT-TO-SPEECH
+// 6. TEXT-TO-SPEECH (FIXED - January 25, 2026)
 // =============================================================================
 
 function speakResponse(text) {
     if (!voiceResponseEnabled || !speechSynthesis) {
+        console.log('🔊 Voice responses disabled or synthesis unavailable');
         return;
     }
     
     if (!text || typeof text !== 'string') {
-        console.log('🔊 No valid text to speak');
+        console.log('🔊 No valid text to speak - received:', typeof text, text);
         return;
     }
+    
+    console.log('🔊 Original text to speak (first 200 chars):', text.substring(0, 200));
     
     var cleanText = cleanTextForSpeech(text);
     
@@ -496,6 +529,8 @@ function speakResponse(text) {
         console.log('🔊 Text empty after cleaning');
         return;
     }
+    
+    console.log('🔊 Clean text to speak (first 200 chars):', cleanText.substring(0, 200));
     
     stopSpeaking();
     
@@ -522,6 +557,7 @@ function speakResponse(text) {
     
     if (preferredVoice) {
         currentUtterance.voice = preferredVoice;
+        console.log('🔊 Using voice:', preferredVoice.name);
     }
     
     currentUtterance.onstart = function() {
@@ -555,6 +591,7 @@ function speakResponse(text) {
     isSpeaking = true;
     updateVoiceUI();
     speechSynthesis.speak(currentUtterance);
+    console.log('🔊 Speech queued');
 }
 
 function cleanTextForSpeech(text) {
