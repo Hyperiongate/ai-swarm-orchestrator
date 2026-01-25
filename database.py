@@ -1,12 +1,18 @@
 """
 Database Module
 Created: January 21, 2026
-Last Updated: January 23, 2026 - ADDED RESEARCH AGENT TABLES
+Last Updated: January 25, 2026 - ADDED MARKETING TABLES
 
 All database operations isolated here.
 No more SQL scattered across 2,500 lines.
 
 CHANGELOG:
+- January 25, 2026: ADDED CONTENT MARKETING ENGINE TABLES
+  * Added 'marketing_content' table - stores generated posts and newsletters
+  * Added 'marketing_activity_log' table - tracks approval workflow
+  * Added 'marketing_performance' table - tracks engagement metrics
+  * Added indexes for marketing tables
+
 - January 23, 2026: ADDED RESEARCH AGENT TABLES
   * Added 'research_logs' table - tracks all web searches
   * Added 'research_briefings' table - stores daily briefings
@@ -350,6 +356,59 @@ def init_db():
     ''')
     
     # ============================================================================
+    # CONTENT MARKETING ENGINE TABLES (Added January 25, 2026)
+    # Tracks generated marketing content (LinkedIn posts, newsletters)
+    # ============================================================================
+    
+    # Marketing Content table - stores all generated marketing content
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS marketing_content (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            content_type TEXT NOT NULL,
+            content_data TEXT NOT NULL,
+            status TEXT DEFAULT 'pending_approval',
+            generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            approved_at TIMESTAMP,
+            published_at TIMESTAMP,
+            rejection_reason TEXT,
+            source_task_id INTEGER,
+            estimated_engagement TEXT,
+            actual_engagement_score REAL,
+            category TEXT,
+            FOREIGN KEY (source_task_id) REFERENCES tasks (id)
+        )
+    ''')
+    
+    # Marketing Activity Log - tracks all actions on marketing content
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS marketing_activity_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            content_id INTEGER,
+            activity_type TEXT NOT NULL,
+            activity_data TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (content_id) REFERENCES marketing_content (id)
+        )
+    ''')
+    
+    # Marketing Performance - tracks actual performance metrics
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS marketing_performance (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            content_id INTEGER NOT NULL,
+            platform TEXT NOT NULL,
+            impressions INTEGER DEFAULT 0,
+            clicks INTEGER DEFAULT 0,
+            likes INTEGER DEFAULT 0,
+            comments INTEGER DEFAULT 0,
+            shares INTEGER DEFAULT 0,
+            engagement_rate REAL,
+            measured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (content_id) REFERENCES marketing_content (id)
+        )
+    ''')
+    
+    # ============================================================================
     # INDEXES FOR PERFORMANCE
     # ============================================================================
     
@@ -380,9 +439,16 @@ def init_db():
     db.execute('CREATE INDEX IF NOT EXISTS idx_research_briefings_date ON research_briefings(created_at)')
     db.execute('CREATE INDEX IF NOT EXISTS idx_research_findings_category ON research_findings(category)')
     
+    # Marketing content indexes
+    db.execute('CREATE INDEX IF NOT EXISTS idx_marketing_content_status ON marketing_content(status)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_marketing_content_type ON marketing_content(content_type)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_marketing_content_generated ON marketing_content(generated_at)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_marketing_activity_content ON marketing_activity_log(content_id)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_marketing_activity_created ON marketing_activity_log(created_at)')
+    
     db.commit()
     db.close()
-    print("✅ Database initialized (with research agent tables)")
+    print("✅ Database initialized (with marketing content tables)")
 
 
 # ============================================================================
@@ -395,23 +461,6 @@ def save_generated_document(filename, original_name, document_type, file_path, f
     """
     Save a generated document to the database for tracking.
     Called whenever the system creates a downloadable document.
-    
-    Args:
-        filename: The unique filename (e.g., 'shiftwork_document_20260123_143052.docx')
-        original_name: User-friendly name (e.g., 'DuPont Schedule Analysis')
-        document_type: File extension (e.g., 'docx', 'pdf', 'xlsx')
-        file_path: Full path where the file is stored
-        file_size: Size in bytes
-        task_id: Associated task ID (optional)
-        conversation_id: Associated conversation ID (optional)
-        project_id: Associated project ID (optional)
-        title: Display title for the document
-        description: Brief description of contents
-        category: Category for organization (e.g., 'schedule', 'report', 'proposal')
-        metadata: JSON metadata (optional)
-    
-    Returns:
-        document_id: The ID of the saved document record
     """
     db = get_db()
     
@@ -440,19 +489,7 @@ def save_generated_document(filename, original_name, document_type, file_path, f
 
 def get_generated_documents(limit=50, document_type=None, project_id=None, 
                            conversation_id=None, include_deleted=False):
-    """
-    Get list of generated documents for display in UI.
-    
-    Args:
-        limit: Maximum number of documents to return
-        document_type: Filter by type (e.g., 'docx', 'pdf')
-        project_id: Filter by project
-        conversation_id: Filter by conversation
-        include_deleted: Whether to include soft-deleted documents
-    
-    Returns:
-        List of document dictionaries
-    """
+    """Get list of generated documents for display in UI."""
     db = get_db()
     
     query = 'SELECT * FROM generated_documents WHERE 1=1'
@@ -547,16 +584,7 @@ def update_document_access(document_id):
 
 
 def delete_generated_document(document_id, hard_delete=False):
-    """
-    Delete a generated document.
-    
-    Args:
-        document_id: The document ID to delete
-        hard_delete: If True, permanently delete. If False, soft delete (mark as deleted)
-    
-    Returns:
-        True if successful, False otherwise
-    """
+    """Delete a generated document."""
     db = get_db()
     
     # Get the document first to find the file path
