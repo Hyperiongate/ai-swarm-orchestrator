@@ -409,6 +409,42 @@ def init_db():
     ''')
     
     # ============================================================================
+    # AVATAR CONSULTATION SYSTEM TABLES (Added January 25, 2026)
+    # Tracks David & Sarah AI avatar consultations on shift-work.com
+    # ============================================================================
+    
+    # Avatar Conversations table - stores each consultation session
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS avatar_conversations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id TEXT UNIQUE NOT NULL,
+            started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            completed_at TIMESTAMP,
+            status TEXT DEFAULT 'active',
+            visitor_name TEXT,
+            visitor_company TEXT,
+            visitor_email TEXT,
+            visitor_phone TEXT,
+            visitor_industry TEXT,
+            visitor_facility_size INTEGER,
+            lead_score INTEGER DEFAULT 0
+        )
+    ''')
+    
+    # Avatar Messages table - stores each message in the conversation
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS avatar_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id TEXT NOT NULL,
+            role TEXT NOT NULL CHECK(role IN ('visitor', 'avatars', 'system')),
+            stage TEXT,
+            content TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (conversation_id) REFERENCES avatar_conversations(conversation_id)
+        )
+    ''')
+    
+    # ============================================================================
     # INDEXES FOR PERFORMANCE
     # ============================================================================
     
@@ -446,9 +482,16 @@ def init_db():
     db.execute('CREATE INDEX IF NOT EXISTS idx_marketing_activity_content ON marketing_activity_log(content_id)')
     db.execute('CREATE INDEX IF NOT EXISTS idx_marketing_activity_created ON marketing_activity_log(created_at)')
     
+    # Avatar consultation indexes
+    db.execute('CREATE INDEX IF NOT EXISTS idx_avatar_conv_status ON avatar_conversations(status)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_avatar_conv_started ON avatar_conversations(started_at)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_avatar_conv_email ON avatar_conversations(visitor_email)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_avatar_messages_conv ON avatar_messages(conversation_id)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_avatar_messages_created ON avatar_messages(created_at)')
+    
     db.commit()
     db.close()
-    print("✅ Database initialized (with marketing content tables)")
+    print("✅ Database initialized (with marketing + avatar tables)")
 
 
 # ============================================================================
