@@ -1,9 +1,17 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: January 25, 2026 - ADDED CONTENT MARKETING ENGINE
+Last Updated: January 25, 2026 - ADDED SWARM SELF-EVALUATION SYSTEM
 
 CHANGES IN THIS VERSION:
+- January 25, 2026: ADDED SWARM SELF-EVALUATION SYSTEM
+  * Added evaluation_bp blueprint for weekly self-reviews
+  * Evaluates internal performance against benchmarks
+  * Tracks emerging AI models and capabilities
+  * Identifies gaps in current AI stack
+  * Generates "State of the Swarm" reports with recommendations
+  * Can run manually or be scheduled weekly
+
 - January 25, 2026: ADDED CONTENT MARKETING ENGINE
   * Added marketing_bp blueprint for autonomous content generation
   * Auto-generates LinkedIn posts from consulting work
@@ -55,8 +63,10 @@ ARCHITECTURE:
 - database.py: All database operations
 - orchestration/: All AI logic + proactive_agent.py
 - routes/: All Flask endpoints
-- content_marketing_engine.py: Autonomous content generation (NEW)
-- routes/marketing.py: Marketing API endpoints (NEW)
+- swarm_self_evaluation.py: Weekly self-evaluation engine (NEW)
+- routes/evaluation.py: Evaluation API endpoints (NEW)
+- content_marketing_engine.py: Autonomous content generation
+- routes/marketing.py: Marketing API endpoints
 - intelligence.py: Lead scoring & pipeline management
 - routes/intelligence.py: Intelligence API endpoints
 - alert_system.py: Automated monitoring & alerts
@@ -250,9 +260,26 @@ def health():
     except:
         avatar_status = 'not_installed'
     
+    # Check Swarm Self-Evaluation status
+    evaluation_status = 'disabled'
+    last_evaluation = None
+    try:
+        from swarm_self_evaluation import get_swarm_evaluator
+        evaluator = get_swarm_evaluator()
+        evaluation_status = 'enabled'
+        last_eval = evaluator.get_latest_evaluation()
+        if last_eval:
+            last_evaluation = {
+                'date': last_eval.get('evaluation_date'),
+                'health_score': last_eval.get('health_score'),
+                'trend': last_eval.get('trend')
+            }
+    except:
+        evaluation_status = 'not_installed'
+    
     return jsonify({
         'status': 'healthy',
-        'version': 'Sprint 3 Complete + Research + Alerts + Intelligence + Marketing + Avatars',
+        'version': 'Sprint 3 Complete + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation',
         'orchestrators': {
             'sonnet': 'configured' if ANTHROPIC_API_KEY else 'missing',
             'opus': 'configured' if ANTHROPIC_API_KEY else 'missing'
@@ -289,6 +316,10 @@ def health():
         'avatar_consultation': {
             'status': avatar_status,
             'avatars': ['david', 'sarah']
+        },
+        'swarm_evaluation': {
+            'status': evaluation_status,
+            'last_evaluation': last_evaluation
         },
         'features': {
             'sprint_1': {
@@ -340,6 +371,13 @@ def health():
                 'smart_questioning': avatar_status,
                 'lead_capture': avatar_status,
                 'conversation_logging': avatar_status
+            },
+            'swarm_evaluation': {
+                'performance_metrics': evaluation_status,
+                'market_scanning': evaluation_status,
+                'gap_analysis': evaluation_status,
+                'recommendations': evaluation_status,
+                'weekly_reports': evaluation_status
             }
         }
     })
@@ -407,6 +445,18 @@ except ImportError as e:
     print(f"ℹ️  Avatar Consultation routes not found: {e}")
 except Exception as e:
     print(f"⚠️  Avatar Consultation registration failed: {e}")
+
+# ============================================================================
+# SWARM SELF-EVALUATION BLUEPRINT (Added January 25, 2026)
+# ============================================================================
+try:
+    from routes.evaluation import evaluation_bp
+    app.register_blueprint(evaluation_bp)
+    print("✅ Swarm Self-Evaluation API registered")
+except ImportError as e:
+    print(f"ℹ️  Swarm Self-Evaluation routes not found: {e}")
+except Exception as e:
+    print(f"⚠️  Swarm Self-Evaluation registration failed: {e}")
 
 # Sprint 3 blueprints
 try:
