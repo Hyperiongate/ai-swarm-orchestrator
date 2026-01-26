@@ -1,9 +1,14 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: January 25, 2026 - ADDED SWARM SELF-EVALUATION SYSTEM
+Last Updated: January 26, 2026 - UPDATED FOR PATTERN-BASED SCHEDULE SYSTEM
 
 CHANGES IN THIS VERSION:
+- January 26, 2026: UPDATED FOR PATTERN-BASED SCHEDULE SYSTEM
+  * Added Flask session configuration (required for multi-turn schedule conversations)
+  * Session stores schedule conversation state between requests
+  * Required for new conversational schedule generator
+
 - January 25, 2026: ADDED SWARM SELF-EVALUATION SYSTEM
   * Added evaluation_bp blueprint for weekly self-reviews
   * Evaluates internal performance against benchmarks
@@ -63,8 +68,10 @@ ARCHITECTURE:
 - database.py: All database operations
 - orchestration/: All AI logic + proactive_agent.py
 - routes/: All Flask endpoints
-- swarm_self_evaluation.py: Weekly self-evaluation engine (NEW)
-- routes/evaluation.py: Evaluation API endpoints (NEW)
+- schedule_generator.py: Pattern-based schedule generation (UPDATED)
+- schedule_request_handler.py: Conversational schedule handler (NEW)
+- swarm_self_evaluation.py: Weekly self-evaluation engine
+- routes/evaluation.py: Evaluation API endpoints
 - content_marketing_engine.py: Autonomous content generation
 - routes/marketing.py: Marketing API endpoints
 - intelligence.py: Lead scoring & pipeline management
@@ -92,6 +99,12 @@ import os
 
 # Initialize Flask
 app = Flask(__name__)
+
+# CRITICAL: Configure session for schedule conversation memory (Added January 26, 2026)
+# This is REQUIRED for the new pattern-based schedule system to work
+# Without this, the system cannot remember multi-turn conversations
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production-12345')
+app.config['SESSION_TYPE'] = 'filesystem'
 
 # Initialize database (includes all tables from all sprints)
 init_db()
@@ -164,10 +177,10 @@ except Exception as e:
 # Load optional modules
 SCHEDULE_GENERATOR_AVAILABLE = False
 try:
-    from schedule_generator import get_schedule_generator
+    from schedule_generator import get_pattern_generator
     SCHEDULE_GENERATOR_AVAILABLE = True
-    schedule_gen = get_schedule_generator()
-    print("✅ Schedule Generator loaded")
+    schedule_gen = get_pattern_generator()
+    print("✅ Pattern-Based Schedule Generator loaded")
     
     # CRITICAL: Make schedule generator available to routes
     app.config['SCHEDULE_GENERATOR_AVAILABLE'] = SCHEDULE_GENERATOR_AVAILABLE
@@ -300,7 +313,7 @@ def health():
     
     return jsonify({
         'status': 'healthy',
-        'version': 'Sprint 3 Complete + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation',
+        'version': 'Sprint 3 Complete + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules',
         'orchestrators': {
             'sonnet': 'configured' if ANTHROPIC_API_KEY else 'missing',
             'opus': 'configured' if ANTHROPIC_API_KEY else 'missing'
@@ -315,7 +328,8 @@ def health():
             'documents_indexed': kb_doc_count
         },
         'schedule_generator': {
-            'status': 'enabled' if SCHEDULE_GENERATOR_AVAILABLE else 'disabled'
+            'status': 'enabled' if SCHEDULE_GENERATOR_AVAILABLE else 'disabled',
+            'type': 'pattern_based_conversational'
         },
         'output_formatter': {
             'status': 'enabled' if OUTPUT_FORMATTER_AVAILABLE else 'disabled'
@@ -419,6 +433,15 @@ def health():
                 'goal_alignment': introspection_status,
                 'reflection_narrative': introspection_status,
                 'notification_system': introspection_status
+            },
+            'schedule_generator': {
+                'pattern_based': SCHEDULE_GENERATOR_AVAILABLE,
+                'conversational': SCHEDULE_GENERATOR_AVAILABLE,
+                'shift_lengths': ['8_hour', '12_hour'],
+                'patterns_12hr': ['2-2-3', '2-3-2', '3-2-2-3', '4-3', '4-4', 'dupont'],
+                'patterns_8hr': ['5-2-fixed', '6-3-fixed', 'southern_swing', '6-2-rotating'],
+                'visual_excel_output': True,
+                'color_coded': True
             }
         }
     })
