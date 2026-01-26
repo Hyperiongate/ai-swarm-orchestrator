@@ -1,12 +1,21 @@
 """
 Database Module
 Created: January 21, 2026
-Last Updated: January 25, 2026 - ADDED SWARM EVALUATION TABLES
+Last Updated: January 25, 2026 - ADDED INTROSPECTION LAYER TABLES
 
 All database operations isolated here.
 No more SQL scattered across 2,500 lines.
 
 CHANGELOG:
+- January 25, 2026: ADDED INTROSPECTION LAYER TABLES
+  * Added 'introspection_insights' table - stores introspection reports
+  * Added 'capability_boundaries' table - tracks known limitations (Phase 2)
+  * Added 'calibration_records' table - confidence vs outcome data (Phase 2)
+  * Added 'modification_proposals' table - self-improvement suggestions (Phase 3)
+  * Added 'goal_alignment_logs' table - tracks objective alignment
+  * Added comprehensive indexes for introspection queries
+  * This supports the Introspection Layer (emulated self-awareness)
+
 - January 25, 2026: ADDED SWARM SELF-EVALUATION TABLES
   * Added 'swarm_evaluations' table - stores weekly evaluation reports
   * Added indexes for evaluation queries
@@ -447,6 +456,95 @@ def init_db():
     ''')
     
     # ============================================================================
+    # INTROSPECTION LAYER TABLES (Added January 25, 2026)
+    # Emulated self-awareness - observes and reflects on swarm performance
+    # ============================================================================
+    
+    # Introspection Insights - stores all introspection reports
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS introspection_insights (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            insight_type TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            period_analyzed TEXT,
+            summary TEXT NOT NULL,
+            full_analysis_json TEXT,
+            confidence_score REAL,
+            requires_action BOOLEAN DEFAULT 0,
+            action_taken BOOLEAN DEFAULT 0,
+            action_notes TEXT,
+            notification_pending BOOLEAN DEFAULT 1,
+            notification_shown_at TIMESTAMP,
+            notification_dismissed BOOLEAN DEFAULT 0,
+            archived BOOLEAN DEFAULT 0
+        )
+    ''')
+    
+    # Capability Boundaries - tracks known limitations (Phase 2)
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS capability_boundaries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            boundary_type TEXT NOT NULL,
+            description TEXT NOT NULL,
+            discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_confirmed TIMESTAMP,
+            occurrence_count INTEGER DEFAULT 1,
+            suggested_resolution TEXT,
+            resolved BOOLEAN DEFAULT 0,
+            resolved_at TIMESTAMP,
+            resolution_notes TEXT
+        )
+    ''')
+    
+    # Calibration Records - stores confidence vs outcome data (Phase 2)
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS calibration_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER,
+            predicted_confidence REAL,
+            actual_outcome_score REAL,
+            calibration_error REAL,
+            recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (task_id) REFERENCES tasks(id)
+        )
+    ''')
+    
+    # Modification Proposals - self-improvement suggestions (Phase 3)
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS modification_proposals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            proposal_type TEXT NOT NULL,
+            priority TEXT DEFAULT 'medium',
+            title TEXT NOT NULL,
+            observation TEXT,
+            current_behavior TEXT,
+            proposed_change TEXT,
+            expected_impact TEXT,
+            code_diff TEXT,
+            confidence_score REAL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            status TEXT DEFAULT 'pending',
+            reviewed_at TIMESTAMP,
+            review_notes TEXT,
+            implemented_at TIMESTAMP
+        )
+    ''')
+    
+    # Goal Alignment Logs - tracks objective alignment over time
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS goal_alignment_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            log_date DATE NOT NULL,
+            objective_id INTEGER,
+            objective_name TEXT,
+            tasks_count INTEGER DEFAULT 0,
+            percentage_of_activity REAL,
+            assessment TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    # ============================================================================
     # INDEXES FOR PERFORMANCE
     # ============================================================================
     
@@ -494,6 +592,18 @@ def init_db():
     # Swarm evaluation indexes
     db.execute('CREATE INDEX IF NOT EXISTS idx_swarm_eval_date ON swarm_evaluations(evaluation_date DESC)')
     db.execute('CREATE INDEX IF NOT EXISTS idx_swarm_eval_health ON swarm_evaluations(health_score)')
+    
+    # Introspection layer indexes
+    db.execute('CREATE INDEX IF NOT EXISTS idx_introspection_type ON introspection_insights(insight_type)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_introspection_created ON introspection_insights(created_at DESC)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_introspection_pending ON introspection_insights(notification_pending, created_at DESC)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_introspection_action ON introspection_insights(requires_action)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_boundaries_type ON capability_boundaries(boundary_type)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_boundaries_resolved ON capability_boundaries(resolved)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_calibration_task ON calibration_records(task_id)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_proposals_status ON modification_proposals(status)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_proposals_priority ON modification_proposals(priority)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_alignment_date ON goal_alignment_logs(log_date DESC)')
     
     db.commit()
     db.close()
