@@ -1,10 +1,19 @@
 """
 Core Routes
 Created: January 21, 2026
-Last Updated: January 23, 2026 - FIXED CLARIFICATION LOOP BUG
+Last Updated: January 26, 2026 - REPLACED OLD SCHEDULE SYSTEM WITH PATTERN-BASED
 
 CHANGES IN THIS VERSION:
-- January 23, 2026: FIXED CLARIFICATION ANSWERS NOT BEING PROCESSED
+- January 26, 2026: COMPLETE SCHEDULE SYSTEM REPLACEMENT
+  * Removed old named-schedule system (DuPont, Panama, Pitman buttons)
+  * Integrated new pattern-based conversational system
+  * Now asks: shift length → pattern selection
+  * Only DuPont and Southern Swing keep their names (industry standards)
+  * All other patterns described by work/off rhythm (2-2-3, 4-4, etc.)
+  * Added session management for multi-turn schedule conversations
+  * Generates visual Excel schedules with color-coded shifts
+
+- January 23, 2026: FIXED CLARIFICATION LOOP BUG
   * Added clarification_answers parsing from request (JSON and form data)
   * Modified proactive pre-check to SKIP when clarification_answers provided
   * This fixes the infinite loop where AI kept asking same questions
@@ -41,12 +50,14 @@ CHANGES IN THIS VERSION:
 Author: Jim @ Shiftwork Solutions LLC
 """
 
-from flask import Blueprint, request, jsonify, send_file, current_app, make_response
+from flask import Blueprint, request, jsonify, send_file, current_app, make_response, session
 import time
 import json
 import os
 import markdown
+import shutil
 from datetime import datetime
+from schedule_request_handler import get_schedule_handler
 from database import (
     get_db, 
     create_conversation, 
@@ -210,15 +221,12 @@ def categorize_document(user_request, doc_type):
 
 
 # ============================================================================
-# PROJECTS API ENDPOINTS (Added January 23, 2026 - FIX FOR 404 ERRORS)
+# PROJECTS API ENDPOINTS
 # ============================================================================
 
 @core_bp.route('/api/projects', methods=['GET'])
 def list_projects():
-    """
-    List all projects.
-    This endpoint was missing and causing frontend 404 errors.
-    """
+    """List all projects."""
     try:
         status_filter = request.args.get('status', 'all')
         limit = request.args.get('limit', 50, type=int)
@@ -369,15 +377,12 @@ def update_project(project_id):
 
 
 # ============================================================================
-# SURVEY API ENDPOINTS (Added January 23, 2026 - FIX FOR 404 ERRORS)
+# SURVEY API ENDPOINTS
 # ============================================================================
 
 @core_bp.route('/api/survey/questions', methods=['GET'])
 def get_survey_questions():
-    """
-    Get available survey questions from the question bank.
-    This endpoint was missing and causing frontend 404 errors.
-    """
+    """Get available survey questions from the question bank."""
     try:
         if not SURVEY_BUILDER_AVAILABLE or not survey_builder:
             return jsonify({
@@ -509,15 +514,12 @@ def get_survey_status():
 
 
 # ============================================================================
-# MARKETING API ENDPOINTS (Added January 23, 2026 - FIX FOR 404 ERRORS)
+# MARKETING API ENDPOINTS
 # ============================================================================
 
 @core_bp.route('/api/marketing/status', methods=['GET'])
 def get_marketing_status():
-    """
-    Get marketing hub status.
-    This endpoint was missing and causing frontend 404 errors.
-    """
+    """Get marketing hub status."""
     try:
         if not MARKETING_HUB_AVAILABLE or not marketing_hub:
             return jsonify({
@@ -620,7 +622,7 @@ def conduct_market_research():
 
 
 # ============================================================================
-# OPPORTUNITIES API ENDPOINTS (Added January 23, 2026 - FIX FOR 404 ERRORS)
+# OPPORTUNITIES API ENDPOINTS
 # ============================================================================
 
 @core_bp.route('/api/opportunities', methods=['GET'])
@@ -656,10 +658,7 @@ def list_opportunities():
 
 @core_bp.route('/api/opportunities/status', methods=['GET'])
 def get_opportunities_status():
-    """
-    Get opportunity finder status.
-    This endpoint was missing and causing frontend 404 errors.
-    """
+    """Get opportunity finder status."""
     try:
         if not OPPORTUNITY_FINDER_AVAILABLE or not opportunity_finder:
             return jsonify({
@@ -768,7 +767,7 @@ def analyze_opportunity():
 
 
 # ============================================================================
-# GENERATED DOCUMENTS MANAGEMENT ENDPOINTS (Added January 23, 2026)
+# GENERATED DOCUMENTS MANAGEMENT ENDPOINTS
 # ============================================================================
 
 @core_bp.route('/api/generated-documents', methods=['GET'])
@@ -1005,7 +1004,7 @@ def get_docs_stats():
 
 
 # ============================================================================
-# CONVERSATION MEMORY ENDPOINTS (Added January 22, 2026)
+# CONVERSATION MEMORY ENDPOINTS
 # ============================================================================
 
 @core_bp.route('/api/conversations', methods=['GET'])
@@ -1097,7 +1096,7 @@ def add_conversation_message(conversation_id):
 
 
 # ============================================================================
-# MAIN ORCHESTRATION ENDPOINT - FIXED January 23, 2026
+# MAIN ORCHESTRATION ENDPOINT - UPDATED January 26, 2026
 # ============================================================================
 
 @core_bp.route('/api/orchestrate', methods=['POST'])
@@ -1105,10 +1104,11 @@ def orchestrate():
     """
     Main orchestration endpoint with proactive intelligence and conversation memory.
     
-    FIXED January 23, 2026: Added clarification_answers handling
-    - Now checks if clarification_answers were provided in the request
-    - If answers exist, SKIPS the proactive pre-check to prevent infinite loop
-    - User answers go straight to task execution
+    UPDATED January 26, 2026: Replaced old schedule system with pattern-based conversational system
+    - Asks for shift length (12-hour or 8-hour)
+    - Then shows available patterns for that shift length
+    - Generates visual Excel schedules with color coding
+    - Only DuPont and Southern Swing keep their names (industry standards)
     """
     try:
         if request.is_json:
@@ -1130,10 +1130,7 @@ def orchestrate():
         
         overall_start = time.time()
         
-        # =====================================================================
-        # FIXED: Check for clarification answers (January 23, 2026)
-        # If user provided answers to clarifying questions, skip proactive check
-        # =====================================================================
+        # Check for clarification answers
         clarification_answers = None
         if request.is_json:
             clarification_answers_raw = request.json.get('clarification_answers')
@@ -1155,7 +1152,6 @@ def orchestrate():
         
         if clarification_answers:
             print(f"✅ Clarification answers received: {clarification_answers}")
-            # Enhance the user request with the clarification context
             context_additions = []
             for field, value in clarification_answers.items():
                 context_additions.append(f"{field}: {value}")
@@ -1177,10 +1173,7 @@ def orchestrate():
         except Exception as proactive_init_error:
             print(f"Proactive agent init failed: {proactive_init_error}")
         
-        # =====================================================================
-        # FIXED: Proactive pre-check - SKIP if clarification answers provided
-        # This prevents the infinite loop of asking the same questions
-        # =====================================================================
+        # Proactive pre-check - SKIP if clarification answers provided
         if proactive and not clarification_answers:
             try:
                 pre_check = proactive.pre_process_request(user_request)
@@ -1212,49 +1205,137 @@ def orchestrate():
         task_id = cursor.lastrowid
         db.commit()
         
-        # Schedule generator intercept
-        schedule_keywords = ['dupont', 'panama', 'pitman', 'southern swing', '2-2-3', '2-3-2',
-                            'create a schedule', 'generate a schedule', 'make a schedule']
-        is_schedule_request = any(keyword in user_request.lower() for keyword in schedule_keywords)
+        # =============================================================================
+        # NEW PATTERN-BASED SCHEDULE SYSTEM - START
+        # =============================================================================
         
-        if is_schedule_request and current_app.config.get('SCHEDULE_GENERATOR_AVAILABLE'):
-            try:
-                schedule_gen = current_app.config.get('SCHEDULE_GENERATOR')
-                schedule_type = schedule_gen.identify_schedule_type(user_request)
-                if schedule_type:
-                    schedule_file = schedule_gen.create_schedule(schedule_type)
-                    if schedule_file and os.path.exists(schedule_file):
-                        filename = os.path.basename(schedule_file)
-                        file_size = os.path.getsize(schedule_file)
-                        doc_title = f"{schedule_type.replace('_', ' ').title()} Schedule"
-                        doc_id = save_generated_document(
-                            filename=filename, original_name=doc_title, document_type='xlsx',
-                            file_path=schedule_file, file_size=file_size, task_id=task_id,
-                            conversation_id=conversation_id, project_id=project_id,
-                            title=doc_title, description=f"Generated {schedule_type} schedule", category='schedule'
-                        )
-                        response_text = f"# {schedule_type.replace('_', ' ').title()} Schedule Created\n\n**Status:** Complete\n\nYour professional {schedule_type.replace('_', ' ')} schedule has been generated."
-                        response_html = convert_markdown_to_html(response_text)
-                        db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
-                                  ('completed', 'schedule_generator', time.time() - overall_start, task_id))
-                        db.commit()
-                        add_message(conversation_id, 'assistant', response_text, task_id,
-                                   {'document_created': True, 'document_type': 'xlsx', 'document_id': doc_id, 'orchestrator': 'schedule_generator'})
-                        suggestions = []
-                        if proactive:
-                            try:
-                                suggestions = proactive.post_process_result(task_id, user_request, response_text)
-                            except:
-                                pass
-                        db.close()
-                        return jsonify({'success': True, 'task_id': task_id, 'conversation_id': conversation_id,
-                                       'result': response_html, 'document_url': f'/api/generated-documents/{doc_id}/download',
-                                       'document_id': doc_id, 'document_created': True, 'document_type': 'xlsx',
-                                       'execution_time': time.time() - overall_start, 'orchestrator': 'schedule_generator',
-                                       'knowledge_applied': False, 'formatting_applied': True, 'specialists_used': [],
-                                       'consensus': None, 'suggestions': suggestions})
-            except Exception as schedule_error:
-                print(f"Schedule generation failed: {schedule_error}")
+        # Pattern-based schedule generator intercept
+        schedule_handler = get_schedule_handler()
+        
+        # Get conversation context from session if it exists
+        schedule_context = session.get('schedule_context', {})
+        
+        # Process the schedule request
+        schedule_result = schedule_handler.process_request(user_request, schedule_context)
+        
+        if schedule_result['action'] != 'not_schedule_request':
+            # This IS a schedule-related request
+            
+            if schedule_result['action'] == 'generate_schedule':
+                # Schedule was generated successfully
+                source_filepath = schedule_result['filepath']
+                filename = os.path.basename(source_filepath)
+                
+                # Move file to outputs directory
+                output_path = os.path.join('/mnt/user-data/outputs', filename)
+                shutil.copy(source_filepath, output_path)
+                
+                # Save to database as generated document
+                file_size = os.path.getsize(output_path)
+                shift_length = schedule_result['shift_length']
+                pattern_key = schedule_result['pattern_key']
+                doc_title = f"{shift_length}-Hour {pattern_key.upper().replace('_', ' ')} Schedule Pattern"
+                
+                doc_id = save_generated_document(
+                    filename=filename,
+                    original_name=doc_title,
+                    document_type='xlsx',
+                    file_path=output_path,
+                    file_size=file_size,
+                    task_id=task_id,
+                    conversation_id=conversation_id,
+                    project_id=project_id,
+                    title=doc_title,
+                    description=f"Visual {shift_length}-hour {pattern_key} schedule pattern with color-coded shifts",
+                    category='schedule'
+                )
+                
+                # Convert markdown response to HTML
+                response_html = convert_markdown_to_html(schedule_result['message'])
+                
+                # Update task as completed
+                db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
+                          ('completed', 'pattern_schedule_generator', time.time() - overall_start, task_id))
+                db.commit()
+                
+                # Add message to conversation
+                add_message(conversation_id, 'assistant', schedule_result['message'], task_id,
+                           {'document_created': True, 'document_type': 'xlsx', 'document_id': doc_id, 
+                            'orchestrator': 'pattern_schedule_generator', 'shift_length': shift_length,
+                            'pattern': pattern_key})
+                
+                # Clear schedule context from session
+                session.pop('schedule_context', None)
+                
+                # Get proactive suggestions if available
+                suggestions = []
+                if proactive:
+                    try:
+                        suggestions = proactive.post_process_result(task_id, user_request, schedule_result['message'])
+                    except:
+                        pass
+                
+                db.close()
+                
+                # Return response with document
+                return jsonify({
+                    'success': True,
+                    'task_id': task_id,
+                    'conversation_id': conversation_id,
+                    'result': response_html,
+                    'document_url': f'/api/generated-documents/{doc_id}/download',
+                    'document_id': doc_id,
+                    'document_created': True,
+                    'document_type': 'xlsx',
+                    'execution_time': time.time() - overall_start,
+                    'orchestrator': 'pattern_schedule_generator',
+                    'knowledge_applied': False,
+                    'formatting_applied': True,
+                    'specialists_used': [],
+                    'consensus': None,
+                    'suggestions': suggestions,
+                    'shift_length': shift_length,
+                    'pattern': pattern_key
+                })
+            
+            else:
+                # Need more information - asking user a question
+                # Save context for next turn
+                session['schedule_context'] = {
+                    'waiting_for': schedule_result.get('waiting_for'),
+                    'shift_length': schedule_result.get('shift_length'),
+                    'pattern_key': schedule_result.get('pattern_key')
+                }
+                
+                # Convert response to HTML
+                response_html = convert_markdown_to_html(schedule_result['message'])
+                
+                # Update task as in-progress
+                db.execute('UPDATE tasks SET status = ? WHERE id = ?', ('in_progress', task_id))
+                db.commit()
+                
+                # Add message to conversation
+                add_message(conversation_id, 'assistant', schedule_result['message'], task_id,
+                           {'waiting_for_input': True, 'orchestrator': 'pattern_schedule_generator',
+                            'waiting_for': schedule_result.get('waiting_for')})
+                
+                db.close()
+                
+                # Return question to user
+                return jsonify({
+                    'success': True,
+                    'task_id': task_id,
+                    'conversation_id': conversation_id,
+                    'result': response_html,
+                    'needs_input': True,
+                    'waiting_for': schedule_result.get('waiting_for'),
+                    'orchestrator': 'pattern_schedule_generator',
+                    'execution_time': time.time() - overall_start
+                })
+        
+        # =============================================================================
+        # NEW PATTERN-BASED SCHEDULE SYSTEM - END
+        # =============================================================================
         
         # Regular AI orchestration
         try:
