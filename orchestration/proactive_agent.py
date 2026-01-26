@@ -329,4 +329,61 @@ class ProjectAutoDetector:
         }
 
 
+# =============================================================================
+# MAIN PROACTIVE AGENT CLASS
+# =============================================================================
+
+class ProactiveAgent:
+    """
+    Main class that orchestrates all proactive features
+    Simplified for January 26, 2026 - schedule clarifications disabled
+    """
+    
+    def __init__(self):
+        self.questioner = SmartQuestioner()
+        self.suggester = NextStepSuggester()
+        self.tracker = PatternTracker()
+        self.project_detector = ProjectAutoDetector()
+    
+    def process_request(self, user_request, context=None):
+        """
+        Main entry point for proactive intelligence
+        
+        Args:
+            user_request: User's message
+            context: Optional context dict
+            
+        Returns:
+            dict with proactive actions or None if no action needed
+        """
+        # Check for new project signals
+        project_signal = self.project_detector.detect_new_project_signal(user_request)
+        if project_signal:
+            return {
+                'type': 'auto_project',
+                'data': self.project_detector.create_auto_project(project_signal)
+            }
+        
+        # Check for ambiguity (schedule ambiguity is now disabled)
+        ambiguities = self.questioner.analyze_ambiguity(user_request)
+        if ambiguities:
+            return {
+                'type': 'clarification',
+                'data': self.questioner.format_clarification_response(ambiguities)
+            }
+        
+        # Record interaction for pattern learning
+        self.tracker.record_interaction(user_request, 'processed', context)
+        
+        return None
+    
+    def suggest_next_steps(self, completed_task_type, context=None):
+        """Get suggestions for what to do next"""
+        return self.suggester.suggest_next_steps(completed_task_type, context)
+    
+    def get_common_patterns(self, limit=10):
+        """Get most common user request patterns"""
+        return self.tracker.get_common_patterns(limit)
+
+
 # I did no harm and this file is not truncated
