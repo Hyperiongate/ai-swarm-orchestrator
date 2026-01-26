@@ -17,7 +17,7 @@ Guides users through: shift length → pattern selection → schedule creation
 AUTHOR: Jim @ Shiftwork Solutions LLC
 """
 
-from schedule_generator_v2 import get_pattern_generator
+from schedule_generator import get_pattern_generator
 
 
 class ScheduleRequestHandler:
