@@ -1331,9 +1331,9 @@ Be comprehensive and professional in your response."""
                     completion_prompt += f"\n\nSTRATEGIC GUIDANCE (from senior AI):\n{opus_guidance}\n\nUse this guidance to inform your response."
                 
                 if orchestrator == 'opus':
-                    response = call_claude_opus(completion_prompt)
+                    response = call_claude_opus(completion_prompt, conversation_history=conversation_context)
                 else:
-                    response = call_claude_sonnet(completion_prompt)
+                    response = call_claude_sonnet(completion_prompt, conversation_history=conversation_context)
                 
                 if isinstance(response, dict):
                     if response.get('error'):
