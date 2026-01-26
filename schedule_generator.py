@@ -1,18 +1,18 @@
 """
-SCHEDULE GENERATOR MODULE
-Created: January 21, 2026
-Last Updated: January 21, 2026
+PATTERN-BASED SCHEDULE GENERATOR
+Created: January 26, 2026
+Last Updated: January 26, 2026
+
+CHANGES:
+- January 26, 2026: Complete rebuild
+  * Removed named schedules (except DuPont and Southern Swing)
+  * Pattern-based selection: shift length → pattern type
+  * Focus on visual clarity of patterns
+  * No staffing, no costs - just clean schedule patterns
 
 PURPOSE:
-Creates ACTUAL shift schedules in Excel format with proper visual formatting.
-No more confusing text descriptions - generates real schedule patterns.
-
-FEATURES:
-- Creates Excel files with visual schedule patterns
-- Supports all major schedule types (DuPont, 2-2-3, Panama, etc.)
-- Proper formatting: D for Day, N for Night, OFF for off days
-- Color coding for easy reading
-- Week-by-week layout matching industry standards
+Creates visually clear shift schedule patterns in Excel format.
+Asks user for shift length, then shows available patterns.
 
 AUTHOR: Jim @ Shiftwork Solutions LLC
 """
@@ -20,264 +20,441 @@ AUTHOR: Jim @ Shiftwork Solutions LLC
 import os
 from datetime import datetime, timedelta
 from openpyxl import Workbook
-from openpyxl.styles import Font, Fill, PatternFill, Alignment, Border, Side
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 
-class ScheduleGenerator:
+class PatternScheduleGenerator:
     """
-    Generates professional shift schedules in Excel format
+    Generates visual schedule patterns based on shift length and rotation type
     """
     
     def __init__(self):
-        self.schedule_patterns = self._define_schedule_patterns()
+        self.patterns_12_hour = self._define_12_hour_patterns()
+        self.patterns_8_hour = self._define_8_hour_patterns()
         
-    def _define_schedule_patterns(self):
-        """Define common schedule patterns"""
+    def _define_12_hour_patterns(self):
+        """Define 12-hour shift patterns"""
         return {
-            'dupont': {
-                'name': '12-Hour DuPont (4-crew rotation)',
-                'description': 'DDDDOOOODDDNOOOONNNNOO pattern',
-                'shift_length': 12,
-                'crews': 4,
-                'pattern': ['D', 'D', 'D', 'D', 'O', 'O', 'O', 'D', 'D', 'D', 'N', 'O', 'O', 'O', 'O', 'N', 'N', 'N', 'N', 'O', 'O', 'O', 'O'],  # 23-day pattern, but repeats to 28
-                'rotation_days': 28  # Full cycle
-            },
             '2-2-3': {
-                'name': '12-Hour 2-2-3 (4-crew rotation)',
-                'description': 'Work 2, Off 2, Work 3, Off 2, Work 2, Off 3',
-                'shift_length': 12,
+                'description': 'Work 2, Off 2, Work 3, Off 2, Work 2, Off 3 (repeats every 14 days)',
+                'cycle_days': 14,
                 'crews': 4,
-                'pattern': ['D', 'D', 'O', 'O', 'D', 'D', 'D', 'O', 'O', 'D', 'D', 'O', 'O', 'D'],
-                'rotation_days': 14
+                'crew_patterns': {
+                    'Crew A': ['D','D','O','O','D','D','D','O','O','D','D','O','O','O'],
+                    'Crew B': ['O','O','D','D','O','O','O','D','D','O','O','D','D','D'],
+                    'Crew C': ['D','D','O','O','D','D','D','O','O','D','D','O','O','O'],
+                    'Crew D': ['O','O','D','D','O','O','O','D','D','O','O','D','D','D']
+                },
+                'notes': [
+                    'Every other weekend off',
+                    'Maximum 3 consecutive days worked',
+                    '4 crews required for 24/7 coverage',
+                    'Crews A & C work days, Crews B & D work nights (alternating)'
+                ]
             },
-            'panama': {
-                'name': '12-Hour Panama (4-crew rotation)',
-                'description': 'Also known as 2-2-3, alternates day/night',
-                'shift_length': 12,
+            '2-3-2': {
+                'description': 'Work 2, Off 2, Work 3, Off 2, Work 2, Off 3 (repeats every 14 days)',
+                'cycle_days': 14,
                 'crews': 4,
-                'pattern': ['D', 'D', 'O', 'O', 'D', 'D', 'D', 'O', 'O', 'D', 'D', 'O', 'O', 'N'],
-                'rotation_days': 14
+                'crew_patterns': {
+                    'Crew A': ['D','D','O','O','D','D','D','O','O','N','N','O','O','O'],
+                    'Crew B': ['O','O','D','D','O','O','O','D','D','O','O','N','N','N'],
+                    'Crew C': ['N','N','O','O','D','D','D','O','O','D','D','O','O','O'],
+                    'Crew D': ['O','O','N','N','O','O','O','D','D','O','O','D','D','D']
+                },
+                'notes': [
+                    'Every other weekend off',
+                    'Maximum 3 consecutive days worked',
+                    '4 crews required for 24/7 coverage',
+                    'Includes day and night shift rotation'
+                ]
             },
-            'pitman': {
-                'name': '12-Hour Pitman (4-crew rotation)',
-                'description': 'Also known as 2-3-2, work 2 days/nights, off 2, work 3, off 2',
-                'shift_length': 12,
+            '3-2-2-3': {
+                'description': 'Work 3, Off 2, Work 2, Off 3 (repeats every 10 days)',
+                'cycle_days': 10,
                 'crews': 4,
-                'pattern': ['D', 'D', 'O', 'O', 'D', 'D', 'D', 'O', 'O', 'N', 'N', 'O', 'O', 'N'],
-                'rotation_days': 14
+                'crew_patterns': {
+                    'Crew A': ['D','D','D','O','O','D','D','O','O','O'],
+                    'Crew B': ['O','O','O','D','D','O','O','D','D','D'],
+                    'Crew C': ['D','D','O','O','D','D','D','O','O','O'],
+                    'Crew D': ['O','O','D','D','O','O','O','D','D','D']
+                },
+                'notes': [
+                    '10-day rotation cycle',
+                    'Maximum 3 consecutive days worked',
+                    '4 crews required for 24/7 coverage',
+                    'Weekend off frequency varies by week'
+                ]
             },
-            '8-hour-fixed': {
-                'name': '8-Hour Fixed Shifts (3-crew)',
-                'description': 'Traditional day/evening/night with fixed crews',
-                'shift_length': 8,
-                'crews': 3,
-                'pattern': ['D', 'D', 'D', 'D', 'D', 'O', 'O'],
-                'rotation_days': 7
+            '4-3': {
+                'description': 'Work 4, Off 3 (repeats every 7 days)',
+                'cycle_days': 7,
+                'crews': 4,
+                'crew_patterns': {
+                    'Crew A': ['D','D','D','D','O','O','O'],
+                    'Crew B': ['O','D','D','D','D','O','O'],
+                    'Crew C': ['O','O','D','D','D','D','O'],
+                    'Crew D': ['D','O','O','D','D','D','D']
+                },
+                'notes': [
+                    'Simple weekly rotation',
+                    'Maximum 4 consecutive days worked',
+                    '4 crews required for 24/7 coverage',
+                    'Weekend coverage rotates through crews'
+                ]
+            },
+            '4-4': {
+                'description': 'Work 4, Off 4 (repeats every 8 days)',
+                'cycle_days': 8,
+                'crews': 4,
+                'crew_patterns': {
+                    'Crew A': ['D','D','D','D','O','O','O','O'],
+                    'Crew B': ['O','O','O','O','D','D','D','D'],
+                    'Crew C': ['D','D','D','D','O','O','O','O'],
+                    'Crew D': ['O','O','O','O','D','D','D','D']
+                },
+                'notes': [
+                    '8-day rotation cycle',
+                    'Maximum 4 consecutive days worked',
+                    '4 crews required for 24/7 coverage',
+                    'Simple pattern, easy to remember'
+                ]
+            },
+            'dupont': {
+                'description': 'DuPont 12-Hour Rotating (4 nights, 3 off, 3 days, 1 off, 3 nights, 3 off, 4 days, 7 off)',
+                'cycle_days': 28,
+                'crews': 4,
+                'crew_patterns': {
+                    'Crew A': ['N','N','N','N','O','O','O','D','D','D','O','N','N','N','O','O','O','D','D','D','D','O','O','O','O','O','O','O'],
+                    'Crew B': ['O','N','N','N','N','O','O','O','D','D','D','O','N','N','N','O','O','O','D','D','D','D','O','O','O','O','O','O'],
+                    'Crew C': ['O','O','N','N','N','N','O','O','O','D','D','D','O','N','N','N','O','O','O','D','D','D','D','O','O','O','O','O'],
+                    'Crew D': ['O','O','O','N','N','N','N','O','O','O','D','D','D','O','N','N','N','O','O','O','D','D','D','D','O','O','O','O']
+                },
+                'notes': [
+                    'Famous 7-day break every 28 days',
+                    'Includes both day and night shifts',
+                    '4 crews required for 24/7 coverage',
+                    'Established industry pattern'
+                ]
             }
         }
     
-    def identify_schedule_type(self, request):
-        """
-        Identify what schedule the user is asking for
-        
-        Args:
-            request: User's request string
-            
-        Returns:
-            schedule_type key or None
-        """
-        request_lower = request.lower()
-        
-        # Check for specific patterns
-        if 'dupont' in request_lower or 'du pont' in request_lower:
-            return 'dupont'
-        elif '2-2-3' in request_lower or '223' in request_lower:
-            return '2-2-3'
-        elif 'panama' in request_lower:
-            return 'panama'
-        elif 'pitman' in request_lower or '2-3-2' in request_lower:
-            return 'pitman'
-        elif '8 hour' in request_lower or '8-hour' in request_lower:
-            return '8-hour-fixed'
-        elif 'schedule' in request_lower:
-            # Default to DuPont if they just say "schedule"
-            return 'dupont'
-        
-        return None
+    def _define_8_hour_patterns(self):
+        """Define 8-hour shift patterns"""
+        return {
+            '5-2-fixed': {
+                'description': '5 days on, 2 days off - Fixed Shifts (Monday-Friday day shift)',
+                'cycle_days': 7,
+                'crews': 3,
+                'crew_patterns': {
+                    'Days': ['D','D','D','D','D','O','O'],
+                    'Evenings': ['E','E','E','E','E','O','O'],
+                    'Nights': ['N','N','N','N','N','O','O']
+                },
+                'notes': [
+                    'Fixed shifts - no rotation',
+                    'Traditional Monday-Friday for each shift',
+                    'Weekends off for all crews',
+                    '3 crews required for 24/7 coverage'
+                ]
+            },
+            '6-3-fixed': {
+                'description': '6 days on, 3 days off - Fixed Shifts',
+                'cycle_days': 9,
+                'crews': 3,
+                'crew_patterns': {
+                    'Days': ['D','D','D','D','D','D','O','O','O'],
+                    'Evenings': ['E','E','E','E','E','E','O','O','O'],
+                    'Nights': ['N','N','N','N','N','N','O','O','O']
+                },
+                'notes': [
+                    'Fixed shifts - no rotation',
+                    'Longer work blocks, longer rest periods',
+                    '9-day rotation cycle',
+                    '3 crews required for 24/7 coverage'
+                ]
+            },
+            'southern_swing': {
+                'description': 'Southern Swing (7 days, 2 off, 7 evenings, 2 off, 7 nights, 2 off - rotating)',
+                'cycle_days': 28,
+                'crews': 4,
+                'crew_patterns': {
+                    'Crew A': ['D','D','D','D','D','D','D','O','O','E','E','E','E','E','E','E','O','O','N','N','N','N','N','N','N','O','O','O'],
+                    'Crew B': ['E','E','E','E','E','E','E','O','O','N','N','N','N','N','N','N','O','O','D','D','D','D','D','D','D','O','O','O'],
+                    'Crew C': ['N','N','N','N','N','N','N','O','O','D','D','D','D','D','D','D','O','O','E','E','E','E','E','E','E','O','O','O'],
+                    'Crew D': ['O','O','E','E','E','E','E','E','E','O','O','N','N','N','N','N','N','N','O','O','D','D','D','D','D','D','D','O']
+                },
+                'notes': [
+                    'Rotating through all three shifts',
+                    'Forward rotation (clockwise): Days → Evenings → Nights',
+                    '7 consecutive days on each shift',
+                    '4 crews required for 24/7 coverage',
+                    'Established industry pattern'
+                ]
+            },
+            '6-2-rotating': {
+                'description': '6 days on, 2 days off - Rotating through shifts',
+                'cycle_days': 24,
+                'crews': 4,
+                'crew_patterns': {
+                    'Crew A': ['D','D','D','D','D','D','O','O','E','E','E','E','E','E','O','O','N','N','N','N','N','N','O','O'],
+                    'Crew B': ['E','E','E','E','E','E','O','O','N','N','N','N','N','N','O','O','D','D','D','D','D','D','O','O'],
+                    'Crew C': ['N','N','N','N','N','N','O','O','D','D','D','D','D','D','O','O','E','E','E','E','E','E','O','O'],
+                    'Crew D': ['O','O','D','D','D','D','D','D','O','O','E','E','E','E','E','E','O','O','N','N','N','N','N','N']
+                },
+                'notes': [
+                    'Rotating through all three shifts',
+                    'Forward rotation (clockwise)',
+                    '6 consecutive days per shift',
+                    '4 crews required for 24/7 coverage'
+                ]
+            }
+        }
     
-    def create_schedule(self, schedule_type, start_date=None, weeks=8):
+    def get_available_patterns(self, shift_length):
+        """Get list of available patterns for given shift length"""
+        if shift_length == 12:
+            return list(self.patterns_12_hour.keys())
+        elif shift_length == 8:
+            return list(self.patterns_8_hour.keys())
+        else:
+            return []
+    
+    def get_pattern_description(self, shift_length, pattern_key):
+        """Get description of a specific pattern"""
+        if shift_length == 12:
+            return self.patterns_12_hour.get(pattern_key, {}).get('description', 'Pattern not found')
+        elif shift_length == 8:
+            return self.patterns_8_hour.get(pattern_key, {}).get('description', 'Pattern not found')
+        return 'Invalid shift length'
+    
+    def create_schedule(self, shift_length, pattern_key, start_date=None, weeks_to_show=8):
         """
-        Create a schedule in Excel format
+        Create a visual schedule pattern in Excel format
         
         Args:
-            schedule_type: Key from schedule_patterns
+            shift_length: 8 or 12 hours
+            pattern_key: Key for the pattern (e.g., '2-2-3', 'dupont')
             start_date: Starting Monday (defaults to next Monday)
-            weeks: Number of weeks to generate
+            weeks_to_show: Number of weeks to display
             
         Returns:
-            bytes: Excel file content
+            File path to created Excel file
         """
-        if schedule_type not in self.schedule_patterns:
-            raise ValueError(f"Unknown schedule type: {schedule_type}")
+        # Get pattern data
+        if shift_length == 12:
+            pattern_data = self.patterns_12_hour.get(pattern_key)
+        elif shift_length == 8:
+            pattern_data = self.patterns_8_hour.get(pattern_key)
+        else:
+            raise ValueError(f"Invalid shift length: {shift_length}. Must be 8 or 12.")
         
-        pattern_info = self.schedule_patterns[schedule_type]
-        
-        # Create workbook
-        wb = Workbook()
-        ws = wb.active
-        ws.title = pattern_info['name'][:31]  # Excel limits sheet names to 31 chars
+        if not pattern_data:
+            raise ValueError(f"Pattern '{pattern_key}' not found for {shift_length}-hour shifts")
         
         # Set start date to next Monday if not provided
         if start_date is None:
             today = datetime.now()
             days_until_monday = (7 - today.weekday()) % 7
             if days_until_monday == 0:
-                days_until_monday = 7  # If today is Monday, start next Monday
+                days_until_monday = 7
             start_date = today + timedelta(days=days_until_monday)
         
+        # Create workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = f"{shift_length}-Hour Pattern"[:31]
+        
         # Define styles
-        header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
-        header_font = Font(color="FFFFFF", bold=True, size=12)
+        header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+        header_font = Font(color="FFFFFF", bold=True, size=11)
         
         day_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
-        night_fill = PatternFill(start_color="C5E0B4", end_color="C5E0B4", fill_type="solid")
+        evening_fill = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
+        night_fill = PatternFill(start_color="B4C7E7", end_color="B4C7E7", fill_type="solid")
         off_fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
         
-        cell_font = Font(size=11)
+        cell_font = Font(size=10)
+        bold_font = Font(size=10, bold=True)
         center_align = Alignment(horizontal="center", vertical="center")
         
         thin_border = Border(
-            left=Side(style='thin'),
-            right=Side(style='thin'),
-            top=Side(style='thin'),
-            bottom=Side(style='thin')
+            left=Side(style='thin', color='CCCCCC'),
+            right=Side(style='thin', color='CCCCCC'),
+            top=Side(style='thin', color='CCCCCC'),
+            bottom=Side(style='thin', color='CCCCCC')
         )
         
-        # Write title
-        ws['A1'] = pattern_info['name']
+        # Write title and description
+        ws['A1'] = f"{shift_length}-Hour Shift Pattern"
         ws['A1'].font = Font(bold=True, size=14)
-        ws['A2'] = pattern_info['description']
+        ws.merge_cells('A1:I1')
+        
+        ws['A2'] = pattern_data['description']
         ws['A2'].font = Font(size=10, italic=True)
+        ws.merge_cells('A2:I2')
         
-        # Start schedule at row 4
-        start_row = 4
+        # Write notes
+        current_row = 4
+        ws[f'A{current_row}'] = 'Pattern Details:'
+        ws[f'A{current_row}'].font = bold_font
+        current_row += 1
         
-        # Write header row
-        ws[f'A{start_row}'] = 'Crew'
-        ws[f'B{start_row}'] = 'Week'
+        for note in pattern_data['notes']:
+            ws[f'A{current_row}'] = f"• {note}"
+            ws[f'A{current_row}'].font = Font(size=9)
+            current_row += 1
         
-        # Add days of week
+        # Start schedule table
+        current_row += 2
+        table_start_row = current_row
+        
+        # Header row
+        ws[f'A{current_row}'] = 'Crew'
+        ws[f'B{current_row}'] = 'Week'
         days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
         for col_idx, day in enumerate(days, start=3):
-            cell = ws.cell(row=start_row, column=col_idx)
+            cell = ws.cell(row=current_row, column=col_idx)
             cell.value = day
             cell.fill = header_fill
             cell.font = header_font
             cell.alignment = center_align
             cell.border = thin_border
         
-        # Format first two header cells
-        ws[f'A{start_row}'].fill = header_fill
-        ws[f'A{start_row}'].font = header_font
-        ws[f'A{start_row}'].alignment = center_align
-        ws[f'A{start_row}'].border = thin_border
+        # Apply header styling to crew/week columns
+        ws.cell(row=current_row, column=1).fill = header_fill
+        ws.cell(row=current_row, column=1).font = header_font
+        ws.cell(row=current_row, column=1).alignment = center_align
+        ws.cell(row=current_row, column=1).border = thin_border
+        ws.cell(row=current_row, column=2).fill = header_fill
+        ws.cell(row=current_row, column=2).font = header_font
+        ws.cell(row=current_row, column=2).alignment = center_align
+        ws.cell(row=current_row, column=2).border = thin_border
         
-        ws[f'B{start_row}'].fill = header_fill
-        ws[f'B{start_row}'].font = header_font
-        ws[f'B{start_row}'].alignment = center_align
-        ws[f'B{start_row}'].border = thin_border
+        current_row += 1
         
-        # Generate schedule for each crew
-        current_row = start_row + 1
-        pattern = pattern_info['pattern']
+        # Generate schedule rows
+        cycle_days = pattern_data['cycle_days']
+        crew_patterns = pattern_data['crew_patterns']
         
-        for crew_num in range(1, pattern_info['crews'] + 1):
-            # Calculate crew offset in pattern
-            crew_offset = (crew_num - 1) * (len(pattern) // pattern_info['crews'])
+        # Calculate total days to show
+        days_to_show = weeks_to_show * 7
+        
+        for crew_name, pattern in crew_patterns.items():
+            # Extend pattern to cover all weeks
+            extended_pattern = []
+            for day_idx in range(days_to_show):
+                pattern_idx = day_idx % cycle_days
+                extended_pattern.append(pattern[pattern_idx])
             
-            for week in range(weeks):
-                # Write crew and week
-                ws.cell(row=current_row, column=1, value=f'Crew {crew_num}')
-                ws.cell(row=current_row, column=1).font = Font(bold=True)
-                ws.cell(row=current_row, column=1).alignment = center_align
-                ws.cell(row=current_row, column=1).border = thin_border
+            # Group by weeks
+            for week_num in range(weeks_to_show):
+                week_start = week_num * 7
+                week_end = week_start + 7
+                week_pattern = extended_pattern[week_start:week_end]
                 
-                ws.cell(row=current_row, column=2, value=f'Week {week + 1}')
-                ws.cell(row=current_row, column=2).alignment = center_align
-                ws.cell(row=current_row, column=2).border = thin_border
+                # Write crew name (only on first week)
+                if week_num == 0:
+                    crew_cell = ws.cell(row=current_row, column=1)
+                    crew_cell.value = crew_name
+                    crew_cell.font = bold_font
+                    crew_cell.alignment = center_align
+                    crew_cell.border = thin_border
+                else:
+                    ws.cell(row=current_row, column=1).border = thin_border
                 
-                # Write schedule for this week
-                for day_idx in range(7):
-                    day_position = (week * 7 + day_idx + crew_offset) % len(pattern)
-                    shift = pattern[day_position]
-                    
-                    cell = ws.cell(row=current_row, column=3 + day_idx, value=shift)
-                    cell.alignment = center_align
+                # Write week number
+                week_cell = ws.cell(row=current_row, column=2)
+                week_cell.value = week_num + 1
+                week_cell.alignment = center_align
+                week_cell.border = thin_border
+                
+                # Write daily shifts
+                for day_idx, shift in enumerate(week_pattern, start=3):
+                    cell = ws.cell(row=current_row, column=day_idx)
+                    cell.value = shift
                     cell.font = cell_font
+                    cell.alignment = center_align
                     cell.border = thin_border
                     
-                    # Apply color
+                    # Apply color based on shift type
                     if shift == 'D':
                         cell.fill = day_fill
+                    elif shift == 'E':
+                        cell.fill = evening_fill
                     elif shift == 'N':
                         cell.fill = night_fill
                     elif shift == 'O':
                         cell.fill = off_fill
                 
                 current_row += 1
+            
+            # Add blank row between crews for readability
+            current_row += 1
         
         # Add legend
-        legend_row = current_row + 2
+        legend_row = current_row + 1
         ws[f'A{legend_row}'] = 'LEGEND:'
-        ws[f'A{legend_row}'].font = Font(bold=True)
+        ws[f'A{legend_row}'].font = bold_font
         
         legend_items = [
-            ('D', 'Day Shift (typically 6 AM - 6 PM)', day_fill),
-            ('N', 'Night Shift (typically 6 PM - 6 AM)', night_fill),
-            ('O', 'OFF', off_fill)
+            ('D', 'Day Shift', day_fill, f'{shift_length} hours starting ~6:00 AM'),
+            ('N', 'Night Shift', night_fill, f'{shift_length} hours starting ~6:00 PM'),
+            ('O', 'OFF', off_fill, 'Not scheduled')
         ]
         
-        for idx, (code, description, fill) in enumerate(legend_items):
+        # Add evening shift to legend if 8-hour
+        if shift_length == 8:
+            legend_items.insert(1, ('E', 'Evening Shift', evening_fill, '8 hours starting ~2:00 PM'))
+        
+        for idx, (code, label, fill, time) in enumerate(legend_items):
             row = legend_row + idx + 1
-            ws[f'A{row}'] = code
-            ws[f'A{row}'].fill = fill
-            ws[f'A{row}'].alignment = center_align
-            ws[f'A{row}'].border = thin_border
             
-            ws[f'B{row}'] = description
-            ws[f'B{row}'].alignment = Alignment(horizontal="left", vertical="center")
+            # Code
+            cell = ws.cell(row=row, column=1)
+            cell.value = code
+            cell.fill = fill
+            cell.font = bold_font
+            cell.alignment = center_align
+            cell.border = thin_border
+            
+            # Label
+            cell = ws.cell(row=row, column=2)
+            cell.value = label
+            cell.alignment = Alignment(horizontal="left", vertical="center")
+            cell.border = thin_border
+            
+            # Time
+            ws.merge_cells(f'C{row}:E{row}')
+            cell = ws.cell(row=row, column=3)
+            cell.value = time
+            cell.alignment = Alignment(horizontal="left", vertical="center")
         
         # Set column widths
-        ws.column_dimensions['A'].width = 12
-        ws.column_dimensions['B'].width = 10
+        ws.column_dimensions['A'].width = 14
+        ws.column_dimensions['B'].width = 8
         for col in range(3, 10):
-            ws.column_dimensions[get_column_letter(col)].width = 8
+            ws.column_dimensions[get_column_letter(col)].width = 7
         
-        # Save to bytes
-        from io import BytesIO
-        output = BytesIO()
-        wb.save(output)
-        output.seek(0)
+        # Save file
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"schedule_{shift_length}hr_{pattern_key}_{timestamp}.xlsx"
+        filepath = os.path.join('/tmp', filename)
         
-        return output.getvalue()
-    
-    def get_schedule_description(self, schedule_type):
-        """Get description of a schedule type"""
-        if schedule_type in self.schedule_patterns:
-            return self.schedule_patterns[schedule_type]
-        return None
+        wb.save(filepath)
+        return filepath
 
 
 # Singleton instance
-_schedule_generator = None
+_generator = None
 
-def get_schedule_generator():
-    """Get or create schedule generator instance"""
-    global _schedule_generator
-    if _schedule_generator is None:
-        _schedule_generator = ScheduleGenerator()
-    return _schedule_generator
+def get_pattern_generator():
+    """Get or create pattern generator instance"""
+    global _generator
+    if _generator is None:
+        _generator = PatternScheduleGenerator()
+    return _generator
 
 
 # I did no harm and this file is not truncated
