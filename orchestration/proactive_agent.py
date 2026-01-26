@@ -1,7 +1,13 @@
 """
 Proactive Intelligence Module
 Created: January 22, 2026
-Last Updated: January 22, 2026 - SPRINT 2: Project Auto-Detection Added
+Last Updated: January 26, 2026 - DISABLED SCHEDULE CLARIFICATIONS
+
+CHANGE LOG:
+- January 26, 2026: DISABLED schedule clarification questions
+  * Schedule requests are now handled by schedule_request_handler.py
+  * Removed DuPont/Panama/Pitman/industry clarification logic
+  * Schedule system now uses conversational pattern-based approach
 
 This module makes the AI Swarm proactive instead of reactive.
 It asks questions, suggests next steps, and anticipates user needs.
@@ -34,411 +40,293 @@ class SmartQuestioner:
         """
         Determine what information is missing from the request
         Returns list of questions to ask user
+        
+        IMPORTANT: Schedule requests are NO LONGER handled here.
+        They are handled by schedule_request_handler.py which uses
+        a conversational approach (shift length → pattern selection).
         """
         ambiguities = []
         request_lower = user_request.lower()
         
-        # Check for schedule requests without type
-        if 'schedule' in request_lower and not self._has_schedule_type(request_lower):
-            ambiguities.append({
-                'field': 'schedule_type',
-                'question': 'Which schedule type?',
-                'options': ['DuPont 12-hour', 'Panama', 'Pitman', 'Southern Swing', '2-2-3', '4-crew rotation'],
-                'why': 'Different schedules fit different operational needs',
-                'required': True
-            })
+        # REMOVED: Schedule clarification logic
+        # Schedule requests now handled by schedule_request_handler.py
+        # which asks for shift length first, then shows available patterns
         
-        # Check for missing employee count
-        if ('schedule' in request_lower or 'facility' in request_lower) and not self._has_number(request_lower):
+        # Check for missing project context (non-schedule requests)
+        if ('implementation' in request_lower or 'rollout' in request_lower) and not self._has_client_context(request_lower):
             ambiguities.append({
-                'field': 'employee_count',
-                'question': 'How many employees?',
-                'options': ['Under 20', '20-50', '50-100', 'Over 100', 'Not sure yet'],
-                'why': 'Affects crew sizing and coverage calculations',
+                'field': 'client_context',
+                'question': 'Is this for an existing client or a new engagement?',
+                'options': ['Existing client', 'New client'],
+                'why': 'Different approaches for new vs existing clients',
                 'required': False
             })
         
-        # Check for missing industry context
-        if ('schedule' in request_lower or 'facility' in request_lower or 'implementation' in request_lower) and not self._has_industry(request_lower):
+        # Check for missing document type
+        if 'document' in request_lower and not self._has_document_type(request_lower):
             ambiguities.append({
-                'field': 'industry',
-                'question': 'What industry?',
-                'options': ['Manufacturing', 'Pharmaceutical', 'Food Processing', 'Distribution', 'Mining', 'Chemical', 'Other'],
-                'why': 'Different industries have different regulatory and operational constraints',
+                'field': 'document_type',
+                'question': 'What type of document?',
+                'options': ['Data collection', 'Proposal', 'Implementation plan', 'Executive summary'],
+                'why': 'Different formats for different document types',
                 'required': False
             })
-        
-        # Check for implementation without current state
-        if 'implementation' in request_lower or 'change' in request_lower:
-            if not self._mentions_current_state(request_lower):
-                ambiguities.append({
-                    'field': 'current_schedule',
-                    'question': 'What schedule are they currently using?',
-                    'options': ['5-day/8-hour', '4-day/10-hour', 'Rotating shifts', '12-hour shifts', 'Don\'t know'],
-                    'why': 'Helps me calculate impact and create comparison',
-                    'required': False
-                })
         
         return ambiguities
     
     def _has_schedule_type(self, text):
-        """Check if schedule type is mentioned"""
-        schedule_types = ['dupont', 'panama', 'pitman', 'southern swing', '2-2-3', '2-3-2', '4-crew']
-        return any(stype in text for stype in schedule_types)
+        """
+        DEPRECATED: No longer used for clarifications.
+        Schedule handling moved to schedule_request_handler.py
+        """
+        return True  # Always return True to skip clarifications
     
     def _has_number(self, text):
-        """Check if any number is mentioned"""
+        """Check if text contains numbers"""
         return bool(re.search(r'\d+', text))
     
     def _has_industry(self, text):
-        """Check if industry is mentioned"""
-        industries = ['manufacturing', 'pharma', 'food', 'distribution', 'mining', 'chemical', 'automotive']
-        return any(ind in text for ind in industries)
+        """
+        DEPRECATED for schedule requests: No longer used for clarifications.
+        Industry context can be captured in other workflows.
+        """
+        return True  # Always return True to skip clarifications
     
-    def _mentions_current_state(self, text):
-        """Check if current state is described"""
-        current_indicators = ['currently', 'now', 'existing', 'current schedule', 'right now']
-        return any(ind in text for ind in current_indicators)
+    def _has_client_context(self, text):
+        """Check if client is mentioned"""
+        client_indicators = ['for', 'client', 'company', 'facility']
+        return any(indicator in text.lower() for indicator in client_indicators)
+    
+    def _has_document_type(self, text):
+        """Check if document type is specified"""
+        doc_types = ['proposal', 'plan', 'summary', 'report', 'collection', 'survey']
+        return any(doc_type in text.lower() for doc_type in doc_types)
+    
+    def format_clarification_response(self, ambiguities):
+        """
+        Format ambiguous questions into structured response
+        """
+        if not ambiguities:
+            return None
+        
+        response = {
+            'needs_clarification': True,
+            'clarification_data': {
+                'message': 'I need a few details to give you the best result:',
+                'required_questions': [],
+                'optional_questions': []
+            }
+        }
+        
+        for item in ambiguities:
+            question_obj = {
+                'field': item['field'],
+                'question': item['question'],
+                'options': item.get('options', []),
+                'why': item.get('why', '')
+            }
+            
+            if item.get('required', False):
+                response['clarification_data']['required_questions'].append(question_obj)
+            else:
+                response['clarification_data']['optional_questions'].append(question_obj)
+        
+        return response
 
 
-class SuggestionEngine:
-    """Generates proactive suggestions based on context"""
+class NextStepSuggester:
+    """Suggests logical next steps after completing a task"""
     
-    def generate_suggestions(self, task_id, user_request, result):
+    def suggest_next_steps(self, completed_task_type, context=None):
         """
-        Generate contextual suggestions after task completion
-        Returns list of suggestion objects
+        Based on what was just done, suggest what to do next
         """
         suggestions = []
-        request_lower = user_request.lower()
         
-        # Schedule-specific suggestions
-        if 'schedule' in request_lower:
-            suggestions.extend(self._get_schedule_suggestions(task_id))
+        if completed_task_type == 'schedule_created':
+            suggestions = [
+                "Would you like me to create a cost analysis for this schedule?",
+                "Should I draft a communication plan for rolling this out to employees?",
+                "Do you want to compare this to alternative schedule patterns?"
+            ]
         
-        # Implementation-specific suggestions
-        if 'implementation' in request_lower or 'rollout' in request_lower:
-            suggestions.extend(self._get_implementation_suggestions(task_id))
+        elif completed_task_type == 'data_collection':
+            suggestions = [
+                "Would you like me to analyze this data and identify opportunities?",
+                "Should I create a findings summary document?",
+                "Do you want recommendations based on this data?"
+            ]
         
-        # Survey-specific suggestions
-        if 'survey' in request_lower:
-            suggestions.extend(self._get_survey_suggestions(task_id))
-        
-        # Cost analysis suggestions
-        if 'cost' in request_lower or 'overtime' in request_lower:
-            suggestions.extend(self._get_cost_suggestions(task_id))
-        
-        # Generic follow-up suggestions
-        suggestions.extend(self._get_generic_suggestions(user_request, result))
-        
-        return suggestions
-    
-    def _get_schedule_suggestions(self, task_id):
-        """Suggestions specific to schedule creation"""
-        return [
-            {
-                'type': 'immediate_next_step',
-                'icon': '📋',
-                'title': 'Create Implementation Checklist',
-                'description': 'A new schedule needs an implementation plan. I can create a step-by-step checklist to track your progress.',
-                'action': 'create_implementation_checklist',
-                'action_params': {'task_id': task_id},
-                'priority': 'high',
-                'time_estimate': '30 seconds'
-            },
-            {
-                'type': 'immediate_next_step',
-                'icon': '💰',
-                'title': 'Generate Cost Comparison',
-                'description': 'Show your client the financial impact. Compare new schedule vs. current costs.',
-                'action': 'create_cost_comparison',
-                'action_params': {'task_id': task_id},
-                'priority': 'high',
-                'time_estimate': '1 minute'
-            },
-            {
-                'type': 'next_step',
-                'icon': '📊',
-                'title': 'Create Employee Survey',
-                'description': 'Get employee input on the new schedule before implementation.',
-                'action': 'create_schedule_survey',
-                'action_params': {'task_id': task_id},
-                'priority': 'medium',
-                'time_estimate': '2 minutes'
-            }
-        ]
-    
-    def _get_implementation_suggestions(self, task_id):
-        """Suggestions for implementation planning"""
-        return [
-            {
-                'type': 'next_step',
-                'icon': '📧',
-                'title': 'Draft Employee Communications',
-                'description': 'Create announcement email and FAQ for employees.',
-                'action': 'create_communications',
-                'action_params': {'task_id': task_id},
-                'priority': 'high',
-                'time_estimate': '2 minutes'
-            },
-            {
-                'type': 'next_step',
-                'icon': '📅',
-                'title': 'Create Implementation Timeline',
-                'description': 'Build a week-by-week rollout plan with milestones.',
-                'action': 'create_timeline',
-                'action_params': {'task_id': task_id},
-                'priority': 'medium',
-                'time_estimate': '1 minute'
-            }
-        ]
-    
-    def _get_survey_suggestions(self, task_id):
-        """Suggestions for survey work"""
-        return [
-            {
-                'type': 'next_step',
-                'icon': '📊',
-                'title': 'Analyze Survey Results',
-                'description': 'Once responses come in, I can analyze and visualize the data.',
-                'action': 'analyze_survey',
-                'action_params': {'task_id': task_id},
-                'priority': 'medium',
-                'time_estimate': '2 minutes'
-            }
-        ]
-    
-    def _get_cost_suggestions(self, task_id):
-        """Suggestions for cost analysis"""
-        return [
-            {
-                'type': 'next_step',
-                'icon': '📈',
-                'title': 'Create Executive Summary',
-                'description': 'Package the cost analysis into a client-ready presentation.',
-                'action': 'create_executive_summary',
-                'action_params': {'task_id': task_id},
-                'priority': 'high',
-                'time_estimate': '3 minutes'
-            }
-        ]
-    
-    def _get_generic_suggestions(self, user_request, result):
-        """General suggestions that apply to most tasks"""
-        suggestions = []
-        
-        # Check if result looks like it should be a document
-        if len(result) > 500 and not result.startswith('<'):
-            suggestions.append({
-                'type': 'process_improvement',
-                'icon': '📄',
-                'title': 'Save as Document',
-                'description': 'This looks document-worthy. Want me to create a Word file?',
-                'action': 'convert_to_document',
-                'priority': 'low',
-                'time_estimate': '15 seconds'
-            })
+        elif completed_task_type == 'proposal_created':
+            suggestions = [
+                "Would you like me to create a presentation deck from this proposal?",
+                "Should I draft follow-up email templates?",
+                "Do you want an FAQ document for common client questions?"
+            ]
         
         return suggestions
 
 
 class PatternTracker:
-    """Tracks user patterns for future automation suggestions"""
-    
-    def track_task(self, user_request, task_type):
-        """Record a task for pattern analysis"""
-        db = get_db()
-        
-        # Normalize request for pattern matching
-        normalized = self._normalize_request(user_request)
-        
-        # Check if pattern exists
-        existing = db.execute('''
-            SELECT id, frequency FROM user_patterns
-            WHERE pattern_type = 'frequent_task'
-            AND pattern_data LIKE ?
-        ''', (f'%{normalized}%',)).fetchone()
-        
-        if existing:
-            # Increment frequency
-            db.execute('''
-                UPDATE user_patterns
-                SET frequency = frequency + 1,
-                    last_seen = ?
-                WHERE id = ?
-            ''', (datetime.now(), existing['id']))
-        else:
-            # Create new pattern
-            pattern_data = json.dumps({
-                'normalized_request': normalized,
-                'task_type': task_type,
-                'first_seen': datetime.now().isoformat()
-            })
-            
-            db.execute('''
-                INSERT INTO user_patterns (pattern_type, pattern_data, frequency)
-                VALUES (?, ?, ?)
-            ''', ('frequent_task', pattern_data, 1))
-        
-        db.commit()
-        db.close()
-    
-    def _normalize_request(self, request):
-        """Normalize request for pattern matching"""
-        # Remove numbers, dates, client names
-        normalized = re.sub(r'\d+', '', request)
-        normalized = re.sub(r'\b[A-Z][a-z]+\s[A-Z][a-z]+\b', 'CLIENT_NAME', normalized)
-        normalized = normalized.lower().strip()
-        return normalized
-    
-    def check_for_automation_opportunities(self):
-        """Find tasks that are repeated frequently"""
-        db = get_db()
-        
-        frequent_patterns = db.execute('''
-            SELECT * FROM user_patterns
-            WHERE pattern_type = 'frequent_task'
-            AND frequency >= 3
-            AND suggestion_made = 0
-            ORDER BY frequency DESC
-            LIMIT 5
-        ''').fetchall()
-        
-        db.close()
-        
-        opportunities = []
-        for pattern in frequent_patterns:
-            data = json.loads(pattern['pattern_data'])
-            opportunities.append({
-                'pattern_id': pattern['id'],
-                'task': data['normalized_request'],
-                'frequency': pattern['frequency'],
-                'suggestion': f'You\'ve done this {pattern["frequency"]} times. Want to create a template?'
-            })
-        
-        return opportunities
-
-
-class ProactiveAgent:
-    """Main orchestrator for proactive intelligence"""
+    """Tracks user patterns to anticipate future needs"""
     
     def __init__(self):
-        self.questioner = SmartQuestioner()
-        self.suggester = SuggestionEngine()
-        self.tracker = PatternTracker()
-        self.project_manager = ProjectManager()  # SPRINT 2: Project management
+        self.db = get_db()
     
-    def pre_process_request(self, user_request):
+    def record_interaction(self, user_request, response_type, context=None):
         """
-        Analyze request BEFORE execution
-        Returns action: 'ask_questions', 'detect_project', or 'execute'
+        Record this interaction for future pattern learning
         """
-        # SPRINT 2: Check for new project indicators FIRST
-        project_detection = self.project_manager.detect_new_project(user_request)
-        
-        if project_detection['detected']:
-            client_name = project_detection.get('client_name', 'Unknown Client')
-            industry = project_detection.get('industry')
+        try:
+            timestamp = datetime.now().isoformat()
             
-            return {
-                'action': 'detect_project',
-                'data': {
-                    'message': f'🎯 I detected you might be starting a new project with {client_name}!',
-                    'client_name': client_name,
-                    'industry': industry,
-                    'suggestion': 'Want me to set up a complete project structure with:\n' +
-                                '  • Implementation checklist (4 phases, 20 tasks)\n' +
-                                '  • Project milestones with target dates\n' +
-                                '  • Folder organization system\n' +
-                                '  • Document templates\n' +
-                                '  • Progress tracking dashboard',
-                    'action_required': 'create_project'
-                }
-            }
-        
-        # Check for ambiguity (SPRINT 1)
-        questions = self.questioner.analyze_ambiguity(user_request)
-        
-        if questions:
-            return {
-                'action': 'ask_questions',
-                'data': {
-                    'message': 'I need a few details to give you the best result:',
-                    'required_questions': [q for q in questions if q.get('required')],
-                    'optional_questions': [q for q in questions if not q.get('required')]
-                }
-            }
-        
-        # No intervention needed - proceed with task
-        return {
-            'action': 'execute',
-            'data': None
-        }
+            self.db.execute('''
+                INSERT INTO interaction_patterns 
+                (timestamp, request_type, response_type, context_json)
+                VALUES (?, ?, ?, ?)
+            ''', (timestamp, user_request, response_type, json.dumps(context or {})))
+            
+            self.db.commit()
+        except Exception as e:
+            print(f"Error recording interaction pattern: {e}")
     
-    def post_process_result(self, task_id, user_request, result):
+    def get_common_patterns(self, limit=10):
         """
-        Analyze result AFTER execution
-        Generate proactive suggestions
+        Get most common request patterns
         """
-        # Generate suggestions
-        suggestions = self.suggester.generate_suggestions(task_id, user_request, result)
-        
-        # Track pattern
-        task_type = self._classify_task(user_request)
-        self.tracker.track_task(user_request, task_type)
-        
-        # Check for automation opportunities
-        automation_opps = self.tracker.check_for_automation_opportunities()
-        if automation_opps:
-            for opp in automation_opps:
-                suggestions.append({
-                    'type': 'automation_opportunity',
-                    'icon': '⚡',
-                    'title': 'Create Template',
-                    'description': opp['suggestion'],
-                    'action': 'create_template',
-                    'action_params': {'pattern_id': opp['pattern_id']},
-                    'priority': 'medium'
-                })
-        
-        # Store suggestions in database
-        self._store_suggestions(task_id, suggestions)
-        
-        return suggestions
+        try:
+            patterns = self.db.execute('''
+                SELECT request_type, COUNT(*) as frequency
+                FROM interaction_patterns
+                GROUP BY request_type
+                ORDER BY frequency DESC
+                LIMIT ?
+            ''', (limit,)).fetchall()
+            
+            return [dict(p) for p in patterns]
+        except Exception as e:
+            print(f"Error getting patterns: {e}")
+            return []
     
-    def _classify_task(self, user_request):
-        """Classify task type for pattern tracking"""
+    def predict_next_request(self, current_request):
+        """
+        Based on past patterns, predict what user might ask next
+        """
+        # TODO: Implement ML-based prediction
+        # For now, return None
+        return None
+
+
+# =============================================================================
+# PROJECT AUTO-DETECTION (SPRINT 2)
+# =============================================================================
+
+class ProjectAutoDetector:
+    """
+    Automatically detects when user is starting a new project
+    and creates project structure without being explicitly asked
+    """
+    
+    def __init__(self):
+        self.project_manager = ProjectManager()
+    
+    def detect_new_project_signal(self, user_request):
+        """
+        Detect if this message indicates a new project starting
+        
+        Returns:
+            dict or None: Project details if detected, None otherwise
+        """
         request_lower = user_request.lower()
         
-        if 'schedule' in request_lower:
-            return 'schedule_design'
-        elif 'survey' in request_lower:
-            return 'survey'
-        elif 'implementation' in request_lower:
-            return 'implementation'
-        elif 'cost' in request_lower or 'overtime' in request_lower:
-            return 'cost_analysis'
-        else:
-            return 'general'
+        # Keywords that indicate new project
+        new_project_keywords = [
+            'new client',
+            'new engagement',
+            'starting with',
+            'just signed',
+            'beginning work with',
+            'new facility',
+            'new implementation'
+        ]
+        
+        if not any(keyword in request_lower for keyword in new_project_keywords):
+            return None
+        
+        # Extract client name (simple heuristic)
+        client_name = self._extract_client_name(user_request)
+        industry = self._extract_industry(user_request)
+        
+        if client_name:
+            return {
+                'client_name': client_name,
+                'industry': industry or 'Manufacturing',
+                'auto_detected': True
+            }
+        
+        return None
     
-    def _store_suggestions(self, task_id, suggestions):
-        """Store suggestions in database for tracking"""
-        db = get_db()
+    def _extract_client_name(self, text):
+        """Try to extract client name from text"""
+        # Look for patterns like "new client ABC Corp" or "working with XYZ Manufacturing"
+        patterns = [
+            r'new client\s+([A-Z][A-Za-z\s&]+)',
+            r'working with\s+([A-Z][A-Za-z\s&]+)',
+            r'signed\s+([A-Z][A-Za-z\s&]+)',
+            r'starting with\s+([A-Z][A-Za-z\s&]+)'
+        ]
         
-        for sug in suggestions:
-            db.execute('''
-                INSERT INTO proactive_suggestions
-                (task_id, suggestion_type, suggestion_title, suggestion_data)
-                VALUES (?, ?, ?, ?)
-            ''', (
-                task_id,
-                sug['type'],
-                sug['title'],
-                json.dumps(sug)
-            ))
+        for pattern in patterns:
+            match = re.search(pattern, text)
+            if match:
+                # Clean up the match
+                name = match.group(1).strip()
+                # Remove trailing words like "for", "in", etc
+                name = re.sub(r'\s+(for|in|at|with)$', '', name, flags=re.IGNORECASE)
+                return name[:100]  # Limit length
         
-        db.commit()
-        db.close()
+        return None
+    
+    def _extract_industry(self, text):
+        """Try to extract industry from text"""
+        industries = {
+            'pharmaceutical': 'Pharmaceutical',
+            'pharma': 'Pharmaceutical',
+            'food': 'Food Processing',
+            'manufacturing': 'Manufacturing',
+            'distribution': 'Distribution',
+            'mining': 'Mining',
+            'chemical': 'Chemical'
+        }
+        
+        text_lower = text.lower()
+        for keyword, industry in industries.items():
+            if keyword in text_lower:
+                return industry
+        
+        return None
+    
+    def create_auto_project(self, project_details):
+        """
+        Automatically create project structure
+        
+        Returns:
+            dict: Created project info
+        """
+        project_id = self.project_manager.create_project(
+            client_name=project_details['client_name'],
+            industry=project_details['industry'],
+            facility_type='24/7 Operations'
+        )
+        
+        # Create initial checklist
+        self.project_manager.create_implementation_checklist(project_id)
+        
+        return {
+            'project_id': project_id,
+            'client_name': project_details['client_name'],
+            'message': f"✅ I've automatically set up a project structure for {project_details['client_name']}. I've created an implementation checklist to track progress. What would you like to work on first?"
+        }
 
 
 # I did no harm and this file is not truncated
