@@ -5,6 +5,11 @@ Shiftwork Solutions LLC
 =============================================================================
 
 CHANGE LOG:
+- January 26, 2026: REMOVED "Create Schedule" Quick Action Button
+  * Removed "📅 Create Schedule" button from 'quick' mode actions
+  * Users should type "Create a schedule" in chat for new pattern-based system
+  * Old button was opening form-based interface instead of conversational AI
+
 - January 24, 2026: Added Pipeline Dashboard Mode
   * Added pipeline mode button handling in switchMode()
   * Added pipelineInfo panel show/hide logic
@@ -36,7 +41,7 @@ SECTIONS:
 4. File Upload Handling
 5. Clipboard Functions
 6. Mode Switching (UPDATED for pipeline)
-7. Quick Actions (UPDATED for pipeline)
+7. Quick Actions (UPDATED January 26 - REMOVED Create Schedule)
 8. Project Management
 9. Message Handling (Core)
 10. Feedback System
@@ -684,7 +689,7 @@ function switchMode(mode) {
     
     var input = document.getElementById('userInput');
     var placeholders = {
-        'quick': "Type your request... (e.g., 'Create a 12-hour DuPont schedule')",
+        'quick': "Type your request... (e.g., 'Create a schedule')",
         'project': "Type your request... (e.g., 'I need a data collection document')",
         'calculator': "Type your request... (e.g., 'Calculate overtime cost')",
         'survey': "Type your request... (e.g., 'Create a survey about weekend preferences')",
@@ -698,15 +703,14 @@ function switchMode(mode) {
 }
 
 // =============================================================================
-// 7. QUICK ACTIONS - UPDATED January 24, 2026 for Pipeline
+// 7. QUICK ACTIONS - UPDATED January 26, 2026 - REMOVED "Create Schedule"
 // =============================================================================
 
 function updateQuickActions() {
     var actions = document.getElementById('quickActions');
     
     var actionSets = {
-        'quick': '<li onclick="quickAction(\'Create a 12-hour rotating schedule\')">📅 Create Schedule</li>' +
-            '<li onclick="quickAction(\'Analyze overtime costs\')">💰 Cost Analysis</li>' +
+        'quick': '<li onclick="quickAction(\'Analyze overtime costs\')">💰 Cost Analysis</li>' +
             '<li onclick="quickAction(\'Compare DuPont vs 2-2-3 schedules\')">⚖️ Compare Schedules</li>' +
             '<li onclick="quickAction(\'Write a LinkedIn post about shift work\')">💼 LinkedIn Post</li>',
         'research': '<li onclick="if(typeof searchIndustryNews===\'function\')searchIndustryNews()">📰 Industry News</li>' +
@@ -1096,7 +1100,7 @@ function initializeApp() {
     
     setInterval(function() { loadStats(); loadDocuments(); }, 30000);
     
-    console.log('AI Swarm Interface initialized with Pipeline Dashboard support');
+    console.log('AI Swarm Interface initialized - Create Schedule button removed (use chat instead)');
 }
 
 if (document.readyState === 'loading') {
