@@ -230,13 +230,23 @@ function setupMessageObserver() {
                     // Try to get the message-content div
                     var contentDiv = node.querySelector('.message-content');
                     if (contentDiv) {
-                        // First try innerText (preserves line breaks and is human-readable)
-                        text = contentDiv.innerText;
+                        // Clone the content div to manipulate it
+                        var clonedContent = contentDiv.cloneNode(true);
                         
-                        // Fallback to textContent if innerText is empty
-                        if (!text || text.trim().length === 0) {
-                            text = contentDiv.textContent;
-                        }
+                        // Remove badges (Memory, Knowledge, etc.) from the clone
+                        var badges = clonedContent.querySelectorAll('.badge');
+                        badges.forEach(function(badge) {
+                            badge.remove();
+                        });
+                        
+                        // Remove download sections
+                        var downloads = clonedContent.querySelectorAll('a[download]');
+                        downloads.forEach(function(dl) {
+                            if (dl.parentElement) dl.parentElement.remove();
+                        });
+                        
+                        // Now extract text from the cleaned content
+                        text = clonedContent.innerText || clonedContent.textContent || '';
                         
                         console.log('🔊 Extracted text from message-content:', text ? text.substring(0, 100) : 'EMPTY');
                     } else {
