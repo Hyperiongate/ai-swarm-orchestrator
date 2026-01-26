@@ -277,6 +277,27 @@ def health():
     except:
         evaluation_status = 'not_installed'
     
+    # Check Introspection Layer status
+    introspection_status = 'disabled'
+    last_introspection = None
+    try:
+        from introspection import get_introspection_engine, check_introspection_notifications
+        intro_engine = get_introspection_engine()
+        introspection_status = 'enabled'
+        latest_intro = intro_engine.get_latest_introspection()
+        if latest_intro:
+            last_introspection = {
+                'id': latest_intro.get('id'),
+                'created_at': latest_intro.get('created_at'),
+                'health_score': int(latest_intro.get('confidence_score', 0) * 100)
+            }
+        # Check for pending notification
+        notification = check_introspection_notifications()
+        if notification.get('has_notification'):
+            introspection_status = 'enabled_with_notification'
+    except:
+        introspection_status = 'not_installed'
+    
     return jsonify({
         'status': 'healthy',
         'version': 'Sprint 3 Complete + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation',
@@ -320,6 +341,17 @@ def health():
         'swarm_evaluation': {
             'status': evaluation_status,
             'last_evaluation': last_evaluation
+        },
+        'introspection_layer': {
+            'status': introspection_status,
+            'last_introspection': last_introspection,
+            'components': {
+                'self_monitoring': 'active',
+                'capability_boundaries': 'phase_2',
+                'confidence_calibration': 'phase_2',
+                'proposals': 'phase_3',
+                'goal_alignment': 'active'
+            }
         },
         'features': {
             'sprint_1': {
@@ -378,6 +410,15 @@ def health():
                 'gap_analysis': evaluation_status,
                 'recommendations': evaluation_status,
                 'weekly_reports': evaluation_status
+            },
+            'introspection': {
+                'self_monitoring': introspection_status,
+                'capability_boundaries': 'phase_2',
+                'confidence_calibration': 'phase_2',
+                'self_modification_proposals': 'phase_3',
+                'goal_alignment': introspection_status,
+                'reflection_narrative': introspection_status,
+                'notification_system': introspection_status
             }
         }
     })
@@ -457,6 +498,18 @@ except ImportError as e:
     print(f"ℹ️  Swarm Self-Evaluation routes not found: {e}")
 except Exception as e:
     print(f"⚠️  Swarm Self-Evaluation registration failed: {e}")
+
+# ============================================================================
+# INTROSPECTION LAYER BLUEPRINT (Added January 25, 2026)
+# ============================================================================
+try:
+    from routes.introspection import introspection_bp
+    app.register_blueprint(introspection_bp)
+    print("✅ Introspection Layer API registered")
+except ImportError as e:
+    print(f"ℹ️  Introspection Layer routes not found: {e}")
+except Exception as e:
+    print(f"⚠️  Introspection Layer registration failed: {e}")
 
 # Sprint 3 blueprints
 try:
