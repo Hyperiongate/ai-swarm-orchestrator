@@ -730,7 +730,7 @@
             // Update input placeholder
             const input = document.getElementById('userInput');
             if (mode === 'quick') {
-                input.placeholder = "Type your request... (e.g., 'Create a 12-hour DuPont schedule')";
+                input.placeholder = "Type your request... (e.g., 'Create a schedule')";
             } else {
                 input.placeholder = "Type your request... (e.g., 'I need a data collection document')";
             }
@@ -741,7 +741,6 @@
             
             if (currentMode === 'quick') {
                 actions.innerHTML = `
-                    <li onclick="quickAction('Create a 12-hour rotating schedule')">📅 Create Schedule</li>
                     <li onclick="quickAction('Analyze overtime costs')">💰 Cost Analysis</li>
                     <li onclick="quickAction('Compare DuPont vs 2-2-3 schedules')">⚖️ Compare Schedules</li>
                     <li onclick="quickAction('Write a LinkedIn post about shift work')">💼 LinkedIn Post</li>
@@ -1270,6 +1269,12 @@
 
 <!-- 
 CHANGE LOG:
+- January 26, 2026: REMOVED "CREATE SCHEDULE" BUTTON
+  * Removed "📅 Create Schedule" from Quick Actions sidebar
+  * Users should now type "Create a schedule" in the chat
+  * Uses new conversational pattern-based schedule system
+  * Updated placeholder text to remove DuPont reference
+
 - January 19, 2026: ENHANCED FEEDBACK SYSTEM
   * Added 4 separate star ratings (Overall, Accuracy, Usefulness, Clarity)
   * Added 6 improvement checkboxes matching backend expectations
