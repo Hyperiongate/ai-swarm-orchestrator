@@ -70,20 +70,32 @@ class CodeAssistantAgent:
         """
         user_lower = user_message.lower()
         
+        # PRIORITY CHECK: If message mentions a .py file, it's DEFINITELY code feedback
+        py_file_pattern = r'[\w_/]+\.py'
+        py_file_match = re.search(py_file_pattern, user_message, re.IGNORECASE)
+        if py_file_match:
+            # Found a .py filename - this is code feedback!
+            return {
+                'is_code_feedback': True,
+                'target_file': py_file_match.group(0),
+                'feedback_type': self._determine_feedback_type(user_lower),
+                'description': user_message
+            }
+        
         # Keywords that indicate code feedback
         code_keywords = [
             'bug', 'error', 'broken', 'wrong', 'incorrect', 'fix',
             'should', 'need to change', 'update', 'modify',
             'schedule_generator', 'routes', 'database',
-            'function', 'method', 'class', 'code'
+            'function', 'method', 'class', 'code', 'file'
         ]
         
-        # File name patterns
+        # File name patterns (for non-.py references)
         file_patterns = [
-            r'schedule_generator\.py',
-            r'routes/core\.py',
-            r'database\.py',
-            r'app\.py',
+            r'schedule_generator',
+            r'routes/core',
+            r'database',
+            r'app',
             r'schedule_request_handler'
         ]
         
@@ -103,7 +115,7 @@ class CodeAssistantAgent:
         for pattern in file_patterns:
             match = re.search(pattern, user_message, re.IGNORECASE)
             if match:
-                target_file = match.group(0)
+                target_file = match.group(0) + '.py'
                 break
         
         # If no specific file mentioned, infer from context
@@ -115,19 +127,21 @@ class CodeAssistantAgent:
             elif any(word in user_lower for word in ['database', 'table', 'query']):
                 target_file = 'database.py'
         
-        # Determine feedback type
-        feedback_type = 'bug'
-        if any(word in user_lower for word in ['add', 'new feature', 'implement', 'create']):
-            feedback_type = 'feature'
-        elif any(word in user_lower for word in ['improve', 'better', 'optimize', 'enhance']):
-            feedback_type = 'improvement'
-        
         return {
             'is_code_feedback': True,
             'target_file': target_file,
-            'feedback_type': feedback_type,
+            'feedback_type': self._determine_feedback_type(user_lower),
             'description': user_message
         }
+    
+    def _determine_feedback_type(self, user_lower):
+        """Helper to determine if feedback is bug, feature, or improvement"""
+        if any(word in user_lower for word in ['add', 'new feature', 'implement', 'create']):
+            return 'feature'
+        elif any(word in user_lower for word in ['improve', 'better', 'optimize', 'enhance']):
+            return 'improvement'
+        else:
+            return 'bug'
     
     def read_code_file(self, filename):
         """
