@@ -74,7 +74,7 @@ from database import (
     get_generated_document_by_filename,
     update_document_access,
     delete_generated_document,
-    get_document_stats
+    get_document_stats,
     get_schedule_context,        
     save_schedule_context         
 )
