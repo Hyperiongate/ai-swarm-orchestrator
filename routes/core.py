@@ -1208,8 +1208,8 @@ def orchestrate():
         task_id = cursor.lastrowid
         db.commit()
         # =============================================================================
-# CODE ASSISTANT - CHECK IF USER IS GIVING CODE FEEDBACK
-# =============================================================================
+        # CODE ASSISTANT - CHECK IF USER IS GIVING CODE FEEDBACK
+        # =============================================================================
 
 # Get code assistant
 try:
