@@ -1238,12 +1238,12 @@ def orchestrate():
                 source_filepath = schedule_result['filepath']
                 filename = os.path.basename(source_filepath)
                 
-                # Move file to outputs directory
-                output_path = os.path.join('/mnt/user-data/outputs', filename)
-                shutil.copy(source_filepath, output_path)
+                # FIXED: Use the file directly from where it was saved (/tmp/)
+                # Don't try to copy to /mnt/user-data/outputs (doesn't exist on Render)
+                file_path = source_filepath
                 
                 # Save to database as generated document
-                file_size = os.path.getsize(output_path)
+                file_size = os.path.getsize(file_path)
                 shift_length = schedule_result['shift_length']
                 pattern_key = schedule_result['pattern_key']
                 doc_title = f"{shift_length}-Hour {pattern_key.upper().replace('_', ' ')} Schedule Pattern"
@@ -1252,7 +1252,7 @@ def orchestrate():
                     filename=filename,
                     original_name=doc_title,
                     document_type='xlsx',
-                    file_path=output_path,
+                    file_path=file_path,
                     file_size=file_size,
                     task_id=task_id,
                     conversation_id=conversation_id,
