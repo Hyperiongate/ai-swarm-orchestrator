@@ -75,6 +75,8 @@ from database import (
     update_document_access,
     delete_generated_document,
     get_document_stats
+    get_schedule_context,        
+    save_schedule_context         
 )
 from orchestration import (
     analyze_task_with_sonnet,
@@ -1213,13 +1215,23 @@ def orchestrate():
         schedule_handler = get_schedule_handler()
         
         # Get conversation context from session if it exists
-        schedule_context = session.get('schedule_context', {})
+        # FIXED: Get conversation context from DATABASE instead of session
+        schedule_context = get_schedule_context(conversation_id)
+        
+        print(f"🔍 DEBUG: Loaded schedule context from DB: {schedule_context}")
         
         # Process the schedule request
         schedule_result = schedule_handler.process_request(user_request, schedule_context)
         
+        print(f"🔍 DEBUG: Schedule result action: {schedule_result['action']}")
+        
         if schedule_result['action'] != 'not_schedule_request':
             # This IS a schedule-related request
+            
+            # FIXED: Save returned context to DATABASE
+            if 'context' in schedule_result:
+                save_schedule_context(conversation_id, schedule_result['context'])
+                print(f"💾 DEBUG: Saved context: {schedule_result['context']}")
             
             if schedule_result['action'] == 'generate_schedule':
                 # Schedule was generated successfully
@@ -1299,13 +1311,11 @@ def orchestrate():
                 })
             
             else:
+                else:
                 # Need more information - asking user a question
-                # Save context for next turn
-                session['schedule_context'] = {
-                    'waiting_for': schedule_result.get('waiting_for'),
-                    'shift_length': schedule_result.get('shift_length'),
-                    'pattern_key': schedule_result.get('pattern_key')
-                }
+                # Context already saved to database above
+                
+                print(f"❓ DEBUG: Asking follow-up. Context in DB for conv {conversation_id}")
                 
                 # Convert response to HTML
                 response_html = convert_markdown_to_html(schedule_result['message'])
