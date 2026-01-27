@@ -1211,96 +1211,96 @@ def orchestrate():
         # CODE ASSISTANT - CHECK IF USER IS GIVING CODE FEEDBACK
         # =============================================================================
 
-  # Get code assistant
-  try:
-      code_assistant_agent = get_code_assistant(knowledge_base=knowledge_base)
-      
-      # Check if this is code feedback
-      feedback_check = code_assistant_agent.detect_code_feedback(user_request)
-      
-      if feedback_check['is_code_feedback']:
-          # This is code feedback - route to code assistant
-          print(f"🔧 Code feedback detected for: {feedback_check['target_file']}")
-          
-          from orchestration.ai_clients import call_claude_sonnet
-          
-          code_result = code_assistant_agent.process_code_feedback(
-              user_request,
-              call_claude_sonnet
-          )
-          
-          if code_result['success']:
-              # Code was fixed!
-              deployment_pkg = code_result['deployment_package']
-              
-              # Save fixed file
-              if code_result.get('output_path'):
-                  try:
-                      file_size = os.path.getsize(code_result['output_path'])
-                      doc_id = save_generated_document(
-                          filename=os.path.basename(code_result['output_path']),
-                          original_name=f"Fixed: {code_result['target_file']}",
-                          document_type='py',
-                          file_path=code_result['output_path'],
-                          file_size=file_size,
-                          task_id=task_id,
-                          conversation_id=conversation_id,
-                          project_id=project_id,
-                          title=f"Code Fix: {code_result['target_file']}",
-                          description=deployment_pkg['change_summary'],
-                          category='code'
-                      )
-                      
-                      document_url = f'/api/generated-documents/{doc_id}/download'
-                  except Exception as doc_error:
-                      print(f"Could not save code file: {doc_error}")
-                      document_url = None
-              else:
-                  document_url = None
-              
-              # Convert response to HTML
-              response_html = convert_markdown_to_html(code_result['message'])
-              
-              # Update task as completed
-              db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
-                        ('completed', 'code_assistant', time.time() - overall_start, task_id))
-              db.commit()
-              
-              # Add message to conversation
-              add_message(conversation_id, 'assistant', code_result['message'], task_id,
-                         {'document_created': True, 'document_type': 'py', 'document_id': doc_id,
-                          'orchestrator': 'code_assistant', 'target_file': code_result['target_file']})
-              
-              # Get suggestions
-              suggestions = []
-              if proactive:
-                  try:
-                      suggestions = proactive.post_process_result(task_id, user_request, code_result['message'])
-                  except:
-                      pass
-              
-              db.close()
-              
-              # Return code fix response
-              return jsonify({
-                  'success': True,
-                  'task_id': task_id,
-                  'conversation_id': conversation_id,
-                  'result': response_html,
-                  'document_url': document_url,
-                  'document_id': doc_id,
-                  'document_created': True,
-                  'document_type': 'py',
-                  'execution_time': time.time() - overall_start,
-                  'orchestrator': 'code_assistant',
-                  'target_file': code_result['target_file'],
-                  'deployment_instructions': deployment_pkg['deployment_instructions'],
-                  'suggestions': suggestions
-              })
-  
-  except Exception as code_assistant_error:
-      print(f"Code Assistant failed: {code_assistant_error}")
-      # Continue to normal orchestration
+        # Get code assistant
+        try:
+            code_assistant_agent = get_code_assistant(knowledge_base=knowledge_base)
+            
+            # Check if this is code feedback
+            feedback_check = code_assistant_agent.detect_code_feedback(user_request)
+            
+            if feedback_check['is_code_feedback']:
+                # This is code feedback - route to code assistant
+                print(f"🔧 Code feedback detected for: {feedback_check['target_file']}")
+                
+                from orchestration.ai_clients import call_claude_sonnet
+                
+                code_result = code_assistant_agent.process_code_feedback(
+                    user_request,
+                    call_claude_sonnet
+                )
+                
+                if code_result['success']:
+                    # Code was fixed!
+                    deployment_pkg = code_result['deployment_package']
+                    
+                    # Save fixed file
+                    if code_result.get('output_path'):
+                        try:
+                            file_size = os.path.getsize(code_result['output_path'])
+                            doc_id = save_generated_document(
+                                filename=os.path.basename(code_result['output_path']),
+                                original_name=f"Fixed: {code_result['target_file']}",
+                                document_type='py',
+                                file_path=code_result['output_path'],
+                                file_size=file_size,
+                                task_id=task_id,
+                                conversation_id=conversation_id,
+                                project_id=project_id,
+                                title=f"Code Fix: {code_result['target_file']}",
+                                description=deployment_pkg['change_summary'],
+                                category='code'
+                            )
+                            
+                            document_url = f'/api/generated-documents/{doc_id}/download'
+                        except Exception as doc_error:
+                            print(f"Could not save code file: {doc_error}")
+                            document_url = None
+                    else:
+                        document_url = None
+                    
+                    # Convert response to HTML
+                    response_html = convert_markdown_to_html(code_result['message'])
+                    
+                    # Update task as completed
+                    db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
+                              ('completed', 'code_assistant', time.time() - overall_start, task_id))
+                    db.commit()
+                    
+                    # Add message to conversation
+                    add_message(conversation_id, 'assistant', code_result['message'], task_id,
+                               {'document_created': True, 'document_type': 'py', 'document_id': doc_id,
+                                'orchestrator': 'code_assistant', 'target_file': code_result['target_file']})
+                    
+                    # Get suggestions
+                    suggestions = []
+                    if proactive:
+                        try:
+                            suggestions = proactive.post_process_result(task_id, user_request, code_result['message'])
+                        except:
+                            pass
+                    
+                    db.close()
+                    
+                    # Return code fix response
+                    return jsonify({
+                        'success': True,
+                        'task_id': task_id,
+                        'conversation_id': conversation_id,
+                        'result': response_html,
+                        'document_url': document_url,
+                        'document_id': doc_id,
+                        'document_created': True,
+                        'document_type': 'py',
+                        'execution_time': time.time() - overall_start,
+                        'orchestrator': 'code_assistant',
+                        'target_file': code_result['target_file'],
+                        'deployment_instructions': deployment_pkg['deployment_instructions'],
+                        'suggestions': suggestions
+                    })
+        
+        except Exception as code_assistant_error:
+            print(f"Code Assistant failed: {code_assistant_error}")
+            # Continue to normal orchestration
         # =============================================================================
         # NEW PATTERN-BASED SCHEDULE SYSTEM - START
         # =============================================================================
