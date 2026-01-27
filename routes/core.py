@@ -84,6 +84,7 @@ from orchestration import (
     execute_specialist_task,
     validate_with_consensus
 )
+from code_assistant_agent import get_code_assistant
 from orchestration.proactive_agent import ProactiveAgent
 
 core_bp = Blueprint('core', __name__)
