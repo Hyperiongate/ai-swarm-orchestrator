@@ -57,7 +57,7 @@ import os
 import markdown
 import shutil
 from datetime import datetime
-from schedule_request_handler import get_schedule_handler
+from schedule_request_handler_combined import get_combined_schedule_handler
 from database import (
     get_db, 
     create_conversation, 
@@ -1212,7 +1212,7 @@ def orchestrate():
         # =============================================================================
         
         # Pattern-based schedule generator intercept
-        schedule_handler = get_schedule_handler()
+        schedule_handler = get_combined_schedule_handler()
         
         # Get conversation context from session if it exists
         # FIXED: Get conversation context from DATABASE instead of session
