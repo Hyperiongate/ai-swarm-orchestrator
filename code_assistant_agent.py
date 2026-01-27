@@ -35,24 +35,45 @@ class CodeAssistantAgent:
         """Discover all Python code files in the system"""
         code_files = {}
         
-        # Common code file locations
+        # Common code file locations - try multiple Render paths
         search_paths = [
-            '/opt/render/project/src',  # Render deployment
-            '/home/claude',              # Local development
-            '.',                         # Current directory
-            '/mnt/project'              # Project knowledge
+            '/opt/render/project/src',      # Render deployment (primary)
+            '/opt/render/project',           # Render project root
+            os.getcwd(),                     # Current working directory (works on Render!)
+            '/home/claude',                  # Local development
+            '.',                             # Current directory
+            '/mnt/project'                   # Project knowledge
         ]
+        
+        # Log what we're searching for debugging
+        print(f"🔍 Code Assistant searching for Python files...")
         
         for search_path in search_paths:
             if os.path.exists(search_path):
+                print(f"   Searching: {search_path}")
+                file_count = 0
+                
                 for root, dirs, files in os.walk(search_path):
-                    # Skip __pycache__ and .venv
-                    dirs[:] = [d for d in dirs if d not in ['__pycache__', '.venv', 'node_modules', '.git']]
+                    # Skip __pycache__ and .venv and cache directories
+                    dirs[:] = [d for d in dirs if d not in ['__pycache__', '.venv', 'node_modules', '.git', '.cache', 'cache']]
                     
                     for file in files:
                         if file.endswith('.py'):
                             full_path = os.path.join(root, file)
-                            code_files[file] = full_path
+                            # Only add if not from cache/dependency directories
+                            if '.cache' not in full_path and 'site-packages' not in full_path:
+                                code_files[file] = full_path
+                                file_count += 1
+                
+                if file_count > 0:
+                    print(f"   ✅ Found {file_count} Python files in {search_path}")
+            else:
+                print(f"   ⏭️  Skipping {search_path} (doesn't exist)")
+        
+        print(f"📊 Total discoverable Python files: {len(code_files)}")
+        if len(code_files) > 0:
+            # Show first 5 files found for debugging
+            print(f"   Sample files: {list(code_files.keys())[:5]}")
         
         return code_files
     
@@ -336,10 +357,30 @@ Start immediately with the file header."""
         current_code, file_path = self.read_code_file(target_file)
         
         if not current_code:
+            # Build a helpful error message
+            available_files = list(self.code_files.keys())[:20]  # Show first 20
+            error_msg = f'''Could not find or read {target_file}.
+
+**Debugging Information:**
+- Total Python files discovered: {len(self.code_files)}
+- Files discovered in current search: {", ".join(available_files) if available_files else "None"}
+
+**Possible Issues:**
+1. File name might be spelled incorrectly
+2. File might be in a subdirectory (try: "routes/{target_file}" or "utils/{target_file}")
+3. File discovery paths might not include your deployment directory
+
+**What to try:**
+- Check the exact filename in your GitHub repository
+- Include the full path if file is in a subdirectory
+- Verify the file exists on Render by checking deployment logs
+
+**Available files found:** {", ".join(list(self.code_files.keys())[:10])}'''
+            
             return {
                 'success': False,
                 'action': 'file_not_found',
-                'message': f'Could not find or read {target_file}. Available files: {list(self.code_files.keys())}'
+                'message': error_msg
             }
         
         print(f"✅ Found {target_file} at {file_path}")
