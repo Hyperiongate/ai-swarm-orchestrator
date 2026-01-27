@@ -1,10 +1,15 @@
 """
-SCHEDULE REQUEST HANDLER - CORRECT VERSION
+SCHEDULE REQUEST HANDLER - FIXED VERSION
 Created: January 27, 2026
-Last Updated: January 27, 2026
+Last Updated: January 27, 2026 - FIXED context passing bug
 
 CHANGES:
-- January 27, 2026: COMPLETE REBUILD
+- January 27, 2026: FIXED BUG in context passing
+  * Now properly includes updated context in ALL return values
+  * This ensures routes/core.py can save the context to session
+  * Fixes the "24/7" response bug where context was lost
+
+- January 27, 2026: COMPLETE REBUILD (earlier today)
   * Asks the RIGHT questions based on 30+ years consulting experience
   * Questions: Coverage → Shift Length → Rotation Speed → Weekend Pref → Work/Off Stretch
   * THEN recommends 2-3 patterns that fit their criteria
@@ -334,7 +339,8 @@ Which appeals to you?"""
         if not self.detect_schedule_request(user_message) and not conversation_context.get('in_schedule_flow'):
             return {
                 'action': 'not_schedule_request',
-                'message': None
+                'message': None,
+                'context': conversation_context
             }
         
         # Mark that we're in the schedule flow
@@ -446,7 +452,8 @@ Which appeals to you?"""
                     'message': self.format_schedule_response(shift_length, pattern_key, filepath),
                     'shift_length': shift_length,
                     'pattern_key': pattern_key,
-                    'filepath': filepath
+                    'filepath': filepath,
+                    'context': conversation_context
                 }
             else:
                 return {
