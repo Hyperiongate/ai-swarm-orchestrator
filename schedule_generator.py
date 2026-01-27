@@ -1,9 +1,14 @@
 """
 PATTERN-BASED SCHEDULE GENERATOR
 Created: January 26, 2026
-Last Updated: January 26, 2026
+Last Updated: January 27, 2026 - FIXED FILE SAVE PATH
 
 CHANGES:
+- January 27, 2026: FIXED FILE SAVE PATH BUG
+  * Now saves directly to /mnt/user-data/outputs (with fallbacks)
+  * Fixes "File not found" error when routes/core.py tries to access file
+  * Added proper error handling and debug logging
+
 - January 26, 2026: Complete rebuild
   * Removed named schedules (except DuPont and Southern Swing)
   * Pattern-based selection: shift length → pattern type
@@ -437,12 +442,33 @@ class PatternScheduleGenerator:
         for col in range(3, 10):
             ws.column_dimensions[get_column_letter(col)].width = 7
         
-        # Save file
+        # Save file - FIXED: Try multiple locations with fallback
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         filename = f"schedule_{shift_length}hr_{pattern_key}_{timestamp}.xlsx"
-        filepath = os.path.join('/tmp', filename)
         
-        wb.save(filepath)
+        # Try multiple save locations
+        save_locations = [
+            '/mnt/user-data/outputs',
+            '/tmp',
+            '.'
+        ]
+        
+        filepath = None
+        for location in save_locations:
+            try:
+                os.makedirs(location, exist_ok=True)
+                test_path = os.path.join(location, filename)
+                wb.save(test_path)
+                filepath = test_path
+                print(f"✅ Schedule saved to: {filepath}")
+                break
+            except Exception as e:
+                print(f"⚠️  Could not save to {location}: {e}")
+                continue
+        
+        if not filepath:
+            raise Exception("Could not save schedule file to any location")
+        
         return filepath
 
 
