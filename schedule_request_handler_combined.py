@@ -241,6 +241,7 @@ Which would you prefer? (Enter **1** for basic or **2** for professional)"""
             pattern_key = context['pattern']
             shift_length = context['shift_length']
             
+            # Use the basic generator which already exists
             filepath = self.basic_generator.create_schedule(shift_length, pattern_key)
             
             return {
