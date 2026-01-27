@@ -1,12 +1,18 @@
 """
 Database Module
 Created: January 21, 2026
-Last Updated: January 25, 2026 - ADDED INTROSPECTION LAYER TABLES
+Last Updated: January 27, 2026 - ADDED SCHEDULE CONTEXT FUNCTIONS
 
 All database operations isolated here.
 No more SQL scattered across 2,500 lines.
 
 CHANGELOG:
+- January 27, 2026: ADDED SCHEDULE CONTEXT STORAGE FUNCTIONS
+  * Added get_schedule_context() - retrieves schedule context from database
+  * Added save_schedule_context() - saves schedule context to database
+  * This fixes the "24/7 bug" where Flask sessions weren't persisting
+  * Schedule context now stored in conversations.schedule_context column
+
 - January 25, 2026: ADDED INTROSPECTION LAYER TABLES
   * Added 'introspection_insights' table - stores introspection reports
   * Added 'capability_boundaries' table - tracks known limitations (Phase 2)
@@ -268,6 +274,7 @@ def init_db():
             message_count INTEGER DEFAULT 0,
             is_archived BOOLEAN DEFAULT 0,
             metadata TEXT,
+            schedule_context TEXT,
             FOREIGN KEY (project_id) REFERENCES projects(project_id)
         )
     ''')
@@ -980,6 +987,45 @@ def get_conversation_context(conversation_id, max_messages=20):
         })
     
     return context
+
+
+# ============================================================================
+# SCHEDULE CONTEXT FUNCTIONS (Added January 27, 2026)
+# ============================================================================
+
+def get_schedule_context(conversation_id):
+    """Get schedule context for a conversation from database"""
+    try:
+        db = get_db()
+        row = db.execute(
+            'SELECT schedule_context FROM conversations WHERE conversation_id = ?',
+            (conversation_id,)
+        ).fetchone()
+        db.close()
+        
+        if row and row['schedule_context']:
+            return json.loads(row['schedule_context'])
+        return {}
+    except Exception as e:
+        print(f"Error getting schedule context: {e}")
+        return {}
+
+
+def save_schedule_context(conversation_id, context):
+    """Save schedule context for a conversation to database"""
+    try:
+        db = get_db()
+        db.execute(
+            'UPDATE conversations SET schedule_context = ? WHERE conversation_id = ?',
+            (json.dumps(context), conversation_id)
+        )
+        db.commit()
+        db.close()
+        print(f"💾 Saved schedule context to DB for conversation {conversation_id}")
+        return True
+    except Exception as e:
+        print(f"Error saving schedule context: {e}")
+        return False
 
 
 # ============================================================================
