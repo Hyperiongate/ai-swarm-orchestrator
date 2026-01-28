@@ -96,7 +96,8 @@ AUTHOR: Jim @ Shiftwork Solutions LLC
 from flask import Flask, render_template, jsonify
 from database import init_db
 import os
-
+from flask import send_from_directory
+import os
 # Initialize Flask
 app = Flask(__name__)
 
@@ -210,6 +211,51 @@ except Exception as e:
 def index():
     """Main interface"""
     return render_template('index.html')
+
+# =============================================================================
+# DOWNLOAD ROUTE FOR DESKTOP APPS - Added January 28, 2026
+# =============================================================================
+# This route allows users to download the Cost Calculator and Survey App
+# Files are served from the /downloads folder in your repository
+# =============================================================================
+
+@app.route('/downloads/<path:filename>')
+def download_file(filename):
+    """
+    Serve downloadable files from the /downloads directory.
+    Allows downloading .pyw, .py, .txt, and .pdf files only.
+    """
+    try:
+        # Security: Define allowed file extensions
+        allowed_extensions = {'.pyw', '.py', '.txt', '.pdf'}
+        
+        # Get the file extension
+        file_ext = os.path.splitext(filename)[1].lower()
+        
+        # Check if file extension is allowed
+        if file_ext not in allowed_extensions:
+            return "File type not allowed", 403
+        
+        # Get the path to the downloads directory
+        downloads_dir = os.path.join(app.root_path, 'downloads')
+        
+        # Serve the file with forced download
+        return send_from_directory(
+            downloads_dir, 
+            filename, 
+            as_attachment=True
+        )
+        
+    except Exception as e:
+        # Log the error and return 404
+        print(f"Error serving download file: {str(e)}")
+        return "File not found", 404
+
+# =============================================================================
+# END DOWNLOAD ROUTE
+# =============================================================================
+
+# I did no harm and this file is not truncated
 
 @app.route('/workflow')
 def workflow():
