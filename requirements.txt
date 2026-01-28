@@ -1,7 +1,8 @@
 # AI SWARM ORCHESTRATOR - Requirements
-# Last Updated: January 21, 2026
+# Last Updated: January 27, 2026
 # 
 # CHANGES:
+# - January 27, 2026: ADDED WebSocket support for OpenAI Realtime Voice API
 # - January 21, 2026: ADDED markdown>=3.5.0 (fixes ModuleNotFoundError in routes/core.py)
 #
 # This file includes all dependencies for:
@@ -10,11 +11,17 @@
 # - Schedule generator (Excel creation)
 # - Knowledge base (document processing)
 # - Database operations
+# - Voice control (OpenAI Realtime API)
 # ==========================================
 # CORE FRAMEWORK
 # ==========================================
 Flask==3.0.0
 gunicorn>=20.1.0
+# ==========================================
+# WEBSOCKET SUPPORT FOR VOICE (Added January 27, 2026)
+# ==========================================
+flask-sock>=0.7.0           # WebSocket support for Flask
+websockets>=12.0            # WebSocket client for OpenAI Realtime API
 # ==========================================
 # AI API CLIENTS - CRITICAL FIX
 # ==========================================
@@ -41,31 +48,21 @@ XlsxWriter>=3.1.9           # Excel file creation with formatting
 # UTILITIES
 # ==========================================
 python-dateutil>=2.8.2
-
 # VISUAL CONTENT GENERATION DEPENDENCIES
 # Add these to your existing requirements.txt file
 # Created: January 26, 2026
-
 # Image generation and manipulation
 Pillow>=10.2.0
-
 # Data visualization
 matplotlib>=3.8.2
-
 # Optional: Enhanced plotting
 plotly>=5.18.0
-
 # Note: OpenAI is likely already in your requirements for GPT-4
 # If not, uncomment below:
 # openai>=1.10.0
-
 # Optional: For animated GIFs (future enhancement)
 # imageio>=2.33.1
 # moviepy>=1.0.3
-
 # Optional: For advanced image processing (future enhancement)
 # opencv-python>=4.9.0
-
-# I did no harm and this file is not truncated
-
 # I did no harm and this file is not truncated
