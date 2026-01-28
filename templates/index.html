@@ -267,6 +267,96 @@
         }
         .high-priority-banner .count { font-size: 18px; font-weight: 700; }
 
+        /* Manual Generator Styles - Added January 28, 2026 */
+        .manuals-info {
+            display: none;
+            padding: 15px;
+            background: linear-gradient(135deg, #e8eaf6 0%, #f3e5f5 100%);
+            border-radius: 10px;
+            margin-bottom: 15px;
+        }
+        .manuals-info h3 { margin-bottom: 10px; color: #5e35b1; }
+        .manuals-status {
+            padding: 10px;
+            background: white;
+            border-radius: 6px;
+            font-size: 12px;
+            margin-bottom: 15px;
+            border-left: 3px solid #667eea;
+        }
+        .manuals-status.error { border-left-color: #f44336; background: #ffebee; }
+        .manuals-btn {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 8px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 13px;
+            transition: all 0.2s;
+            color: white;
+        }
+        .manuals-btn:hover { 
+            transform: translateY(-1px); 
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15); 
+        }
+        .manuals-btn.new-manual { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+        }
+        .manuals-btn.view-all { 
+            background: linear-gradient(135deg, #1976d2 0%, #42a5f5 100%); 
+        }
+        .manuals-btn.lessons { 
+            background: linear-gradient(135deg, #f57c00 0%, #ffb74d 100%); 
+        }
+        .manuals-list { 
+            max-height: 300px; 
+            overflow-y: auto; 
+            margin-top: 10px; 
+        }
+        .manual-card {
+            padding: 12px;
+            background: white;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            border-left: 4px solid #667eea;
+            cursor: pointer;
+            transition: all 0.2s;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .manual-card:hover { 
+            transform: translateX(3px); 
+            box-shadow: 0 3px 10px rgba(0,0,0,0.15); 
+        }
+        .manual-card-client { 
+            font-size: 13px; 
+            font-weight: 600; 
+            color: #333; 
+            margin-bottom: 4px;
+        }
+        .manual-card-status { 
+            font-size: 10px; 
+            padding: 2px 6px; 
+            border-radius: 4px; 
+            background: #e0e0e0;
+            color: #555;
+            text-transform: uppercase;
+            display: inline-block;
+        }
+        .manual-card-progress {
+            margin-top: 8px;
+            height: 4px;
+            background: #e0e0e0;
+            border-radius: 2px;
+            overflow: hidden;
+        }
+        .manual-card-progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            transition: width 0.3s;
+        }
+        
         /* Add Lead Modal Styles - Added January 24, 2026 */
         .modal-overlay {
             display: none;
@@ -382,6 +472,7 @@
                 <button class="mode-btn" onclick="switchMode('research')" id="researchModeBtn">🔬 Research</button>
                 <button class="mode-btn" onclick="switchMode('alerts')" id="alertsModeBtn">🔔 Alerts</button>
                 <button class="mode-btn" onclick="switchMode('pipeline')" id="pipelineModeBtn">📊 Pipeline</button>
+                <button class="mode-btn" onclick="switchMode('manuals')" id="manualsModeBtn">📝 Manuals</button>
             </div>
         </div>
         
@@ -658,6 +749,41 @@
                     <div class="section-title">🔥 Top Leads</div>
                     <div class="lead-list" id="topLeadsList">
                         <div style="text-align: center; color: #999; padding: 20px;">Loading leads...</div>
+                    </div>
+                </div>
+
+                                <!-- Implementation Manual Generator Panel - NEW January 28, 2026 -->
+                <div class="manuals-info" id="manualsInfo" style="display: none;">
+                    <h3>📝 Manual Generator</h3>
+                    <div class="manuals-status" id="manualsStatus">
+                        <strong>Status:</strong> Checking...
+                    </div>
+                    
+                    <div class="manuals-summary" id="manualsSummary">
+                        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px; border-radius: 8px; margin-bottom: 10px;">
+                            <div style="font-size: 24px; font-weight: 700;" id="activeManualsCount">0</div>
+                            <div style="font-size: 11px; opacity: 0.9;">Active Manual Projects</div>
+                        </div>
+                        <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+                            <div style="flex: 1; background: #e3f2fd; padding: 10px; border-radius: 6px; text-align: center;">
+                                <div style="font-size: 18px; font-weight: 700; color: #1976d2;" id="draftingCount">0</div>
+                                <div style="font-size: 9px; color: #666;">Drafting</div>
+                            </div>
+                            <div style="flex: 1; background: #f3e5f5; padding: 10px; border-radius: 6px; text-align: center;">
+                                <div style="font-size: 18px; font-weight: 700; color: #9c27b0;" id="completeCount">0</div>
+                                <div style="font-size: 9px; color: #666;">Complete</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="section-title">⚡ Quick Actions</div>
+                    <button class="manuals-btn new-manual" onclick="startNewManual()">➕ New Manual</button>
+                    <button class="manuals-btn view-all" onclick="viewAllManuals()">👁️ View All Manuals</button>
+                    <button class="manuals-btn lessons" onclick="viewLessons()">💡 View Lessons Learned</button>
+                    
+                    <div class="section-title">📌 Recent Projects</div>
+                    <div class="manuals-list" id="recentManualsList">
+                        <div style="text-align: center; color: #999; padding: 20px;">Loading...</div>
                     </div>
                 </div>
                 
@@ -1434,6 +1560,240 @@
             checkPipelineStatus();
         }, 500);
     });
+   // =============================================================================
+// IMPLEMENTATION MANUAL GENERATOR FUNCTIONS - Added January 28, 2026
+// =============================================================================
+
+var currentManualId = null;
+
+function checkManualsStatus() {
+    fetch('/api/manuals/status')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var statusDiv = document.getElementById('manualsStatus');
+            if (data.available) {
+                statusDiv.innerHTML = '<strong>✅ Status:</strong> Online - Conversational manual generation ready';
+                statusDiv.className = 'manuals-status';
+                loadManualsSummary();
+                loadRecentManuals();
+            } else {
+                statusDiv.innerHTML = '<strong>⚠️ Status:</strong> Not available';
+                statusDiv.className = 'manuals-status error';
+            }
+        })
+        .catch(function(err) {
+            var statusDiv = document.getElementById('manualsStatus');
+            statusDiv.innerHTML = '<strong>❌ Status:</strong> Error connecting';
+            statusDiv.className = 'manuals-status error';
+        });
+}
+
+function loadManualsSummary() {
+    fetch('/api/manuals/dashboard')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                var active = (data.status_counts.gathering_info || 0) + (data.status_counts.drafting || 0) + (data.status_counts.reviewing || 0);
+                var drafting = data.status_counts.drafting || 0;
+                var complete = data.status_counts.complete || 0;
+                
+                document.getElementById('activeManualsCount').textContent = active;
+                document.getElementById('draftingCount').textContent = drafting;
+                document.getElementById('completeCount').textContent = complete;
+            }
+        });
+}
+
+function loadRecentManuals() {
+    fetch('/api/manuals/list?status=all&limit=5')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var listDiv = document.getElementById('recentManualsList');
+            if (data.success && data.manuals && data.manuals.length > 0) {
+                var html = '';
+                data.manuals.forEach(function(manual) {
+                    var statusName = manual.project_status.replace(/_/g, ' ');
+                    var statusColor = getManualStatusColor(manual.project_status);
+                    
+                    html += '<div class="manual-card" onclick="continueManual(' + manual.id + ')" style="border-left-color: ' + statusColor + ';">';
+                    html += '<div class="manual-card-client">' + escapeHtml(manual.client_name) + '</div>';
+                    html += '<span class="manual-card-status" style="background: ' + statusColor + '20; color: ' + statusColor + ';">' + statusName + '</span>';
+                    html += '</div>';
+                });
+                listDiv.innerHTML = html;
+            } else {
+                listDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No manual projects yet</div>';
+            }
+        });
+}
+
+function getManualStatusColor(status) {
+    var colors = {
+        'gathering_info': '#2196f3',
+        'ready_to_draft': '#ff9800',
+        'drafting': '#9c27b0',
+        'reviewing': '#f44336',
+        'ready_to_finalize': '#4caf50',
+        'complete': '#607d8b'
+    };
+    return colors[status] || '#667eea';
+}
+
+function startNewManual() {
+    var clientName = prompt('What is the client name?', '');
+    if (!clientName) return;
+    
+    var facilityName = prompt('What is the facility/plant name? (optional)', '');
+    
+    addMessage('user', '📝 Create implementation manual for ' + clientName);
+    
+    var loading = document.getElementById('loadingIndicator');
+    loading.classList.add('active');
+    document.querySelector('.loading-text').textContent = 'Starting new manual project...';
+    
+    fetch('/api/manuals/start', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            client_name: clientName,
+            facility_name: facilityName || null
+        })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        loading.classList.remove('active');
+        if (data.success) {
+            currentManualId = data.manual_id;
+            
+            var msg = '✅ **Manual project started for ' + clientName + '!**\n\n';
+            msg += 'I need to ask you some questions to gather the information for the manual.\n\n';
+            
+            if (data.next_question) {
+                msg += '**Question:** ' + data.next_question.question;
+            }
+            
+            addMessage('assistant', msg);
+            loadManualsSummary();
+            loadRecentManuals();
+        } else {
+            addMessage('assistant', '❌ Error: ' + data.error);
+        }
+    })
+    .catch(function(err) {
+        loading.classList.remove('active');
+        addMessage('assistant', '❌ Error: ' + err.message);
+    });
+}
+
+function continueManual(manualId) {
+    currentManualId = manualId;
+    
+    addMessage('user', '📝 Continue Manual Project #' + manualId);
+    
+    var loading = document.getElementById('loadingIndicator');
+    loading.classList.add('active');
+    
+    fetch('/api/manuals/' + manualId)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            loading.classList.remove('active');
+            if (data.success) {
+                var manual = data.manual;
+                var msg = '📝 **' + manual.client_name + ' Implementation Manual**\n\n';
+                msg += '**Status:** ' + manual.project_status.replace(/_/g, ' ') + '\n';
+                msg += '**Progress:** ' + data.section_status.approved_sections + '/' + data.section_status.total_sections + ' sections approved\n\n';
+                
+                if (data.next_question) {
+                    msg += '**Next Question:** ' + data.next_question.question + '\n\n';
+                    msg += 'Just type your answer, or say "skip" to move on.';
+                } else if (manual.project_status === 'ready_to_draft') {
+                    msg += '✅ All information collected!\n\n';
+                    msg += 'Ready to generate draft sections. Say "generate [section name]" or "start drafting".';
+                } else if (manual.project_status === 'drafting') {
+                    msg += 'Currently working on sections.\n\n';
+                    msg += 'Sections completed: ' + data.section_status.drafted_sections + '/' + data.section_status.total_sections + '\n\n';
+                    msg += 'Say "continue drafting" to work on the next section.';
+                } else if (manual.project_status === 'ready_to_finalize') {
+                    msg += '🎉 All sections approved!\n\n';
+                    msg += 'Ready to generate the final Word document. Say "finalize manual".';
+                }
+                
+                addMessage('assistant', msg);
+            } else {
+                addMessage('assistant', '❌ Error: ' + data.error);
+            }
+        })
+        .catch(function(err) {
+            loading.classList.remove('active');
+            addMessage('assistant', '❌ Error: ' + err.message);
+        });
+}
+
+function viewAllManuals() {
+    addMessage('user', '👁️ View All Manual Projects');
+    
+    var loading = document.getElementById('loadingIndicator');
+    loading.classList.add('active');
+    
+    fetch('/api/manuals/list?status=all&limit=50')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            loading.classList.remove('active');
+            if (data.success) {
+                var msg = '# 📝 All Manual Projects\n\n';
+                
+                if (data.manuals && data.manuals.length > 0) {
+                    data.manuals.forEach(function(manual) {
+                        msg += '### ' + manual.client_name;
+                        if (manual.facility_name) msg += ' - ' + manual.facility_name;
+                        msg += '\n';
+                        msg += '- **Status:** ' + manual.project_status.replace(/_/g, ' ') + '\n';
+                        msg += '- **ID:** ' + manual.id + ' (Click to continue)\n\n';
+                    });
+                } else {
+                    msg += 'No manual projects found.';
+                }
+                
+                addMessage('assistant', msg);
+            }
+        });
+}
+
+function viewLessons() {
+    addMessage('user', '💡 View Lessons Learned');
+    
+    var loading = document.getElementById('loadingIndicator');
+    loading.classList.add('active');
+    
+    fetch('/api/manuals/lessons')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            loading.classList.remove('active');
+            if (data.success) {
+                var msg = '# 💡 Lessons Learned\n\n';
+                
+                if (data.lessons && data.lessons.length > 0) {
+                    data.lessons.forEach(function(lesson) {
+                        msg += '### ' + lesson.lesson_category + '\n';
+                        msg += lesson.lesson_text + '\n';
+                        if (lesson.industry) msg += '_Industry: ' + lesson.industry + '_\n';
+                        msg += '\n';
+                    });
+                } else {
+                    msg += 'No lessons recorded yet. As you create manuals, the system will learn and remember best practices.';
+                }
+                
+                addMessage('assistant', msg);
+            }
+        });
+}
+
+// Initialize manual generator on page load
+document.addEventListener('DOMContentLoaded', function() {
+    setTimeout(function() {
+        checkManualsStatus();
+    }, 500);
+});     
     </script>
 </body>
 </html>
