@@ -616,6 +616,7 @@
         let messageCounter = 0;
         let feedbackRatings = {};  // Store ratings for each message
         let uploadedFiles = [];  // Store uploaded files
+        let currentOpenFolder = null;  // Track which project folder is open
         
         // File upload handling
         function handleFileUpload(event) {
@@ -677,6 +678,20 @@
             if (bytes < 1024) return bytes + ' B';
             if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
             return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        }
+        
+        function formatBytes(bytes) {
+            if (!bytes) return '0 B';
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+            return (bytes/(1024*1024)).toFixed(1) + ' MB';
+        }
+        
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
         
         // Copy to clipboard function
@@ -792,16 +807,17 @@
                 return;
             }
             
+            currentProjectId = projectId;
+            
             // Load project details
-            fetch(`/api/project/${projectId}/context`)
+            fetch(`/api/projects/${projectId}`)
                 .then(r => r.json())
                 .then(data => {
                     if (data.success) {
-                        currentProjectId = projectId;
-                        document.getElementById('clientName').textContent = data.client_name;
-                        document.getElementById('projectPhase').innerHTML = `<div class="phase-indicator">${data.phase}</div>`;
+                        document.getElementById('clientName').textContent = data.project.client_name;
+                        document.getElementById('projectPhase').innerHTML = `<div class="phase-indicator">${data.project.project_phase}</div>`;
                         
-                        addMessage('assistant', `✅ Loaded project for ${data.client_name}. Currently in ${data.phase} phase. ${data.files_count} files uploaded, ${data.findings_count} findings recorded.`, null, 'project');
+                        addMessage('assistant', `✅ Loaded project for ${data.project.client_name}. Currently in ${data.project.project_phase} phase.`, null, 'project');
                     }
                 });
         }
@@ -813,13 +829,13 @@
             const industry = prompt("Enter industry (e.g., Pharmaceutical, Food Processing):");
             const facilityType = prompt("Enter facility type (e.g., Manufacturing, Distribution):");
             
-            fetch('/api/project/start', {
+            fetch('/api/projects', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
                     client_name: clientName,
-                    industry: industry,
-                    facility_type: facilityType
+                    industry: industry || 'Manufacturing',
+                    facility_type: facilityType || 'Production'
                 })
             })
             .then(r => r.json())
@@ -837,7 +853,7 @@
                         document.getElementById('existingProjects').value = data.project_id;
                     }, 500);
                     
-                    addMessage('assistant', `✅ Project started for ${clientName}! ${data.suggested_first_step}`, null, 'project');
+                    addMessage('assistant', `✅ Project started for ${clientName}! You can now upload files and the AI can access them.`, null, 'project');
                 }
             });
         }
@@ -917,10 +933,11 @@
                         `;
                     }
                     
-                    addMessage('assistant', data.actual_output + '<div style="margin-top: 10px;">' + badges + '</div>' + downloadSection, data.task_id, currentMode, data);
+                    addMessage('assistant', data.result + '<div style="margin-top: 10px;">' + badges + '</div>' + downloadSection, data.task_id, currentMode, data);
                     
-                    // Refresh stats
+                    // Refresh stats and documents
                     loadStats();
+                    refreshDocuments();
                 } else {
                     addMessage('assistant', `❌ Error: ${data.error}`);
                 }
@@ -1197,52 +1214,139 @@
                 });
         }
         
-        // Load generated documents
+        // ============================================================================
+        // PROJECT FOLDER BROWSER - Added January 28, 2026
+        // ============================================================================
+        
         function loadDocuments() {
-            fetch('/api/documents')
+            loadProjectFolders();
+        }
+        
+        function loadProjectFolders() {
+            fetch('/api/projects/folders')
                 .then(r => r.json())
                 .then(data => {
                     const docsList = document.getElementById('documentsList');
                     
-                    if (!data.success || data.documents.length === 0) {
-                        docsList.innerHTML = '<div style="color: #999; padding: 10px; text-align: center;">No documents yet</div>';
+                    if (!data.success || data.projects.length === 0) {
+                        docsList.innerHTML = '<div style="color: #999; padding: 10px; text-align: center; font-size: 11px;">No project folders yet</div>';
                         return;
                     }
                     
                     docsList.innerHTML = '';
                     
-                    data.documents.forEach(doc => {
-                        const docItem = document.createElement('div');
-                        docItem.style.cssText = 'padding: 8px; margin: 4px 0; background: #f8f9fa; border-radius: 6px; border: 1px solid #e0e0e0;';
-                        
-                        const icon = doc.type === 'pdf' ? '📄' : doc.type === 'docx' ? '📝' : doc.type === 'xlsx' ? '📊' : '📎';
-                        const size = formatFileSize(doc.size);
-                        const date = new Date(doc.modified).toLocaleDateString();
-                        
-                        docItem.innerHTML = `
-                            <div style="display: flex; align-items: start; gap: 6px;">
-                                <span style="font-size: 16px;">${icon}</span>
-                                <div style="flex: 1; min-width: 0;">
-                                    <div style="font-weight: 600; font-size: 11px; color: #333; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${doc.filename}">
-                                        ${doc.filename}
-                                    </div>
-                                    <div style="font-size: 10px; color: #999; margin-top: 2px;">
-                                        ${size} • ${date}
-                                    </div>
-                                    <a href="${doc.download_url}" download style="display: inline-block; margin-top: 4px; padding: 4px 8px; background: #667eea; color: white; text-decoration: none; border-radius: 4px; font-size: 10px; font-weight: 600;">
-                                        ⬇️ Download
-                                    </a>
+                    data.projects.forEach(project => {
+                        const folderDiv = document.createElement('div');
+                        folderDiv.style.cssText = 'padding: 10px; margin: 4px 0; background: #f8f9fa; border-left: 4px solid #667eea; border-radius: 6px; cursor: pointer;';
+                        folderDiv.innerHTML = `
+                            <div style="display: flex; align-items: center; gap: 6px;">
+                                <span style="font-size: 16px;">📁</span>
+                                <div style="flex: 1;">
+                                    <div style="font-weight: 600; font-size: 11px;">${escapeHtml(project.client_name)}</div>
+                                    <div style="font-size: 9px; color: #666;">${project.file_count} files</div>
                                 </div>
                             </div>
                         `;
-                        
-                        docsList.appendChild(docItem);
+                        folderDiv.onclick = () => openProjectFolder(project.project_id, project.client_name);
+                        docsList.appendChild(folderDiv);
                     });
+                })
+                .catch(err => {
+                    document.getElementById('documentsList').innerHTML = '<div style="color: #f44336; padding: 10px; text-align: center; font-size: 10px;">Error loading folders</div>';
+                });
+        }
+        
+        function openProjectFolder(projectId, clientName) {
+            currentOpenFolder = projectId;
+            const docsList = document.getElementById('documentsList');
+            docsList.innerHTML = '<div style="padding: 20px; text-align: center; font-size: 11px;">Loading...</div>';
+            
+            fetch(`/api/projects/${projectId}/files`)
+                .then(r => r.json())
+                .then(data => {
+                    docsList.innerHTML = '';
+                    
+                    // Back button
+                    const backBtn = document.createElement('div');
+                    backBtn.style.cssText = 'padding: 8px; margin-bottom: 10px; background: #e8eaf6; border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: 600;';
+                    backBtn.innerHTML = '⬅️ Back';
+                    backBtn.onclick = () => { currentOpenFolder = null; loadProjectFolders(); };
+                    docsList.appendChild(backBtn);
+                    
+                    // Header
+                    const header = document.createElement('div');
+                    header.style.cssText = 'padding: 10px; background: #667eea; color: white; border-radius: 6px; margin-bottom: 10px;';
+                    header.innerHTML = `
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div style="font-weight: 700; font-size: 12px;">📁 ${escapeHtml(clientName)}</div>
+                            <button onclick="uploadToProject('${projectId}')" style="background: white; color: #667eea; border: none; padding: 5px 10px; border-radius: 4px; font-size: 10px; cursor: pointer; font-weight: 600;">➕ Upload</button>
+                        </div>
+                        <div style="font-size: 9px; margin-top: 4px;">${data.files.length} files</div>
+                    `;
+                    docsList.appendChild(header);
+                    
+                    // Files
+                    if (data.files.length === 0) {
+                        docsList.innerHTML += '<div style="padding: 20px; text-align: center; color: #999; font-size: 11px;">No files yet</div>';
+                    } else {
+                        data.files.forEach(file => {
+                            const fileDiv = document.createElement('div');
+                            fileDiv.style.cssText = 'padding: 8px; margin: 4px 0; background: white; border: 1px solid #e0e0e0; border-radius: 4px;';
+                            const icon = getFileIcon(file.original_filename);
+                            fileDiv.innerHTML = `
+                                <div style="display: flex; align-items: start; gap: 6px;">
+                                    <span style="font-size: 14px;">${icon}</span>
+                                    <div style="flex: 1; min-width: 0;">
+                                        <div style="font-weight: 600; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(file.original_filename)}</div>
+                                        <div style="font-size: 8px; color: #999;">${formatBytes(file.file_size)}</div>
+                                        <div style="display: flex; gap: 4px; margin-top: 4px;">
+                                            <button onclick="downloadFile('${projectId}', ${file.id})" style="padding: 3px 6px; background: #4caf50; color: white; border: none; border-radius: 3px; font-size: 8px; cursor: pointer;">⬇️</button>
+                                            <button onclick="deleteFile('${projectId}', ${file.id})" style="padding: 3px 6px; background: #f44336; color: white; border: none; border-radius: 3px; font-size: 8px; cursor: pointer;">🗑️</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            `;
+                            docsList.appendChild(fileDiv);
+                        });
+                    }
+                });
+        }
+        
+        function uploadToProject(projectId) {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.multiple = true;
+            input.accept = '.pdf,.docx,.xlsx,.csv,.txt,.png,.jpg,.jpeg';
+            input.onchange = (e) => {
+                const formData = new FormData();
+                for (let file of e.target.files) formData.append('files', file);
+                
+                fetch(`/api/projects/${projectId}/files/upload`, { method: 'POST', body: formData })
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.success) openProjectFolder(projectId, 'Project');
+                        else alert('Upload failed');
+                    });
+            };
+            input.click();
+        }
+        
+        function downloadFile(projectId, fileId) {
+            window.location.href = `/api/projects/${projectId}/files/${fileId}/download`;
+        }
+        
+        function deleteFile(projectId, fileId) {
+            if (!confirm('Delete this file?')) return;
+            fetch(`/api/projects/${projectId}/files/${fileId}`, { method: 'DELETE' })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) openProjectFolder(projectId, 'Project');
                 });
         }
         
         function refreshDocuments() {
-            loadDocuments();
+            if (currentOpenFolder) openProjectFolder(currentOpenFolder, 'Project');
+            else loadProjectFolders();
         }
         
         // Initialize
@@ -1269,6 +1373,14 @@
 
 <!-- 
 CHANGE LOG:
+- January 28, 2026: ADDED PROJECT FILE MANAGEMENT SYSTEM
+  * Added project folder browser to Documents tab
+  * Users can click folders to see files inside
+  * Upload button for each project
+  * Download/delete buttons for each file
+  * Integrated with backend file management routes
+  * Files are organized by project with visual folder structure
+
 - January 26, 2026: REMOVED "CREATE SCHEDULE" BUTTON
   * Removed "📅 Create Schedule" from Quick Actions sidebar
   * Users should now type "Create a schedule" in the chat
