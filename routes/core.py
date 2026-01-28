@@ -1232,12 +1232,11 @@ def orchestrate():
                 if code_result['success']:
                     # Code was fixed!
                     deployment_pkg = code_result['deployment_package']
+                 
                     # FIXED January 28, 2026: Initialize these variables BEFORE the try block
                     doc_id = None
                     document_url = None
                     
-                    # Save fixed file
-                    if code_result.get('output_path'):
                     # Save fixed file
                     if code_result.get('output_path'):
                         try:
