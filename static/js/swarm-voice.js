@@ -135,7 +135,7 @@ async function connectWebSocket() {
             var wsUrl = 'ws://localhost:10001/ws/voice';
         } else {
             // Production - connect to deployed voice service
-            var wsUrl = 'wss://ai-swarm-voice.onrender.com/ws/voice';
+            var wsUrl = 'wss://ai-swarm-orchestrator-1.onrender.com/ws/voice';
         }
         
         console.log('🔌 Connecting to voice service:', wsUrl);
