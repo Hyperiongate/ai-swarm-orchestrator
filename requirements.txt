@@ -19,10 +19,12 @@ Flask==3.0.0
 gunicorn>=20.1.0
 # ==========================================
 # WEBSOCKET SUPPORT FOR VOICE (Added January 27, 2026)
+# Updated January 28, 2026: Added Hypercorn for proper async support
 # ==========================================
 flask-sock>=0.7.0           # WebSocket support for Flask
 websockets>=12.0            # WebSocket client for OpenAI Realtime API
-eventlet>=0.33.0            # Async support for Gunicorn WebSockets
+hypercorn>=0.16.0           # ASGI server for async Flask (replaces Gunicorn for WebSockets)
+asgiref>=3.7.0              # ASGI utilities
 # ==========================================
 # AI API CLIENTS - CRITICAL FIX
 # ==========================================
