@@ -5,6 +5,13 @@ Shiftwork Solutions LLC
 =============================================================================
 
 CHANGE LOG:
+- January 28, 2026: ADDED MANUALS MODE
+  * Added manuals mode button handling in switchMode()
+  * Added manualsInfo panel show/hide logic
+  * Added manuals mode placeholder text
+  * Added manuals quick actions
+  * Updated mode button active state for manuals
+
 - January 26, 2026: REMOVED "Create Schedule" Quick Action Button
   * Removed "📅 Create Schedule" button from 'quick' mode actions
   * Users should type "Create a schedule" in chat for new pattern-based system
@@ -40,8 +47,8 @@ SECTIONS:
 3. Clarification Handling Functions
 4. File Upload Handling
 5. Clipboard Functions
-6. Mode Switching (UPDATED for pipeline)
-7. Quick Actions (UPDATED January 26 - REMOVED Create Schedule)
+6. Mode Switching (UPDATED for manuals)
+7. Quick Actions (UPDATED for manuals)
 8. Project Management
 9. Message Handling (Core)
 10. Feedback System
@@ -286,6 +293,7 @@ function clearConversationArea() {
         '<li><strong>🔬 Research Mode:</strong> Real-time industry intelligence and news</li>' +
         '<li><strong>🔔 Alerts Mode:</strong> Autonomous monitoring and notifications</li>' +
         '<li><strong>📊 Pipeline Mode:</strong> Lead scoring and sales pipeline management</li>' +
+        '<li><strong>📝 Manuals Mode:</strong> Conversational implementation manual generation</li>' +
         '</ul></div></div>';
     
     messageCounter = 0;
@@ -631,7 +639,7 @@ function copyToClipboard(event, msgId) {
 }
 
 // =============================================================================
-// 6. MODE SWITCHING - UPDATED January 24, 2026 for Pipeline
+// 6. MODE SWITCHING - UPDATED January 28, 2026 for Manuals
 // =============================================================================
 
 function switchMode(mode) {
@@ -657,6 +665,10 @@ function switchMode(mode) {
     var pipelineBtn = document.getElementById('pipelineModeBtn');
     if (pipelineBtn) pipelineBtn.classList.toggle('active', mode === 'pipeline');
     
+    // Manuals mode button (added January 28, 2026)
+    var manualsBtn = document.getElementById('manualsModeBtn');
+    if (manualsBtn) manualsBtn.classList.toggle('active', mode === 'manuals');
+    
     // Show/hide mode-specific panels
     document.getElementById('projectInfo').style.display = mode === 'project' ? 'block' : 'none';
     document.getElementById('calculatorInfo').style.display = mode === 'calculator' ? 'block' : 'none';
@@ -676,6 +688,10 @@ function switchMode(mode) {
     var pipelineInfo = document.getElementById('pipelineInfo');
     if (pipelineInfo) pipelineInfo.style.display = mode === 'pipeline' ? 'block' : 'none';
     
+    // Manuals panel (added January 28, 2026)
+    var manualsInfo = document.getElementById('manualsInfo');
+    if (manualsInfo) manualsInfo.style.display = mode === 'manuals' ? 'block' : 'none';
+    
     // Load mode-specific data
     if (mode === 'project') loadSavedProjects();
     else if (mode === 'survey') loadQuestionBank();
@@ -684,6 +700,7 @@ function switchMode(mode) {
     else if (mode === 'research' && typeof checkResearchStatus === 'function') checkResearchStatus();
     else if (mode === 'alerts' && typeof checkAlertStatus === 'function') checkAlertStatus();
     else if (mode === 'pipeline' && typeof checkPipelineStatus === 'function') checkPipelineStatus();
+    else if (mode === 'manuals' && typeof checkManualsStatus === 'function') checkManualsStatus();
     
     updateQuickActions();
     
@@ -697,13 +714,14 @@ function switchMode(mode) {
         'opportunities': "Type your request... (e.g., 'Analyze my current schedule')",
         'research': "Type your research topic... (e.g., 'Latest OSHA fatigue regulations')",
         'alerts': "Type your request... (e.g., 'Add ABC Manufacturing to monitored clients')",
-        'pipeline': "Type your request... (e.g., 'Show me high priority leads')"
+        'pipeline': "Type your request... (e.g., 'Show me high priority leads')",
+        'manuals': "Type your request... (e.g., 'Create implementation manual for Acme Manufacturing')"
     };
     input.placeholder = placeholders[mode] || placeholders['quick'];
 }
 
 // =============================================================================
-// 7. QUICK ACTIONS - UPDATED January 26, 2026 - REMOVED "Create Schedule"
+// 7. QUICK ACTIONS - UPDATED January 28, 2026 for Manuals
 // =============================================================================
 
 function updateQuickActions() {
@@ -725,6 +743,10 @@ function updateQuickActions() {
             '<li onclick="if(typeof importLeadsFromAlerts===\'function\')importLeadsFromAlerts()">📥 Import Alerts</li>' +
             '<li onclick="if(typeof viewAllLeads===\'function\')viewAllLeads()">👁️ View Pipeline</li>' +
             '<li onclick="quickAction(\'Show me high priority leads with score above 70\')">🔥 High Priority</li>',
+        'manuals': '<li onclick="if(typeof startNewManual===\'function\')startNewManual()">➕ New Manual</li>' +
+            '<li onclick="if(typeof viewAllManuals===\'function\')viewAllManuals()">👁️ All Manuals</li>' +
+            '<li onclick="if(typeof viewLessons===\'function\')viewLessons()">💡 Lessons</li>' +
+            '<li onclick="quickAction(\'Continue my manual for [client name]\')">📝 Continue</li>',
         'default': '<li onclick="quickAction(\'data collection\')">📋 Data Collection Doc</li>' +
             '<li onclick="quickAction(\'proposal\')">📄 Create Proposal</li>' +
             '<li onclick="quickAction(\'analyze files\')">📊 Analyze Files</li>' +
@@ -1100,7 +1122,7 @@ function initializeApp() {
     
     setInterval(function() { loadStats(); loadDocuments(); }, 30000);
     
-    console.log('AI Swarm Interface initialized - Create Schedule button removed (use chat instead)');
+    console.log('AI Swarm Interface initialized - Manuals mode added');
 }
 
 if (document.readyState === 'loading') {
