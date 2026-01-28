@@ -1,0 +1,72 @@
+# =============================================================================
+# Shiftwork Solutions Desktop Apps - Python Requirements
+# =============================================================================
+# Created: January 28, 2026
+# Updated: January 28, 2026
+# 
+# This file contains all Python package dependencies for:
+# - Cost of Time Calculator v3.3.2
+# - Survey Processing App v87
+#
+# INSTALLATION:
+# Run this command in terminal/command prompt:
+#   pip install -r requirements.txt
+#
+# Or install packages individually:
+#   pip install matplotlib openpyxl reportlab pandas python-docx python-pptx
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Cost of Time Calculator Requirements
+# -----------------------------------------------------------------------------
+matplotlib>=3.5.0          # For charts and visualizations
+openpyxl>=3.0.9            # For Excel export functionality
+reportlab>=3.6.0           # For PDF report generation
+
+# -----------------------------------------------------------------------------
+# Survey Processing App Requirements
+# -----------------------------------------------------------------------------
+pandas>=1.3.0              # For data manipulation and analysis
+python-docx>=0.8.11        # For reading Word survey documents
+python-pptx>=0.6.21        # For PowerPoint template updates
+
+# -----------------------------------------------------------------------------
+# Common Dependencies (usually installed automatically with above packages)
+# -----------------------------------------------------------------------------
+Pillow>=8.3.0              # Image processing library
+numpy>=1.21.0              # Numerical computing library
+
+# -----------------------------------------------------------------------------
+# Optional: Specific versions for maximum compatibility
+# -----------------------------------------------------------------------------
+# If you experience issues, uncomment these lines and use exact versions:
+# matplotlib==3.7.1
+# openpyxl==3.1.2
+# reportlab==4.0.4
+# pandas==2.0.2
+# python-docx==0.8.11
+# python-pptx==0.6.21
+# Pillow==10.0.0
+# numpy==1.24.3
+
+# -----------------------------------------------------------------------------
+# Platform-Specific Notes
+# -----------------------------------------------------------------------------
+# 
+# WINDOWS:
+# - All packages should install without issues
+# - Tkinter (GUI library) comes with Python installation
+#
+# macOS:
+# - May need to install Tkinter separately:
+#   brew install python-tk
+#
+# LINUX (Ubuntu/Debian):
+# - Install Tkinter:
+#   sudo apt-get install python3-tk
+# - May need development headers:
+#   sudo apt-get install python3-dev
+#
+# -----------------------------------------------------------------------------
+
+# I did no harm and this file is not truncated
