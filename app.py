@@ -1,9 +1,17 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: January 26, 2026 - UPDATED FOR PATTERN-BASED SCHEDULE SYSTEM
+Last Updated: January 28, 2026 - ADDED IMPLEMENTATION MANUAL GENERATOR
 
 CHANGES IN THIS VERSION:
+- January 28, 2026: ADDED IMPLEMENTATION MANUAL GENERATOR
+  * Added manuals_bp blueprint for conversational manual generation
+  * Question-driven data collection for implementation manuals
+  * Section-by-section drafting and refinement
+  * Iterative editing through conversation
+  * Lessons learned tracking
+  * Word document generation integration
+
 - January 26, 2026: UPDATED FOR PATTERN-BASED SCHEDULE SYSTEM
   * Added Flask session configuration (required for multi-turn schedule conversations)
   * Session stores schedule conversation state between requests
@@ -70,6 +78,8 @@ ARCHITECTURE:
 - routes/: All Flask endpoints
 - schedule_generator.py: Pattern-based schedule generation (UPDATED)
 - schedule_request_handler.py: Conversational schedule handler (NEW)
+- implementation_manual_generator.py: Conversational manual generation (NEW)
+- routes/manuals.py: Manual generator API endpoints (NEW)
 - swarm_self_evaluation.py: Weekly self-evaluation engine
 - routes/evaluation.py: Evaluation API endpoints
 - content_marketing_engine.py: Autonomous content generation
@@ -370,9 +380,18 @@ def health():
     except:
         introspection_status = 'not_installed'
     
+    # Check Manual Generator status
+    manual_generator_status = 'disabled'
+    try:
+        from implementation_manual_generator import get_manuals_dashboard
+        dashboard = get_manuals_dashboard()
+        manual_generator_status = 'enabled'
+    except:
+        manual_generator_status = 'not_installed'
+    
     return jsonify({
         'status': 'healthy',
-        'version': 'Sprint 3 Complete + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules',
+        'version': 'Sprint 3 Complete + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator',
         'orchestrators': {
             'sonnet': 'configured' if ANTHROPIC_API_KEY else 'missing',
             'opus': 'configured' if ANTHROPIC_API_KEY else 'missing'
@@ -425,6 +444,16 @@ def health():
                 'proposals': 'phase_3',
                 'goal_alignment': 'active'
             }
+        },
+        'manual_generator': {
+            'status': manual_generator_status,
+            'features': [
+                'conversational_data_collection',
+                'section_drafting',
+                'iterative_refinement',
+                'lessons_learned',
+                'docx_generation'
+            ]
         },
         'features': {
             'sprint_1': {
@@ -501,6 +530,14 @@ def health():
                 'patterns_8hr': ['5-2-fixed', '6-3-fixed', 'southern_swing', '6-2-rotating'],
                 'visual_excel_output': True,
                 'color_coded': True
+            },
+            'manual_generator': {
+                'conversational_flow': manual_generator_status,
+                'question_driven': manual_generator_status,
+                'section_drafting': manual_generator_status,
+                'iterative_refinement': manual_generator_status,
+                'lessons_learned': manual_generator_status,
+                'docx_output': manual_generator_status
             }
         }
     })
@@ -605,6 +642,18 @@ except ImportError as e:
     print(f"ℹ️  Introspection Layer routes not found: {e}")
 except Exception as e:
     print(f"⚠️  Introspection Layer registration failed: {e}")
+
+# ============================================================================
+# IMPLEMENTATION MANUAL GENERATOR BLUEPRINT (Added January 28, 2026)
+# ============================================================================
+try:
+    from routes.manuals import manuals_bp
+    app.register_blueprint(manuals_bp)
+    print("✅ Implementation Manual Generator API registered")
+except ImportError as e:
+    print(f"ℹ️  Implementation Manual Generator routes not found: {e}")
+except Exception as e:
+    print(f"⚠️  Implementation Manual Generator registration failed: {e}")
 
 # Sprint 3 blueprints
 try:
