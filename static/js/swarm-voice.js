@@ -5,6 +5,12 @@ Shiftwork Solutions LLC
 =============================================================================
 
 CHANGE LOG:
+- January 28, 2026: UPDATED - Connect to dedicated voice service
+  * Changed WebSocket URL from main app to voice service
+  * Production: wss://ai-swarm-voice.onrender.com/ws/voice
+  * Local dev: ws://localhost:10001/ws/voice
+  * Auto-detects environment (local vs production)
+
 - January 27, 2026: COMPLETE REWRITE - OpenAI Realtime API Integration
   * Replaced slow Web Speech API with OpenAI Realtime WebSocket streaming
   * Sub-2-second response time with streaming audio
@@ -116,16 +122,28 @@ function disableVoiceUI(message) {
 
 async function connectWebSocket() {
     try {
-        // Determine WebSocket URL (ws:// for local, wss:// for production)
-        var protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        var wsUrl = protocol + '//' + window.location.host + '/api/voice/stream';
+        // UPDATED January 28, 2026: Connect to dedicated voice service
+        // The voice service is a separate FastAPI microservice
+        // Production: wss://ai-swarm-voice.onrender.com/ws/voice
+        // Local dev: ws://localhost:10001/ws/voice
         
-        console.log('🔌 Connecting to:', wsUrl);
+        // Automatically detect environment
+        var isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+        
+        if (isLocal) {
+            // Local development - connect to local voice service
+            var wsUrl = 'ws://localhost:10001/ws/voice';
+        } else {
+            // Production - connect to deployed voice service
+            var wsUrl = 'wss://ai-swarm-voice.onrender.com/ws/voice';
+        }
+        
+        console.log('🔌 Connecting to voice service:', wsUrl);
         
         ws = new WebSocket(wsUrl);
         
         ws.onopen = function() {
-            console.log('✅ WebSocket connected');
+            console.log('✅ WebSocket connected to voice service');
             isConnected = true;
             updateVoiceStatus('listening', 'Say "Hey Swarm" to begin...');
             updateVoiceUI();
