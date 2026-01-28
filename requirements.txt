@@ -22,6 +22,7 @@ gunicorn>=20.1.0
 # ==========================================
 flask-sock>=0.7.0           # WebSocket support for Flask
 websockets>=12.0            # WebSocket client for OpenAI Realtime API
+eventlet>=0.33.0            # Async support for Gunicorn WebSockets
 # ==========================================
 # AI API CLIENTS - CRITICAL FIX
 # ==========================================
