@@ -322,6 +322,80 @@ def create_project():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+# ============================================================================
+# LEGACY PROJECT ENDPOINTS - ADDED January 28, 2026
+# These support the old swarm-app.js interface
+# ============================================================================
+
+@core_bp.route('/api/project/start', methods=['POST'])
+def start_project_legacy():
+    """
+    Start a new project (singular endpoint - used by swarm-app.js)
+    FIXED: January 28, 2026 - Added missing endpoint
+    """
+    try:
+        data = request.json or {}
+        
+        import uuid
+        project_id = str(uuid.uuid4())[:8]
+        
+        client_name = data.get('client_name', 'New Client')
+        industry = data.get('industry', 'Manufacturing')
+        facility_type = data.get('facility_type', 'Production')
+        
+        db = get_db()
+        db.execute('''
+            INSERT INTO projects (project_id, client_name, industry, facility_type, status, project_phase)
+            VALUES (?, ?, ?, ?, 'active', 'initial')
+        ''', (project_id, client_name, industry, facility_type))
+        db.commit()
+        db.close()
+        
+        return jsonify({
+            'success': True,
+            'project_id': project_id,
+            'client_name': client_name,
+            'message': f'Project workflow started for {client_name}',
+            'suggested_first_step': 'Upload data collection documents or employee surveys'
+        })
+    except Exception as e:
+        print(f"Error starting project: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@core_bp.route('/api/project/<project_id>/context', methods=['GET'])
+def get_project_context_legacy(project_id):
+    """
+    Get project context (singular endpoint - used by swarm-app.js)
+    FIXED: January 28, 2026 - Added missing endpoint
+    """
+    try:
+        db = get_db()
+        
+        project = db.execute('''
+            SELECT * FROM projects WHERE project_id = ? OR id = ?
+        ''', (project_id, project_id)).fetchone()
+        
+        db.close()
+        
+        if not project:
+            return jsonify({'success': False, 'error': 'Project not found'}), 404
+        
+        return jsonify({
+            'success': True,
+            'project_id': project['project_id'],
+            'client_name': project['client_name'],
+            'industry': project['industry'],
+            'facility_type': project['facility_type'],
+            'phase': project['project_phase'],
+            'project_phase': project['project_phase'],
+            'status': project['status'],
+            'created_at': project['created_at']
+        })
+    except Exception as e:
+        print(f"Error getting project context: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @core_bp.route('/api/projects/<project_id>', methods=['GET'])
 def get_project(project_id):
     """Get a specific project by ID"""
