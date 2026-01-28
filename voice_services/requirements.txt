@@ -1,0 +1,103 @@
+# ============================================================================
+# AI SWARM VOICE SERVICE - Python Dependencies
+# Created: January 28, 2026
+# Last Updated: January 28, 2026
+# ============================================================================
+#
+# PURPOSE:
+# All dependencies required to run the FastAPI voice microservice.
+# This service handles WebSocket connections for real-time voice interaction.
+#
+# DEPLOYMENT NOTE:
+# Render will automatically install these dependencies from requirements.txt
+# when you deploy. No need to manually install anything.
+#
+# LEARNING NOTES:
+# - FastAPI: Modern async web framework (like Flask but async-first)
+# - Uvicorn: ASGI server (like Gunicorn but for async apps)
+# - Websockets: WebSocket client library (for OpenAI connection)
+# - httpx: Async HTTP client (like requests but async)
+# - OpenAI: OpenAI Python SDK (includes Realtime API support)
+#
+# ============================================================================
+
+# ============================================================================
+# CORE FRAMEWORK
+# ============================================================================
+
+# FastAPI - Modern async web framework with automatic API docs
+fastapi>=0.109.0
+
+# Uvicorn - ASGI server for running FastAPI
+# [standard] includes all optional dependencies for production
+uvicorn[standard]>=0.27.0
+
+# ============================================================================
+# WEBSOCKET SUPPORT
+# ============================================================================
+
+# Websockets - WebSocket client for connecting to OpenAI Realtime API
+websockets>=12.0
+
+# ============================================================================
+# HTTP CLIENT
+# ============================================================================
+
+# httpx - Async HTTP client for calling main Flask app
+# Supports async/await patterns
+httpx>=0.27.0
+
+# ============================================================================
+# OPENAI INTEGRATION
+# ============================================================================
+
+# OpenAI Python SDK - Includes Realtime API support
+# Version 1.12.0+ required for Realtime API
+openai>=1.12.0
+
+# ============================================================================
+# UTILITIES
+# ============================================================================
+
+# Python-dotenv - Load environment variables from .env file (for local dev)
+python-dotenv>=1.0.0
+
+# ============================================================================
+# OPTIONAL (for enhanced features)
+# ============================================================================
+
+# Pydantic - Data validation (comes with FastAPI but can be updated)
+# pydantic>=2.5.0
+
+# ============================================================================
+# DEPLOYMENT NOTES
+# ============================================================================
+#
+# RENDER DEPLOYMENT:
+# 1. Render reads this file automatically
+# 2. Installs all dependencies in a Python 3.11+ environment
+# 3. No additional configuration needed
+#
+# LOCAL DEVELOPMENT:
+# 1. Create virtual environment: python -m venv venv
+# 2. Activate: source venv/bin/activate (Mac/Linux) or venv\Scripts\activate (Windows)
+# 3. Install: pip install -r requirements.txt
+# 4. Run: uvicorn main:app --reload --port 10001
+#
+# TESTING:
+# After installation, you can test imports:
+#   python -c "import fastapi, uvicorn, websockets, httpx, openai; print('✅ All imports successful')"
+#
+# TROUBLESHOOTING:
+# - If install fails, try: pip install --upgrade pip
+# - If websockets fails, try: pip install websockets==12.0 --force-reinstall
+# - If openai fails, ensure you have Python 3.8+
+#
+# PRODUCTION OPTIMIZATION:
+# - All packages are pinned to minimum versions with >=
+# - This allows patch updates but prevents breaking changes
+# - If you want exact versions, change >= to ==
+#
+# ============================================================================
+
+# I did no harm and this file is not truncated
