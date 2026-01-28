@@ -121,7 +121,7 @@ class VoiceHandler:
             # Create WebSocket connection to OpenAI
             self.openai_ws = await websockets.connect(
                 openai_url,
-                extra_headers={
+                additional_headers={
                     "Authorization": f"Bearer {self.openai_api_key}",
                     "OpenAI-Beta": "realtime=v1"
                 }
