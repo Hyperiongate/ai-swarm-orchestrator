@@ -449,7 +449,18 @@ def health():
 # Register blueprints (CRITICAL - THIS MAKES THE API WORK)
 from routes.core import core_bp
 app.register_blueprint(core_bp)
-
+# ============================================================================
+# VOICE CONTROL WEBSOCKET (Added January 27, 2026)
+# ============================================================================
+try:
+    from routes.voice import voice_bp, register_voice_websocket
+    app.register_blueprint(voice_bp)
+    register_voice_websocket(app)
+    print("✅ Voice Control WebSocket registered")
+except ImportError as e:
+    print(f"ℹ️  Voice Control routes not found: {e}")
+except Exception as e:
+    print(f"⚠️  Voice Control registration failed: {e}")
 # ============================================================================
 # RESEARCH AGENT BLUEPRINT (Added January 23, 2026)
 # ============================================================================
