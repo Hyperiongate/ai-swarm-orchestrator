@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<!--
+SURVEY BUILDER TAB FOR AI SWARM ORCHESTRATOR
+Created: January 28, 2026
+Last Updated: January 28, 2026
+
+PURPOSE:
+Internal survey creation interface for Jim @ Shiftwork Solutions LLC
+NOT client-facing - this is for creating surveys to give to clients
+
+FEATURES:
+- Browse question bank by category
+- Select questions for survey
+- Choose schedules to rate
+- Add custom questions
+- Preview survey structure
+- Export to Word/PDF
+- Future: Analyze results with normative database
+
+USAGE:
+Add this as a new tab in your main Swarm index.html
+
+AUTHOR: Jim @ Shiftwork Solutions LLC
+-->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Survey Builder | AI Swarm Orchestrator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .question-card {
+            transition: all 0.3s ease;
+        }
+        .question-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .question-card.selected {
+            border-color: #3b82f6;
+            background-color: #eff6ff;
+        }
+        .category-badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.875rem;
+            font-weight: 600;
+        }
+        .step-indicator {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 2rem;
+        }
+        .step {
+            flex: 1;
+            text-align: center;
+            padding: 1rem;
+            border-bottom: 3px solid #e5e7eb;
+            cursor: pointer;
+        }
+        .step.active {
+            border-bottom-color: #3b82f6;
+            color: #3b82f6;
+        }
+        .step.completed {
+            border-bottom-color: #10b981;
+            color: #10b981;
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+
+<div class="container mx-auto px-4 py-8 max-w-7xl">
+    <!-- Header -->
+    <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+        <h1 class="text-3xl font-bold text-gray-900 mb-2">Survey Builder</h1>
+        <p class="text-gray-600">Create customized shift schedule surveys for client projects</p>
+    </div>
+
+    <!-- Step Indicator -->
+    <div class="step-indicator bg-white rounded-lg shadow-md p-4 mb-6">
+        <div class="step active" data-step="1">
+            <div class="font-bold">1. Project Info</div>
+            <div class="text-sm text-gray-500">Basic details</div>
+        </div>
+        <div class="step" data-step="2">
+            <div class="font-bold">2. Select Questions</div>
+            <div class="text-sm text-gray-500">From question bank</div>
+        </div>
+        <div class="step" data-step="3">
+            <div class="font-bold">3. Add Schedules</div>
+            <div class="text-sm text-gray-500">Choose schedules to rate</div>
+        </div>
+        <div class="step" data-step="4">
+            <div class="font-bold">4. Preview & Export</div>
+            <div class="text-sm text-gray-500">Download survey</div>
+        </div>
+    </div>
+
+    <!-- Main Content Area -->
+    <div id="content-area">
+        
+        <!-- STEP 1: Project Information -->
+        <div id="step-1" class="step-content">
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h2 class="text-2xl font-bold mb-4">Project Information</h2>
+                
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Project Name</label>
+                        <input type="text" id="project-name" 
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                               placeholder="e.g., ABC Manufacturing Schedule Review">
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Company Name</label>
+                        <input type="text" id="company-name" 
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                               placeholder="e.g., ABC Manufacturing Corp">
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Survey Template (Optional)</label>
+                        <select id="survey-template" 
+                                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                            <option value="">Start from scratch</option>
+                            <option value="standard_full">Standard Full Survey (All questions)</option>
+                            <option value="schedule_focused">Schedule-Focused Survey</option>
+                            <option value="quick_pulse">Quick Pulse Survey</option>
+                        </select>
+                        <p class="mt-2 text-sm text-gray-500">Templates pre-select common question sets</p>
+                    </div>
+                    
+                    <div class="flex gap-4 mt-6">
+                        <button onclick="nextStep()" 
+                                class="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">
+                            Next: Select Questions →
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- STEP 2: Select Questions -->
+        <div id="step-2" class="step-content hidden">
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h2 class="text-2xl font-bold mb-4">Select Survey Questions</h2>
+                
+                <!-- Quick Actions -->
+                <div class="flex gap-4 mb-6">
+                    <button onclick="selectAllQuestions()" 
+                            class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300">
+                        Select All
+                    </button>
+                    <button onclick="deselectAllQuestions()" 
+                            class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300">
+                        Deselect All
+                    </button>
+                    <div class="ml-auto text-gray-600">
+                        <span id="question-count">0</span> questions selected
+                    </div>
+                </div>
+
+                <!-- Category Tabs -->
+                <div class="border-b border-gray-200 mb-6">
+                    <nav class="flex space-x-8" id="category-tabs">
+                        <!-- Will be populated by JavaScript -->
+                    </nav>
+                </div>
+
+                <!-- Questions Display -->
+                <div id="questions-container" class="space-y-3 max-h-[600px] overflow-y-auto">
+                    <!-- Will be populated by JavaScript -->
+                </div>
+
+                <div class="flex gap-4 mt-6">
+                    <button onclick="previousStep()" 
+                            class="px-6 py-3 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-medium">
+                        ← Back
+                    </button>
+                    <button onclick="nextStep()" 
+                            class="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">
+                        Next: Add Schedules →
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- STEP 3: Add Schedule Ratings -->
+        <div id="step-3" class="step-content hidden">
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h2 class="text-2xl font-bold mb-4">Choose Schedules to Rate</h2>
+                <p class="text-gray-600 mb-6">Select which schedule options employees will evaluate</p>
+
+                <div id="schedules-container" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <!-- Will be populated by JavaScript -->
+                </div>
+
+                <div class="flex gap-4 mt-6">
+                    <button onclick="previousStep()" 
+                            class="px-6 py-3 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-medium">
+                        ← Back
+                    </button>
+                    <button onclick="nextStep()" 
+                            class="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">
+                        Next: Preview & Export →
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- STEP 4: Preview & Export -->
+        <div id="step-4" class="step-content hidden">
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h2 class="text-2xl font-bold mb-4">Preview & Export Survey</h2>
+
+                <!-- Survey Summary -->
+                <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+                    <h3 class="font-bold text-lg mb-2">Survey Summary</h3>
+                    <div class="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                            <span class="text-gray-600">Total Questions:</span>
+                            <span id="summary-questions" class="font-bold ml-2">0</span>
+                        </div>
+                        <div>
+                            <span class="text-gray-600">Schedule Ratings:</span>
+                            <span id="summary-schedules" class="font-bold ml-2">0</span>
+                        </div>
+                        <div>
+                            <span class="text-gray-600">Estimated Time:</span>
+                            <span id="summary-time" class="font-bold ml-2">0 minutes</span>
+                        </div>
+                        <div>
+                            <span class="text-gray-600">Categories:</span>
+                            <span id="summary-categories" class="font-bold ml-2">0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Category Breakdown -->
+                <div class="mb-6">
+                    <h3 class="font-bold text-lg mb-2">Questions by Category</h3>
+                    <div id="category-breakdown" class="space-y-2">
+                        <!-- Will be populated by JavaScript -->
+                    </div>
+                </div>
+
+                <!-- Export Options -->
+                <div class="border-t border-gray-200 pt-6">
+                    <h3 class="font-bold text-lg mb-4">Export Survey</h3>
+                    <div class="flex gap-4">
+                        <button onclick="exportWord()" 
+                                class="px-8 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium flex items-center gap-2">
+                            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z"/>
+                            </svg>
+                            Export to Word (.docx)
+                        </button>
+                        <button onclick="exportPDF()" disabled
+                                class="px-8 py-3 bg-gray-300 text-gray-600 rounded-lg cursor-not-allowed font-medium flex items-center gap-2">
+                            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z"/>
+                            </svg>
+                            Export to PDF (Coming Soon)
+                        </button>
+                    </div>
+                </div>
+
+                <div class="flex gap-4 mt-6">
+                    <button onclick="previousStep()" 
+                            class="px-6 py-3 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-medium">
+                        ← Back
+                    </button>
+                    <button onclick="startOver()" 
+                            class="px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium">
+                        Start New Survey
+                    </button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<script>
+// Global state
+let currentStep = 1;
+let surveyData = {
+    project_name: '',
+    company_name: '',
+    selected_questions: [],
+    schedules_to_rate: [],
+    custom_questions: []
+};
+let questionBank = {};
+let scheduleLibrary = [];
+let currentCategory = 'demographics';
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', () => {
+    loadQuestionBank();
+    loadScheduleLibrary();
+});
+
+// Load question bank from API
+async function loadQuestionBank() {
+    try {
+        const response = await fetch('/api/survey/question-bank');
+        const data = await response.json();
+        
+        if (data.success) {
+            questionBank = data.questions_by_category;
+            renderCategoryTabs(data.categories);
+            renderQuestions(currentCategory);
+        }
+    } catch (error) {
+        console.error('Error loading question bank:', error);
+        alert('Failed to load question bank');
+    }
+}
+
+// Load schedule library from API
+async function loadScheduleLibrary() {
+    try {
+        const response = await fetch('/api/survey/schedules');
+        const data = await response.json();
+        
+        if (data.success) {
+            scheduleLibrary = data.schedules;
+            renderSchedules();
+        }
+    } catch (error) {
+        console.error('Error loading schedules:', error);
+    }
+}
+
+// Render category tabs
+function renderCategoryTabs(categories) {
+    const container = document.getElementById('category-tabs');
+    container.innerHTML = categories.map(cat => `
+        <button onclick="switchCategory('${cat}')" 
+                class="category-tab ${cat === currentCategory ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-600 hover:text-gray-900'} py-4 px-1 font-medium"
+                data-category="${cat}">
+            ${cat.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+        </button>
+    `).join('');
+}
+
+// Switch category
+function switchCategory(category) {
+    currentCategory = category;
+    renderCategoryTabs(Object.keys(questionBank));
+    renderQuestions(category);
+}
+
+// Render questions for current category
+function renderQuestions(category) {
+    const container = document.getElementById('questions-container');
+    const questions = questionBank[category] || [];
+    
+    container.innerHTML = questions.map(q => `
+        <div class="question-card border rounded-lg p-4 cursor-pointer ${surveyData.selected_questions.includes(q.id) ? 'selected' : ''}"
+             onclick="toggleQuestion('${q.id}')">
+            <div class="flex items-start justify-between">
+                <div class="flex-1">
+                    <div class="flex items-center gap-2 mb-2">
+                        <input type="checkbox" 
+                               ${surveyData.selected_questions.includes(q.id) ? 'checked' : ''}
+                               onclick="event.stopPropagation(); toggleQuestion('${q.id}')"
+                               class="w-4 h-4 text-blue-600 rounded">
+                        <span class="category-badge ${getCategoryColor(q.category)}">${q.category.replace('_', ' ')}</span>
+                        <span class="text-xs text-gray-500 uppercase">${q.type.replace('_', ' ')}</span>
+                    </div>
+                    <p class="text-gray-800">${q.text}</p>
+                    ${q.options ? `
+                        <div class="mt-2 text-sm text-gray-500">
+                            Options: ${q.options.length} choices
+                        </div>
+                    ` : ''}
+                    ${q.scale ? `
+                        <div class="mt-2 text-sm text-gray-500">
+                            Scale: ${q.scale}
+                        </div>
+                    ` : ''}
+                </div>
+            </div>
+        </div>
+    `).join('');
+    
+    updateQuestionCount();
+}
+
+// Toggle question selection
+function toggleQuestion(questionId) {
+    const index = surveyData.selected_questions.indexOf(questionId);
+    if (index > -1) {
+        surveyData.selected_questions.splice(index, 1);
+    } else {
+        surveyData.selected_questions.push(questionId);
+    }
+    renderQuestions(currentCategory);
+}
+
+// Select all questions
+function selectAllQuestions() {
+    // Get all question IDs from all categories
+    surveyData.selected_questions = [];
+    Object.values(questionBank).forEach(questions => {
+        questions.forEach(q => {
+            if (!surveyData.selected_questions.includes(q.id)) {
+                surveyData.selected_questions.push(q.id);
+            }
+        });
+    });
+    renderQuestions(currentCategory);
+}
+
+// Deselect all questions
+function deselectAllQuestions() {
+    surveyData.selected_questions = [];
+    renderQuestions(currentCategory);
+}
+
+// Update question count
+function updateQuestionCount() {
+    document.getElementById('question-count').textContent = surveyData.selected_questions.length;
+}
+
+// Render schedules
+function renderSchedules() {
+    const container = document.getElementById('schedules-container');
+    container.innerHTML = scheduleLibrary.map(schedule => `
+        <div class="border rounded-lg p-4 cursor-pointer hover:border-blue-500 ${surveyData.schedules_to_rate.includes(schedule.id) ? 'border-blue-500 bg-blue-50' : ''}"
+             onclick="toggleSchedule('${schedule.id}')">
+            <div class="flex items-start gap-3">
+                <input type="checkbox" 
+                       ${surveyData.schedules_to_rate.includes(schedule.id) ? 'checked' : ''}
+                       class="mt-1 w-4 h-4 text-blue-600 rounded">
+                <div class="flex-1">
+                    <h4 class="font-bold text-gray-900">${schedule.name}</h4>
+                    <p class="text-sm text-gray-600 mt-1">${schedule.description}</p>
+                    <div class="flex gap-4 mt-2 text-xs text-gray-500">
+                        <span>Shift Length: ${schedule.shift_length}</span>
+                        <span>Type: ${schedule.pattern_type}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+// Toggle schedule selection
+function toggleSchedule(scheduleId) {
+    const index = surveyData.schedules_to_rate.indexOf(scheduleId);
+    if (index > -1) {
+        surveyData.schedules_to_rate.splice(index, 1);
+    } else {
+        surveyData.schedules_to_rate.push(scheduleId);
+    }
+    renderSchedules();
+}
+
+// Get category color
+function getCategoryColor(category) {
+    const colors = {
+        demographics: 'bg-purple-100 text-purple-800',
+        sleep_alertness: 'bg-blue-100 text-blue-800',
+        working_conditions: 'bg-green-100 text-green-800',
+        schedule_features: 'bg-yellow-100 text-yellow-800',
+        overtime: 'bg-red-100 text-red-800',
+        open_ended: 'bg-gray-100 text-gray-800'
+    };
+    return colors[category] || 'bg-gray-100 text-gray-800';
+}
+
+// Navigation functions
+function nextStep() {
+    if (validateStep(currentStep)) {
+        hideStep(currentStep);
+        currentStep++;
+        showStep(currentStep);
+        updateStepIndicator();
+        
+        if (currentStep === 4) {
+            updatePreview();
+        }
+    }
+}
+
+function previousStep() {
+    hideStep(currentStep);
+    currentStep--;
+    showStep(currentStep);
+    updateStepIndicator();
+}
+
+function validateStep(step) {
+    if (step === 1) {
+        const projectName = document.getElementById('project-name').value.trim();
+        const companyName = document.getElementById('company-name').value.trim();
+        
+        if (!projectName || !companyName) {
+            alert('Please enter both project name and company name');
+            return false;
+        }
+        
+        surveyData.project_name = projectName;
+        surveyData.company_name = companyName;
+    }
+    
+    if (step === 2 && surveyData.selected_questions.length === 0) {
+        if (!confirm('No questions selected. Continue anyway?')) {
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+function showStep(step) {
+    document.getElementById(`step-${step}`).classList.remove('hidden');
+}
+
+function hideStep(step) {
+    document.getElementById(`step-${step}`).classList.add('hidden');
+}
+
+function updateStepIndicator() {
+    document.querySelectorAll('.step').forEach((el, index) => {
+        const stepNum = index + 1;
+        el.classList.remove('active', 'completed');
+        
+        if (stepNum === currentStep) {
+            el.classList.add('active');
+        } else if (stepNum < currentStep) {
+            el.classList.add('completed');
+        }
+    });
+}
+
+// Update preview
+function updatePreview() {
+    document.getElementById('summary-questions').textContent = surveyData.selected_questions.length;
+    document.getElementById('summary-schedules').textContent = surveyData.schedules_to_rate.length;
+    document.getElementById('summary-time').textContent = 
+        Math.ceil((surveyData.selected_questions.length + surveyData.schedules_to_rate.length) / 2);
+    
+    // Count categories
+    const categories = new Set();
+    const categoryCounts = {};
+    
+    Object.entries(questionBank).forEach(([category, questions]) => {
+        const count = questions.filter(q => surveyData.selected_questions.includes(q.id)).length;
+        if (count > 0) {
+            categories.add(category);
+            categoryCounts[category] = count;
+        }
+    });
+    
+    document.getElementById('summary-categories').textContent = categories.size;
+    
+    // Render category breakdown
+    const breakdownHtml = Object.entries(categoryCounts).map(([category, count]) => `
+        <div class="flex justify-between items-center p-2 bg-gray-50 rounded">
+            <span class="category-badge ${getCategoryColor(category)}">
+                ${category.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+            </span>
+            <span class="text-gray-700 font-medium">${count} questions</span>
+        </div>
+    `).join('');
+    
+    document.getElementById('category-breakdown').innerHTML = breakdownHtml;
+}
+
+// Export to Word
+async function exportWord() {
+    try {
+        // Create the survey
+        const createResponse = await fetch('/api/survey/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(surveyData)
+        });
+        
+        const createData = await createResponse.json();
+        
+        if (!createData.success) {
+            alert('Error creating survey: ' + createData.error);
+            return;
+        }
+        
+        // Export to Word
+        const exportResponse = await fetch('/api/survey/export/word', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ survey: createData.survey })
+        });
+        
+        if (exportResponse.ok) {
+            const blob = await exportResponse.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${surveyData.project_name.replace(/\s+/g, '_')}_Survey.docx`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+            
+            alert('Survey exported successfully!');
+        } else {
+            alert('Error exporting survey');
+        }
+    } catch (error) {
+        console.error('Export error:', error);
+        alert('Error exporting survey: ' + error.message);
+    }
+}
+
+// Export to PDF (placeholder)
+function exportPDF() {
+    alert('PDF export coming soon!');
+}
+
+// Start over
+function startOver() {
+    if (confirm('Start a new survey? Current progress will be lost.')) {
+        surveyData = {
+            project_name: '',
+            company_name: '',
+            selected_questions: [],
+            schedules_to_rate: [],
+            custom_questions: []
+        };
+        
+        document.getElementById('project-name').value = '';
+        document.getElementById('company-name').value = '';
+        document.getElementById('survey-template').value = '';
+        
+        currentStep = 1;
+        hideStep(4);
+        showStep(1);
+        updateStepIndicator();
+        updateQuestionCount();
+    }
+}
+</script>
+
+</body>
+</html>
+<!--
+I did no harm and this file is not truncated
+-->
