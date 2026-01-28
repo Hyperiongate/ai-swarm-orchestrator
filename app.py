@@ -95,6 +95,7 @@ AUTHOR: Jim @ Shiftwork Solutions LLC
 
 from flask import Flask, render_template, jsonify
 from database import init_db
+from database_survey_additions import add_surveys_table
 import os
 from flask import send_from_directory
 import os
@@ -109,6 +110,13 @@ app.config['SESSION_TYPE'] = 'filesystem'
 
 # Initialize database (includes all tables from all sprints)
 init_db()
+
+# Initialize survey tables
+try:
+    add_surveys_table()
+    print("✅ Survey tables initialized")
+except Exception as e:
+    print(f"⚠️  Survey tables: {e}")
 
 # ============================================================================
 # AUTO-RUN ALL DATABASE MIGRATIONS (SPRINTS 2 & 3)
@@ -261,6 +269,11 @@ def download_file(filename):
 def workflow():
     """Workflow interface"""
     return render_template('index_workflow.html')
+
+@app.route('/survey')
+def survey():
+    """Survey builder interface"""
+    return render_template('survey.html')
 
 @app.route('/health')
 def health():
@@ -494,7 +507,9 @@ def health():
 
 # Register blueprints (CRITICAL - THIS MAKES THE API WORK)
 from routes.core import core_bp
+from routes.survey import survey_bp
 app.register_blueprint(core_bp)
+app.register_blueprint(survey_bp)
 # ============================================================================
 # VOICE CONTROL WEBSOCKET (Added January 27, 2026)
 # ============================================================================
