@@ -84,6 +84,13 @@ from orchestration import (
     execute_specialist_task,
     validate_with_consensus
 )
+from database_file_management import (
+    save_project_file, get_project_files, get_all_projects_with_files,
+    get_project_file_by_id, get_project_file_by_name, delete_project_file,
+    get_file_stats_by_project
+)
+from werkzeug.utils import secure_filename
+import shutil
 from code_assistant_agent import get_code_assistant
 from orchestration.proactive_agent import ProactiveAgent
 
@@ -1857,5 +1864,369 @@ def download_file(filename):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+# ============================================================================
+# PROJECT FILE MANAGEMENT ENDPOINTS
+# ============================================================================
+
+@core_bp.route('/api/projects/<project_id>/files/upload', methods=['POST'])
+def upload_project_files(project_id):
+    """
+    Upload files to a specific project.
+    Creates project folder if it doesn't exist.
+    """
+    try:
+        # Import here to avoid circular dependency
+        from database_file_management import save_project_file
+        from werkzeug.utils import secure_filename
+        
+        # Check if project exists
+        db = get_db()
+        project = db.execute(
+            'SELECT * FROM projects WHERE project_id = ?',
+            (project_id,)
+        ).fetchone()
+        db.close()
+        
+        if not project:
+            return jsonify({'success': False, 'error': 'Project not found'}), 404
+        
+        # Check if files were uploaded
+        if 'files' not in request.files:
+            return jsonify({'success': False, 'error': 'No files provided'}), 400
+        
+        files = request.files.getlist('files')
+        
+        if not files or files[0].filename == '':
+            return jsonify({'success': False, 'error': 'No files selected'}), 400
+        
+        # Create project directory
+        project_dir = f'/tmp/projects/{project_id}'
+        os.makedirs(project_dir, exist_ok=True)
+        
+        uploaded_files = []
+        
+        for file in files:
+            if file and file.filename:
+                # Secure the filename
+                original_filename = file.filename
+                filename = secure_filename(original_filename)
+                
+                # Add timestamp to avoid collisions
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                name, ext = os.path.splitext(filename)
+                filename = f"{name}_{timestamp}{ext}"
+                
+                # Save file to disk
+                file_path = os.path.join(project_dir, filename)
+                file.save(file_path)
+                
+                # Get file size
+                file_size = os.path.getsize(file_path)
+                
+                # Determine file type
+                file_type = ext[1:].lower() if ext else 'unknown'
+                
+                # Get optional metadata from request
+                conversation_id = request.form.get('conversation_id')
+                task_id = request.form.get('task_id')
+                description = request.form.get('description')
+                
+                # Save to database
+                file_id = save_project_file(
+                    project_id=project_id,
+                    filename=filename,
+                    original_filename=original_filename,
+                    file_type=file_type,
+                    file_path=file_path,
+                    file_size=file_size,
+                    uploaded_by='user',
+                    is_generated=False,
+                    task_id=task_id,
+                    conversation_id=conversation_id,
+                    description=description
+                )
+                
+                uploaded_files.append({
+                    'id': file_id,
+                    'filename': filename,
+                    'original_filename': original_filename,
+                    'file_type': file_type,
+                    'file_size': file_size,
+                    'download_url': f'/api/projects/{project_id}/files/{file_id}/download'
+                })
+        
+        return jsonify({
+            'success': True,
+            'files': uploaded_files,
+            'count': len(uploaded_files),
+            'message': f'Uploaded {len(uploaded_files)} file(s) to project'
+        })
+        
+    except Exception as e:
+        import traceback
+        print(f"File upload error: {traceback.format_exc()}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@core_bp.route('/api/projects/<project_id>/files', methods=['GET'])
+def list_project_files(project_id):
+    """
+    List all files in a project.
+    This powers the folder view in the UI.
+    """
+    try:
+        from database_file_management import get_project_files, get_file_stats_by_project
+        
+        # Check if project exists
+        db = get_db()
+        project = db.execute(
+            'SELECT * FROM projects WHERE project_id = ?',
+            (project_id,)
+        ).fetchone()
+        db.close()
+        
+        if not project:
+            return jsonify({'success': False, 'error': 'Project not found'}), 404
+        
+        # Get all files for this project
+        files = get_project_files(project_id)
+        
+        # Get file statistics
+        stats = get_file_stats_by_project(project_id)
+        
+        # Format files for UI
+        formatted_files = []
+        for file in files:
+            formatted_files.append({
+                'id': file['id'],
+                'filename': file['filename'],
+                'original_filename': file['original_filename'],
+                'file_type': file['file_type'],
+                'file_size': file['file_size'],
+                'is_generated': file['is_generated'],
+                'uploaded_at': file['uploaded_at'],
+                'category': file['category'],
+                'description': file['description'],
+                'download_url': f'/api/projects/{project_id}/files/{file["id"]}/download'
+            })
+        
+        return jsonify({
+            'success': True,
+            'project_id': project_id,
+            'client_name': project['client_name'],
+            'files': formatted_files,
+            'count': len(formatted_files),
+            'stats': stats
+        })
+        
+    except Exception as e:
+        import traceback
+        print(f"List files error: {traceback.format_exc()}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@core_bp.route('/api/projects/folders', methods=['GET'])
+def list_project_folders():
+    """
+    List all projects with their file counts.
+    This creates the folder view in the documents tab.
+    """
+    try:
+        from database_file_management import get_all_projects_with_files
+        
+        projects = get_all_projects_with_files()
+        
+        formatted_projects = []
+        for project in projects:
+            formatted_projects.append({
+                'project_id': project['project_id'],
+                'client_name': project['client_name'] or 'Unnamed Project',
+                'industry': project['industry'],
+                'project_phase': project['project_phase'],
+                'file_count': project['file_count'],
+                'folder_icon': '📁',
+                'view_url': f'/api/projects/{project["project_id"]}/files'
+            })
+        
+        return jsonify({
+            'success': True,
+            'projects': formatted_projects,
+            'count': len(formatted_projects)
+        })
+        
+    except Exception as e:
+        import traceback
+        print(f"List folders error: {traceback.format_exc()}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@core_bp.route('/api/projects/<project_id>/files/<int:file_id>/download', methods=['GET'])
+def download_project_file(project_id, file_id):
+    """Download a file from a project"""
+    try:
+        from database_file_management import get_project_file_by_id
+        
+        # Get file from database
+        file = get_project_file_by_id(file_id)
+        
+        if not file:
+            return jsonify({'error': 'File not found'}), 404
+        
+        # Verify file belongs to this project
+        if file['project_id'] != project_id:
+            return jsonify({'error': 'File does not belong to this project'}), 403
+        
+        # Check if file exists on disk
+        file_path = file['file_path']
+        if not os.path.exists(file_path):
+            return jsonify({'error': 'File not found on server'}), 404
+        
+        # Send file
+        return send_file(
+            file_path,
+            as_attachment=True,
+            download_name=file['original_filename']
+        )
+        
+    except Exception as e:
+        import traceback
+        print(f"Download error: {traceback.format_exc()}")
+        return jsonify({'error': str(e)}), 500
+
+
+@core_bp.route('/api/projects/<project_id>/files/<int:file_id>', methods=['DELETE'])
+def delete_project_file_endpoint(project_id, file_id):
+    """Delete a file from a project"""
+    try:
+        from database_file_management import get_project_file_by_id, delete_project_file
+        
+        # Get file from database
+        file = get_project_file_by_id(file_id)
+        
+        if not file:
+            return jsonify({'success': False, 'error': 'File not found'}), 404
+        
+        # Verify file belongs to this project
+        if file['project_id'] != project_id:
+            return jsonify({'success': False, 'error': 'File does not belong to this project'}), 403
+        
+        # Delete file (soft delete by default)
+        hard_delete = request.args.get('hard', 'false').lower() == 'true'
+        delete_project_file(file_id, hard_delete=hard_delete)
+        
+        return jsonify({
+            'success': True,
+            'message': 'File deleted successfully'
+        })
+        
+    except Exception as e:
+        import traceback
+        print(f"Delete error: {traceback.format_exc()}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@core_bp.route('/api/projects/<project_id>/files/find', methods=['POST'])
+def find_project_file(project_id):
+    """
+    Find a file by name in a project.
+    This is used by the AI to locate files when user says "look at the budget file"
+    """
+    try:
+        from database_file_management import get_project_file_by_name
+        
+        data = request.json or {}
+        filename = data.get('filename', '').strip()
+        
+        if not filename:
+            return jsonify({'success': False, 'error': 'Filename required'}), 400
+        
+        # Find file
+        file = get_project_file_by_name(project_id, filename)
+        
+        if not file:
+            return jsonify({
+                'success': False,
+                'found': False,
+                'message': f'No file matching "{filename}" found in this project'
+            })
+        
+        # Return file info and content path
+        return jsonify({
+            'success': True,
+            'found': True,
+            'file': {
+                'id': file['id'],
+                'filename': file['filename'],
+                'original_filename': file['original_filename'],
+                'file_type': file['file_type'],
+                'file_size': file['file_size'],
+                'file_path': file['file_path'],
+                'uploaded_at': file['uploaded_at'],
+                'description': file['description']
+            }
+        })
+        
+    except Exception as e:
+        import traceback
+        print(f"Find file error: {traceback.format_exc()}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ============================================================================
+# HELPER: Save generated files to project
+# ============================================================================
+
+def save_generated_file_to_project(project_id, filename, file_path, file_type, 
+                                   task_id=None, conversation_id=None, 
+                                   description=None):
+    """
+    Helper function to save AI-generated files to a project.
+    Call this when the AI generates a document for a project.
+    """
+    try:
+        from database_file_management import save_project_file
+        from werkzeug.utils import secure_filename
+        
+        if not os.path.exists(file_path):
+            print(f"⚠️ File does not exist: {file_path}")
+            return None
+        
+        # Create project directory
+        project_dir = f'/tmp/projects/{project_id}'
+        os.makedirs(project_dir, exist_ok=True)
+        
+        # Copy file to project directory
+        secure_name = secure_filename(filename)
+        new_path = os.path.join(project_dir, secure_name)
+        
+        import shutil
+        shutil.copy2(file_path, new_path)
+        
+        # Get file size
+        file_size = os.path.getsize(new_path)
+        
+        # Save to database
+        file_id = save_project_file(
+            project_id=project_id,
+            filename=secure_name,
+            original_filename=filename,
+            file_type=file_type,
+            file_path=new_path,
+            file_size=file_size,
+            uploaded_by='ai',
+            is_generated=True,
+            task_id=task_id,
+            conversation_id=conversation_id,
+            description=description
+        )
+        
+        return file_id
+        
+    except Exception as e:
+        print(f"Error saving generated file to project: {e}")
+        return None
+
+
+# I did no harm and this file is not truncated
 
 # I did no harm and this file is not truncated
