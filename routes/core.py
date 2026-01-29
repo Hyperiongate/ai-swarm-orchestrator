@@ -87,8 +87,14 @@ from orchestration import (
 from database_file_management import (
     save_project_file, get_project_files, get_all_projects_with_files,
     get_project_file_by_id, get_project_file_by_name, delete_project_file,
-    get_file_stats_by_project
+    get_file_stats_by_project,
+    get_files_for_ai_context,
+    mark_file_as_analyzed,
+    search_project_files,
+    update_file_metadata
 )
+from file_analysis_agent import get_file_analysis_agent
+from file_content_reader import extract_file_content, extract_multiple_files
 from werkzeug.utils import secure_filename
 import shutil
 from code_assistant_agent import get_code_assistant
@@ -1282,8 +1288,19 @@ def orchestrate():
         app_module = sys.modules.get('app')
         knowledge_base = getattr(app_module, 'knowledge_base', None) if app_module else None
         conversation_context = get_conversation_context(conversation_id, max_messages=10)
-        
-        db = get_db()
+
+        # Get project file context if in project mode
+           file_context = ""
+           if project_id:
+               try:
+                   from database_file_management import get_files_for_ai_context
+                   file_context = get_files_for_ai_context(project_id, max_files=5, max_chars_per_file=2000)
+                   if file_context:
+                       print(f"✅ Added file context from project {project_id}")
+               except Exception as file_ctx_error:
+                   print(f"⚠️ Could not load file context: {file_ctx_error}")
+           
+           db = get_db()
         cursor = db.execute('INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
                            (user_request, 'processing', conversation_id))
         task_id = cursor.lastrowid
@@ -1673,7 +1690,7 @@ def orchestrate():
             if specialist_output:
                 actual_output = specialist_output
             else:
-                completion_prompt = f"""{knowledge_context}{conversation_history}
+                completion_prompt = f"""{knowledge_context}{file_context}{conversation_history}
 
 USER REQUEST: {user_request}
 
@@ -2032,12 +2049,13 @@ def download_file(filename):
 def upload_project_files(project_id):
     """
     Upload files to a specific project.
-    Creates project folder if it doesn't exist.
+    UPDATED January 29, 2026: Now automatically analyzes files with AI
     """
     try:
-        # Import here to avoid circular dependency
         from database_file_management import save_project_file
         from werkzeug.utils import secure_filename
+        from file_analysis_agent import get_file_analysis_agent
+        from orchestration.ai_clients import call_claude_sonnet
         
         # Check if project exists
         db = get_db()
@@ -2059,11 +2077,15 @@ def upload_project_files(project_id):
         if not files or files[0].filename == '':
             return jsonify({'success': False, 'error': 'No files selected'}), 400
         
+        # Check for auto-analyze flag
+        auto_analyze = request.form.get('auto_analyze', 'true').lower() == 'true'
+        
         # Create project directory
         project_dir = f'/tmp/projects/{project_id}'
         os.makedirs(project_dir, exist_ok=True)
         
         uploaded_files = []
+        file_paths = []
         
         for file in files:
             if file and file.filename:
@@ -2114,12 +2136,56 @@ def upload_project_files(project_id):
                     'file_size': file_size,
                     'download_url': f'/api/projects/{project_id}/files/{file_id}/download'
                 })
+                
+                file_paths.append(file_path)
+        
+        # AUTO-ANALYZE FILES (NEW FEATURE)
+        analysis_result = None
+        if auto_analyze and file_paths:
+            try:
+                file_agent = get_file_analysis_agent()
+                
+                if len(file_paths) == 1:
+                    # Analyze single file
+                    analysis = file_agent.analyze_file(
+                        file_paths[0],
+                        "Provide a summary and key insights from this file",
+                        call_claude_sonnet
+                    )
+                    
+                    if analysis['success']:
+                        analysis_result = {
+                            'type': 'single',
+                            'summary': analysis['analysis']
+                        }
+                        
+                        # Mark file as analyzed
+                        from database_file_management import mark_file_as_analyzed
+                        mark_file_as_analyzed(uploaded_files[0]['id'], analysis['analysis'][:500])
+                else:
+                    # Analyze multiple files together
+                    analysis = file_agent.analyze_multiple_files(
+                        file_paths,
+                        "Provide a summary and key insights from these files",
+                        call_claude_sonnet
+                    )
+                    
+                    if analysis['success']:
+                        analysis_result = {
+                            'type': 'multiple',
+                            'summary': analysis['analysis'],
+                            'files_analyzed': analysis['files_analyzed']
+                        }
+            except Exception as analysis_error:
+                print(f"Auto-analysis failed: {analysis_error}")
+                analysis_result = None
         
         return jsonify({
             'success': True,
             'files': uploaded_files,
             'count': len(uploaded_files),
-            'message': f'Uploaded {len(uploaded_files)} file(s) to project'
+            'message': f'Uploaded {len(uploaded_files)} file(s) to project',
+            'analysis': analysis_result
         })
         
     except Exception as e:
@@ -2386,7 +2452,202 @@ def save_generated_file_to_project(project_id, filename, file_path, file_type,
         print(f"Error saving generated file to project: {e}")
         return None
 
+# ============================================================================
+# FILE ANALYSIS AND REFORMATTING ENDPOINTS - Added January 29, 2026
+# ============================================================================
 
-# I did no harm and this file is not truncated
+@core_bp.route('/api/projects/<project_id>/files/<int:file_id>/analyze', methods=['POST'])
+def analyze_specific_file(project_id, file_id):
+    """
+    Analyze a specific file with custom user request.
+    """
+    try:
+        from database_file_management import get_project_file_by_id, mark_file_as_analyzed
+        from file_analysis_agent import get_file_analysis_agent
+        from orchestration.ai_clients import call_claude_sonnet
+        
+        file = get_project_file_by_id(file_id)
+        if not file or file['project_id'] != project_id:
+            return jsonify({'success': False, 'error': 'File not found'}), 404
+        
+        data = request.json or {}
+        user_request = data.get('request', 'Analyze this file and provide key insights')
+        
+        agent = get_file_analysis_agent()
+        result = agent.analyze_file(file['file_path'], user_request, call_claude_sonnet)
+        
+        if result['success']:
+            mark_file_as_analyzed(file_id, result['analysis'][:500])
+            
+            return jsonify({
+                'success': True,
+                'analysis': result['analysis'],
+                'file_name': result['file_name'],
+                'file_type': result['file_type']
+            })
+        else:
+            return jsonify({'success': False, 'error': result['error']}), 500
+    
+    except Exception as e:
+        import traceback
+        print(f"Analysis error: {traceback.format_exc()}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@core_bp.route('/api/projects/<project_id>/files/<int:file_id>/reformat', methods=['POST'])
+def reformat_file(project_id, file_id):
+    """
+    Reformat a file professionally.
+    """
+    try:
+        from database_file_management import get_project_file_by_id, save_project_file
+        from file_analysis_agent import get_file_analysis_agent
+        from orchestration.ai_clients import call_claude_sonnet
+        
+        file = get_project_file_by_id(file_id)
+        if not file or file['project_id'] != project_id:
+            return jsonify({'success': False, 'error': 'File not found'}), 404
+        
+        data = request.json or {}
+        user_request = data.get('request', 'Reformat this document professionally')
+        output_format = data.get('format', 'docx')
+        
+        agent = get_file_analysis_agent()
+        result = agent.reformat_document(
+            file['file_path'], 
+            user_request, 
+            call_claude_sonnet,
+            output_format=output_format
+        )
+        
+        if result['success']:
+            file_size = os.path.getsize(result['output_path'])
+            new_file_id = save_project_file(
+                project_id=project_id,
+                filename=result['output_filename'],
+                original_filename=f"Reformatted_{file['original_filename']}",
+                file_type=output_format,
+                file_path=result['output_path'],
+                file_size=file_size,
+                uploaded_by='ai',
+                is_generated=True,
+                description=f"AI reformatted version of {file['original_filename']}"
+            )
+            
+            return jsonify({
+                'success': True,
+                'new_file_id': new_file_id,
+                'download_url': f'/api/projects/{project_id}/files/{new_file_id}/download',
+                'message': 'File reformatted successfully'
+            })
+        else:
+            return jsonify({'success': False, 'error': result['error']}), 500
+    
+    except Exception as e:
+        import traceback
+        print(f"Reformat error: {traceback.format_exc()}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@core_bp.route('/api/projects/<project_id>/create-document', methods=['POST'])
+def create_document_in_project(project_id):
+    """
+    Create a new document and save it in a specific project folder.
+    """
+    try:
+        from database_file_management import save_project_file
+        from file_analysis_agent import get_file_analysis_agent
+        from orchestration.ai_clients import call_claude_sonnet
+        
+        db = get_db()
+        project = db.execute('SELECT * FROM projects WHERE project_id = ?', (project_id,)).fetchone()
+        db.close()
+        
+        if not project:
+            return jsonify({'success': False, 'error': 'Project not found'}), 404
+        
+        data = request.json or {}
+        user_request = data.get('request', '')
+        file_format = data.get('format', 'docx')
+        
+        if not user_request:
+            return jsonify({'success': False, 'error': 'Request is required'}), 400
+        
+        agent = get_file_analysis_agent()
+        result = agent.create_document_from_request(
+            user_request,
+            call_claude_sonnet,
+            project_id=project_id,
+            file_format=file_format
+        )
+        
+        if result['success']:
+            file_size = os.path.getsize(result['output_path'])
+            file_id = save_project_file(
+                project_id=project_id,
+                filename=result['output_filename'],
+                original_filename=result['output_filename'],
+                file_type=file_format,
+                file_path=result['output_path'],
+                file_size=file_size,
+                uploaded_by='ai',
+                is_generated=True,
+                description=f"AI created: {user_request[:100]}"
+            )
+            
+            return jsonify({
+                'success': True,
+                'file_id': file_id,
+                'filename': result['output_filename'],
+                'download_url': f'/api/projects/{project_id}/files/{file_id}/download',
+                'message': f'Document created and saved to project folder'
+            })
+        else:
+            return jsonify({'success': False, 'error': result['error']}), 500
+    
+    except Exception as e:
+        import traceback
+        print(f"Create document error: {traceback.format_exc()}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@core_bp.route('/api/projects/<project_id>/files/search', methods=['GET'])
+def search_files_in_project(project_id):
+    """
+    Search for files by name or description.
+    """
+    try:
+        from database_file_management import search_project_files
+        
+        search_term = request.args.get('q', '').strip()
+        
+        if not search_term:
+            return jsonify({'success': False, 'error': 'Search term required'}), 400
+        
+        files = search_project_files(project_id, search_term)
+        
+        formatted_files = []
+        for file in files:
+            formatted_files.append({
+                'id': file['id'],
+                'filename': file['filename'],
+                'original_filename': file['original_filename'],
+                'file_type': file['file_type'],
+                'file_size': file['file_size'],
+                'uploaded_at': file['uploaded_at'],
+                'description': file['description'],
+                'download_url': f'/api/projects/{project_id}/files/{file["id"]}/download'
+            })
+        
+        return jsonify({
+            'success': True,
+            'results': formatted_files,
+            'count': len(formatted_files),
+            'search_term': search_term
+        })
+    
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 
 # I did no harm and this file is not truncated
