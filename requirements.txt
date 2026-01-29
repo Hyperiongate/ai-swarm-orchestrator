@@ -1,7 +1,12 @@
 # AI SWARM ORCHESTRATOR - Requirements
-# Last Updated: January 27, 2026
+# Last Updated: January 29, 2026
 # 
 # CHANGES:
+# - January 29, 2026: ADDED file management and content extraction dependencies
+#   * PyPDF2>=3.0.1 (already present, confirmed)
+#   * python-docx>=0.8.11 (already present, confirmed)
+#   * openpyxl>=3.1.2 (already present, confirmed)
+#   * These support the new file_content_reader.py and file_analysis_agent.py modules
 # - January 27, 2026: ADDED WebSocket support for OpenAI Realtime Voice API
 # - January 21, 2026: ADDED markdown>=3.5.0 (fixes ModuleNotFoundError in routes/core.py)
 #
@@ -12,11 +17,13 @@
 # - Knowledge base (document processing)
 # - Database operations
 # - Voice control (OpenAI Realtime API)
+# - File management and analysis (NEW - January 29, 2026)
 # ==========================================
 # CORE FRAMEWORK
 # ==========================================
 Flask==3.0.0
 gunicorn>=20.1.0
+
 # ==========================================
 # WEBSOCKET SUPPORT FOR VOICE (Added January 27, 2026)
 # Updated January 28, 2026: Added Hypercorn for proper async support
@@ -25,6 +32,7 @@ flask-sock>=0.7.0           # WebSocket support for Flask
 websockets>=12.0            # WebSocket client for OpenAI Realtime API
 hypercorn>=0.16.0           # ASGI server for async Flask (replaces Gunicorn for WebSockets)
 asgiref>=3.7.0              # ASGI utilities
+
 # ==========================================
 # AI API CLIENTS - CRITICAL FIX
 # ==========================================
@@ -32,40 +40,58 @@ anthropic>=0.40.0           # MUST be >=0.40.0 to fix httpx proxies error
 openai>=1.12.0
 google-generativeai==0.8.3  # Gemini API
 requests>=2.31.0
+
 # ==========================================
-# DOCUMENT PROCESSING FOR KNOWLEDGE BASE
+# DOCUMENT PROCESSING FOR KNOWLEDGE BASE & FILE MANAGEMENT
+# Updated January 29, 2026: These packages now also support file_content_reader.py
 # ==========================================
-python-docx>=0.8.11         # Word documents (.docx)
-openpyxl>=3.1.2             # Excel files (.xlsx)
-PyPDF2>=3.0.1               # PDF files
+python-docx>=0.8.11         # Word documents (.docx) - Used by knowledge base AND file analysis
+openpyxl>=3.1.2             # Excel files (.xlsx) - Used by schedule generator AND file analysis
+PyPDF2>=3.0.1               # PDF files - Used by knowledge base AND file content extraction
 markdown>=3.5.0             # HTML rendering in routes/core.py
+
 # ==========================================
 # SCHEDULE GENERATOR
 # ==========================================
 XlsxWriter>=3.1.9           # Excel file creation with formatting
+
 # ==========================================
 # DATABASE
 # ==========================================
 # SQLite is built into Python, no package needed
+
 # ==========================================
 # UTILITIES
 # ==========================================
 python-dateutil>=2.8.2
+
+# ==========================================
 # VISUAL CONTENT GENERATION DEPENDENCIES
-# Add these to your existing requirements.txt file
-# Created: January 26, 2026
+# Added: January 26, 2026
+# ==========================================
 # Image generation and manipulation
 Pillow>=10.2.0
+
 # Data visualization
 matplotlib>=3.8.2
+
 # Optional: Enhanced plotting
 plotly>=5.18.0
-# Note: OpenAI is likely already in your requirements for GPT-4
-# If not, uncomment below:
-# openai>=1.10.0
+
+# Note: OpenAI is already included above for GPT-4
+
 # Optional: For animated GIFs (future enhancement)
 # imageio>=2.33.1
 # moviepy>=1.0.3
+
 # Optional: For advanced image processing (future enhancement)
 # opencv-python>=4.9.0
+
+# ==========================================
+# OPTIONAL: IMAGE OCR SUPPORT (For file_content_reader.py)
+# Uncomment these if you want to extract text from images
+# ==========================================
+# pytesseract>=0.3.10        # OCR for images
+# Note: Also requires Tesseract OCR binary to be installed on system
+
 # I did no harm and this file is not truncated
