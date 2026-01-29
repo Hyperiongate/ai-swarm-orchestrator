@@ -1,7 +1,13 @@
 """
 Database File Management Extension
 Created: January 28, 2026
-Last Updated: January 28, 2026
+Last Updated: January 29, 2026 - Added missing functions for AI file access
+
+CHANGELOG January 29, 2026:
+- Added get_files_for_ai_context() - Extract file content for AI prompts
+- Added mark_file_as_analyzed() - Track when AI has analyzed a file
+- Added search_project_files() - Search files by name/description
+- Added update_file_metadata() - Update file metadata
 
 Adds project_files table and related functions for project-based file management.
 This allows users to upload files to projects and have the AI access them.
@@ -45,6 +51,9 @@ def add_project_files_table():
             is_deleted BOOLEAN DEFAULT 0,
             deleted_at TIMESTAMP,
             metadata TEXT,
+            is_analyzed BOOLEAN DEFAULT 0,
+            analysis_summary TEXT,
+            analyzed_at TIMESTAMP,
             FOREIGN KEY (project_id) REFERENCES projects(project_id),
             FOREIGN KEY (task_id) REFERENCES tasks(id),
             FOREIGN KEY (conversation_id) REFERENCES conversations(conversation_id)
@@ -281,6 +290,250 @@ def get_file_stats_by_project(project_id):
     
     db.close()
     return stats
+
+
+# ============================================================================
+# NEW FUNCTIONS - Added January 29, 2026
+# ============================================================================
+
+def get_files_for_ai_context(project_id, max_files=5, max_chars_per_file=2000):
+    """
+    NEW FUNCTION - Extract file content to provide as context to AI.
+    
+    This function is called when the AI needs to know what files exist in a project
+    and get relevant content from them to inform its responses.
+    
+    Args:
+        project_id: The project to get files from
+        max_files: Maximum number of files to include (default 5)
+        max_chars_per_file: Maximum characters to extract per file (default 2000)
+        
+    Returns:
+        str: Formatted context string with file information
+    """
+    db = sqlite3.connect(DATABASE)
+    db.row_factory = sqlite3.Row
+    
+    # Get recent files from this project
+    files = db.execute('''
+        SELECT id, filename, original_filename, file_type, file_path, 
+               description, uploaded_at, is_analyzed, analysis_summary
+        FROM project_files
+        WHERE project_id = ? AND is_deleted = 0
+        ORDER BY uploaded_at DESC
+        LIMIT ?
+    ''', (project_id, max_files)).fetchall()
+    
+    db.close()
+    
+    if not files:
+        return ""
+    
+    context = "\n\n=== PROJECT FILES CONTEXT ===\n"
+    context += f"This project has {len(files)} file(s) available:\n\n"
+    
+    for file in files:
+        context += f"📄 {file['original_filename']} ({file['file_type']})\n"
+        
+        # Add description if available
+        if file['description']:
+            context += f"   Description: {file['description']}\n"
+        
+        # Add analysis summary if available
+        if file['is_analyzed'] and file['analysis_summary']:
+            context += f"   Summary: {file['analysis_summary']}\n"
+        
+        # Try to extract content from file
+        try:
+            file_content = _extract_file_preview(file['file_path'], file['file_type'], max_chars_per_file)
+            if file_content:
+                context += f"   Preview: {file_content[:max_chars_per_file]}...\n"
+        except Exception as e:
+            context += f"   (Content extraction failed: {str(e)})\n"
+        
+        context += "\n"
+    
+    context += "=== END PROJECT FILES CONTEXT ===\n\n"
+    
+    return context
+
+
+def _extract_file_preview(file_path, file_type, max_chars):
+    """
+    Helper function to extract a preview of file content.
+    Used by get_files_for_ai_context.
+    """
+    if not os.path.exists(file_path):
+        return None
+    
+    try:
+        # Text files
+        if file_type in ['txt', 'md', 'csv']:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read(max_chars)
+                return content
+        
+        # Word documents
+        elif file_type in ['docx', 'doc']:
+            try:
+                from docx import Document
+                doc = Document(file_path)
+                text = '\n'.join([p.text for p in doc.paragraphs[:10]])  # First 10 paragraphs
+                return text[:max_chars]
+            except:
+                return None
+        
+        # PDFs
+        elif file_type == 'pdf':
+            try:
+                import PyPDF2
+                with open(file_path, 'rb') as f:
+                    reader = PyPDF2.PdfReader(f)
+                    text = ''
+                    for page_num in range(min(3, len(reader.pages))):  # First 3 pages
+                        text += reader.pages[page_num].extract_text()
+                    return text[:max_chars]
+            except:
+                return None
+        
+        # Excel files
+        elif file_type in ['xlsx', 'xls']:
+            try:
+                import openpyxl
+                wb = openpyxl.load_workbook(file_path, data_only=True)
+                sheet = wb.active
+                text = f"Sheet: {sheet.title}\n"
+                for row in list(sheet.iter_rows(values_only=True))[:20]:  # First 20 rows
+                    text += ' | '.join([str(cell) if cell else '' for cell in row]) + '\n'
+                return text[:max_chars]
+            except:
+                return None
+        
+        else:
+            return None
+            
+    except Exception as e:
+        print(f"Error extracting preview from {file_path}: {e}")
+        return None
+
+
+def mark_file_as_analyzed(file_id, analysis_summary=None):
+    """
+    NEW FUNCTION - Mark a file as analyzed by AI.
+    
+    This tracks when the AI has looked at a file and what it found,
+    so we don't repeatedly analyze the same files.
+    
+    Args:
+        file_id: ID of the file that was analyzed
+        analysis_summary: Optional short summary of the analysis (max 500 chars)
+    """
+    db = sqlite3.connect(DATABASE)
+    
+    if analysis_summary and len(analysis_summary) > 500:
+        analysis_summary = analysis_summary[:497] + "..."
+    
+    db.execute('''
+        UPDATE project_files
+        SET is_analyzed = 1,
+            analysis_summary = ?,
+            analyzed_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    ''', (analysis_summary, file_id))
+    
+    db.commit()
+    db.close()
+    
+    print(f"✅ File {file_id} marked as analyzed")
+
+
+def search_project_files(project_id, search_term):
+    """
+    NEW FUNCTION - Search for files by name or description.
+    
+    This allows the AI (or users) to find files based on keywords.
+    
+    Args:
+        project_id: The project to search in
+        search_term: The term to search for
+        
+    Returns:
+        list: Matching files
+    """
+    import json
+    
+    db = sqlite3.connect(DATABASE)
+    db.row_factory = sqlite3.Row
+    
+    search_pattern = f'%{search_term}%'
+    
+    rows = db.execute('''
+        SELECT * FROM project_files
+        WHERE project_id = ?
+        AND is_deleted = 0
+        AND (
+            filename LIKE ? OR
+            original_filename LIKE ? OR
+            description LIKE ? OR
+            analysis_summary LIKE ?
+        )
+        ORDER BY uploaded_at DESC
+    ''', (project_id, search_pattern, search_pattern, search_pattern, search_pattern)).fetchall()
+    
+    db.close()
+    
+    files = []
+    for row in rows:
+        file_dict = dict(row)
+        if file_dict.get('metadata'):
+            try:
+                file_dict['metadata'] = json.loads(file_dict['metadata'])
+            except:
+                pass
+        files.append(file_dict)
+    
+    return files
+
+
+def update_file_metadata(file_id, **kwargs):
+    """
+    NEW FUNCTION - Update file metadata.
+    
+    This allows updating file properties like description, category, etc.
+    
+    Args:
+        file_id: ID of the file to update
+        **kwargs: Fields to update (description, category, metadata, etc.)
+    """
+    import json
+    
+    db = sqlite3.connect(DATABASE)
+    
+    # Build update query dynamically based on provided kwargs
+    allowed_fields = ['description', 'category', 'metadata']
+    updates = []
+    values = []
+    
+    for field, value in kwargs.items():
+        if field in allowed_fields:
+            if field == 'metadata' and isinstance(value, dict):
+                value = json.dumps(value)
+            updates.append(f"{field} = ?")
+            values.append(value)
+    
+    if not updates:
+        db.close()
+        return False
+    
+    values.append(file_id)
+    query = f"UPDATE project_files SET {', '.join(updates)} WHERE id = ?"
+    
+    db.execute(query, values)
+    db.commit()
+    db.close()
+    
+    print(f"✅ File {file_id} metadata updated")
+    return True
 
 
 if __name__ == '__main__':
