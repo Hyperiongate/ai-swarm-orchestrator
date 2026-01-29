@@ -1719,7 +1719,7 @@ YOUR CAPABILITIES IN THIS PROJECT FOLDER:
 IMPORTANT: This project folder is managed by the system. Users don't need to create folders on their computer.
 ===
 
-
+"""
 
                         print(f"✅ Added project context for {project['client_name']}")
                 except Exception as proj_ctx_error:
