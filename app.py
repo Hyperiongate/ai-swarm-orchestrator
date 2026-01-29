@@ -1,9 +1,17 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: January 28, 2026 - ADDED IMPLEMENTATION MANUAL GENERATOR
+Last Updated: January 29, 2026 - ADDED LINKEDIN POSTER DOWNLOAD BUTTON
 
 CHANGES IN THIS VERSION:
+- January 29, 2026: ADDED LINKEDIN POSTER DOWNLOAD BUTTON
+  * Added download button for linkedin_poster.pyw in Marketing Info Panel (templates/index.html)
+  * Desktop app with 120 pre-written posts tailored to 12 LinkedIn groups
+  * Styled consistently with Calculator and Survey app download sections
+  * Includes app description and Python requirements
+  * Download route already configured in app.py (see /downloads/<filename> route below)
+  * File should be placed in /downloads/linkedin_poster.pyw
+
 - January 28, 2026: ADDED IMPLEMENTATION MANUAL GENERATOR
   * Added manuals_bp blueprint for conversational manual generation
   * Question-driven data collection for implementation manuals
@@ -231,9 +239,13 @@ def index():
     return render_template('index.html')
 
 # =============================================================================
-# DOWNLOAD ROUTE FOR DESKTOP APPS - Added January 28, 2026
+# DOWNLOAD ROUTE FOR DESKTOP APPS - Updated January 29, 2026
 # =============================================================================
-# This route allows users to download the Cost Calculator and Survey App
+# This route allows users to download desktop apps from the Marketing tab:
+# - LinkedIn Poster (linkedin_poster.pyw) - 120 pre-written posts for 12 groups
+# - Cost Calculator (cost_of_time_calculator_v3_3_2.pyw)
+# - Survey App (SurveySelector_v87_FINAL.pyw)
+# 
 # Files are served from the /downloads folder in your repository
 # =============================================================================
 
@@ -242,6 +254,12 @@ def download_file(filename):
     """
     Serve downloadable files from the /downloads directory.
     Allows downloading .pyw, .py, .txt, and .pdf files only.
+    
+    IMPORTANT: Place downloaded files in a /downloads folder at your project root:
+    /downloads/
+        linkedin_poster.pyw
+        cost_of_time_calculator_v3_3_2.pyw
+        SurveySelector_v87_FINAL.pyw
     """
     try:
         # Security: Define allowed file extensions
@@ -391,7 +409,7 @@ def health():
     
     return jsonify({
         'status': 'healthy',
-        'version': 'Sprint 3 Complete + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator',
+        'version': 'Sprint 3 Complete + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator + LinkedIn Poster',
         'orchestrators': {
             'sonnet': 'configured' if ANTHROPIC_API_KEY else 'missing',
             'opus': 'configured' if ANTHROPIC_API_KEY else 'missing'
@@ -497,7 +515,8 @@ def health():
                 'linkedin_posts': marketing_status,
                 'newsletters': marketing_status,
                 'content_extraction': marketing_status,
-                'approval_workflow': marketing_status
+                'approval_workflow': marketing_status,
+                'linkedin_poster_download': 'enabled'
             },
             'avatar_consultation': {
                 'tag_team_avatars': avatar_status,
@@ -538,6 +557,11 @@ def health():
                 'iterative_refinement': manual_generator_status,
                 'lessons_learned': manual_generator_status,
                 'docx_output': manual_generator_status
+            },
+            'desktop_apps': {
+                'linkedin_poster': 'available',
+                'cost_calculator': 'available',
+                'survey_processor': 'available'
             }
         }
     })
