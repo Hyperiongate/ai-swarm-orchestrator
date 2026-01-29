@@ -776,25 +776,40 @@
         
         // Project management
         function loadSavedProjects() {
-            fetch('/api/projects')
+            return fetch('/api/projects')
                 .then(r => r.json())
                 .then(data => {
                     const select = document.getElementById('existingProjects');
-                    if (!select) return;
+                    if (!select) return [];
                     
                     // Keep the first option
                     select.innerHTML = '<option value="">-- Select Project --</option>';
                     
+                    const projects = [];
                     if (data.success && data.projects.length > 0) {
                         data.projects.forEach(project => {
                             const option = document.createElement('option');
                             option.value = project.project_id;
                             option.textContent = `${project.client_name} (${project.project_phase})`;
                             select.appendChild(option);
+                            projects.push(project);
                         });
                     }
+                    
+                    // Restore previous selection if it exists
+                    const savedProjectId = sessionStorage.getItem('currentProjectId');
+                    if (savedProjectId) {
+                        select.value = savedProjectId;
+                    }
+                    
+                    return projects;
+                })
+                .catch(err => {
+                    console.error('Error loading projects:', err);
+                    return [];
                 });
         }
+
         
         function loadExistingProject() {
             const select = document.getElementById('existingProjects');
@@ -824,10 +839,15 @@
         
         function startNewProject() {
             const clientName = prompt("Enter client name:");
-            if (!clientName) return;
+            if (!clientName || clientName.trim() === '') {
+                return;
+            }
             
             const industry = prompt("Enter industry (e.g., Pharmaceutical, Food Processing):");
             const facilityType = prompt("Enter facility type (e.g., Manufacturing, Distribution):");
+            
+            // Show loading message
+            addMessage('assistant', `⏳ Creating project for ${clientName}...`, null, 'project');
             
             fetch('/api/projects', {
                 method: 'POST',
@@ -838,23 +858,39 @@
                     facility_type: facilityType || 'Production'
                 })
             })
-            .then(r => r.json())
+            .then(r => {
+                if (!r.ok) {
+                    throw new Error('Failed to create project');
+                }
+                return r.json();
+            })
             .then(data => {
                 if (data.success) {
+                    // CRITICAL FIX: Save project ID immediately to sessionStorage
                     currentProjectId = data.project_id;
+                    sessionStorage.setItem('currentProjectId', data.project_id);
+                    
+                    // Update UI immediately
                     document.getElementById('clientName').textContent = clientName;
                     document.getElementById('projectPhase').innerHTML = '<div class="phase-indicator">Initial Phase</div>';
                     
-                    // Refresh projects list
-                    loadSavedProjects();
-                    
-                    // Select the new project
-                    setTimeout(() => {
-                        document.getElementById('existingProjects').value = data.project_id;
-                    }, 500);
-                    
-                    addMessage('assistant', `✅ Project started for ${clientName}! You can now upload files and the AI can access them.`, null, 'project');
+                    // FIXED: Reload projects dropdown AND WAIT for completion
+                    loadSavedProjects().then(() => {
+                        // Now we can safely select the project
+                        const select = document.getElementById('existingProjects');
+                        if (select) {
+                            select.value = data.project_id;
+                        }
+                        
+                        addMessage('assistant', `✅ Project started for ${clientName}! You can now upload files and I can work with them in this project folder.`, null, 'project');
+                    });
+                } else {
+                    throw new Error(data.error || 'Unknown error creating project');
                 }
+            })
+            .catch(err => {
+                console.error('Error starting project:', err);
+                addMessage('assistant', `❌ Failed to create project: ${err.message}. Please try again.`, null, 'project');
             });
         }
         
