@@ -1524,7 +1524,92 @@ def orchestrate():
         # =============================================================================
         # NEW PATTERN-BASED SCHEDULE SYSTEM - END
         # =============================================================================
-
+# =============================================================================
+        # INTROSPECTION DETECTION - FIXED January 29, 2026
+        # Must come BEFORE regular AI orchestration to intercept introspection requests
+        # =============================================================================
+        
+        try:
+            from introspection import is_introspection_request, get_introspection_engine
+            
+            introspection_check = is_introspection_request(user_request)
+            
+            if introspection_check['is_introspection']:
+                print(f"🔍 Introspection request detected: {introspection_check['action']}")
+                
+                intro_engine = get_introspection_engine()
+                action = introspection_check['action']
+                
+                if action == 'run':
+                    print("Running introspection analysis...")
+                    
+                    days = 7
+                    if 'monthly' in user_request.lower() or '30' in user_request:
+                        days = 30
+                    
+                    report = intro_engine.run_introspection(days=days, is_monthly=(days >= 28))
+                    response_html = convert_markdown_to_html(report.get('reflection', ''))
+                    
+                    db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
+                              ('completed', 'introspection_engine', time.time() - overall_start, task_id))
+                    db.commit()
+                    
+                    add_message(conversation_id, 'assistant', report.get('reflection', ''), task_id,
+                               {'orchestrator': 'introspection_engine', 'introspection_id': report.get('insight_id')})
+                    
+                    db.close()
+                    
+                    return jsonify({
+                        'success': True,
+                        'task_id': task_id,
+                        'conversation_id': conversation_id,
+                        'result': response_html,
+                        'orchestrator': 'introspection_engine',
+                        'execution_time': time.time() - overall_start,
+                        'introspection_report': {
+                            'id': report.get('insight_id'),
+                            'health_score': report.get('summary', {}).get('health_score', 0),
+                            'period_days': report.get('period_days', days),
+                            'type': report.get('introspection_type', 'weekly')
+                        }
+                    })
+                
+                elif action == 'show_latest':
+                    latest = intro_engine.get_latest_introspection()
+                    
+                    if not latest or not latest.get('full_report'):
+                        response_text = "No introspection has been run yet. Would you like me to run one now? Just say 'run introspection'."
+                    else:
+                        response_text = latest.get('full_report', {}).get('reflection', 'No reflection available.')
+                    
+                    response_html = convert_markdown_to_html(response_text)
+                    
+                    db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ? WHERE id = ?',
+                              ('completed', 'introspection_engine', task_id))
+                    db.commit()
+                    
+                    add_message(conversation_id, 'assistant', response_text, task_id,
+                               {'orchestrator': 'introspection_engine'})
+                    
+                    db.close()
+                    
+                    return jsonify({
+                        'success': True,
+                        'task_id': task_id,
+                        'conversation_id': conversation_id,
+                        'result': response_html,
+                        'orchestrator': 'introspection_engine',
+                        'execution_time': time.time() - overall_start
+                    })
+        
+        except ImportError:
+            print("ℹ️  Introspection not available - continuing to regular orchestration")
+        except Exception as intro_error:
+            print(f"⚠️  Introspection detection failed: {intro_error}")
+        
+        # =============================================================================
+        # END INTROSPECTION DETECTION
+        # =============================================================================
      
         # Regular AI orchestration
         try:
