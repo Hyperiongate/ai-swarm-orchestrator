@@ -1747,7 +1747,6 @@ IMPORTANT: This project folder is managed by the system. Users don't need to cre
 4. Test with: **"Create a folder for the Skechers project"**
 
 **Expected Response:**
-```
 
                         print(f"✅ Added project context for {project['client_name']}")
                 except Exception as proj_ctx_error:
