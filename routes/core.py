@@ -1571,7 +1571,105 @@ def orchestrate():
                         specialist_results.append(result)
                         if result.get('success') and result.get('output'):
                             specialist_output = result.get('output')
+
+# =============================================================================
+        # INTROSPECTION DETECTION - Added January 29, 2026
+        # =============================================================================
+        
+        # Check if this is an introspection request
+        try:
+            from introspection import is_introspection_request
+            from introspection import get_introspection_engine
             
+            introspection_check = is_introspection_request(user_request)
+            
+            if introspection_check['is_introspection']:
+                print(f"🔍 Introspection request detected: {introspection_check['action']}")
+                
+                intro_engine = get_introspection_engine()
+                action = introspection_check['action']
+                
+                if action == 'run':
+                    # Run introspection analysis
+                    print("Running introspection analysis...")
+                    
+                    # Extract days parameter if specified
+                    days = 7  # default
+                    if 'monthly' in user_request.lower() or '30' in user_request:
+                        days = 30
+                    
+                    report = intro_engine.run_introspection(days=days, is_monthly=(days >= 28))
+                    
+                    # Convert response to HTML
+                    response_html = convert_markdown_to_html(report.get('reflection', ''))
+                    
+                    # Update task as completed
+                    db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
+                              ('completed', 'introspection_engine', time.time() - overall_start, task_id))
+                    db.commit()
+                    
+                    # Add message to conversation
+                    add_message(conversation_id, 'assistant', report.get('reflection', ''), task_id,
+                               {'orchestrator': 'introspection_engine', 'introspection_id': report.get('insight_id')})
+                    
+                    db.close()
+                    
+                    # Return introspection response
+                    return jsonify({
+                        'success': True,
+                        'task_id': task_id,
+                        'conversation_id': conversation_id,
+                        'result': response_html,
+                        'orchestrator': 'introspection_engine',
+                        'execution_time': time.time() - overall_start,
+                        'introspection_report': {
+                            'id': report.get('insight_id'),
+                            'health_score': report.get('summary', {}).get('health_score', 0),
+                            'period_days': report.get('period_days', days),
+                            'type': report.get('introspection_type', 'weekly')
+                        }
+                    })
+                
+                elif action == 'show_latest':
+                    # Show latest introspection report
+                    latest = intro_engine.get_latest_introspection()
+                    
+                    if not latest or not latest.get('full_report'):
+                        response_text = "No introspection has been run yet. Would you like me to run one now? Just say 'run introspection'."
+                    else:
+                        response_text = latest.get('full_report', {}).get('reflection', 'No reflection available.')
+                    
+                    response_html = convert_markdown_to_html(response_text)
+                    
+                    # Update task as completed
+                    db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ? WHERE id = ?',
+                              ('completed', 'introspection_engine', task_id))
+                    db.commit()
+                    
+                    add_message(conversation_id, 'assistant', response_text, task_id,
+                               {'orchestrator': 'introspection_engine'})
+                    
+                    db.close()
+                    
+                    return jsonify({
+                        'success': True,
+                        'task_id': task_id,
+                        'conversation_id': conversation_id,
+                        'result': response_html,
+                        'orchestrator': 'introspection_engine',
+                        'execution_time': time.time() - overall_start
+                    })
+        
+        except ImportError:
+            print("ℹ️  Introspection not available - continuing to regular orchestration")
+        except Exception as intro_error:
+            print(f"⚠️  Introspection detection failed: {intro_error}")
+        
+        # =============================================================================
+        # END INTROSPECTION DETECTION
+        # =============================================================================
+
+        
             from orchestration.ai_clients import call_claude_opus, call_claude_sonnet
             knowledge_context = get_knowledge_context_for_prompt(knowledge_base, user_request)
             
