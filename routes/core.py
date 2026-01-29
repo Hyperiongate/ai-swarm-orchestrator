@@ -1290,17 +1290,17 @@ def orchestrate():
         conversation_context = get_conversation_context(conversation_id, max_messages=10)
 
         # Get project file context if in project mode
-           file_context = ""
-           if project_id:
-               try:
-                   from database_file_management import get_files_for_ai_context
-                   file_context = get_files_for_ai_context(project_id, max_files=5, max_chars_per_file=2000)
-                   if file_context:
-                       print(f"✅ Added file context from project {project_id}")
-               except Exception as file_ctx_error:
-                   print(f"⚠️ Could not load file context: {file_ctx_error}")
-           
-           db = get_db()
+        file_context = ""
+        if project_id:
+            try:
+                from database_file_management import get_files_for_ai_context
+                file_context = get_files_for_ai_context(project_id, max_files=5, max_chars_per_file=2000)
+                if file_context:
+                    print(f"✅ Added file context from project {project_id}")
+            except Exception as file_ctx_error:
+                print(f"⚠️ Could not load file context: {file_ctx_error}")
+        
+        db = get_db()
         cursor = db.execute('INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
                            (user_request, 'processing', conversation_id))
         task_id = cursor.lastrowid
