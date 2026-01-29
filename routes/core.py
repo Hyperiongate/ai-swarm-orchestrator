@@ -1719,32 +1719,7 @@ YOUR CAPABILITIES IN THIS PROJECT FOLDER:
 IMPORTANT: This project folder is managed by the system. Users don't need to create folders on their computer.
 ===
 
-"""
 
-
-
-## 📋 **What This Changes:**
-
-**Before:**
-- "You are currently working in a project for: Skechers"
-- No mention that projects ARE folders
-- AI interprets "create a folder" as a computer file system request
-
-**After:**
-- "You are currently working inside the 'Skechers' PROJECT FOLDER"
-- Explicit: "Projects in this system ARE folders"
-- Explicit: "This project folder ALREADY EXISTS"
-- AI understands "folder" = "this project folder"
-
-
-## 🚀 **Deploy Steps:**
-
-1. Update the project context in `routes/core.py` with the text above
-2. Commit to GitHub: `Enhanced project context - clarify that projects ARE folders`
-3. Wait for Render to redeploy (~2-3 minutes)
-4. Test with: **"Create a folder for the Skechers project"**
-
-**Expected Response:**
 
                         print(f"✅ Added project context for {project['client_name']}")
                 except Exception as proj_ctx_error:
