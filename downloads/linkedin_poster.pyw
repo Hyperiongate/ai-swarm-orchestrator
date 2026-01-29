@@ -1,4 +1,4 @@
-""
+"""
 LINKEDIN POSTING HELPER TOOL - GROUP-FIRST VERSION
 ====================================================
 Created for: Shiftwork Solutions LLC
