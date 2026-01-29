@@ -1524,56 +1524,10 @@ def orchestrate():
         # =============================================================================
         # NEW PATTERN-BASED SCHEDULE SYSTEM - END
         # =============================================================================
-        
-        # Regular AI orchestration
-        try:
-            print(f"Analyzing task: {user_request[:100]}...")
-            analysis = analyze_task_with_sonnet(user_request, knowledge_base=knowledge_base)
-            task_type = analysis.get('task_type', 'general')
-            confidence = analysis.get('confidence', 0.5)
-            escalate = analysis.get('escalate_to_opus', False)
-            specialists_needed = analysis.get('specialists_needed', [])
-            knowledge_applied = analysis.get('knowledge_applied', False)
-            knowledge_sources = analysis.get('knowledge_sources', [])
-            
-            if specialists_needed:
-                specialists_needed = [s for s in specialists_needed if s and s.lower() != 'none']
-            
-            orchestrator = 'sonnet'
-            opus_guidance = None
-            
-            if escalate:
-                print("Escalating to Opus for strategic guidance...")
-                orchestrator = 'opus'
-                try:
-                    opus_result = handle_with_opus(user_request, analysis, knowledge_base=knowledge_base)
-                    opus_guidance = opus_result.get('strategic_analysis', '')
-                    if opus_result.get('specialist_assignments'):
-                        for assignment in opus_result.get('specialist_assignments', []):
-                            specialist = assignment.get('ai') or assignment.get('specialist')
-                            if specialist and specialist.lower() != 'none':
-                                specialists_needed.append(specialist)
-                except Exception as opus_error:
-                    print(f"Opus guidance failed: {opus_error}")
-            
-            specialist_results = []
-            specialist_output = None
-            if specialists_needed:
-                for specialist_info in specialists_needed:
-                    if isinstance(specialist_info, dict):
-                        specialist = specialist_info.get('specialist') or specialist_info.get('ai')
-                        specialist_task = specialist_info.get('task', user_request)
-                    else:
-                        specialist = specialist_info
-                        specialist_task = user_request
-                    if specialist and specialist.lower() != 'none':
-                        result = execute_specialist_task(specialist, specialist_task)
-                        specialist_results.append(result)
-                        if result.get('success') and result.get('output'):
-                            specialist_output = result.get('output')
 
 # =============================================================================
         # INTROSPECTION DETECTION - Added January 29, 2026
+        # Must come BEFORE regular AI orchestration to intercept requests
         # =============================================================================
         
         # Check if this is an introspection request
@@ -1668,8 +1622,54 @@ def orchestrate():
         # =============================================================================
         # END INTROSPECTION DETECTION
         # =============================================================================
-
-        
+     
+        # Regular AI orchestration
+        try:
+            print(f"Analyzing task: {user_request[:100]}...")
+            analysis = analyze_task_with_sonnet(user_request, knowledge_base=knowledge_base)
+            task_type = analysis.get('task_type', 'general')
+            confidence = analysis.get('confidence', 0.5)
+            escalate = analysis.get('escalate_to_opus', False)
+            specialists_needed = analysis.get('specialists_needed', [])
+            knowledge_applied = analysis.get('knowledge_applied', False)
+            knowledge_sources = analysis.get('knowledge_sources', [])
+            
+            if specialists_needed:
+                specialists_needed = [s for s in specialists_needed if s and s.lower() != 'none']
+            
+            orchestrator = 'sonnet'
+            opus_guidance = None
+            
+            if escalate:
+                print("Escalating to Opus for strategic guidance...")
+                orchestrator = 'opus'
+                try:
+                    opus_result = handle_with_opus(user_request, analysis, knowledge_base=knowledge_base)
+                    opus_guidance = opus_result.get('strategic_analysis', '')
+                    if opus_result.get('specialist_assignments'):
+                        for assignment in opus_result.get('specialist_assignments', []):
+                            specialist = assignment.get('ai') or assignment.get('specialist')
+                            if specialist and specialist.lower() != 'none':
+                                specialists_needed.append(specialist)
+                except Exception as opus_error:
+                    print(f"Opus guidance failed: {opus_error}")
+            
+            specialist_results = []
+            specialist_output = None
+            if specialists_needed:
+                for specialist_info in specialists_needed:
+                    if isinstance(specialist_info, dict):
+                        specialist = specialist_info.get('specialist') or specialist_info.get('ai')
+                        specialist_task = specialist_info.get('task', user_request)
+                    else:
+                        specialist = specialist_info
+                        specialist_task = user_request
+                    if specialist and specialist.lower() != 'none':
+                        result = execute_specialist_task(specialist, specialist_task)
+                        specialist_results.append(result)
+                        if result.get('success') and result.get('output'):
+                            specialist_output = result.get('output')
+      
             from orchestration.ai_clients import call_claude_opus, call_claude_sonnet
             knowledge_context = get_knowledge_context_for_prompt(knowledge_base, user_request)
             
