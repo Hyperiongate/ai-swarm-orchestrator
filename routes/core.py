@@ -1694,27 +1694,71 @@ def orchestrate():
                         from database_file_management import get_file_stats_by_project
                         file_stats = get_file_stats_by_project(project_id)
                         
-                        project_context = f"""
+                       project_context = f"""
 
 === CURRENT PROJECT CONTEXT ===
-You are currently working in a project for: {project['client_name']}
-Industry: {project['industry']}
-Facility Type: {project['facility_type']}
-Project Phase: {project['project_phase']}
+You are currently working inside the "{project['client_name']}" PROJECT FOLDER.
+- Industry: {project['industry']}
+- Facility Type: {project['facility_type']}
+- Project Phase: {project['project_phase']}
 
-Project Files Available: {file_stats.get('total_files', 0)} files
+This project folder currently contains: {file_stats.get('total_files', 0)} files
 - Uploaded files: {file_stats.get('uploaded_files', 0)}
 - Generated files: {file_stats.get('generated_files', 0)}
 
-IMPORTANT CAPABILITIES IN THIS PROJECT:
-✅ You CAN accept file uploads - tell users to upload files
+CRITICAL: Projects in this system ARE folders that contain files.
+When the user says "create a folder" or "folder for this project", they mean this project folder ALREADY EXISTS.
+
+YOUR CAPABILITIES IN THIS PROJECT FOLDER:
+✅ You CAN accept file uploads to this project folder
 ✅ You CAN create documents and save them to this project folder
-✅ You CAN analyze uploaded files
-✅ You CAN reformat documents
-✅ Users can click "📎 Upload Files" to add files to this project
+✅ You CAN analyze files in this project folder
+✅ You CAN reformat documents in this project folder
+✅ Tell users to click "📎 Upload Files" to add files to this project folder
+
+IMPORTANT: This project folder is managed by the system. Users don't need to create folders on their computer.
 ===
 
 """
+```
+
+---
+
+## 📋 **What This Changes:**
+
+**Before:**
+- "You are currently working in a project for: Skechers"
+- No mention that projects ARE folders
+- AI interprets "create a folder" as a computer file system request
+
+**After:**
+- "You are currently working inside the 'Skechers' PROJECT FOLDER"
+- Explicit: "Projects in this system ARE folders"
+- Explicit: "This project folder ALREADY EXISTS"
+- AI understands "folder" = "this project folder"
+
+---
+
+## 🚀 **Deploy Steps:**
+
+1. Update the project context in `routes/core.py` with the text above
+2. Commit to GitHub: `Enhanced project context - clarify that projects ARE folders`
+3. Wait for Render to redeploy (~2-3 minutes)
+4. Test with: **"Create a folder for the Skechers project"**
+
+**Expected Response:**
+```
+The Skechers project folder already exists! You're currently working inside it.
+
+This project folder contains:
+- 3 files total
+- 2 uploaded files
+- 1 generated file
+
+What would you like to do with this project folder?
+- Upload more files?
+- Create a document?
+- Analyze existing files?
                         print(f"✅ Added project context for {project['client_name']}")
                 except Exception as proj_ctx_error:
                     print(f"⚠️ Could not load project context: {proj_ctx_error}")
