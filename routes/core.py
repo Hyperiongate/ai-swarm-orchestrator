@@ -1722,7 +1722,6 @@ IMPORTANT: This project folder is managed by the system. Users don't need to cre
 """
 
 
----
 
 ## 📋 **What This Changes:**
 
@@ -1737,7 +1736,6 @@ IMPORTANT: This project folder is managed by the system. Users don't need to cre
 - Explicit: "This project folder ALREADY EXISTS"
 - AI understands "folder" = "this project folder"
 
----
 
 ## 🚀 **Deploy Steps:**
 
