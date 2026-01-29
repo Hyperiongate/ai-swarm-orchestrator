@@ -1,9 +1,17 @@
 """
 AI Clients Module
 Created: January 21, 2026
-Last Updated: January 25, 2026 - FIXED CONVERSATION MEMORY
+Last Updated: January 29, 2026 - ROBUST CAPABILITY INJECTION FIX
 
 CHANGES IN THIS VERSION:
+- January 29, 2026: ROBUST CAPABILITY INJECTION
+  * CRITICAL FIX: ALL AI calls now inject system capabilities
+  * call_claude_sonnet() now ALWAYS knows what it can do
+  * call_claude_opus() now ALWAYS knows what it can do  
+  * call_gpt4(), call_deepseek(), call_gemini() all get capabilities
+  * Fixes "I don't have the ability to..." false negatives
+  * AI is now ALWAYS aware of file handling, document creation, etc.
+
 - January 25, 2026: FIXED CONVERSATION MEMORY NOT BEING USED
   * Modified call_claude_sonnet() to accept optional conversation_history parameter
   * Modified call_claude_opus() to accept optional conversation_history parameter
@@ -40,6 +48,16 @@ deepseek_client = OpenAI(
 if config.GOOGLE_API_KEY:
     genai.configure(api_key=config.GOOGLE_API_KEY)
 
+# 🔧 CRITICAL: Import system capabilities
+try:
+    from orchestration.system_capabilities import get_system_capabilities_prompt
+    CAPABILITIES_AVAILABLE = True
+except ImportError:
+    print("⚠️ WARNING: system_capabilities module not found - AI will not know its capabilities!")
+    CAPABILITIES_AVAILABLE = False
+    def get_system_capabilities_prompt():
+        return ""
+
 def call_claude_sonnet(prompt, max_tokens=4000, conversation_history=None):
     """
     Call Claude Sonnet (primary orchestrator)
@@ -51,7 +69,7 @@ def call_claude_sonnet(prompt, max_tokens=4000, conversation_history=None):
     
     Returns dict with 'content' and 'usage'
     
-    FIXED: Now properly includes conversation history in API call
+    ROBUST FIX (January 29, 2026): Now ALWAYS injects system capabilities
     """
     if not anthropic_client:
         return {
@@ -60,8 +78,11 @@ def call_claude_sonnet(prompt, max_tokens=4000, conversation_history=None):
             'error': True
         }
     
+    # 🔧 CRITICAL: Inject capabilities FIRST so AI knows what it can do
+    capabilities = get_system_capabilities_prompt() if CAPABILITIES_AVAILABLE else ""
+    
     # Add formatting requirements
-    enhanced_prompt = f"{prompt}\n\n{config.FORMATTING_REQUIREMENTS}"
+    enhanced_prompt = f"{capabilities}\n\n{prompt}\n\n{config.FORMATTING_REQUIREMENTS}"
     
     try:
         # Build messages array with conversation history
@@ -133,11 +154,11 @@ def call_claude_opus(prompt, max_tokens=4000, conversation_history=None):
     Args:
         prompt: The current user request/prompt
         max_tokens: Maximum tokens in response
-        conversation_history: Optional list of prior messages [{'role': 'user'|'assistant', 'content': '...'}]
+        conversation_history: Optional list of prior messages
     
     Returns dict with 'content' and 'usage'
     
-    FIXED: Now properly includes conversation history in API call
+    ROBUST FIX (January 29, 2026): Now ALWAYS injects system capabilities
     """
     if not anthropic_client:
         return {
@@ -146,8 +167,11 @@ def call_claude_opus(prompt, max_tokens=4000, conversation_history=None):
             'error': True
         }
     
+    # 🔧 CRITICAL: Inject capabilities FIRST so AI knows what it can do
+    capabilities = get_system_capabilities_prompt() if CAPABILITIES_AVAILABLE else ""
+    
     # Add formatting requirements
-    enhanced_prompt = f"{prompt}\n\n{config.FORMATTING_REQUIREMENTS}"
+    enhanced_prompt = f"{capabilities}\n\n{prompt}\n\n{config.FORMATTING_REQUIREMENTS}"
     
     try:
         # Build messages array with conversation history
@@ -156,11 +180,8 @@ def call_claude_opus(prompt, max_tokens=4000, conversation_history=None):
         # Add conversation history if provided
         if conversation_history and len(conversation_history) > 0:
             for msg in conversation_history:
-                # Skip if not proper format
                 if not isinstance(msg, dict) or 'role' not in msg or 'content' not in msg:
                     continue
-                
-                # Only include user and assistant messages
                 if msg['role'] in ['user', 'assistant']:
                     messages.append({
                         'role': msg['role'],
@@ -174,16 +195,12 @@ def call_claude_opus(prompt, max_tokens=4000, conversation_history=None):
         })
         
         # Ensure messages alternate user/assistant and start with user
-        # Anthropic API requires this
         if len(messages) > 1:
-            # Remove any leading assistant messages
             while messages and messages[0]['role'] == 'assistant':
                 messages.pop(0)
             
-            # Ensure alternating pattern
-            cleaned_messages = [messages[0]]  # Start with first user message
+            cleaned_messages = [messages[0]]
             for i in range(1, len(messages)):
-                # Only add if it alternates with previous
                 if messages[i]['role'] != cleaned_messages[-1]['role']:
                     cleaned_messages.append(messages[i])
             
@@ -216,6 +233,8 @@ def call_gpt4(prompt, max_tokens=4000):
     """
     Call GPT-4 (design specialist)
     Returns dict with 'content' and 'usage'
+    
+    ROBUST FIX (January 29, 2026): Now ALWAYS injects system capabilities
     """
     if not openai_client:
         return {
@@ -224,12 +243,16 @@ def call_gpt4(prompt, max_tokens=4000):
             'error': True
         }
     
+    # 🔧 CRITICAL: Inject capabilities so AI knows what it can do
+    capabilities = get_system_capabilities_prompt() if CAPABILITIES_AVAILABLE else ""
+    enhanced_prompt = f"{capabilities}\n\n{prompt}"
+    
     try:
         response = openai_client.chat.completions.create(
             model=config.GPT4_MODEL,
             messages=[{
                 "role": "user",
-                "content": prompt
+                "content": enhanced_prompt
             }],
             max_tokens=max_tokens,
             timeout=config.OPENAI_TIMEOUT
@@ -253,6 +276,8 @@ def call_deepseek(prompt, max_tokens=4000):
     """
     Call DeepSeek (code specialist)
     Returns dict with 'content' and 'usage'
+    
+    ROBUST FIX (January 29, 2026): Now ALWAYS injects system capabilities
     """
     if not deepseek_client:
         return {
@@ -261,12 +286,16 @@ def call_deepseek(prompt, max_tokens=4000):
             'error': True
         }
     
+    # 🔧 CRITICAL: Inject capabilities so AI knows what it can do
+    capabilities = get_system_capabilities_prompt() if CAPABILITIES_AVAILABLE else ""
+    enhanced_prompt = f"{capabilities}\n\n{prompt}"
+    
     try:
         response = deepseek_client.chat.completions.create(
             model=config.DEEPSEEK_MODEL,
             messages=[{
                 "role": "user",
-                "content": prompt
+                "content": enhanced_prompt
             }],
             max_tokens=max_tokens,
             timeout=config.DEEPSEEK_TIMEOUT
@@ -290,6 +319,8 @@ def call_gemini(prompt, max_tokens=4000):
     """
     Call Google Gemini (multimodal specialist)
     Returns dict with 'content' and 'usage'
+    
+    ROBUST FIX (January 29, 2026): Now ALWAYS injects system capabilities
     """
     if not config.GOOGLE_API_KEY:
         return {
@@ -298,12 +329,15 @@ def call_gemini(prompt, max_tokens=4000):
             'error': True
         }
     
+    # 🔧 CRITICAL: Inject capabilities so AI knows what it can do
+    capabilities = get_system_capabilities_prompt() if CAPABILITIES_AVAILABLE else ""
+    enhanced_prompt = f"{capabilities}\n\n{prompt}"
+    
     try:
         model = genai.GenerativeModel(config.GEMINI_MODEL)
-        
         response = model.generate_content(
-            prompt,
-            generation_config=genai.types.GenerationConfig(
+            enhanced_prompt,
+            generation_config=genai.GenerationConfig(
                 max_output_tokens=max_tokens,
             )
         )
@@ -311,7 +345,7 @@ def call_gemini(prompt, max_tokens=4000):
         return {
             'content': response.text,
             'usage': {
-                'input_tokens': 0,  # Gemini doesn't provide token counts easily
+                'input_tokens': 0,  # Gemini doesn't provide token counts
                 'output_tokens': 0
             }
         }
