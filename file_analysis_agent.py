@@ -3,6 +3,14 @@ File Analysis Agent
 Created: January 29, 2026
 Last Updated: January 29, 2026
 
+CHANGE LOG:
+- January 29, 2026: Initial creation
+  * Analyze uploaded files with AI
+  * Reformat documents professionally
+  * Extract insights from data files
+  * Create new documents in specific folders
+  * Support for DOCX, TXT, XLSX output formats
+
 Specialized AI agent for file-related tasks:
 - Analyze uploaded files
 - Reformat documents professionally
@@ -12,7 +20,9 @@ Specialized AI agent for file-related tasks:
 USAGE:
     from file_analysis_agent import get_file_analysis_agent
     agent = get_file_analysis_agent()
-    result = agent.analyze_file(file_path, user_request)
+    result = agent.analyze_file(file_path, user_request, ai_function)
+
+IMPORTANT: This agent requires file_content_reader.py to be in the same directory
 
 Author: Jim @ Shiftwork Solutions LLC
 """
@@ -26,6 +36,12 @@ from file_content_reader import extract_file_content, extract_multiple_files
 class FileAnalysisAgent:
     """
     Specialized agent for file analysis and document creation tasks.
+    
+    This agent handles:
+    1. Single and multi-file analysis
+    2. Document reformatting with AI
+    3. Professional document creation
+    4. Saving to specific project folders
     """
     
     def __init__(self):
@@ -48,7 +64,13 @@ class FileAnalysisAgent:
             ai_function: AI function to call (e.g., call_claude_sonnet)
         
         Returns:
-            dict with analysis results
+            dict with analysis results containing:
+            - success: bool
+            - analysis: str (AI's analysis text)
+            - file_name: str
+            - file_type: str
+            - file_size: int
+            - error: str (if failed)
         """
         print(f"📄 FileAnalysisAgent: Analyzing {os.path.basename(file_path)}")
         
@@ -111,6 +133,14 @@ Please provide a comprehensive analysis addressing the user's request. Be specif
     def analyze_multiple_files(self, file_paths, user_request, ai_function):
         """
         Analyze multiple files together.
+        
+        Args:
+            file_paths: List of file paths
+            user_request: What the user wants to know
+            ai_function: AI function to call
+        
+        Returns:
+            dict with combined analysis results
         """
         print(f"📚 FileAnalysisAgent: Analyzing {len(file_paths)} files")
         
@@ -176,10 +206,10 @@ Please provide a comprehensive analysis addressing the user's request. Compare a
         Reformat a document professionally.
         
         Args:
-            source_file_path: Original document
+            source_file_path: Original document path
             user_request: How to reformat (e.g., "make more professional", "executive summary style")
             ai_function: AI function to call
-            output_format: Output file format (docx, pdf, txt)
+            output_format: Output file format (docx, txt, xlsx)
         
         Returns:
             dict with reformatted content and file path
@@ -267,11 +297,19 @@ Provide the complete reformatted document."""
             user_request: What document to create
             ai_function: AI function to call
             project_id: Optional project ID to save to
-            file_format: Output format (docx, pdf, txt, xlsx)
-            save_to_folder: Optional specific folder path
+            file_format: Output format (docx, txt, xlsx)
+            save_to_folder: Optional specific folder path (overrides project_id)
         
         Returns:
-            dict with created document info
+            dict with created document info containing:
+            - success: bool
+            - output_path: str (full path to created file)
+            - output_filename: str (filename only)
+            - output_dir: str (directory where saved)
+            - content: str (document text content)
+            - file_format: str
+            - project_id: str (if provided)
+            - error: str (if failed)
         """
         print(f"📝 FileAnalysisAgent: Creating document from request")
         
@@ -282,7 +320,9 @@ REQUEST: {user_request}
 
 Please create a complete, well-structured document that fully addresses this request.
 Include all relevant sections, professional formatting, and comprehensive content.
-This document will be saved as a {file_format.upper()} file."""
+This document will be saved as a {file_format.upper()} file.
+
+Use Shiftwork Solutions branding and professional style."""
         
         # Call AI
         try:
@@ -345,6 +385,7 @@ This document will be saved as a {file_format.upper()} file."""
                             output_dir='/tmp', title=None):
         """
         Internal method to create actual document files.
+        Supports DOCX, TXT, and XLSX formats.
         """
         try:
             # Clean filename
@@ -375,7 +416,7 @@ This document will be saved as a {file_format.upper()} file."""
             }
     
     def _create_docx(self, content, output_path, title=None):
-        """Create a Word document"""
+        """Create a Word document with Shiftwork Solutions branding"""
         try:
             from docx import Document
             from docx.shared import Pt, RGBColor
@@ -510,9 +551,13 @@ This document will be saved as a {file_format.upper()} file."""
         words = request.split()[:5]
         base = "_".join(words)
         
-        # Clean up
+        # Clean up - only alphanumeric and underscores
         base = "".join(c if c.isalnum() or c == '_' else '_' for c in base)
         base = base.lower()
+        
+        # Remove multiple consecutive underscores
+        while '__' in base:
+            base = base.replace('__', '_')
         
         return f"{base}.{file_format}"
     
