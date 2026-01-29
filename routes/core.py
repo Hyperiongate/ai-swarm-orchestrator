@@ -1694,7 +1694,7 @@ def orchestrate():
                         from database_file_management import get_file_stats_by_project
                         file_stats = get_file_stats_by_project(project_id)
                         
-                       project_context = f"""
+                        project_context = f"""
 
 === CURRENT PROJECT CONTEXT ===
 You are currently working inside the "{project['client_name']}" PROJECT FOLDER.
