@@ -1677,6 +1677,47 @@ def orchestrate():
       
             from orchestration.ai_clients import call_claude_opus, call_claude_sonnet
             knowledge_context = get_knowledge_context_for_prompt(knowledge_base, user_request)
+
+         # 🔧 CRITICAL FIX (January 29, 2026): ADD PROJECT CONTEXT
+            # This tells the AI what project it's in and what capabilities it has
+            project_context = ""
+            if project_id:
+                try:
+                    db_temp = get_db()
+                    project = db_temp.execute(
+                        'SELECT * FROM projects WHERE project_id = ?',
+                        (project_id,)
+                    ).fetchone()
+                    db_temp.close()
+                    
+                    if project:
+                        from database_file_management import get_file_stats_by_project
+                        file_stats = get_file_stats_by_project(project_id)
+                        
+                        project_context = f"""
+
+=== CURRENT PROJECT CONTEXT ===
+You are currently working in a project for: {project['client_name']}
+Industry: {project['industry']}
+Facility Type: {project['facility_type']}
+Project Phase: {project['project_phase']}
+
+Project Files Available: {file_stats.get('total_files', 0)} files
+- Uploaded files: {file_stats.get('uploaded_files', 0)}
+- Generated files: {file_stats.get('generated_files', 0)}
+
+IMPORTANT CAPABILITIES IN THIS PROJECT:
+✅ You CAN accept file uploads - tell users to upload files
+✅ You CAN create documents and save them to this project folder
+✅ You CAN analyze uploaded files
+✅ You CAN reformat documents
+✅ Users can click "📎 Upload Files" to add files to this project
+===
+
+"""
+                        print(f"✅ Added project context for {project['client_name']}")
+                except Exception as proj_ctx_error:
+                    print(f"⚠️ Could not load project context: {proj_ctx_error}")
             
             conversation_history = ""
             if conversation_context and len(conversation_context) > 1:
@@ -1690,7 +1731,7 @@ def orchestrate():
             if specialist_output:
                 actual_output = specialist_output
             else:
-                completion_prompt = f"""{knowledge_context}{file_context}{conversation_history}
+                completion_prompt = f"""{knowledge_context}{project_context}{file_context}{conversation_history}
 
 USER REQUEST: {user_request}
 
