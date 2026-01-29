@@ -1748,17 +1748,7 @@ IMPORTANT: This project folder is managed by the system. Users don't need to cre
 
 **Expected Response:**
 ```
-The Skechers project folder already exists! You're currently working inside it.
 
-This project folder contains:
-- 3 files total
-- 2 uploaded files
-- 1 generated file
-
-What would you like to do with this project folder?
-- Upload more files?
-- Create a document?
-- Analyze existing files?
                         print(f"✅ Added project context for {project['client_name']}")
                 except Exception as proj_ctx_error:
                     print(f"⚠️ Could not load project context: {proj_ctx_error}")
