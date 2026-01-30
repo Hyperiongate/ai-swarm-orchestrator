@@ -1,12 +1,19 @@
 """
 Database Module
 Created: January 21, 2026
-Last Updated: January 27, 2026 - ADDED SCHEDULE CONTEXT FUNCTIONS
+Last Updated: January 30, 2026 - ADDED FILE CONTENTS STORAGE FOR GPT-4 CONTINUITY
 
 All database operations isolated here.
 No more SQL scattered across 2,500 lines.
 
 CHANGELOG:
+- January 30, 2026: ADDED FILE CONTENTS STORAGE
+  * Modified conversation_messages table to add file_contents column
+  * Modified add_message() to accept and store file_contents
+  * Modified get_messages() to return file_contents
+  * Modified get_conversation_context() to include file_contents in context
+  * This enables GPT-4 to handle follow-up questions about uploaded files
+
 - January 27, 2026: ADDED SCHEDULE CONTEXT STORAGE FUNCTIONS
   * Added get_schedule_context() - retrieves schedule context from database
   * Added save_schedule_context() - saves schedule context to database
@@ -280,6 +287,7 @@ def init_db():
     ''')
     
     # Conversation messages table - stores each message
+    # UPDATED January 30, 2026: Added file_contents column
     db.execute('''
         CREATE TABLE IF NOT EXISTS conversation_messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -288,6 +296,7 @@ def init_db():
             content TEXT NOT NULL,
             task_id INTEGER,
             metadata TEXT,
+            file_contents TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (conversation_id) REFERENCES conversations(conversation_id),
             FOREIGN KEY (task_id) REFERENCES tasks(id)
@@ -814,6 +823,7 @@ def get_document_stats():
 
 # ============================================================================
 # CONVERSATION MEMORY FUNCTIONS
+# UPDATED January 30, 2026: Added file_contents support
 # ============================================================================
 
 def create_conversation(mode='quick', project_id=None, title=None):
@@ -930,14 +940,21 @@ def delete_conversation(conversation_id):
     db.close()
 
 
-def add_message(conversation_id, role, content, task_id=None, metadata=None):
-    """Add a message to a conversation"""
+def add_message(conversation_id, role, content, task_id=None, metadata=None, file_contents=None):
+    """
+    Add a message to a conversation
+    
+    UPDATED January 30, 2026: Added file_contents parameter
+    This stores file contents with user messages so GPT-4 can handle follow-ups
+    """
     db = get_db()
     
     db.execute('''
-        INSERT INTO conversation_messages (conversation_id, role, content, task_id, metadata)
-        VALUES (?, ?, ?, ?, ?)
-    ''', (conversation_id, role, content, task_id, json.dumps(metadata) if metadata else None))
+        INSERT INTO conversation_messages (conversation_id, role, content, task_id, metadata, file_contents)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (conversation_id, role, content, task_id, 
+          json.dumps(metadata) if metadata else None,
+          file_contents))
     
     db.execute('''
         UPDATE conversations 
@@ -962,7 +979,11 @@ def add_message(conversation_id, role, content, task_id=None, metadata=None):
 
 
 def get_messages(conversation_id, limit=100):
-    """Get messages for a conversation"""
+    """
+    Get messages for a conversation
+    
+    UPDATED January 30, 2026: Now returns file_contents
+    """
     db = get_db()
     rows = db.execute('''
         SELECT * FROM conversation_messages 
@@ -976,17 +997,41 @@ def get_messages(conversation_id, limit=100):
 
 
 def get_conversation_context(conversation_id, max_messages=20):
-    """Get recent messages formatted for AI context"""
+    """
+    Get recent messages formatted for AI context
+    
+    UPDATED January 30, 2026: Now includes file_contents in context
+    This enables GPT-4 to handle follow-up questions about uploaded files
+    """
     messages = get_messages(conversation_id, limit=max_messages)
     
     context = []
     for msg in messages:
         context.append({
             'role': msg['role'],
-            'content': msg['content']
+            'content': msg['content'],
+            'file_contents': msg.get('file_contents')  # Include file contents if present
         })
     
     return context
+
+
+def get_conversation_file_contents(conversation_id):
+    """
+    Get the most recent file contents from a conversation
+    
+    NEW January 30, 2026: Retrieves file contents for follow-up questions
+    """
+    db = get_db()
+    row = db.execute('''
+        SELECT file_contents FROM conversation_messages 
+        WHERE conversation_id = ? AND file_contents IS NOT NULL
+        ORDER BY created_at DESC
+        LIMIT 1
+    ''', (conversation_id,)).fetchone()
+    db.close()
+    
+    return row['file_contents'] if row else None
 
 
 # ============================================================================
