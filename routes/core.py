@@ -1818,9 +1818,9 @@ Be comprehensive and professional in your response."""
                 
                               
                 if orchestrator == 'opus':
-                    response = call_claude_opus(completion_prompt, conversation_history=conversation_context)
+                    response = call_claude_opus(completion_prompt, conversation_history=conversation_context, files_attached=bool(file_contents))
                 else:
-                    response = call_claude_sonnet(completion_prompt, conversation_history=conversation_context)
+                    response = call_claude_sonnet(completion_prompt, conversation_history=conversation_context, files_attached=bool(file_contents))
                 
                 if isinstance(response, dict):
                     if response.get('error'):
