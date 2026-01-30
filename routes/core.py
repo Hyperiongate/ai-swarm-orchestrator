@@ -1201,6 +1201,8 @@ def orchestrate():
     - Only DuPont and Southern Swing keep their names (industry standards)
     """
     try:
+        try:
+        # Parse request data (JSON or FormData)
         if request.is_json:
             data = request.json
             user_request = data.get('request')
@@ -1208,15 +1210,44 @@ def orchestrate():
             project_id = data.get('project_id')
             conversation_id = data.get('conversation_id')
             mode = data.get('mode', 'quick')
+            file_paths = []  # No files with JSON requests
         else:
             user_request = request.form.get('request')
             enable_consensus = request.form.get('enable_consensus', 'true').lower() == 'true'
             project_id = request.form.get('project_id')
             conversation_id = request.form.get('conversation_id')
             mode = request.form.get('mode', 'quick')
+            
+            # 🔧 CRITICAL FIX (January 29, 2026): Handle file uploads
+            file_paths = []
+            if 'files' in request.files:
+                files = request.files.getlist('files')
+                
+                # Create upload directory
+                if project_id:
+                    upload_dir = f'/tmp/projects/{project_id}'
+                else:
+                    upload_dir = f'/tmp/uploads'
+                os.makedirs(upload_dir, exist_ok=True)
+                
+                # Save each file and track the path
+                for file in files:
+                    if file and file.filename:
+                        filename = secure_filename(file.filename)
+                        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                        name, ext = os.path.splitext(filename)
+                        filename = f"{name}_{timestamp}{ext}"
+                        file_path = os.path.join(upload_dir, filename)
+                        file.save(file_path)
+                        file_paths.append(file_path)
+                        print(f"📎 Saved uploaded file: {filename}")
         
         if not user_request:
             return jsonify({'success': False, 'error': 'Request text required'}), 400
+        
+        # Log file attachment info
+        if file_paths:
+            print(f"📎 {len(file_paths)} file(s) attached to request")
         
         overall_start = time.time()
         
@@ -1631,7 +1662,7 @@ def orchestrate():
         # Regular AI orchestration
         try:
             print(f"Analyzing task: {user_request[:100]}...")
-            analysis = analyze_task_with_sonnet(user_request, knowledge_base=knowledge_base)
+            analysis = analyze_task_with_sonnet(user_request, knowledge_base=knowledge_base, file_paths=file_paths)
             task_type = analysis.get('task_type', 'general')
             confidence = analysis.get('confidence', 0.5)
             escalate = analysis.get('escalate_to_opus', False)
@@ -1649,7 +1680,7 @@ def orchestrate():
                 print("Escalating to Opus for strategic guidance...")
                 orchestrator = 'opus'
                 try:
-                    opus_result = handle_with_opus(user_request, analysis, knowledge_base=knowledge_base)
+                    opus_result = handle_with_opus(user_request, analysis, knowledge_base=knowledge_base, file_paths=file_paths)
                     opus_guidance = opus_result.get('strategic_analysis', '')
                     if opus_result.get('specialist_assignments'):
                         for assignment in opus_result.get('specialist_assignments', []):
@@ -1670,7 +1701,7 @@ def orchestrate():
                         specialist = specialist_info
                         specialist_task = user_request
                     if specialist and specialist.lower() != 'none':
-                        result = execute_specialist_task(specialist, specialist_task)
+                        result = execute_specialist_task(specialist, specialist_task, file_paths=file_paths)
                         specialist_results.append(result)
                         if result.get('success') and result.get('output'):
                             specialist_output = result.get('output')
