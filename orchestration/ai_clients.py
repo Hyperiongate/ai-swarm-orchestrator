@@ -1,9 +1,16 @@
 """
 AI Clients Module
 Created: January 21, 2026
-Last Updated: January 29, 2026 - ROBUST CAPABILITY INJECTION FIX
+Last Updated: January 30, 2026 - CRITICAL FILE ATTACHMENT FIX
 
 CHANGES IN THIS VERSION:
+- January 30, 2026: CRITICAL FILE ATTACHMENT AWARENESS FIX
+  * Added files_attached parameter to call_claude_sonnet()
+  * Added files_attached parameter to call_claude_opus()
+  * When files are attached, AI receives EXPLICIT WARNING it cannot ignore
+  * This forces AI to acknowledge and read attached files
+  * Fixes pattern-matching issue where AI says "I don't see files"
+
 - January 29, 2026: ROBUST CAPABILITY INJECTION
   * CRITICAL FIX: ALL AI calls now inject system capabilities
   * call_claude_sonnet() now ALWAYS knows what it can do
@@ -58,7 +65,7 @@ except ImportError:
     def get_system_capabilities_prompt():
         return ""
 
-def call_claude_sonnet(prompt, max_tokens=4000, conversation_history=None):
+def call_claude_sonnet(prompt, max_tokens=4000, conversation_history=None, files_attached=False):
     """
     Call Claude Sonnet (primary orchestrator)
     
@@ -66,10 +73,11 @@ def call_claude_sonnet(prompt, max_tokens=4000, conversation_history=None):
         prompt: The current user request/prompt
         max_tokens: Maximum tokens in response
         conversation_history: Optional list of prior messages [{'role': 'user'|'assistant', 'content': '...'}]
+        files_attached: Boolean indicating if files are attached to this request
     
     Returns dict with 'content' and 'usage'
     
-    ROBUST FIX (January 29, 2026): Now ALWAYS injects system capabilities
+    CRITICAL FIX (January 30, 2026): Added files_attached parameter to force AI acknowledgment
     """
     if not anthropic_client:
         return {
@@ -81,8 +89,24 @@ def call_claude_sonnet(prompt, max_tokens=4000, conversation_history=None):
     # 🔧 CRITICAL: Inject capabilities FIRST so AI knows what it can do
     capabilities = get_system_capabilities_prompt() if CAPABILITIES_AVAILABLE else ""
     
+    # 🔧 CRITICAL FIX (January 30, 2026): Add explicit file attachment warning
+    file_warning = ""
+    if files_attached:
+        file_warning = """
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️ CRITICAL: FILES ARE ATTACHED TO THIS REQUEST
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+The user has attached files to this request. The file contents appear BELOW in the prompt.
+YOU MUST acknowledge these files and reference their content in your response.
+DO NOT say "I don't see any files" - the files ARE present and you MUST read them.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+"""
+    
     # Add formatting requirements
-    enhanced_prompt = f"{capabilities}\n\n{prompt}\n\n{config.FORMATTING_REQUIREMENTS}"
+    enhanced_prompt = f"{capabilities}\n\n{file_warning}{prompt}\n\n{config.FORMATTING_REQUIREMENTS}"
     
     try:
         # Build messages array with conversation history
@@ -147,7 +171,7 @@ def call_claude_sonnet(prompt, max_tokens=4000, conversation_history=None):
             'error': True
         }
 
-def call_claude_opus(prompt, max_tokens=4000, conversation_history=None):
+def call_claude_opus(prompt, max_tokens=4000, conversation_history=None, files_attached=False):
     """
     Call Claude Opus (strategic supervisor)
     
@@ -155,10 +179,11 @@ def call_claude_opus(prompt, max_tokens=4000, conversation_history=None):
         prompt: The current user request/prompt
         max_tokens: Maximum tokens in response
         conversation_history: Optional list of prior messages
+        files_attached: Boolean indicating if files are attached to this request
     
     Returns dict with 'content' and 'usage'
     
-    ROBUST FIX (January 29, 2026): Now ALWAYS injects system capabilities
+    CRITICAL FIX (January 30, 2026): Added files_attached parameter to force AI acknowledgment
     """
     if not anthropic_client:
         return {
@@ -170,8 +195,24 @@ def call_claude_opus(prompt, max_tokens=4000, conversation_history=None):
     # 🔧 CRITICAL: Inject capabilities FIRST so AI knows what it can do
     capabilities = get_system_capabilities_prompt() if CAPABILITIES_AVAILABLE else ""
     
+    # 🔧 CRITICAL FIX (January 30, 2026): Add explicit file attachment warning
+    file_warning = ""
+    if files_attached:
+        file_warning = """
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️ CRITICAL: FILES ARE ATTACHED TO THIS REQUEST
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+The user has attached files to this request. The file contents appear BELOW in the prompt.
+YOU MUST acknowledge these files and reference their content in your response.
+DO NOT say "I don't see any files" - the files ARE present and you MUST read them.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+"""
+    
     # Add formatting requirements
-    enhanced_prompt = f"{capabilities}\n\n{prompt}\n\n{config.FORMATTING_REQUIREMENTS}"
+    enhanced_prompt = f"{capabilities}\n\n{file_warning}{prompt}\n\n{config.FORMATTING_REQUIREMENTS}"
     
     try:
         # Build messages array with conversation history
