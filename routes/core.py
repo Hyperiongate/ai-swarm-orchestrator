@@ -1244,36 +1244,23 @@ def orchestrate():
         if not user_request:
             return jsonify({'success': False, 'error': 'Request text required'}), 400
         
-        # Log file attachment info
+       # Log file attachment info
         if file_paths:
             print(f"📎 {len(file_paths)} file(s) attached to request")
         
-        # 🔧 EXTRACT FILE CONTENTS (January 30, 2026)
+        # 🔧 EXTRACT FILE CONTENTS (January 30, 2026 - FIXED)
         file_contents = ""
         if file_paths:
             try:
-                from file_content_reader import extract_multiple_files
                 extracted = extract_multiple_files(file_paths)
                 
-                if extracted['success'] and extracted.get('files'):
-                    file_contents = "\n\n=== ATTACHED FILE CONTENTS ===\n\n"
-                    for file_data in extracted['files']:
-                        # Extract nested data structure
-                        file_name = file_data.get('file_name', 'Unknown')
-                        result = file_data.get('result', {})
-                        
-                        if result.get('success'):
-                            content = result.get('text', '')
-                            file_type = result.get('file_type', 'unknown')
-                            
-                            file_contents += f"📄 FILE: {file_name}\n"
-                            file_contents += f"Type: {file_type}\n"
-                            file_contents += f"Content:\n{content[:5000]}\n"
-                            file_contents += "\n" + "="*80 + "\n\n"
-                    
-                    print(f"✅ Extracted content from {len(extracted['files'])} file(s)")
+                if extracted['success'] and extracted.get('combined_text'):
+                    # Use the pre-formatted combined_text
+                    file_contents = f"\n\n=== ATTACHED FILE CONTENTS ===\n{extracted['combined_text']}\n=== END ATTACHED FILES ===\n\n"
+                    print(f"✅ Extracted {extracted['total_chars']} characters from {extracted['num_files']} file(s)")
                 else:
-                    print(f"⚠️ File extraction returned no files")
+                    print(f"⚠️ File extraction returned no content")
+                    file_contents = ""
             except Exception as extract_error:
                 print(f"⚠️ Could not extract file contents: {extract_error}")
                 file_contents = ""
