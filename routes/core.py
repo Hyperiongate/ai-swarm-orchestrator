@@ -1264,6 +1264,57 @@ def orchestrate():
             except Exception as extract_error:
                 print(f"⚠️ Could not extract file contents: {extract_error}")
                 file_contents = ""
+
+     # 🔧 CRITICAL FIX (January 30, 2026): Route file analysis to GPT-4
+# Anthropic API has pattern-matching issues with file uploads
+# GPT-4 handles this perfectly
+if file_contents:
+    print(f"📎 File content detected - routing to GPT-4 for analysis")
+    
+    from orchestration.ai_clients import call_gpt4
+    
+    file_analysis_prompt = f"""The user has uploaded files and asked: {user_request}
+
+Here are the file contents:
+
+{file_contents}
+
+Please analyze these files and respond to the user's request. Be specific and reference actual content from the files."""
+
+    try:
+        gpt_response = call_gpt4(file_analysis_prompt, max_tokens=4000)
+        
+        if gpt_response.get('error'):
+            print(f"⚠️ GPT-4 analysis failed, falling back to Claude")
+        else:
+            actual_output = gpt_response.get('content', '')
+            
+            # Convert to HTML
+            formatted_output = convert_markdown_to_html(actual_output)
+            
+            # Save the response
+            total_time = time.time() - overall_start
+            db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
+                      ('completed', 'gpt4_file_handler', total_time, task_id))
+            db.commit()
+            db.close()
+            
+            add_message(conversation_id, 'assistant', actual_output, task_id,
+                       {'orchestrator': 'gpt4_file_handler', 'file_analysis': True,
+                        'execution_time': total_time})
+            
+            return jsonify({
+                'success': True,
+                'task_id': task_id,
+                'conversation_id': conversation_id,
+                'result': formatted_output,
+                'orchestrator': 'gpt4_file_handler',
+                'execution_time': total_time,
+                'message': '📎 File analyzed by GPT-4 (optimized for file handling)'
+            })
+    except Exception as gpt_error:
+        print(f"GPT-4 file analysis error: {gpt_error}")
+        # Fall through to normal Claude processing
         
         overall_start = time.time()
            
