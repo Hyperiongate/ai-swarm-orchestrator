@@ -864,6 +864,10 @@ function sendMessage() {
     uploadedFiles = [];
     displayFilePreview();
     
+    // 🔧 CRITICAL FIX: Reset the file input so user can upload again
+    var fileInput = document.getElementById('fileUpload');
+    if (fileInput) fileInput.value = '';
+    
     var isFirstMessage = !conversations.find(function(c) { return c.conversation_id === currentConversationId && c.message_count > 0; });
     
     fetch('/api/orchestrate', { method: 'POST', body: formData })
