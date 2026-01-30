@@ -1249,7 +1249,32 @@ def orchestrate():
             print(f"📎 {len(file_paths)} file(s) attached to request")
         
         overall_start = time.time()
+
+# Log file attachment info
+        if file_paths:
+            print(f"📎 {len(file_paths)} file(s) attached to request")
         
+        # 🔧 EXTRACT FILE CONTENTS (January 29, 2026)
+        file_contents = ""
+        if file_paths:
+            try:
+                from file_content_reader import extract_multiple_files
+                extracted = extract_multiple_files(file_paths)
+                
+                if extracted['success'] and extracted['files']:
+                    file_contents = "\n\n=== ATTACHED FILE CONTENTS ===\n\n"
+                    for file_data in extracted['files']:
+                        file_contents += f"📄 FILE: {file_data['filename']}\n"
+                        file_contents += f"Type: {file_data['file_type']}\n"
+                        file_contents += f"Content:\n{file_data['content'][:5000]}\n"  # First 5000 chars
+                        file_contents += "\n" + "="*80 + "\n\n"
+                    print(f"✅ Extracted content from {len(extracted['files'])} file(s)")
+            except Exception as extract_error:
+                print(f"⚠️ Could not extract file contents: {extract_error}")
+                file_contents = ""
+        
+        overall_start = time.time()
+     
         # Check for clarification answers
         clarification_answers = None
         if request.is_json:
@@ -1767,7 +1792,7 @@ IMPORTANT: This project folder is managed by the system. Users don't need to cre
             if specialist_output:
                 actual_output = specialist_output
             else:
-                completion_prompt = f"""{knowledge_context}{project_context}{file_context}{conversation_history}
+                completion_prompt = f"""{knowledge_context}{project_context}{file_context}{file_contents}{conversation_history}
 
 USER REQUEST: {user_request}
 
