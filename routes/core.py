@@ -1194,11 +1194,8 @@ def orchestrate():
     """
     Main orchestration endpoint with proactive intelligence and conversation memory.
     
+    UPDATED January 30, 2026: Route file uploads to GPT-4 (Anthropic has pattern-matching issues)
     UPDATED January 26, 2026: Replaced old schedule system with pattern-based conversational system
-    - Asks for shift length (12-hour or 8-hour)
-    - Then shows available patterns for that shift length
-    - Generates visual Excel schedules with color coding
-    - Only DuPont and Southern Swing keep their names (industry standards)
     """
     try:
         # Parse request data (JSON or FormData)
@@ -1244,7 +1241,7 @@ def orchestrate():
         if not user_request:
             return jsonify({'success': False, 'error': 'Request text required'}), 400
         
-       # Log file attachment info
+        # Log file attachment info
         if file_paths:
             print(f"📎 {len(file_paths)} file(s) attached to request")
         
@@ -1264,16 +1261,30 @@ def orchestrate():
             except Exception as extract_error:
                 print(f"⚠️ Could not extract file contents: {extract_error}")
                 file_contents = ""
-
-     # 🔧 CRITICAL FIX (January 30, 2026): Route file analysis to GPT-4
-# Anthropic API has pattern-matching issues with file uploads
-# GPT-4 handles this perfectly
-if file_contents:
-    print(f"📎 File content detected - routing to GPT-4 for analysis")
-    
-    from orchestration.ai_clients import call_gpt4
-    
-    file_analysis_prompt = f"""The user has uploaded files and asked: {user_request}
+        
+        overall_start = time.time()
+        
+        # 🔧 CRITICAL FIX (January 30, 2026): Route file analysis to GPT-4
+        # Anthropic API has pattern-matching issues with file uploads - GPT-4 handles perfectly
+        if file_contents:
+            print(f"📎 File content detected ({len(file_contents)} chars) - routing to GPT-4 for analysis")
+            
+            # Create conversation and task FIRST
+            if not conversation_id:
+                conversation_id = create_conversation(mode=mode, project_id=project_id)
+                print(f"Created new conversation: {conversation_id}")
+            
+            add_message(conversation_id, 'user', user_request)
+            
+            db = get_db()
+            cursor = db.execute('INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
+                               (user_request, 'processing', conversation_id))
+            task_id = cursor.lastrowid
+            db.commit()
+            
+            from orchestration.ai_clients import call_gpt4
+            
+            file_analysis_prompt = f"""The user has uploaded files and asked: {user_request}
 
 Here are the file contents:
 
@@ -1281,43 +1292,45 @@ Here are the file contents:
 
 Please analyze these files and respond to the user's request. Be specific and reference actual content from the files."""
 
-    try:
-        gpt_response = call_gpt4(file_analysis_prompt, max_tokens=4000)
+            try:
+                gpt_response = call_gpt4(file_analysis_prompt, max_tokens=4000)
+                
+                if not gpt_response.get('error') and gpt_response.get('content'):
+                    actual_output = gpt_response.get('content', '')
+                    
+                    # Convert to HTML
+                    formatted_output = convert_markdown_to_html(actual_output)
+                    
+                    # Save the response
+                    total_time = time.time() - overall_start
+                    db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
+                              ('completed', 'gpt4_file_handler', total_time, task_id))
+                    db.commit()
+                    db.close()
+                    
+                    add_message(conversation_id, 'assistant', actual_output, task_id,
+                               {'orchestrator': 'gpt4_file_handler', 'file_analysis': True,
+                                'execution_time': total_time})
+                    
+                    return jsonify({
+                        'success': True,
+                        'task_id': task_id,
+                        'conversation_id': conversation_id,
+                        'result': formatted_output,
+                        'orchestrator': 'gpt4_file_handler',
+                        'execution_time': total_time,
+                        'message': '📎 File analyzed by GPT-4 (optimized for file handling)'
+                    })
+                else:
+                    print(f"⚠️ GPT-4 analysis failed: {gpt_response.get('content', 'Unknown error')}")
+                    db.close()
+                    # Fall through to normal Claude processing
+                    
+            except Exception as gpt_error:
+                print(f"GPT-4 file analysis error: {gpt_error}")
+                db.close()
+                # Fall through to normal Claude processing
         
-        if gpt_response.get('error'):
-            print(f"⚠️ GPT-4 analysis failed, falling back to Claude")
-        else:
-            actual_output = gpt_response.get('content', '')
-            
-            # Convert to HTML
-            formatted_output = convert_markdown_to_html(actual_output)
-            
-            # Save the response
-            total_time = time.time() - overall_start
-            db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
-                      ('completed', 'gpt4_file_handler', total_time, task_id))
-            db.commit()
-            db.close()
-            
-            add_message(conversation_id, 'assistant', actual_output, task_id,
-                       {'orchestrator': 'gpt4_file_handler', 'file_analysis': True,
-                        'execution_time': total_time})
-            
-            return jsonify({
-                'success': True,
-                'task_id': task_id,
-                'conversation_id': conversation_id,
-                'result': formatted_output,
-                'orchestrator': 'gpt4_file_handler',
-                'execution_time': total_time,
-                'message': '📎 File analyzed by GPT-4 (optimized for file handling)'
-            })
-    except Exception as gpt_error:
-        print(f"GPT-4 file analysis error: {gpt_error}")
-        # Fall through to normal Claude processing
-        
-        overall_start = time.time()
-           
         # Check for clarification answers
         clarification_answers = None
         if request.is_json:
@@ -1403,6 +1416,7 @@ Please analyze these files and respond to the user's request. Be specific and re
                            (user_request, 'processing', conversation_id))
         task_id = cursor.lastrowid
         db.commit()
+        
         # =============================================================================
         # CODE ASSISTANT - CHECK IF USER IS GIVING CODE FEEDBACK
         # =============================================================================
@@ -1501,6 +1515,7 @@ Please analyze these files and respond to the user's request. Be specific and re
         except Exception as code_assistant_error:
             print(f"Code Assistant failed: {code_assistant_error}")
             # Continue to normal orchestration
+            
         # =============================================================================
         # NEW PATTERN-BASED SCHEDULE SYSTEM - START
         # =============================================================================
@@ -1640,7 +1655,7 @@ Please analyze these files and respond to the user's request. Be specific and re
         # NEW PATTERN-BASED SCHEDULE SYSTEM - END
         # =============================================================================
 
-     # =============================================================================
+        # =============================================================================
         # INTROSPECTION DETECTION - FIXED January 29, 2026
         # Must come BEFORE regular AI orchestration to intercept introspection requests
         # =============================================================================
@@ -1726,6 +1741,7 @@ Please analyze these files and respond to the user's request. Be specific and re
         # =============================================================================
         # END INTROSPECTION DETECTION
         # =============================================================================
+        
         # Regular AI orchestration
         try:
             print(f"Analyzing task: {user_request[:100]}...")
@@ -1776,7 +1792,7 @@ Please analyze these files and respond to the user's request. Be specific and re
             from orchestration.ai_clients import call_claude_opus, call_claude_sonnet
             knowledge_context = get_knowledge_context_for_prompt(knowledge_base, user_request)
 
-         # 🔧 CRITICAL FIX (January 29, 2026): ADD PROJECT CONTEXT
+            # 🔧 CRITICAL FIX (January 29, 2026): ADD PROJECT CONTEXT
             # This tells the AI what project it's in and what capabilities it has
             project_context = ""
             if project_id:
@@ -1992,11 +2008,6 @@ Be comprehensive and professional in your response."""
         import traceback
         print(f"CRITICAL ERROR: {traceback.format_exc()}")
         return jsonify({'success': False, 'error': f'Server error: {str(e)}'}), 500
-
-
-# ============================================================================
-# OTHER EXISTING ENDPOINTS
-# ============================================================================
 
 @core_bp.route('/api/tasks', methods=['GET'])
 def get_tasks():
