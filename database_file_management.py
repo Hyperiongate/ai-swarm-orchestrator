@@ -845,6 +845,197 @@ def delete_project_file(file_id, hard_delete=False):
     return pm.delete_file(file_id, hard_delete)
 
 
+def get_all_projects_with_files():
+    """Backward compatible - get all projects with file counts"""
+    pm = get_project_manager()
+    projects = pm.list_projects(status='active', limit=1000)
+    
+    result = []
+    for proj in projects:
+        files = pm.list_files(proj['project_id'])
+        result.append({
+            'project_id': proj['project_id'],
+            'client_name': proj['client_name'],
+            'industry': proj.get('industry'),
+            'project_phase': proj.get('project_phase'),
+            'file_count': len(files)
+        })
+    
+    return result
+
+
+def get_project_file_by_name(project_id, filename):
+    """Backward compatible - get file by name"""
+    pm = get_project_manager()
+    files = pm.list_files(project_id)
+    
+    # Try exact match first
+    for file in files:
+        if file['filename'] == filename or file['original_filename'] == filename:
+            return file
+    
+    # Try fuzzy match
+    for file in files:
+        if filename in file['filename'] or filename in file['original_filename']:
+            return file
+    
+    return None
+
+
+def get_file_stats_by_project(project_id):
+    """Backward compatible - get file statistics"""
+    pm = get_project_manager()
+    files = pm.list_files(project_id)
+    
+    stats = {
+        'total_files': len(files),
+        'by_type': {},
+        'total_size_bytes': 0,
+        'uploaded_count': 0,
+        'generated_count': 0
+    }
+    
+    for file in files:
+        # Count by type
+        file_type = file.get('file_type', 'unknown')
+        stats['by_type'][file_type] = stats['by_type'].get(file_type, 0) + 1
+        
+        # Total size
+        stats['total_size_bytes'] += file.get('file_size', 0)
+        
+        # Uploaded vs generated
+        if file.get('is_generated'):
+            stats['generated_count'] += 1
+        else:
+            stats['uploaded_count'] += 1
+    
+    return stats
+
+
+def get_files_for_ai_context(project_id, max_files=5, max_chars_per_file=2000):
+    """
+    Backward compatible - Extract file content for AI context.
+    Returns formatted string with file information.
+    """
+    pm = get_project_manager()
+    files = pm.list_files(project_id)[:max_files]
+    
+    if not files:
+        return ""
+    
+    context = "\n\n=== PROJECT FILES CONTEXT ===\n"
+    context += f"This project has {len(files)} file(s) available:\n\n"
+    
+    for file in files:
+        context += f"📄 {file['original_filename']} ({file.get('file_type', 'unknown')})\n"
+        
+        if file.get('description'):
+            context += f"   Description: {file['description']}\n"
+        
+        if file.get('analysis_summary'):
+            context += f"   Summary: {file['analysis_summary']}\n"
+        
+        # Try to read file content
+        try:
+            if os.path.exists(file['file_path']):
+                with open(file['file_path'], 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read(max_chars_per_file)
+                    if content:
+                        context += f"   Preview: {content[:max_chars_per_file]}...\n"
+        except:
+            pass
+        
+        context += "\n"
+    
+    context += "=== END PROJECT FILES CONTEXT ===\n\n"
+    
+    return context
+
+
+def mark_file_as_analyzed(file_id, analysis_summary=None):
+    """Backward compatible - mark file as analyzed"""
+    pm = get_project_manager()
+    file_info = pm.get_file(file_id)
+    
+    if not file_info:
+        return False
+    
+    # Update metadata with analysis info
+    metadata = file_info.get('metadata', {})
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except:
+            metadata = {}
+    
+    metadata['is_analyzed'] = True
+    metadata['analysis_summary'] = analysis_summary
+    metadata['analyzed_at'] = datetime.now().isoformat()
+    
+    # Update in database
+    db = sqlite3.connect(DATABASE)
+    db.execute('''
+        UPDATE project_files
+        SET is_analyzed = 1,
+            analysis_summary = ?,
+            analyzed_at = CURRENT_TIMESTAMP,
+            metadata = ?
+        WHERE file_id = ?
+    ''', (analysis_summary, json.dumps(metadata), file_id))
+    
+    db.commit()
+    db.close()
+    
+    return True
+
+
+def search_project_files(project_id, search_term):
+    """Backward compatible - search files by name or description"""
+    pm = get_project_manager()
+    all_files = pm.list_files(project_id)
+    
+    results = []
+    search_lower = search_term.lower()
+    
+    for file in all_files:
+        if (search_lower in file['filename'].lower() or
+            search_lower in file['original_filename'].lower() or
+            (file.get('description') and search_lower in file['description'].lower()) or
+            (file.get('analysis_summary') and search_lower in file['analysis_summary'].lower())):
+            results.append(file)
+    
+    return results
+
+
+def update_file_metadata(file_id, **kwargs):
+    """Backward compatible - update file metadata"""
+    allowed_fields = ['description', 'category']
+    
+    updates = []
+    values = []
+    
+    for field, value in kwargs.items():
+        if field in allowed_fields:
+            updates.append(f"{field} = ?")
+            values.append(value)
+        elif field == 'metadata':
+            updates.append("metadata = ?")
+            values.append(json.dumps(value) if isinstance(value, dict) else value)
+    
+    if not updates:
+        return False
+    
+    values.append(file_id)
+    
+    db = sqlite3.connect(DATABASE)
+    query = f"UPDATE project_files SET {', '.join(updates)} WHERE file_id = ?"
+    db.execute(query, values)
+    db.commit()
+    db.close()
+    
+    return True
+
+
 if __name__ == '__main__':
     print("🔧 Initializing bulletproof project management system...")
     pm = get_project_manager()
