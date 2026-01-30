@@ -1795,6 +1795,14 @@ Do not provide meta-commentary about the task - provide the actual content reque
 Be comprehensive and professional in your response."""
                 if opus_guidance:
                     completion_prompt += f"\n\nSTRATEGIC GUIDANCE (from senior AI):\n{opus_guidance}\n\nUse this guidance to inform your response."
+
+# DEBUG: Check if file contents are in prompt
+                if file_contents:
+                    print(f"🔍 DEBUG: Prompt contains {len(file_contents)} chars of file content")
+                else:
+                    print(f"⚠️ DEBUG: file_contents is EMPTY in prompt!")
+                
+                if orchestrator == 'opus':
                 
                 if orchestrator == 'opus':
                     response = call_claude_opus(completion_prompt, conversation_history=conversation_context)
