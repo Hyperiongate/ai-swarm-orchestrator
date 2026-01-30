@@ -1784,9 +1784,11 @@ IMPORTANT: This project folder is managed by the system. Users don't need to cre
             if specialist_output:
                 actual_output = specialist_output
             else:
-                completion_prompt = f"""{knowledge_context}{project_context}{file_context}{file_contents}{conversation_history}
+                completion_prompt = f"""{knowledge_context}{project_context}{file_context}{conversation_history}
 
 USER REQUEST: {user_request}
+
+{file_contents}
 
 Please complete this request fully. Provide the actual deliverable the user is asking for.
 Do not describe what you would do - actually do it.
