@@ -1201,7 +1201,6 @@ def orchestrate():
     - Only DuPont and Southern Swing keep their names (industry standards)
     """
     try:
-        try:
         # Parse request data (JSON or FormData)
         if request.is_json:
             data = request.json
