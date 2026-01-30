@@ -1274,7 +1274,9 @@ def orchestrate():
                 conversation_id = create_conversation(mode=mode, project_id=project_id)
                 print(f"Created new conversation: {conversation_id}")
             
-            add_message(conversation_id, 'user', user_request)
+            # 🔧 SAVE USER MESSAGE WITH FILE CONTENTS (January 30, 2026)
+            # This enables GPT-4 to handle follow-up questions about uploaded files
+            add_message(conversation_id, 'user', user_request, file_contents=file_contents if file_contents else None)
             
             db = get_db()
             cursor = db.execute('INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
@@ -1330,6 +1332,68 @@ Please analyze these files and respond to the user's request. Be specific and re
                 print(f"GPT-4 file analysis error: {gpt_error}")
                 db.close()
                 # Fall through to normal Claude processing
+
+# 🔧 CHECK FOR FILE CONTENTS IN CONVERSATION HISTORY (January 30, 2026)
+        # If no files attached to THIS request, check if previous messages had files
+        if not file_contents and conversation_id:
+            from database import get_conversation_file_contents
+            file_contents = get_conversation_file_contents(conversation_id)
+            if file_contents:
+                print(f"📎 Retrieved file contents from conversation history ({len(file_contents)} chars)")
+                print(f"📎 Routing follow-up question to GPT-4")
+                
+                # Route to GPT-4 for follow-up analysis
+                db = get_db()
+                cursor = db.execute('INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
+                               (user_request, 'processing', conversation_id))
+                task_id = cursor.lastrowid
+                db.commit()
+                
+                from orchestration.ai_clients import call_gpt4
+                
+                file_analysis_prompt = f"""The user previously uploaded files and is now asking a follow-up question: {user_request}
+
+Here are the file contents from the previous upload:
+
+{file_contents}
+
+Please respond to the user's follow-up question based on these files. Be specific and reference actual content from the files."""
+
+                try:
+                    gpt_response = call_gpt4(file_analysis_prompt, max_tokens=4000)
+                    
+                    if not gpt_response.get('error') and gpt_response.get('content'):
+                        actual_output = gpt_response.get('content', '')
+                        formatted_output = convert_markdown_to_html(actual_output)
+                        
+                        total_time = time.time() - overall_start
+                        db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
+                                  ('completed', 'gpt4_file_handler', total_time, task_id))
+                        db.commit()
+                        db.close()
+                        
+                        add_message(conversation_id, 'assistant', actual_output, task_id,
+                                   {'orchestrator': 'gpt4_file_handler', 'file_analysis': True,
+                                    'execution_time': total_time})
+                        
+                        return jsonify({
+                            'success': True,
+                            'task_id': task_id,
+                            'conversation_id': conversation_id,
+                            'result': formatted_output,
+                            'orchestrator': 'gpt4_file_handler',
+                            'execution_time': total_time,
+                            'message': '📎 Follow-up question answered using previously uploaded files'
+                        })
+                    else:
+                        print(f"⚠️ GPT-4 follow-up analysis failed: {gpt_response.get('content', 'Unknown error')}")
+                        db.close()
+                        # Fall through to normal Claude processing
+                        
+                except Exception as gpt_error:
+                    print(f"GPT-4 follow-up analysis error: {gpt_error}")
+                    db.close()
+                    # Fall through to normal Claude processing
         
         # Check for clarification answers
         clarification_answers = None
