@@ -4,6 +4,12 @@ Created: January 21, 2026
 Last Updated: January 30, 2026 - FIXED FILE CONTENTS DISPLAY
 
 CHANGELOG:
+- January 30, 2026: CRITICAL FIX - FILE CONTENTS IN USER REQUEST
+  * Moved file contents from system context INTO the user request
+  * AI can no longer give reflexive "I don't see files" responses
+  * File contents are now IMPOSSIBLE to miss - part of the actual request
+  * This fixes the pattern-matching issue where AI ignores system context
+
 - January 30, 2026: CRITICAL FIX - FILE CONTENTS NOW VISIBLE TO AI
   * Added file_contents parameter to analyze_task_with_sonnet()
   * AI now receives ACTUAL FILE CONTENTS in the prompt, not just paths
@@ -160,6 +166,11 @@ def analyze_task_with_sonnet(user_request, knowledge_base=None, file_paths=None,
     """
     Sonnet analyzes task WITH system capabilities + project knowledge + FILE ATTACHMENTS.
     
+    CRITICAL FIX (January 30, 2026 - FINAL):
+    - File contents now added to USER REQUEST, not system context
+    - This prevents AI from giving reflexive "I don't see files" responses
+    - AI must acknowledge files because they're part of the actual request
+    
     CRITICAL FIX (January 30, 2026):
     - Now accepts file_contents parameter with ACTUAL file text
     - AI can now READ the files, not just see that they exist
@@ -174,7 +185,7 @@ def analyze_task_with_sonnet(user_request, knowledge_base=None, file_paths=None,
         user_request (str): The user's request
         knowledge_base: Knowledge base instance (optional)
         file_paths (list): List of file paths that were uploaded (optional)
-        file_contents (str): Extracted contents from uploaded files (optional) - NEW!
+        file_contents (str): Extracted contents from uploaded files (optional)
     
     Returns:
         dict: Analysis results with task routing decisions
@@ -199,29 +210,22 @@ You are the primary orchestrator in an AI swarm system for Shiftwork Solutions L
 
 """
     
-    # 🔧 CRITICAL FIX (January 30, 2026): Add ACTUAL FILE CONTENTS
-    # This is the missing piece - AI needs to SEE the file contents, not just know files exist
+    # 🔧 CRITICAL FIX (January 30, 2026 - FINAL): Store file contents to add to USER REQUEST
+    # This prevents the AI from pattern-matching on "can you see the file" and saying no
+    file_section = ""
     if file_contents:
-        analysis_prompt += f"""
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📎 UPLOADED FILE CONTENTS - READ CAREFULLY
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        file_section = f"""
 
-The user has uploaded file(s). Here is the COMPLETE CONTENT from those files:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📎 ATTACHED FILES - CONTENT BELOW
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 {file_contents}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-CRITICAL INSTRUCTIONS:
-✅ You CAN see and read these files - the content is shown above
-✅ The user expects you to analyze, reference, or work with this content
-✅ If asked "can you see the file?" answer YES and describe what you see
-✅ Never say "I cannot access files" - you have the content right here
-
 """
     
-    # 🔧 Add file path information (metadata about files)
+    # 🔧 Add file path information (metadata about files) - only if no contents
     elif file_paths and len(file_paths) > 0:
         analysis_prompt += f"""
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -255,7 +259,8 @@ INSTRUCTIONS FOR HANDLING ATTACHED FILES:
 
 """
     
-    analysis_prompt += f"""USER REQUEST: {user_request}
+    # 🔧 CRITICAL: Add user request WITH file contents (not before)
+    analysis_prompt += f"""USER REQUEST: {user_request}{file_section}
 
 """
     
@@ -353,6 +358,9 @@ def handle_with_opus(user_request, sonnet_analysis, knowledge_base=None, file_pa
     """
     Opus handles complex requests WITH system capabilities + knowledge + FILES.
     
+    CRITICAL FIX (January 30, 2026 - FINAL):
+    - File contents now added to USER REQUEST, not system context
+    
     CRITICAL FIX (January 30, 2026):
     - Now accepts file_contents parameter with ACTUAL file text
     - Opus can now READ the files, not just see that they exist
@@ -366,7 +374,7 @@ def handle_with_opus(user_request, sonnet_analysis, knowledge_base=None, file_pa
         sonnet_analysis (dict): Sonnet's analysis results
         knowledge_base: Knowledge base instance (optional)
         file_paths (list): List of file paths that were uploaded (optional)
-        file_contents (str): Extracted contents from uploaded files (optional) - NEW!
+        file_contents (str): Extracted contents from uploaded files (optional)
     """
     
     # 🔧 CRITICAL: Import and inject system capabilities
@@ -387,17 +395,18 @@ You are the strategic supervisor in the AI Swarm for Shiftwork Solutions LLC.
 
 """
     
-    # 🔧 CRITICAL FIX (January 30, 2026): Add ACTUAL FILE CONTENTS for Opus too
+    # 🔧 CRITICAL FIX (January 30, 2026 - FINAL): Store file contents for USER REQUEST
+    file_section = ""
     if file_contents:
-        opus_prompt += f"""
+        file_section = f"""
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📎 UPLOADED FILE CONTENTS
+📎 ATTACHED FILES - CONTENT BELOW
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 {file_contents}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 """
     # 🔧 Add file path information (metadata about files)
     elif file_paths and len(file_paths) > 0:
@@ -425,7 +434,7 @@ Sources: {', '.join(kb_check['knowledge_sources'])}
     opus_prompt += f"""
 Sonnet escalated this request to you.
 
-USER REQUEST: {user_request}
+USER REQUEST: {user_request}{file_section}
 
 SONNET'S ANALYSIS:
 {json.dumps(sonnet_analysis, indent=2)}
@@ -495,6 +504,9 @@ def execute_specialist_task(specialist_ai, task_description, knowledge_context="
     """
     Execute task with specialist AI.
     
+    CRITICAL FIX (January 30, 2026 - FINAL):
+    - File contents now part of the task description
+    
     CRITICAL FIX (January 30, 2026):
     - Now accepts file_contents parameter
     - Specialists can now READ file contents
@@ -504,7 +516,7 @@ def execute_specialist_task(specialist_ai, task_description, knowledge_context="
         task_description (str): Description of the task
         knowledge_context (str): Optional knowledge context
         file_paths (list): Optional list of attached file paths
-        file_contents (str): Optional extracted file contents - NEW!
+        file_contents (str): Optional extracted file contents
     """
     from orchestration.ai_clients import call_gpt4, call_deepseek, call_gemini
     
@@ -532,20 +544,20 @@ def execute_specialist_task(specialist_ai, task_description, knowledge_context="
     # Build prompt with capabilities
     full_prompt = f"{capabilities}\n\n"
     
-    # Add file contents if available
-    if file_contents:
-        full_prompt += f"\n📎 UPLOADED FILE CONTENTS:\n{file_contents}\n\n"
-    # Add file information if files are attached
-    elif file_paths and len(file_paths) > 0:
-        full_prompt += f"\n📎 ATTACHED FILES ({len(file_paths)}):\n"
-        for fp in file_paths:
-            full_prompt += f"- {os.path.basename(fp)} (Path: {fp})\n"
-        full_prompt += "\n"
-    
     if knowledge_context:
         full_prompt += f"{knowledge_context}\n\n"
     
-    full_prompt += f"TASK: {task_description}"
+    # Build file section for task description
+    file_section = ""
+    if file_contents:
+        file_section = f"\n\n📎 ATTACHED FILES:\n{file_contents}\n\n"
+    elif file_paths and len(file_paths) > 0:
+        file_section = f"\n\n📎 ATTACHED FILES ({len(file_paths)}):\n"
+        for fp in file_paths:
+            file_section += f"- {os.path.basename(fp)} (Path: {fp})\n"
+        file_section += "\n"
+    
+    full_prompt += f"TASK: {task_description}{file_section}"
     
     start_time = time.time()
     api_response = ai_function(full_prompt)
