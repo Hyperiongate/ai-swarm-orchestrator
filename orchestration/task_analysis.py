@@ -1,9 +1,15 @@
 """
 Task Analysis Module - WITH SYSTEM CAPABILITIES AND FILE ATTACHMENT AWARENESS
 Created: January 21, 2026
-Last Updated: January 29, 2026 - ADDED FILE ATTACHMENT AWARENESS
+Last Updated: January 30, 2026 - FIXED FILE CONTENTS DISPLAY
 
 CHANGELOG:
+- January 30, 2026: CRITICAL FIX - FILE CONTENTS NOW VISIBLE TO AI
+  * Added file_contents parameter to analyze_task_with_sonnet()
+  * AI now receives ACTUAL FILE CONTENTS in the prompt, not just paths
+  * This fixes the "I can't see files" issue - AI can now read uploaded files
+  * File contents are displayed prominently at the top of the prompt
+
 - January 29, 2026: FILE ATTACHMENT AWARENESS FIX
   * CRITICAL: AI now receives explicit information about attached files
   * When files are uploaded, AI is told: filenames, paths, and file count
@@ -150,19 +156,25 @@ def check_knowledge_base_first(user_request, knowledge_base):
         }
 
 
-def analyze_task_with_sonnet(user_request, knowledge_base=None, file_paths=None):
+def analyze_task_with_sonnet(user_request, knowledge_base=None, file_paths=None, file_contents=None):
     """
     Sonnet analyzes task WITH system capabilities + project knowledge + FILE ATTACHMENTS.
+    
+    CRITICAL FIX (January 30, 2026):
+    - Now accepts file_contents parameter with ACTUAL file text
+    - AI can now READ the files, not just see that they exist
+    - File contents displayed prominently at TOP of prompt
     
     CRITICAL FIX (January 29, 2026):
     - Injects SYSTEM CAPABILITIES so AI knows what it can do
     - AI now aware of file handling, folders, document creation, etc.
-    - **NEW**: When files are attached, AI is explicitly informed about them
+    - When files are attached, AI is explicitly informed about them
     
     Args:
         user_request (str): The user's request
         knowledge_base: Knowledge base instance (optional)
         file_paths (list): List of file paths that were uploaded (optional)
+        file_contents (str): Extracted contents from uploaded files (optional) - NEW!
     
     Returns:
         dict: Analysis results with task routing decisions
@@ -187,8 +199,30 @@ You are the primary orchestrator in an AI swarm system for Shiftwork Solutions L
 
 """
     
-    # 🔧 NEW: Add explicit file attachment information
-    if file_paths and len(file_paths) > 0:
+    # 🔧 CRITICAL FIX (January 30, 2026): Add ACTUAL FILE CONTENTS
+    # This is the missing piece - AI needs to SEE the file contents, not just know files exist
+    if file_contents:
+        analysis_prompt += f"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📎 UPLOADED FILE CONTENTS - READ CAREFULLY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+The user has uploaded file(s). Here is the COMPLETE CONTENT from those files:
+
+{file_contents}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+CRITICAL INSTRUCTIONS:
+✅ You CAN see and read these files - the content is shown above
+✅ The user expects you to analyze, reference, or work with this content
+✅ If asked "can you see the file?" answer YES and describe what you see
+✅ Never say "I cannot access files" - you have the content right here
+
+"""
+    
+    # 🔧 Add file path information (metadata about files)
+    elif file_paths and len(file_paths) > 0:
         analysis_prompt += f"""
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📎 FILES ATTACHED TO THIS REQUEST
@@ -315,19 +349,24 @@ Respond ONLY with valid JSON:
         }
 
 
-def handle_with_opus(user_request, sonnet_analysis, knowledge_base=None, file_paths=None):
+def handle_with_opus(user_request, sonnet_analysis, knowledge_base=None, file_paths=None, file_contents=None):
     """
     Opus handles complex requests WITH system capabilities + knowledge + FILES.
     
+    CRITICAL FIX (January 30, 2026):
+    - Now accepts file_contents parameter with ACTUAL file text
+    - Opus can now READ the files, not just see that they exist
+    
     CRITICAL FIX (January 29, 2026):
     - Injects SYSTEM CAPABILITIES so Opus knows what it can do
-    - **NEW**: When files are attached, Opus is explicitly informed
+    - When files are attached, Opus is explicitly informed
     
     Args:
         user_request (str): The user's request
         sonnet_analysis (dict): Sonnet's analysis results
         knowledge_base: Knowledge base instance (optional)
         file_paths (list): List of file paths that were uploaded (optional)
+        file_contents (str): Extracted contents from uploaded files (optional) - NEW!
     """
     
     # 🔧 CRITICAL: Import and inject system capabilities
@@ -348,8 +387,20 @@ You are the strategic supervisor in the AI Swarm for Shiftwork Solutions LLC.
 
 """
     
-    # 🔧 NEW: Add explicit file attachment information for Opus
-    if file_paths and len(file_paths) > 0:
+    # 🔧 CRITICAL FIX (January 30, 2026): Add ACTUAL FILE CONTENTS for Opus too
+    if file_contents:
+        opus_prompt += f"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📎 UPLOADED FILE CONTENTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+{file_contents}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+"""
+    # 🔧 Add file path information (metadata about files)
+    elif file_paths and len(file_paths) > 0:
         opus_prompt += f"""
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📎 FILES ATTACHED TO THIS REQUEST
@@ -440,15 +491,20 @@ Respond in JSON:
         }
 
 
-def execute_specialist_task(specialist_ai, task_description, knowledge_context="", file_paths=None):
+def execute_specialist_task(specialist_ai, task_description, knowledge_context="", file_paths=None, file_contents=None):
     """
     Execute task with specialist AI.
+    
+    CRITICAL FIX (January 30, 2026):
+    - Now accepts file_contents parameter
+    - Specialists can now READ file contents
     
     Args:
         specialist_ai (str): Name of the specialist AI to use
         task_description (str): Description of the task
         knowledge_context (str): Optional knowledge context
         file_paths (list): Optional list of attached file paths
+        file_contents (str): Optional extracted file contents - NEW!
     """
     from orchestration.ai_clients import call_gpt4, call_deepseek, call_gemini
     
@@ -476,8 +532,11 @@ def execute_specialist_task(specialist_ai, task_description, knowledge_context="
     # Build prompt with capabilities
     full_prompt = f"{capabilities}\n\n"
     
+    # Add file contents if available
+    if file_contents:
+        full_prompt += f"\n📎 UPLOADED FILE CONTENTS:\n{file_contents}\n\n"
     # Add file information if files are attached
-    if file_paths and len(file_paths) > 0:
+    elif file_paths and len(file_paths) > 0:
         full_prompt += f"\n📎 ATTACHED FILES ({len(file_paths)}):\n"
         for fp in file_paths:
             full_prompt += f"- {os.path.basename(fp)} (Path: {fp})\n"
