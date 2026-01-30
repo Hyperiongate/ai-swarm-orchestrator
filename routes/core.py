@@ -1255,9 +1255,9 @@ def orchestrate():
                 extracted = extract_multiple_files(file_paths)
                 
                 if extracted['success'] and extracted.get('combined_text'):
-                    # Use the pre-formatted combined_text
-                    file_contents = f"\n\n=== ATTACHED FILE CONTENTS ===\n{extracted['combined_text']}\n=== END ATTACHED FILES ===\n\n"
-                    print(f"✅ Extracted {extracted['total_chars']} characters from {extracted['num_files']} file(s)")
+                    # Use the pre-formatted combined_text (already has headers)
+                    file_contents = extracted['combined_text']
+                 
                 else:
                     print(f"⚠️ File extraction returned no content")
                     file_contents = ""
