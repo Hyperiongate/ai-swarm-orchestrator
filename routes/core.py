@@ -1678,7 +1678,7 @@ def orchestrate():
         # Regular AI orchestration
         try:
             print(f"Analyzing task: {user_request[:100]}...")
-            analysis = analyze_task_with_sonnet(user_request, knowledge_base=knowledge_base, file_paths=file_paths)
+            analysis = analyze_task_with_sonnet(user_request, knowledge_base=knowledge_base, file_paths=file_paths, file_contents=file_contents)
             task_type = analysis.get('task_type', 'general')
             confidence = analysis.get('confidence', 0.5)
             escalate = analysis.get('escalate_to_opus', False)
@@ -1696,7 +1696,7 @@ def orchestrate():
                 print("Escalating to Opus for strategic guidance...")
                 orchestrator = 'opus'
                 try:
-                    opus_result = handle_with_opus(user_request, analysis, knowledge_base=knowledge_base, file_paths=file_paths)
+                    opus_result = handle_with_opus(user_request, analysis, knowledge_base=knowledge_base, file_paths=file_paths, file_contents=file_contents)
                     opus_guidance = opus_result.get('strategic_analysis', '')
                     if opus_result.get('specialist_assignments'):
                         for assignment in opus_result.get('specialist_assignments', []):
@@ -1717,7 +1717,7 @@ def orchestrate():
                         specialist = specialist_info
                         specialist_task = user_request
                     if specialist and specialist.lower() != 'none':
-                        result = execute_specialist_task(specialist, specialist_task, file_paths=file_paths)
+                        result = execute_specialist_task(specialist, specialist_task, file_paths=file_paths, file_contents=file_contents)
                         specialist_results.append(result)
                         if result.get('success') and result.get('output'):
                             specialist_output = result.get('output')
@@ -1787,8 +1787,6 @@ IMPORTANT: This project folder is managed by the system. Users don't need to cre
                 completion_prompt = f"""{knowledge_context}{project_context}{file_context}{conversation_history}
 
 USER REQUEST: {user_request}
-
-{file_contents}
 
 Please complete this request fully. Provide the actual deliverable the user is asking for.
 Do not describe what you would do - actually do it.
