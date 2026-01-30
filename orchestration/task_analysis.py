@@ -1,23 +1,31 @@
 """
-Task Analysis Module - WITH SYSTEM CAPABILITIES
+Task Analysis Module - WITH SYSTEM CAPABILITIES AND FILE ATTACHMENT AWARENESS
 Created: January 21, 2026
-Last Updated: January 29, 2026 - ADDED SYSTEM CAPABILITIES INJECTION
+Last Updated: January 29, 2026 - ADDED FILE ATTACHMENT AWARENESS
 
 CHANGELOG:
-- January 29, 2026: SYSTEM CAPABILITIES FIX
-  * CRITICAL: Added get_system_capabilities_prompt() injection
-  * AI now knows what it can do (files, folders, documents, etc.)
-  * Capabilities injected into EVERY prompt for Sonnet and Opus
-  * Fixed "I don't have ability to..." false negatives
+- January 29, 2026: FILE ATTACHMENT AWARENESS FIX
+  * CRITICAL: AI now receives explicit information about attached files
+  * When files are uploaded, AI is told: filenames, paths, and file count
+  * This fixes the "I can't accept files" issue when files ARE attached
+  * Added file_paths parameter to analyze_task_with_sonnet()
+  * AI now knows: "USER HAS ATTACHED X FILES - you must work with them"
 
-CRITICAL: The system capabilities manifest is now injected into every
-AI call so the AI knows what it's capable of doing.
+- January 29, 2026: SYSTEM CAPABILITIES FIX
+  * Added get_system_capabilities_prompt() injection
+  * AI knows what it can do (files, folders, documents, etc.)
+  * Capabilities injected into EVERY prompt for Sonnet and Opus
+
+CRITICAL: When files are attached, the AI must be explicitly told about them.
+The capabilities prompt says "you CAN accept files" but we must also say
+"files ARE attached to this request" when they actually are.
 
 Author: Jim @ Shiftwork Solutions LLC
 """
 
 import json
 import time
+import os
 from orchestration.ai_clients import call_claude_sonnet, call_claude_opus
 from database import get_db
 
@@ -142,13 +150,22 @@ def check_knowledge_base_first(user_request, knowledge_base):
         }
 
 
-def analyze_task_with_sonnet(user_request, knowledge_base=None):
+def analyze_task_with_sonnet(user_request, knowledge_base=None, file_paths=None):
     """
-    Sonnet analyzes task WITH system capabilities + project knowledge.
+    Sonnet analyzes task WITH system capabilities + project knowledge + FILE ATTACHMENTS.
     
     CRITICAL FIX (January 29, 2026):
     - Injects SYSTEM CAPABILITIES so AI knows what it can do
     - AI now aware of file handling, folders, document creation, etc.
+    - **NEW**: When files are attached, AI is explicitly informed about them
+    
+    Args:
+        user_request (str): The user's request
+        knowledge_base: Knowledge base instance (optional)
+        file_paths (list): List of file paths that were uploaded (optional)
+    
+    Returns:
+        dict: Analysis results with task routing decisions
     """
     
     # 🔧 CRITICAL: Import and inject system capabilities
@@ -168,7 +185,43 @@ You are the primary orchestrator in an AI swarm system for Shiftwork Solutions L
 
 {kb_check['knowledge_context']}
 
-USER REQUEST: {user_request}
+"""
+    
+    # 🔧 NEW: Add explicit file attachment information
+    if file_paths and len(file_paths) > 0:
+        analysis_prompt += f"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📎 FILES ATTACHED TO THIS REQUEST
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️ CRITICAL: The user has attached {len(file_paths)} file(s) to this request.
+You MUST work with these files. They are available and accessible.
+
+ATTACHED FILES:
+"""
+        for idx, fp in enumerate(file_paths, 1):
+            filename = os.path.basename(fp)
+            file_ext = os.path.splitext(filename)[1].lower()
+            try:
+                file_size = os.path.getsize(fp)
+                size_mb = file_size / (1024 * 1024)
+                analysis_prompt += f"{idx}. {filename} ({size_mb:.2f} MB) - Type: {file_ext}\n"
+                analysis_prompt += f"   Path: {fp}\n"
+            except:
+                analysis_prompt += f"{idx}. {filename} - Type: {file_ext}\n"
+                analysis_prompt += f"   Path: {fp}\n"
+        
+        analysis_prompt += f"""
+INSTRUCTIONS FOR HANDLING ATTACHED FILES:
+- These files are REAL and ACCESSIBLE - you can work with them
+- The user expects you to analyze, process, or reference these files
+- Use your file analysis capabilities to extract content
+- If the user's request is vague, analyze the files and provide insights
+- Never say "I cannot access files" - you have these files available
+
+"""
+    
+    analysis_prompt += f"""USER REQUEST: {user_request}
 
 """
     
@@ -219,7 +272,8 @@ Respond ONLY with valid JSON:
                 "reasoning": f"API error: {api_response.get('content')}",
                 "execution_time": execution_time,
                 "knowledge_applied": kb_check['has_relevant_knowledge'],
-                "knowledge_sources": kb_check['knowledge_sources']
+                "knowledge_sources": kb_check['knowledge_sources'],
+                "files_attached": len(file_paths) if file_paths else 0
             }
         response_text = api_response.get('content', '')
     else:
@@ -237,6 +291,7 @@ Respond ONLY with valid JSON:
         analysis['knowledge_applied'] = kb_check['has_relevant_knowledge']
         analysis['knowledge_sources'] = kb_check['knowledge_sources']
         analysis['knowledge_confidence'] = kb_check['knowledge_confidence']
+        analysis['files_attached'] = len(file_paths) if file_paths else 0
         
         # Boost confidence if strong knowledge match
         if kb_check['knowledge_confidence'] > 0.7:
@@ -255,16 +310,24 @@ Respond ONLY with valid JSON:
             "reasoning": "Parse error - escalating",
             "execution_time": execution_time,
             "knowledge_applied": kb_check['has_relevant_knowledge'],
-            "knowledge_sources": kb_check['knowledge_sources']
+            "knowledge_sources": kb_check['knowledge_sources'],
+            "files_attached": len(file_paths) if file_paths else 0
         }
 
 
-def handle_with_opus(user_request, sonnet_analysis, knowledge_base=None):
+def handle_with_opus(user_request, sonnet_analysis, knowledge_base=None, file_paths=None):
     """
-    Opus handles complex requests WITH system capabilities + knowledge.
+    Opus handles complex requests WITH system capabilities + knowledge + FILES.
     
     CRITICAL FIX (January 29, 2026):
     - Injects SYSTEM CAPABILITIES so Opus knows what it can do
+    - **NEW**: When files are attached, Opus is explicitly informed
+    
+    Args:
+        user_request (str): The user's request
+        sonnet_analysis (dict): Sonnet's analysis results
+        knowledge_base: Knowledge base instance (optional)
+        file_paths (list): List of file paths that were uploaded (optional)
     """
     
     # 🔧 CRITICAL: Import and inject system capabilities
@@ -284,6 +347,23 @@ You are the strategic supervisor in the AI Swarm for Shiftwork Solutions LLC.
 {kb_check['knowledge_context']}
 
 """
+    
+    # 🔧 NEW: Add explicit file attachment information for Opus
+    if file_paths and len(file_paths) > 0:
+        opus_prompt += f"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📎 FILES ATTACHED TO THIS REQUEST
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+The user has attached {len(file_paths)} file(s). These files are available and accessible.
+
+ATTACHED FILES:
+"""
+        for idx, fp in enumerate(file_paths, 1):
+            filename = os.path.basename(fp)
+            opus_prompt += f"{idx}. {filename} (Path: {fp})\n"
+        
+        opus_prompt += "\n"
     
     if kb_check['has_relevant_knowledge']:
         opus_prompt += f"""
@@ -327,7 +407,8 @@ Respond in JSON:
                 "specialist_assignments": [],
                 "workflow": ["Manual handling required"],
                 "execution_time": execution_time,
-                "knowledge_applied": kb_check['has_relevant_knowledge']
+                "knowledge_applied": kb_check['has_relevant_knowledge'],
+                "files_attached": len(file_paths) if file_paths else 0
             }
         response_text = api_response.get('content', '')
     else:
@@ -344,6 +425,7 @@ Respond in JSON:
         opus_plan['execution_time'] = execution_time
         opus_plan['knowledge_applied'] = kb_check['has_relevant_knowledge']
         opus_plan['knowledge_sources'] = kb_check['knowledge_sources']
+        opus_plan['files_attached'] = len(file_paths) if file_paths else 0
         
         return opus_plan
         
@@ -353,12 +435,21 @@ Respond in JSON:
             "specialist_assignments": [],
             "workflow": ["Manual handling"],
             "execution_time": execution_time,
-            "knowledge_applied": kb_check['has_relevant_knowledge']
+            "knowledge_applied": kb_check['has_relevant_knowledge'],
+            "files_attached": len(file_paths) if file_paths else 0
         }
 
 
-def execute_specialist_task(specialist_ai, task_description, knowledge_context=""):
-    """Execute task with specialist AI."""
+def execute_specialist_task(specialist_ai, task_description, knowledge_context="", file_paths=None):
+    """
+    Execute task with specialist AI.
+    
+    Args:
+        specialist_ai (str): Name of the specialist AI to use
+        task_description (str): Description of the task
+        knowledge_context (str): Optional knowledge context
+        file_paths (list): Optional list of attached file paths
+    """
     from orchestration.ai_clients import call_gpt4, call_deepseek, call_gemini
     
     # 🔧 CRITICAL: Inject capabilities for specialists too
@@ -384,8 +475,17 @@ def execute_specialist_task(specialist_ai, task_description, knowledge_context="
     
     # Build prompt with capabilities
     full_prompt = f"{capabilities}\n\n"
+    
+    # Add file information if files are attached
+    if file_paths and len(file_paths) > 0:
+        full_prompt += f"\n📎 ATTACHED FILES ({len(file_paths)}):\n"
+        for fp in file_paths:
+            full_prompt += f"- {os.path.basename(fp)} (Path: {fp})\n"
+        full_prompt += "\n"
+    
     if knowledge_context:
         full_prompt += f"{knowledge_context}\n\n"
+    
     full_prompt += f"TASK: {task_description}"
     
     start_time = time.time()
@@ -405,7 +505,8 @@ def execute_specialist_task(specialist_ai, task_description, knowledge_context="
         "output": output_text,
         "execution_time": execution_time,
         "success": not has_error,
-        "had_knowledge_context": bool(knowledge_context)
+        "had_knowledge_context": bool(knowledge_context),
+        "files_available": len(file_paths) if file_paths else 0
     }
 
 
