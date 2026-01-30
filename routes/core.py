@@ -1784,9 +1784,23 @@ IMPORTANT: This project folder is managed by the system. Users don't need to cre
             if specialist_output:
                 actual_output = specialist_output
             else:
+                # 🔧 CRITICAL FIX (January 30, 2026): ADD FILE CONTENTS TO COMPLETION PROMPT
+                file_section = ""
+                if file_contents:
+                    file_section = f"""
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📎 ATTACHED FILES - READ THESE CAREFULLY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+{file_contents}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+"""
+
                 completion_prompt = f"""{knowledge_context}{project_context}{file_context}{conversation_history}
 
-USER REQUEST: {user_request}
+USER REQUEST: {user_request}{file_section}
 
 Please complete this request fully. Provide the actual deliverable the user is asking for.
 Do not describe what you would do - actually do it.
@@ -1798,9 +1812,9 @@ Be comprehensive and professional in your response."""
 
                 # DEBUG: Check if file contents are in prompt
                 if file_contents:
-                    print(f"🔍 DEBUG: Prompt contains {len(file_contents)} chars of file content")
+                    print(f"🔍 DEBUG: Completion prompt contains {len(file_contents)} chars of file content")
                 else:
-                    print(f"⚠️ DEBUG: file_contents is EMPTY in prompt!")
+                    print(f"⚠️ DEBUG: file_contents is EMPTY in completion prompt!")
                 
                               
                 if orchestrator == 'opus':
