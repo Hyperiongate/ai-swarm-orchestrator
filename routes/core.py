@@ -1929,9 +1929,23 @@ IMPORTANT: This project folder is managed by the system. Users don't need to cre
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
 
-                completion_prompt = f"""{knowledge_context}{project_context}{file_context}{conversation_history}
+                c# 🔧 CRITICAL FIX (January 31, 2026): ADD FILE CONTENTS TO PROMPT
+file_section = ""
+if file_contents:
+    file_section = f"""
 
-USER REQUEST: {user_request}{file_section}
+============================================================
+📎 ATTACHED FILES - READ THESE CAREFULLY
+============================================================
+
+{file_contents}
+
+============================================================
+"""
+
+completion_prompt = f"""{knowledge_context}{project_context}{file_context}{conversation_history}{file_section}
+
+USER REQUEST: {user_request}
 
 Please complete this request fully. Provide the actual deliverable the user is asking for.
 Do not describe what you would do - actually do it.
