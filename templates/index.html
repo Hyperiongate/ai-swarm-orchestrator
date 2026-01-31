@@ -452,6 +452,84 @@
             transform: translateY(-1px);
             box-shadow: 0 4px 12px rgba(76, 175, 80, 0.4);
         }
+        /* FILE BROWSER STYLES - Added January 31, 2026 */
+.file-item {
+    display: flex;
+    align-items: center;
+    padding: 12px;
+    border-bottom: 1px solid #eee;
+    transition: background 0.2s;
+}
+
+.file-item:hover {
+    background: #f9f9f9;
+}
+
+.file-item:last-child {
+    border-bottom: none;
+}
+
+.file-checkbox {
+    margin-right: 12px;
+    cursor: pointer;
+    width: 18px;
+    height: 18px;
+}
+
+.file-icon {
+    font-size: 24px;
+    margin-right: 12px;
+}
+
+.file-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.file-name {
+    font-weight: 500;
+    color: #333;
+    margin-bottom: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.file-meta {
+    font-size: 12px;
+    color: #999;
+}
+
+.file-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.file-action-btn {
+    background: none;
+    border: 1px solid #ddd;
+    padding: 6px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s;
+}
+
+.file-action-btn:hover {
+    background: #f5f5f5;
+    border-color: #999;
+}
+
+.file-action-group button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.file-action-group button:not(:disabled):hover {
+    opacity: 0.9;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
     </style>
 </head>
 <body>
@@ -557,6 +635,34 @@
                     <label>Phase</label>
                     <span id="projectPhase"><div class="phase-indicator">Not started</div></span>
                     <button onclick="startNewProject()" style="width: 100%; padding: 10px; margin-top: 10px; background: #667eea; color: white; border: none; border-radius: 8px; cursor: pointer;">+ New Project</button>
+                    <!-- FILE BROWSER - Added January 31, 2026 -->
+<div class="file-browser-panel" style="margin-top: 20px;">
+    <div class="file-browser-header" style="display: flex; justify-content: space-between; align-items: center; padding: 15px; background: #f5f5f5; border-radius: 8px 8px 0 0;">
+        <div>
+            <h3 style="margin: 0 0 5px 0; font-size: 16px;">📁 Project Files</h3>
+            <div id="projectFileCount" style="font-size: 12px; color: #666;">0 files</div>
+        </div>
+        <div>
+            <button onclick="selectAllFiles()" style="padding: 6px 12px; margin-right: 5px; font-size: 12px; background: #fff; border: 1px solid #ddd; border-radius: 4px; cursor: pointer;">✓ Select All</button>
+            <button onclick="clearFileSelection()" style="padding: 6px 12px; font-size: 12px; background: #fff; border: 1px solid #ddd; border-radius: 4px; cursor: pointer;">Clear</button>
+        </div>
+    </div>
+    
+    <div id="projectFilesList" class="files-list" style="max-height: 300px; overflow-y: auto; border: 1px solid #ddd; border-top: none;">
+        <div style="padding: 20px; text-align: center; color: #999;">No project selected</div>
+    </div>
+    
+    <div class="file-browser-footer" style="padding: 15px; background: #f5f5f5; border: 1px solid #ddd; border-top: none; border-radius: 0 0 8px 8px;">
+        <div id="selectedFileCount" style="font-size: 12px; color: #666; margin-bottom: 10px;">0 files selected</div>
+        <div class="file-action-group" style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button onclick="performFileAction('analyze')" disabled style="flex: 1; padding: 8px 12px; background: #2196f3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px;">🔍 Analyze</button>
+            <button onclick="performFileAction('summarize')" disabled style="flex: 1; padding: 8px 12px; background: #4caf50; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px;">📝 Summarize</button>
+            <button onclick="performFileAction('extract')" disabled style="flex: 1; padding: 8px 12px; background: #ff9800; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px;">📊 Extract Data</button>
+            <button onclick="performFileAction('compare')" disabled style="flex: 1; padding: 8px 12px; background: #9c27b0; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px;">⚖️ Compare</button>
+        </div>
+    </div>
+</div>
+
                 </div>
                 
                 <!-- Marketing Info Panel (marketing mode only) -->
