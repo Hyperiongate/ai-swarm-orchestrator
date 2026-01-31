@@ -840,7 +840,24 @@ function loadExistingProject() {
             }
         });
 }
-
+    
+    // Store selection
+    sessionStorage.setItem('lastSelectedProjectId', projectId);
+    
+    fetch('/api/project/' + projectId + '/context')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                currentProjectId = projectId;
+                document.getElementById('clientName').textContent = data.client_name;
+                document.getElementById('projectPhase').innerHTML = '<div class="phase-indicator">' + data.phase + '</div>';
+                addMessage('assistant', '✅ Loaded project for ' + data.client_name, null, 'project');
+                
+                // LOAD PROJECT FILES WHEN PROJECT IS SELECTED
+                loadProjectFiles();
+            }
+        });
+}
 function startNewProject() {
     var clientName = prompt("Enter client name:");
     if (!clientName) return;
@@ -1288,5 +1305,236 @@ if (document.readyState === 'loading') {
 } else {
     initializeApp();
 }
+
+/* I did no harm and this file is not truncated */
+// =============================================================================
+// FILE BROWSER FOR PROJECT MODE - Added January 31, 2026
+// =============================================================================
+
+var selectedFiles = [];  // Track selected file IDs
+
+/**
+ * Load and display project files in the file browser
+ */
+function loadProjectFiles() {
+    if (!currentProjectId) {
+        var fileList = document.getElementById('projectFilesList');
+        if (fileList) {
+            fileList.innerHTML = '<div style="padding: 20px; text-align: center; color: #999;">No project selected</div>';
+        }
+        return;
+    }
+    
+    fetch('/api/projects/' + currentProjectId + '/files')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success && data.files) {
+                displayProjectFiles(data.files);
+                updateFileCount(data.files.length);
+            } else {
+                var fileList = document.getElementById('projectFilesList');
+                if (fileList) {
+                    fileList.innerHTML = '<div style="padding: 20px; text-align: center; color: #999;">No files uploaded yet</div>';
+                }
+            }
+        })
+        .catch(function(err) {
+            console.error('Error loading files:', err);
+        });
+}
+
+/**
+ * Display files in the browser
+ */
+function displayProjectFiles(files) {
+    var fileList = document.getElementById('projectFilesList');
+    if (!fileList) return;
+    
+    if (files.length === 0) {
+        fileList.innerHTML = '<div style="padding: 20px; text-align: center; color: #999;">No files uploaded yet</div>';
+        return;
+    }
+    
+    var html = '';
+    files.forEach(function(file) {
+        var isSelected = selectedFiles.indexOf(file.file_id) !== -1;
+        var icon = getFileIcon(file.original_filename);
+        var sizeStr = formatFileSize(file.file_size);
+        var dateStr = new Date(file.uploaded_at).toLocaleDateString();
+        
+        html += '<div class="file-item" data-file-id="' + file.file_id + '">';
+        html += '  <input type="checkbox" class="file-checkbox" ' + (isSelected ? 'checked' : '') + ' onchange="toggleFileSelection(\'' + file.file_id + '\')">';
+        html += '  <span class="file-icon">' + icon + '</span>';
+        html += '  <div class="file-info">';
+        html += '    <div class="file-name">' + file.original_filename + '</div>';
+        html += '    <div class="file-meta">' + sizeStr + ' • ' + dateStr + '</div>';
+        html += '  </div>';
+        html += '  <div class="file-actions">';
+        html += '    <button onclick="downloadProjectFile(\'' + file.file_id + '\', \'' + file.original_filename + '\')" class="file-action-btn">⬇️</button>';
+        html += '    <button onclick="deleteProjectFile(\'' + file.file_id + '\')" class="file-action-btn">🗑️</button>';
+        html += '  </div>';
+        html += '</div>';
+    });
+    
+    fileList.innerHTML = html;
+}
+
+/**
+ * Toggle file selection
+ */
+function toggleFileSelection(fileId) {
+    var index = selectedFiles.indexOf(fileId);
+    if (index === -1) {
+        selectedFiles.push(fileId);
+    } else {
+        selectedFiles.splice(index, 1);
+    }
+    updateSelectedCount();
+}
+
+/**
+ * Select all files
+ */
+function selectAllFiles() {
+    var checkboxes = document.querySelectorAll('.file-checkbox');
+    selectedFiles = [];
+    checkboxes.forEach(function(cb) {
+        cb.checked = true;
+        var fileId = cb.closest('.file-item').getAttribute('data-file-id');
+        selectedFiles.push(fileId);
+    });
+    updateSelectedCount();
+}
+
+/**
+ * Clear selection
+ */
+function clearFileSelection() {
+    var checkboxes = document.querySelectorAll('.file-checkbox');
+    checkboxes.forEach(function(cb) {
+        cb.checked = false;
+    });
+    selectedFiles = [];
+    updateSelectedCount();
+}
+
+/**
+ * Update selected file count display
+ */
+function updateSelectedCount() {
+    var countEl = document.getElementById('selectedFileCount');
+    if (countEl) {
+        countEl.textContent = selectedFiles.length + ' file' + (selectedFiles.length !== 1 ? 's' : '') + ' selected';
+    }
+    
+    // Enable/disable action buttons
+    var actionBtns = document.querySelectorAll('.file-action-group button');
+    actionBtns.forEach(function(btn) {
+        btn.disabled = selectedFiles.length === 0;
+    });
+}
+
+/**
+ * Update total file count
+ */
+function updateFileCount(count) {
+    var countEl = document.getElementById('projectFileCount');
+    if (countEl) {
+        countEl.textContent = count + ' file' + (count !== 1 ? 's' : '');
+    }
+}
+
+/**
+ * Download a project file
+ */
+function downloadProjectFile(fileId, filename) {
+    window.open('/api/projects/' + currentProjectId + '/files/' + fileId, '_blank');
+}
+
+/**
+ * Delete a project file
+ */
+function deleteProjectFile(fileId) {
+    if (!confirm('Delete this file? This cannot be undone.')) return;
+    
+    fetch('/api/projects/' + currentProjectId + '/files/' + fileId, {
+        method: 'DELETE'
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.success) {
+            loadProjectFiles();  // Reload list
+            addMessage('assistant', '✅ File deleted successfully');
+        } else {
+            addMessage('assistant', '❌ Failed to delete file: ' + data.error);
+        }
+    });
+}
+
+/**
+ * Perform action on selected files
+ */
+function performFileAction(action) {
+    if (selectedFiles.length === 0) {
+        alert('Please select at least one file');
+        return;
+    }
+    
+    var messages = {
+        'analyze': 'Analyze these files and provide insights',
+        'summarize': 'Summarize the key points from these files',
+        'extract': 'Extract all data from these files into a structured format',
+        'compare': 'Compare these files and highlight the differences'
+    };
+    
+    var message = messages[action] || 'Process these files';
+    
+    // Get file info for display
+    fetch('/api/projects/' + currentProjectId + '/files')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                var selectedFileInfo = data.files.filter(function(f) {
+                    return selectedFiles.indexOf(f.file_id) !== -1;
+                });
+                
+                var fileNames = selectedFileInfo.map(function(f) { return f.original_filename; }).join(', ');
+                
+                // Add user message
+                addMessage('user', message + ' (' + selectedFiles.length + ' file' + (selectedFiles.length !== 1 ? 's' : '') + ': ' + fileNames + ')');
+                
+                // Send to AI with file IDs
+                var formData = new FormData();
+                formData.append('request', message);
+                formData.append('project_id', currentProjectId);
+                formData.append('file_ids', JSON.stringify(selectedFiles));
+                
+                var loading = document.getElementById('loadingIndicator');
+                loading.classList.add('active');
+                
+                fetch('/api/orchestrate', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    loading.classList.remove('active');
+                    if (data.success) {
+                        addMessage('assistant', data.result, data.task_id, 'project');
+                    } else {
+                        addMessage('assistant', '❌ Error: ' + data.error);
+                    }
+                })
+                .catch(function(err) {
+                    loading.classList.remove('active');
+                    addMessage('assistant', '❌ Error: ' + err.message);
+                });
+                
+                // Clear selection after action
+                clearFileSelection();
+            }
+        });
+}
+
 
 /* I did no harm and this file is not truncated */
