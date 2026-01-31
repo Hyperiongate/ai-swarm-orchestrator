@@ -30,16 +30,20 @@ def migrate_projects_table():
         WHERE type='table' AND name='projects'
     """)
     
-    if not cursor.fetchone():
+    table_exists = cursor.fetchone()
+    
+    if not table_exists:
         print("   ℹ️  Projects table doesn't exist - will be created by ProjectManager")
         db.close()
         return
+    
+    print("   📋 Projects table exists - checking for missing columns...")
     
     # Get existing columns
     cursor.execute("PRAGMA table_info(projects)")
     existing_columns = {row[1] for row in cursor.fetchall()}
     
-    print(f"   📋 Existing columns: {existing_columns}")
+    print(f"   📋 Current columns: {existing_columns}")
     
     # Add missing columns one by one
     columns_to_add = [
@@ -54,13 +58,16 @@ def migrate_projects_table():
     for col_name, col_type in columns_to_add:
         if col_name not in existing_columns:
             try:
+                print(f"   🔧 Adding column: {col_name}")
                 cursor.execute(f'ALTER TABLE projects ADD COLUMN {col_name} {col_type}')
+                db.commit()  # Commit after each column
                 print(f"   ✅ Added column: {col_name}")
                 added_count += 1
             except sqlite3.OperationalError as e:
                 print(f"   ⚠️  Could not add {col_name}: {e}")
+        else:
+            print(f"   ✓ Column {col_name} already exists")
     
-    db.commit()
     db.close()
     
     if added_count > 0:
