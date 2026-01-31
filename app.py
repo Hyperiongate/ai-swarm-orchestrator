@@ -170,6 +170,10 @@ except Exception as e:
 # ============================================================================
 print("🔄 Running database migrations...")
 try:
+    # Projects table migration (CRITICAL - must run before ProjectManager initializes)
+    from migrate_projects_table import migrate_projects_table
+    migrate_projects_table()
+    
     # Sprint 2 migrations
     from upgrade_database_sprint2 import upgrade_database_sprint2
     from add_resource_searches_table import add_resource_searches_table
