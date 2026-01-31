@@ -5,6 +5,13 @@ Shiftwork Solutions LLC
 =============================================================================
 
 CHANGE LOG:
+- January 31, 2026: FIXED PROJECT PERSISTENCE
+  * Changed startNewProject() to use /api/projects/create endpoint (bulletproof backend)
+  * Added description field to project creation request
+  * Updated loadSavedProjects() to handle new response format with project_phase
+  * Projects now persist across page refreshes with full bulletproof features
+  * Added sessionStorage to remember selected project after creation
+
 - January 28, 2026: ADDED MANUALS MODE
   * Added manuals mode button handling in switchMode()
   * Added manualsInfo panel show/hide logic
@@ -49,7 +56,7 @@ SECTIONS:
 5. Clipboard Functions
 6. Mode Switching (UPDATED for manuals)
 7. Quick Actions (UPDATED for manuals)
-8. Project Management
+8. Project Management (FIXED January 31, 2026)
 9. Message Handling (Core)
 10. Feedback System
 11. Statistics & Documents
@@ -762,7 +769,7 @@ function quickAction(action) {
 }
 
 // =============================================================================
-// 8. PROJECT MANAGEMENT
+// 8. PROJECT MANAGEMENT - FIXED January 31, 2026
 // =============================================================================
 
 function loadSavedProjects() {
@@ -771,15 +778,39 @@ function loadSavedProjects() {
         .then(function(data) {
             var select = document.getElementById('existingProjects');
             if (!select) return;
+            
             select.innerHTML = '<option value="">-- Select Project --</option>';
-            if (data.success && data.projects.length > 0) {
-                data.projects.forEach(function(project) {
+            
+            // Handle both old and new response formats
+            var projects = [];
+            if (data.success && data.projects) {
+                projects = data.projects;
+            } else if (Array.isArray(data)) {
+                projects = data;
+            }
+            
+            if (projects.length > 0) {
+                projects.forEach(function(project) {
                     var option = document.createElement('option');
                     option.value = project.project_id;
-                    option.textContent = project.client_name + ' (' + project.project_phase + ')';
+                    // Handle both project_phase (new) and status (old)
+                    var phase = project.project_phase || project.status || 'Active';
+                    option.textContent = project.client_name + ' (' + phase + ')';
                     select.appendChild(option);
                 });
+                
+                // Restore previous selection if stored
+                var lastProjectId = sessionStorage.getItem('lastSelectedProjectId');
+                if (lastProjectId) {
+                    select.value = lastProjectId;
+                    if (select.value === lastProjectId) {
+                        loadExistingProject();
+                    }
+                }
             }
+        })
+        .catch(function(err) {
+            console.error('Error loading projects:', err);
         });
 }
 
@@ -789,10 +820,14 @@ function loadExistingProject() {
     
     if (!projectId) {
         currentProjectId = null;
+        sessionStorage.removeItem('lastSelectedProjectId');
         document.getElementById('clientName').textContent = 'No active project';
         document.getElementById('projectPhase').innerHTML = '<div class="phase-indicator">Not started</div>';
         return;
     }
+    
+    // Store selection
+    sessionStorage.setItem('lastSelectedProjectId', projectId);
     
     fetch('/api/project/' + projectId + '/context')
         .then(function(r) { return r.json(); })
@@ -809,23 +844,54 @@ function loadExistingProject() {
 function startNewProject() {
     var clientName = prompt("Enter client name:");
     if (!clientName) return;
-    var industry = prompt("Enter industry:");
-    var facilityType = prompt("Enter facility type:");
     
-    fetch('/api/project/start', {
+    var industry = prompt("Enter industry (or press Cancel for default):");
+    var facilityType = prompt("Enter facility type (or press Cancel for default):");
+    
+    // Use bulletproof endpoint: /api/projects/create
+    fetch('/api/projects/create', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ client_name: clientName, industry: industry, facility_type: facilityType })
+        body: JSON.stringify({
+            client_name: clientName,
+            industry: industry || 'Manufacturing',
+            facility_type: facilityType || 'Production',
+            description: 'Project for ' + clientName
+        })
     })
     .then(function(r) { return r.json(); })
     .then(function(data) {
-        if (data.success) {
+        if (data.success && data.project_id) {
             currentProjectId = data.project_id;
+            
+            // Store in sessionStorage so it persists
+            sessionStorage.setItem('lastSelectedProjectId', data.project_id);
+            
+            // Update UI
             document.getElementById('clientName').textContent = clientName;
             document.getElementById('projectPhase').innerHTML = '<div class="phase-indicator">Initial Phase</div>';
+            
+            // Reload project dropdown and select the new project
             loadSavedProjects();
-            addMessage('assistant', '✅ Project started for ' + clientName + '!', null, 'project');
+            
+            // Show success message with bulletproof features
+            var successMsg = '✅ <strong>Project created for ' + clientName + '!</strong><br><br>';
+            successMsg += '📁 <strong>Project ID:</strong> ' + data.project_id + '<br><br>';
+            successMsg += '<strong>Bulletproof Features Enabled:</strong><br>';
+            successMsg += '• ✅ Persistent storage (survives page refresh)<br>';
+            successMsg += '• ✅ File management (upload/download/organize)<br>';
+            successMsg += '• ✅ Conversation tracking (full message history)<br>';
+            successMsg += '• ✅ Context storage (key-value data)<br>';
+            successMsg += '• ✅ Checklists & milestones<br>';
+            successMsg += '• ✅ Organized folder structure<br>';
+            
+            addMessage('assistant', successMsg, null, 'project');
+        } else {
+            addMessage('assistant', '❌ Error creating project: ' + (data.error || 'Unknown error'));
         }
+    })
+    .catch(function(err) {
+        addMessage('assistant', '❌ Error: ' + err.message);
     });
 }
 
@@ -1126,7 +1192,7 @@ function initializeApp() {
     
     setInterval(function() { loadStats(); loadDocuments(); }, 30000);
     
-    console.log('AI Swarm Interface initialized - Manuals mode added');
+    console.log('AI Swarm Interface initialized - Bulletproof project persistence enabled - January 31, 2026');
 }
 
 if (document.readyState === 'loading') {
