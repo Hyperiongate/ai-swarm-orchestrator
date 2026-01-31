@@ -57,12 +57,28 @@ def manual_migrate():
         db = sqlite3.connect(DATABASE)
         cursor = db.cursor()
         
+        # Check if table exists
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='projects'")
+        table_exists = cursor.fetchone()
+        
+        if not table_exists:
+            # Table doesn't exist - let ProjectManager create it
+            db.close()
+            # Force ProjectManager to create tables
+            pm.create_tables()
+            
+            # Now try again
+            db = sqlite3.connect(DATABASE)
+            cursor = db.cursor()
+        
         # Check current schema
         cursor.execute("PRAGMA table_info(projects)")
         existing_columns = {row[1] for row in cursor.fetchall()}
         
         result = {
             'success': True,
+            'database_path': DATABASE,
+            'table_existed': bool(table_exists),
             'existing_columns': list(existing_columns),
             'columns_added': []
         }
@@ -91,7 +107,12 @@ def manual_migrate():
         return jsonify(result)
         
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        import traceback
+        return jsonify({
+            'success': False, 
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
 
 
 @projects_bp.route('/api/projects/create', methods=['POST'])
