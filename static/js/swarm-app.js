@@ -837,21 +837,6 @@ function loadExistingProject() {
                 document.getElementById('clientName').textContent = data.client_name;
                 document.getElementById('projectPhase').innerHTML = '<div class="phase-indicator">' + data.phase + '</div>';
                 addMessage('assistant', '✅ Loaded project for ' + data.client_name, null, 'project');
-            }
-        });
-}
-    
-    // Store selection
-    sessionStorage.setItem('lastSelectedProjectId', projectId);
-    
-    fetch('/api/project/' + projectId + '/context')
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            if (data.success) {
-                currentProjectId = projectId;
-                document.getElementById('clientName').textContent = data.client_name;
-                document.getElementById('projectPhase').innerHTML = '<div class="phase-indicator">' + data.phase + '</div>';
-                addMessage('assistant', '✅ Loaded project for ' + data.client_name, null, 'project');
                 
                 // LOAD PROJECT FILES WHEN PROJECT IS SELECTED
                 loadProjectFiles();
