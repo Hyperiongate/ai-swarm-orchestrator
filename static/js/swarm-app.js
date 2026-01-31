@@ -848,7 +848,7 @@ function startNewProject() {
     var industry = prompt("Enter industry (or press Cancel for default):");
     var facilityType = prompt("Enter facility type (or press Cancel for default):");
     
-    // Use bulletproof endpoint: /api/projects/create
+    // Try bulletproof endpoint first: /api/projects/create
     fetch('/api/projects/create', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
@@ -858,6 +858,22 @@ function startNewProject() {
             facility_type: facilityType || 'Production',
             description: 'Project for ' + clientName
         })
+    })
+    .then(function(r) {
+        // If bulletproof endpoint fails (500 error), try legacy endpoint
+        if (!r.ok && r.status === 500) {
+            console.log('Bulletproof endpoint failed, trying legacy endpoint...');
+            return fetch('/api/project/start', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    client_name: clientName,
+                    industry: industry || 'Manufacturing',
+                    facility_type: facilityType || 'Production'
+                })
+            });
+        }
+        return r;
     })
     .then(function(r) { return r.json(); })
     .then(function(data) {
@@ -874,16 +890,13 @@ function startNewProject() {
             // Reload project dropdown and select the new project
             loadSavedProjects();
             
-            // Show success message with bulletproof features
+            // Show success message
             var successMsg = '✅ <strong>Project created for ' + clientName + '!</strong><br><br>';
             successMsg += '📁 <strong>Project ID:</strong> ' + data.project_id + '<br><br>';
-            successMsg += '<strong>Bulletproof Features Enabled:</strong><br>';
-            successMsg += '• ✅ Persistent storage (survives page refresh)<br>';
-            successMsg += '• ✅ File management (upload/download/organize)<br>';
-            successMsg += '• ✅ Conversation tracking (full message history)<br>';
-            successMsg += '• ✅ Context storage (key-value data)<br>';
-            successMsg += '• ✅ Checklists & milestones<br>';
-            successMsg += '• ✅ Organized folder structure<br>';
+            successMsg += '<strong>Project features:</strong><br>';
+            successMsg += '• ✅ Persistent storage<br>';
+            successMsg += '• ✅ File management<br>';
+            successMsg += '• ✅ Conversation tracking<br>';
             
             addMessage('assistant', successMsg, null, 'project');
         } else {
@@ -899,6 +912,37 @@ function startNewProject() {
 // 9. MESSAGE HANDLING (CORE)
 // =============================================================================
 
+
+// =============================================================================
+// 9. MESSAGE HANDLING - ROBUST FIX January 31, 2026
+// =============================================================================
+
+/**
+ * Upload files directly to project storage (bypasses AI analysis)
+ */
+function uploadFilesToProject(projectId, files) {
+    return new Promise(function(resolve, reject) {
+        var formData = new FormData();
+        files.forEach(function(file) {
+            formData.append('files', file);
+        });
+        
+        fetch('/api/projects/' + projectId + '/files', {
+            method: 'POST',
+            body: formData
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                resolve(data.files);
+            } else {
+                reject(new Error(data.error || 'Upload failed'));
+            }
+        })
+        .catch(reject);
+    });
+}
+
 function sendMessage() {
     var input = document.getElementById('userInput');
     var message = input.value.trim();
@@ -906,6 +950,50 @@ function sendMessage() {
     
     input.dataset.lastRequest = message;
     
+    // ROBUST FIX: Smart file routing for project mode
+    var hasFiles = uploadedFiles.length > 0;
+    var inProjectMode = currentMode === 'project' && currentProjectId;
+    
+    // If project mode + files = Upload to project storage FIRST
+    if (hasFiles && inProjectMode) {
+        var displayMessage = message || 'Uploading files to project';
+        displayMessage += ' (' + uploadedFiles.length + ' file' + (uploadedFiles.length > 1 ? 's' : '') + ')';
+        addMessage('user', displayMessage);
+        
+        input.value = '';
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        
+        var filesToUpload = uploadedFiles.slice();
+        uploadedFiles = [];
+        displayFilePreview();
+        
+        var fileInput = document.getElementById('fileUpload');
+        if (fileInput) fileInput.value = '';
+        
+        uploadFilesToProject(currentProjectId, filesToUpload)
+            .then(function(uploadedFileInfo) {
+                loading.classList.remove('active');
+                
+                var successMsg = '✅ <strong>Files saved to project!</strong><br><br>';
+                uploadedFileInfo.forEach(function(file) {
+                    successMsg += '📎 ' + file.original_filename + ' (' + formatFileSize(file.file_size) + ')<br>';
+                });
+                successMsg += '<br><div style="font-size: 11px; color: #666;">✓ Stored in project folder<br>✓ Available for future use<br>✓ Survives page refresh</div>';
+                
+                addMessage('assistant', successMsg, null, 'project');
+                loadStats();
+                loadDocuments();
+            })
+            .catch(function(err) {
+                loading.classList.remove('active');
+                addMessage('assistant', '❌ Upload failed: ' + err.message);
+            });
+        
+        return; // Exit - files uploaded
+    }
+    
+    // ORIGINAL BEHAVIOR: Non-project mode or no files
     var displayMessage = message || 'Uploaded files for analysis';
     if (uploadedFiles.length > 0) {
         displayMessage += ' (' + uploadedFiles.length + ' file' + (uploadedFiles.length > 1 ? 's' : '') + ' attached)';
@@ -930,7 +1018,6 @@ function sendMessage() {
     uploadedFiles = [];
     displayFilePreview();
     
-    // 🔧 CRITICAL FIX: Reset the file input so user can upload again
     var fileInput = document.getElementById('fileUpload');
     if (fileInput) fileInput.value = '';
     
@@ -987,6 +1074,7 @@ function sendMessage() {
         addMessage('assistant', '❌ Error: ' + err.message);
     });
 }
+
 
 function addMessage(role, content, taskId, mode, data) {
     var conversation = document.getElementById('conversation');
