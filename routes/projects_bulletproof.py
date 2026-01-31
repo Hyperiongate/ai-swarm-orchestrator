@@ -1,10 +1,16 @@
 """
 BULLETPROOF PROJECT API ROUTES
 Created: January 30, 2026
-Last Updated: January 30, 2026
+Last Updated: January 31, 2026 - FIXED response format for frontend compatibility
 
 Complete Flask blueprint for project management.
 Integrates with ProjectManager for reliable project handling.
+
+CHANGES:
+- January 31, 2026: Fixed /api/projects/create response format
+  * Now returns project_id at top level for frontend compatibility
+  * Frontend expects: {success: true, project_id: "..."}
+  * Added all project fields to response for full context
 
 ENDPOINTS:
 - POST   /api/projects/create          - Create new project
@@ -142,6 +148,21 @@ def create_project():
             "client_name": "ABC Manufacturing",
             "industry": "Automotive",
             "facility_type": "Assembly Plant",
+            "description": "Project for ABC Manufacturing",
+            "metadata": {...}
+        }
+    
+    Response JSON:
+        {
+            "success": true,
+            "project_id": "proj_...",
+            "client_name": "ABC Manufacturing",
+            "industry": "Automotive",
+            "facility_type": "Assembly Plant",
+            "project_phase": "discovery",
+            "status": "active",
+            "created_at": "2026-01-31...",
+            "storage_path": "/path/to/storage",
             "metadata": {...}
         }
     """
@@ -156,6 +177,7 @@ def create_project():
         facility_type = data.get('facility_type')
         metadata = data.get('metadata')
         
+        # Create project using ProjectManager
         project = pm.create_project(
             client_name=client_name,
             industry=industry,
@@ -163,13 +185,28 @@ def create_project():
             metadata=metadata
         )
         
+        # CRITICAL: Return project_id at top level for frontend compatibility
+        # Frontend expects: if (data.success && data.project_id)
         return jsonify({
             'success': True,
-            'project': project
+            'project_id': project['project_id'],
+            'client_name': project['client_name'],
+            'industry': project.get('industry'),
+            'facility_type': project.get('facility_type'),
+            'project_phase': project.get('project_phase', 'discovery'),
+            'status': project.get('status', 'active'),
+            'created_at': project.get('created_at'),
+            'storage_path': project.get('storage_path'),
+            'metadata': project.get('metadata', {})
         })
     
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        import traceback
+        return jsonify({
+            'success': False, 
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
 
 
 @projects_bp.route('/api/projects', methods=['GET'])
