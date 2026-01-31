@@ -149,28 +149,11 @@ except Exception as e:
     print(f"⚠️  Survey tables: {e}")
 
 # ============================================================================
-# INITIALIZE BULLETPROOF PROJECT MANAGEMENT (Added January 30, 2026)
-# ============================================================================
-print("🔧 Initializing Bulletproof Project Management...")
-try:
-    from database_file_management import get_project_manager
-    pm = get_project_manager()
-    app.config['PROJECT_MANAGER'] = pm
-    print("✅ Bulletproof Project Manager initialized")
-    print("   - Projects with full lifecycle management")
-    print("   - File upload/download with storage")
-    print("   - Conversation tracking")
-    print("   - Context management")
-except Exception as e:
-    print(f"⚠️  Project Manager initialization failed: {e}")
-# ============================================================================
-
-# ============================================================================
 # AUTO-RUN ALL DATABASE MIGRATIONS (SPRINTS 2 & 3)
 # ============================================================================
 print("🔄 Running database migrations...")
 try:
-    # Projects table migration (CRITICAL - must run before ProjectManager initializes)
+    # Projects table migration (CRITICAL - must run FIRST)
     from migrate_projects_table import migrate_projects_table
     migrate_projects_table()
     
@@ -198,6 +181,24 @@ except ImportError as e:
     print(f"ℹ️  Some migrations not found: {e}")
 except Exception as e:
     print(f"⚠️  Migration warning: {e}")
+# ============================================================================
+
+# ============================================================================
+# INITIALIZE BULLETPROOF PROJECT MANAGEMENT (Added January 30, 2026)
+# MUST come AFTER migrations so table columns exist
+# ============================================================================
+print("🔧 Initializing Bulletproof Project Management...")
+try:
+    from database_file_management import get_project_manager
+    pm = get_project_manager()
+    app.config['PROJECT_MANAGER'] = pm
+    print("✅ Bulletproof Project Manager initialized")
+    print("   - Projects with full lifecycle management")
+    print("   - File upload/download with storage")
+    print("   - Conversation tracking")
+    print("   - Context management")
+except Exception as e:
+    print(f"⚠️  Project Manager initialization failed: {e}")
 # ============================================================================
 
 # Initialize knowledge base
