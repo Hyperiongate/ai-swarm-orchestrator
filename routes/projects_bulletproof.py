@@ -43,7 +43,7 @@ pm = get_project_manager()
 @projects_bp.route('/api/projects/migrate', methods=['POST'])
 def manual_migrate():
     """
-    Manual migration endpoint to add missing columns to projects table.
+    Manual migration endpoint to create or fix the projects table.
     Call this once to fix the schema.
     """
     try:
@@ -61,54 +61,68 @@ def manual_migrate():
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='projects'")
         table_exists = cursor.fetchone()
         
-        if not table_exists:
-            # Table doesn't exist - create a dummy project to force table creation
-            db.close()
-            try:
-                # This will trigger ProjectManager to create the tables
-                temp_project = pm.create_project('TEMP_MIGRATION', 'Test', 'Test')
-                # Delete it immediately
-                if temp_project:
-                    pm.delete_project(temp_project['project_id'])
-            except:
-                pass  # Ignore errors, just trying to create table
-            
-            # Reconnect
-            db = sqlite3.connect(DATABASE)
-            cursor = db.cursor()
-        
-        # Check current schema
-        cursor.execute("PRAGMA table_info(projects)")
-        columns_info = cursor.fetchall()
-        existing_columns = {row[1] for row in columns_info}
-        
         result = {
             'success': True,
             'database_path': DATABASE,
             'table_existed': bool(table_exists),
-            'existing_columns': list(existing_columns),
-            'columns_added': [],
-            'column_details': [{'name': c[1], 'type': c[2]} for c in columns_info]
+            'action_taken': None
         }
         
-        # Add missing columns
-        columns_to_add = [
-            ('storage_path', 'TEXT'),
-            ('checklist_data', 'TEXT'),
-            ('milestone_data', 'TEXT'),
-            ('folder_data', 'TEXT'),
-            ('metadata', 'TEXT DEFAULT "{}"'),
-        ]
+        if not table_exists:
+            # Create table with full schema
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS projects (
+                    project_id TEXT PRIMARY KEY,
+                    client_name TEXT NOT NULL,
+                    industry TEXT,
+                    facility_type TEXT,
+                    project_phase TEXT DEFAULT 'discovery',
+                    status TEXT DEFAULT 'active',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    storage_path TEXT,
+                    checklist_data TEXT,
+                    milestone_data TEXT,
+                    folder_data TEXT,
+                    metadata TEXT DEFAULT '{}'
+                )
+            ''')
+            db.commit()
+            result['action_taken'] = 'created_table'
+            result['columns_added'] = ['all_columns_in_new_table']
+        else:
+            # Table exists - check for missing columns
+            cursor.execute("PRAGMA table_info(projects)")
+            columns_info = cursor.fetchall()
+            existing_columns = {row[1] for row in columns_info}
+            
+            result['existing_columns'] = list(existing_columns)
+            result['columns_added'] = []
+            
+            # Add missing columns
+            columns_to_add = [
+                ('storage_path', 'TEXT'),
+                ('checklist_data', 'TEXT'),
+                ('milestone_data', 'TEXT'),
+                ('folder_data', 'TEXT'),
+                ('metadata', 'TEXT DEFAULT "{}"'),
+            ]
+            
+            for col_name, col_type in columns_to_add:
+                if col_name not in existing_columns:
+                    try:
+                        cursor.execute(f'ALTER TABLE projects ADD COLUMN {col_name} {col_type}')
+                        db.commit()
+                        result['columns_added'].append(col_name)
+                    except Exception as e:
+                        result['errors'] = result.get('errors', [])
+                        result['errors'].append(f"{col_name}: {str(e)}")
+            
+            result['action_taken'] = 'added_columns' if result['columns_added'] else 'no_changes_needed'
         
-        for col_name, col_type in columns_to_add:
-            if col_name not in existing_columns:
-                try:
-                    cursor.execute(f'ALTER TABLE projects ADD COLUMN {col_name} {col_type}')
-                    db.commit()
-                    result['columns_added'].append(col_name)
-                except Exception as e:
-                    result['errors'] = result.get('errors', [])
-                    result['errors'].append(f"{col_name}: {str(e)}")
+        # Verify final schema
+        cursor.execute("PRAGMA table_info(projects)")
+        result['final_columns'] = [row[1] for row in cursor.fetchall()]
         
         db.close()
         
