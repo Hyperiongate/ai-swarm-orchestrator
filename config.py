@@ -1,9 +1,15 @@
 """
 AI SWARM ORCHESTRATOR - Configuration
 Created: January 18, 2026
-Last Updated: January 23, 2026 - ADDED ALERT SYSTEM CONFIGURATION
+Last Updated: January 31, 2026 - FIXED DATABASE PATH FOR PERSISTENCE
 
 CHANGES IN THIS VERSION:
+- January 31, 2026: FIXED DATABASE PATH FOR PERSISTENCE
+  * Changed DATABASE from 'swarm_intelligence.db' (ephemeral) 
+  * To '/mnt/project/swarm_intelligence.db' (persistent disk)
+  * Projects and files now survive server restarts and deployments
+  * Uses Render's persistent disk mounted at /mnt/project
+
 - January 23, 2026: ADDED ALERT SYSTEM CONFIGURATION
   * Added SMTP configuration for email alerts (SendGrid, Gmail, custom)
   * Added alert recipient email configuration
@@ -67,10 +73,12 @@ ENABLE_SCHEDULED_JOBS = os.environ.get('ENABLE_SCHEDULED_JOBS', 'false').lower()
 ALERT_CHECK_INTERVAL = int(os.environ.get('ALERT_CHECK_INTERVAL', 60))
 
 # ============================================================================
-# DATABASE
+# DATABASE - FIXED January 31, 2026
 # ============================================================================
 
-DATABASE = 'swarm_intelligence.db'
+# CRITICAL: Database must be on persistent disk to survive restarts
+# Render persistent disk is mounted at /mnt/project
+DATABASE = '/mnt/project/swarm_intelligence.db'
 
 # ============================================================================
 # FORMATTING REQUIREMENTS (Added to every prompt)
