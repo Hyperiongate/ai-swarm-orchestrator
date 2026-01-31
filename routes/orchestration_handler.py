@@ -1,12 +1,18 @@
 """
 Orchestration Handler - Main AI Task Processing
 Created: January 31, 2026
-Last Updated: January 31, 2026 - EXTRACTED FROM core.py FOR BETTER MAINTAINABILITY
+Last Updated: January 31, 2026 - ADDED PROGRESSIVE FILE ANALYSIS
 
 This file handles the main /api/orchestrate endpoint that processes user requests.
 Separated from core.py to make it easier to fix and maintain.
 
-CRITICAL FIX (January 31, 2026): File upload contents now properly passed to Claude
+UPDATES:
+- January 31, 2026: File upload contents now properly passed to Claude
+- January 31, 2026: Added progressive analysis for large Excel files (hybrid approach)
+  * Files under 5MB: Full analysis
+  * Files 5-25MB: Analyze first 100 rows, ask user if they want more
+  * Files over 25MB: Rejected with helpful message
+  * User can request: "next 500", "next 1000", "analyze all"
 
 Author: Jim @ Shiftwork Solutions LLC
 """
@@ -35,6 +41,7 @@ from file_content_reader import extract_multiple_files
 from code_assistant_agent import get_code_assistant
 from orchestration.proactive_agent import ProactiveAgent
 from schedule_request_handler_combined import get_combined_schedule_handler
+from progressive_file_analyzer import get_progressive_analyzer
 
 # Create blueprint
 orchestration_bp = Blueprint('orchestration', __name__)
@@ -166,6 +173,60 @@ def orchestrate():
         if file_paths:
             print(f"📎 {len(file_paths)} file(s) attached to request")
         
+        overall_start = time.time()
+        
+        # ====================================================================
+        # PROGRESSIVE FILE ANALYSIS - New Feature (January 31, 2026)
+        # ====================================================================
+        
+        # Check if this is a continuation request (user asking for more rows)
+        analyzer = get_progressive_analyzer()
+        continuation_request = analyzer.parse_user_continuation_request(user_request)
+        
+        if continuation_request and conversation_id:
+            # User is requesting more data from a previous file upload
+            # Retrieve file path from session
+            file_analysis_state = session.get(f'file_analysis_{conversation_id}')
+            
+            if file_analysis_state:
+                return handle_progressive_continuation(
+                    conversation_id=conversation_id,
+                    user_request=user_request,
+                    continuation_request=continuation_request,
+                    file_analysis_state=file_analysis_state,
+                    overall_start=overall_start
+                )
+        
+        # Check for large Excel files that need progressive analysis
+        if file_paths:
+            for file_path in file_paths:
+                file_info = analyzer.get_file_info(file_path)
+                
+                # Reject files that are too large
+                if file_info.get('is_too_large'):
+                    file_size_mb = file_info.get('file_size_mb', 0)
+                    return jsonify({
+                        'success': False,
+                        'error': f'File too large ({file_size_mb}MB). Maximum file size is 25MB.',
+                        'suggestion': 'Please reduce file size by:\n- Filtering to specific date range\n- Removing unnecessary columns\n- Splitting into multiple smaller files\n- Exporting only relevant sheets'
+                    }), 413
+                
+                # Handle large files with progressive analysis
+                if file_info.get('is_large') and file_info.get('file_type') in ['.xlsx', '.xls']:
+                    return handle_large_excel_initial(
+                        file_path=file_path,
+                        user_request=user_request,
+                        conversation_id=conversation_id,
+                        project_id=project_id,
+                        mode=mode,
+                        file_info=file_info,
+                        overall_start=overall_start
+                    )
+        
+        # ====================================================================
+        # STANDARD FILE HANDLING (Small files - under 5MB)
+        # ====================================================================
+        
         # Extract file contents
         file_contents = ""
         if file_paths:
@@ -173,6 +234,11 @@ def orchestrate():
                 extracted = extract_multiple_files(file_paths)
                 if extracted['success'] and extracted.get('combined_text'):
                     file_contents = extracted['combined_text']
+                    
+                    # Check if extracted content is too long (over 50,000 chars)
+                    if len(file_contents) > 50000:
+                        print(f"⚠️ File content very large ({len(file_contents)} chars) - truncating")
+                        file_contents = file_contents[:50000] + f"\n\n... (truncated {len(file_contents) - 50000} characters for performance)"
                 else:
                     print(f"⚠️ File extraction returned no content")
             except Exception as extract_error:
@@ -868,6 +934,214 @@ Be comprehensive and professional."""
         import traceback
         print(f"CRITICAL ERROR: {traceback.format_exc()}")
         return jsonify({'success': False, 'error': f'Server error: {str(e)}'}), 500
+
+
+def handle_large_excel_initial(file_path, user_request, conversation_id, project_id, mode, file_info, overall_start):
+    """
+    Handle initial upload of a large Excel file - analyze first 100 rows.
+    Added: January 31, 2026
+    """
+    try:
+        analyzer = get_progressive_analyzer()
+        
+        # Extract first 100 rows
+        chunk_result = analyzer.extract_excel_chunk(file_path, start_row=0, num_rows=100)
+        
+        if not chunk_result['success']:
+            return jsonify({
+                'success': False,
+                'error': f"Could not analyze Excel file: {chunk_result.get('error')}"
+            }), 500
+        
+        # Create conversation if needed
+        if not conversation_id:
+            conversation_id = create_conversation(mode=mode, project_id=project_id)
+            print(f"Created new conversation: {conversation_id}")
+        
+        # Store file analysis state in session
+        session[f'file_analysis_{conversation_id}'] = {
+            'file_path': file_path,
+            'current_position': chunk_result['end_row'],
+            'total_rows': chunk_result['total_rows'],
+            'columns': chunk_result['columns'],
+            'file_name': os.path.basename(file_path),
+            'file_size_mb': file_info['file_size_mb']
+        }
+        
+        # Create task
+        db = get_db()
+        cursor = db.execute('INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
+                           (user_request, 'processing', conversation_id))
+        task_id = cursor.lastrowid
+        db.commit()
+        
+        # Build analysis prompt
+        from orchestration.ai_clients import call_gpt4
+        
+        analysis_prompt = f"""The user uploaded a large Excel file ({file_info['file_size_mb']}MB, {chunk_result['total_rows']:,} rows) and asked: {user_request}
+
+This is a LARGE file, so I'm showing you the FIRST 100 ROWS as a preview.
+
+{chunk_result['summary']}
+
+{chunk_result['text_preview']}
+
+Please analyze this preview and respond to the user's request based on what you can see in these first 100 rows."""
+
+        gpt_response = call_gpt4(analysis_prompt, max_tokens=3000)
+        
+        if not gpt_response.get('error') and gpt_response.get('content'):
+            ai_analysis = gpt_response.get('content', '')
+            
+            # Add continuation prompt
+            continuation_prompt = analyzer.generate_continuation_prompt(chunk_result)
+            full_response = ai_analysis + continuation_prompt
+            
+            formatted_output = convert_markdown_to_html(full_response)
+            
+            total_time = time.time() - overall_start
+            db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
+                      ('completed', 'gpt4_progressive_excel', total_time, task_id))
+            db.commit()
+            db.close()
+            
+            add_message(conversation_id, 'assistant', full_response, task_id,
+                       {'orchestrator': 'gpt4_progressive_excel', 'rows_analyzed': 100, 
+                        'total_rows': chunk_result['total_rows'], 'execution_time': total_time})
+            
+            return jsonify({
+                'success': True,
+                'task_id': task_id,
+                'conversation_id': conversation_id,
+                'result': formatted_output,
+                'orchestrator': 'gpt4_progressive_excel',
+                'execution_time': total_time,
+                'progressive_analysis': True,
+                'rows_analyzed': 100,
+                'total_rows': chunk_result['total_rows'],
+                'rows_remaining': chunk_result['rows_remaining']
+            })
+        else:
+            db.close()
+            return jsonify({
+                'success': False,
+                'error': 'Could not analyze Excel file'
+            }), 500
+            
+    except Exception as e:
+        import traceback
+        print(f"Large Excel handling error: {traceback.format_exc()}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+def handle_progressive_continuation(conversation_id, user_request, continuation_request, file_analysis_state, overall_start):
+    """
+    Handle user requesting more rows from a large Excel file.
+    Added: January 31, 2026
+    """
+    try:
+        analyzer = get_progressive_analyzer()
+        
+        file_path = file_analysis_state['file_path']
+        current_position = file_analysis_state['current_position']
+        total_rows = file_analysis_state['total_rows']
+        
+        # Determine how many rows to analyze
+        action = continuation_request['action']
+        
+        if action == 'analyze_next':
+            num_rows = continuation_request['num_rows']
+            start_row = current_position
+        elif action == 'analyze_all':
+            num_rows = None  # All remaining
+            start_row = current_position
+        elif action == 'analyze_range':
+            start_row = continuation_request['start_row']
+            num_rows = continuation_request['end_row'] - start_row
+        else:
+            return jsonify({'success': False, 'error': 'Invalid continuation action'}), 400
+        
+        # Extract the requested chunk
+        chunk_result = analyzer.extract_excel_chunk(file_path, start_row=start_row, num_rows=num_rows)
+        
+        if not chunk_result['success']:
+            return jsonify({
+                'success': False,
+                'error': f"Could not extract data: {chunk_result.get('error')}"
+            }), 500
+        
+        # Update session state
+        session[f'file_analysis_{conversation_id}']['current_position'] = chunk_result['end_row']
+        
+        # Create task
+        db = get_db()
+        cursor = db.execute('INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
+                           (user_request, 'processing', conversation_id))
+        task_id = cursor.lastrowid
+        db.commit()
+        
+        # Build analysis prompt
+        from orchestration.ai_clients import call_gpt4
+        
+        analysis_prompt = f"""The user requested more data from their Excel file. They said: "{user_request}"
+
+Here is the next chunk of data:
+
+{chunk_result['summary']}
+
+{chunk_result['text_preview']}
+
+Please analyze this data and respond to the user's request."""
+
+        gpt_response = call_gpt4(analysis_prompt, max_tokens=3000)
+        
+        if not gpt_response.get('error') and gpt_response.get('content'):
+            ai_analysis = gpt_response.get('content', '')
+            
+            # Add continuation prompt if more rows remain
+            if chunk_result['rows_remaining'] > 0:
+                continuation_prompt = analyzer.generate_continuation_prompt(chunk_result)
+                full_response = ai_analysis + continuation_prompt
+            else:
+                full_response = ai_analysis + "\n\n✅ **Analysis complete!** All rows have been analyzed."
+                # Clear session state
+                session.pop(f'file_analysis_{conversation_id}', None)
+            
+            formatted_output = convert_markdown_to_html(full_response)
+            
+            total_time = time.time() - overall_start
+            db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
+                      ('completed', 'gpt4_progressive_excel', total_time, task_id))
+            db.commit()
+            db.close()
+            
+            add_message(conversation_id, 'assistant', full_response, task_id,
+                       {'orchestrator': 'gpt4_progressive_excel', 'rows_analyzed': chunk_result['rows_analyzed'],
+                        'total_rows': total_rows, 'execution_time': total_time})
+            
+            return jsonify({
+                'success': True,
+                'task_id': task_id,
+                'conversation_id': conversation_id,
+                'result': formatted_output,
+                'orchestrator': 'gpt4_progressive_excel',
+                'execution_time': total_time,
+                'progressive_analysis': True,
+                'rows_analyzed': chunk_result['rows_analyzed'],
+                'total_rows': total_rows,
+                'rows_remaining': chunk_result['rows_remaining']
+            })
+        else:
+            db.close()
+            return jsonify({
+                'success': False,
+                'error': 'Could not analyze data'
+            }), 500
+            
+    except Exception as e:
+        import traceback
+        print(f"Progressive continuation error: {traceback.format_exc()}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 # I did no harm and this file is not truncated
