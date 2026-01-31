@@ -639,6 +639,8 @@ from routes.core import core_bp
 from routes.survey import survey_bp
 app.register_blueprint(core_bp)
 app.register_blueprint(survey_bp)
+from routes.orchestration_handler import orchestration_bp
+app.register_blueprint(orchestration_bp)
 
 # ============================================================================
 # BULLETPROOF PROJECT MANAGEMENT BLUEPRINT (Added January 30, 2026)
