@@ -40,6 +40,60 @@ pm = get_project_manager()
 # PROJECT MANAGEMENT ENDPOINTS
 # ============================================================================
 
+@projects_bp.route('/api/projects/migrate', methods=['POST'])
+def manual_migrate():
+    """
+    Manual migration endpoint to add missing columns to projects table.
+    Call this once to fix the schema.
+    """
+    try:
+        import sqlite3
+        import os
+        
+        DATABASE = os.environ.get('DATABASE_URL', 'swarm.db')
+        if DATABASE.startswith('postgres'):
+            DATABASE = 'swarm.db'
+        
+        db = sqlite3.connect(DATABASE)
+        cursor = db.cursor()
+        
+        # Check current schema
+        cursor.execute("PRAGMA table_info(projects)")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+        
+        result = {
+            'success': True,
+            'existing_columns': list(existing_columns),
+            'columns_added': []
+        }
+        
+        # Add missing columns
+        columns_to_add = [
+            ('storage_path', 'TEXT'),
+            ('checklist_data', 'TEXT'),
+            ('milestone_data', 'TEXT'),
+            ('folder_data', 'TEXT'),
+            ('metadata', 'TEXT DEFAULT "{}"'),
+        ]
+        
+        for col_name, col_type in columns_to_add:
+            if col_name not in existing_columns:
+                try:
+                    cursor.execute(f'ALTER TABLE projects ADD COLUMN {col_name} {col_type}')
+                    db.commit()
+                    result['columns_added'].append(col_name)
+                except Exception as e:
+                    result['errors'] = result.get('errors', [])
+                    result['errors'].append(f"{col_name}: {str(e)}")
+        
+        db.close()
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @projects_bp.route('/api/projects/create', methods=['POST'])
 def create_project():
     """
