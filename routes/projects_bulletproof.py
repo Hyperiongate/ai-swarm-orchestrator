@@ -62,25 +62,33 @@ def manual_migrate():
         table_exists = cursor.fetchone()
         
         if not table_exists:
-            # Table doesn't exist - let ProjectManager create it
+            # Table doesn't exist - create a dummy project to force table creation
             db.close()
-            # Force ProjectManager to create tables
-            pm.create_tables()
+            try:
+                # This will trigger ProjectManager to create the tables
+                temp_project = pm.create_project('TEMP_MIGRATION', 'Test', 'Test')
+                # Delete it immediately
+                if temp_project:
+                    pm.delete_project(temp_project['project_id'])
+            except:
+                pass  # Ignore errors, just trying to create table
             
-            # Now try again
+            # Reconnect
             db = sqlite3.connect(DATABASE)
             cursor = db.cursor()
         
         # Check current schema
         cursor.execute("PRAGMA table_info(projects)")
-        existing_columns = {row[1] for row in cursor.fetchall()}
+        columns_info = cursor.fetchall()
+        existing_columns = {row[1] for row in columns_info}
         
         result = {
             'success': True,
             'database_path': DATABASE,
             'table_existed': bool(table_exists),
             'existing_columns': list(existing_columns),
-            'columns_added': []
+            'columns_added': [],
+            'column_details': [{'name': c[1], 'type': c[2]} for c in columns_info]
         }
         
         # Add missing columns
