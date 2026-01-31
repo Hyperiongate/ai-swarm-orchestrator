@@ -638,8 +638,12 @@ app.register_blueprint(survey_bp)
 # ============================================================================
 # BULLETPROOF PROJECT MANAGEMENT BLUEPRINT (Added January 30, 2026)
 # ============================================================================
+print("🔍 DEBUG: About to import bulletproof project routes...")
 try:
+    print("🔍 DEBUG: Attempting import from routes.projects_bulletproof...")
     from routes.projects_bulletproof import projects_bp
+    print("🔍 DEBUG: Import successful! projects_bp =", projects_bp)
+    print("🔍 DEBUG: Registering blueprint...")
     app.register_blueprint(projects_bp)
     print("✅ Bulletproof Project Management API registered")
     print("   - 15 production-ready endpoints")
@@ -648,9 +652,15 @@ try:
     print("   - Conversation tracking")
     print("   - Context persistence")
 except ImportError as e:
-    print(f"ℹ️  Bulletproof Project Management routes not found: {e}")
+    print(f"❌ IMPORT ERROR: Bulletproof Project Management routes not found")
+    print(f"   Error details: {e}")
+    import traceback
+    print(f"   Traceback: {traceback.format_exc()}")
 except Exception as e:
-    print(f"⚠️  Bulletproof Project Management registration failed: {e}")
+    print(f"❌ EXCEPTION: Bulletproof Project Management registration failed")
+    print(f"   Error details: {e}")
+    import traceback
+    print(f"   Traceback: {traceback.format_exc()}")
 # ============================================================================
 
 # ============================================================================
