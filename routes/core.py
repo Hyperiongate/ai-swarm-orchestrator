@@ -1927,7 +1927,7 @@ IMPORTANT: This project folder is managed by the system. Users don't need to cre
 {file_contents}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-"""
+    """
 
                 completion_prompt = f"""{knowledge_context}{project_context}{file_context}{conversation_history}{file_section}
 
