@@ -1928,6 +1928,16 @@ IMPORTANT: This project folder is managed by the system. Users don't need to cre
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
+completion_prompt = f"""{knowledge_context}{project_context}{file_context}{conversation_history}{file_section}
+
+USER REQUEST: {user_request}
+
+Please complete this request fully. Provide the actual deliverable the user is asking for.
+Do not describe what you would do - actually do it.
+Do not provide meta-commentary about the task - provide the actual content requested.
+
+Be comprehensive and professional in your response."""
+
 
                 if opus_guidance:
                     completion_prompt += f"\n\nSTRATEGIC GUIDANCE (from senior AI):\n{opus_guidance}\n\nUse this guidance to inform your response."
