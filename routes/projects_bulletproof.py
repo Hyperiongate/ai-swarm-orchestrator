@@ -28,6 +28,8 @@ from flask import Blueprint, request, jsonify, send_file
 from werkzeug.utils import secure_filename
 import os
 from database_file_management import get_project_manager
+from config import DATABASE  # Use same DATABASE as ProjectManager
+import sqlite3
 
 # Create blueprint
 projects_bp = Blueprint('projects', __name__)
@@ -47,14 +49,7 @@ def manual_migrate():
     Call this once to fix the schema.
     """
     try:
-        import sqlite3
-        import os
-        
-        DATABASE = os.environ.get('DATABASE_URL', 'swarm.db')
-        if DATABASE.startswith('postgres'):
-            DATABASE = 'swarm.db'
-        
-        db = sqlite3.connect(DATABASE)
+        db = sqlite3.connect(DATABASE)  # Use same DATABASE as ProjectManager
         cursor = db.cursor()
         
         # Check if table exists
@@ -63,7 +58,7 @@ def manual_migrate():
         
         result = {
             'success': True,
-            'database_path': DATABASE,
+            'database_path': DATABASE,  # Use imported DATABASE constant
             'table_existed': bool(table_exists),
             'action_taken': None
         }
