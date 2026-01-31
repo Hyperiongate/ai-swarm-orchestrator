@@ -1,7 +1,12 @@
 """
 Database File Management - UNIFIED PRODUCTION VERSION
 Created: January 28, 2026
-Last Updated: January 30, 2026 - Complete rebuild with bulletproof project management
+Last Updated: January 31, 2026 - ADDED FILE_IDS PARAMETER SUPPORT
+
+CHANGELOG January 31, 2026:
+- CRITICAL FIX: Added file_ids parameter to get_files_for_ai_context()
+- Now supports selective file retrieval for file browser feature
+- Maintains backward compatibility
 
 CHANGELOG January 30, 2026:
 - COMPLETE REBUILD: Merged Sprint 2 features + bulletproof persistence
@@ -24,6 +29,7 @@ FEATURES:
 ✅ Search projects and files
 ✅ Complete project summaries
 ✅ All data persists in database
+✅ Selective file retrieval by IDs (NEW!)
 
 Author: Jim @ Shiftwork Solutions LLC
 """
@@ -891,8 +897,8 @@ def get_file_stats_by_project(project_id):
         'total_files': len(files),
         'by_type': {},
         'total_size_bytes': 0,
-        'uploaded_count': 0,
-        'generated_count': 0
+        'uploaded_files': 0,
+        'generated_files': 0
     }
     
     for file in files:
@@ -905,20 +911,42 @@ def get_file_stats_by_project(project_id):
         
         # Uploaded vs generated
         if file.get('is_generated'):
-            stats['generated_count'] += 1
+            stats['generated_files'] += 1
         else:
-            stats['uploaded_count'] += 1
+            stats['uploaded_files'] += 1
     
     return stats
 
 
-def get_files_for_ai_context(project_id, max_files=5, max_chars_per_file=2000):
+def get_files_for_ai_context(project_id, max_files=5, max_chars_per_file=2000, file_ids=None):
     """
-    Backward compatible - Extract file content for AI context.
+    Extract file content for AI context.
     Returns formatted string with file information.
+    
+    UPDATED January 31, 2026: Added file_ids parameter for selective file retrieval
+    
+    Args:
+        project_id: Project ID
+        max_files: Maximum number of files to include (default: 5)
+        max_chars_per_file: Max characters per file preview (default: 2000)
+        file_ids: Optional list of specific file IDs to retrieve (NEW!)
+    
+    Returns:
+        Formatted string with file information and content
     """
     pm = get_project_manager()
-    files = pm.list_files(project_id)[:max_files]
+    
+    # NEW: If file_ids specified, get only those specific files
+    if file_ids:
+        files = []
+        for file_id in file_ids:
+            file_info = pm.get_file(file_id)
+            if file_info:
+                files.append(file_info)
+        print(f"✅ Retrieved {len(files)} specific file(s) by ID")
+    else:
+        # Original behavior: get first max_files
+        files = pm.list_files(project_id)[:max_files]
     
     if not files:
         return ""
@@ -1046,5 +1074,6 @@ if __name__ == '__main__':
     print("  - Track conversations")
     print("  - Manage project context")
     print("  - Get complete project summaries")
+    print("  - Retrieve files by IDs (NEW!)")
 
 # I did no harm and this file is not truncated
