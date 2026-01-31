@@ -166,7 +166,61 @@ def orchestrate():
                         file.save(file_path)
                         file_paths.append(file_path)
                         print(f"📎 Saved uploaded file: {filename}")
+        # ====================================================================
+        # FILE BROWSER SUPPORT - Handle file_ids from project file selection
+        # Added: January 31, 2026
+        # ====================================================================
         
+        # Check if user selected files from project (file_ids parameter)
+        file_ids_param = None
+        if request.is_json:
+            file_ids_param = data.get('file_ids')
+        else:
+            file_ids_param = request.form.get('file_ids')
+        
+        if file_ids_param and project_id:
+            try:
+                # Parse file_ids (comes as JSON string)
+                if isinstance(file_ids_param, str):
+                    import json
+                    file_ids = json.loads(file_ids_param)
+                else:
+                    file_ids = file_ids_param
+                
+                if file_ids and len(file_ids) > 0:
+                    print(f"📎 User selected {len(file_ids)} file(s) from project {project_id}")
+                    
+                    # Fetch file context from database
+                    from database_file_management import get_files_for_ai_context
+                    
+                    # Get detailed file info with actual file contents
+                    selected_file_context = get_files_for_ai_context(
+                        project_id=project_id, 
+                        file_ids=file_ids,  # Pass specific file IDs
+                        max_files=len(file_ids),  # Get all selected files
+                        max_chars_per_file=10000  # Allow up to 10k chars per file
+                    )
+                    
+                    if selected_file_context:
+                        print(f"✅ Retrieved context for {len(file_ids)} selected file(s)")
+                        
+                        # Add to file_contents for AI processing
+                        if file_contents:
+                            file_contents += "\n\n" + selected_file_context
+                        else:
+                            file_contents = selected_file_context
+                    else:
+                        print(f"⚠️ No file context retrieved for file_ids: {file_ids}")
+                        
+            except Exception as file_ids_error:
+                print(f"⚠️ Error processing file_ids: {file_ids_error}")
+                import traceback
+                traceback.print_exc()
+        
+        # ====================================================================
+        # END FILE BROWSER SUPPORT
+        # ====================================================================
+
         if not user_request:
             return jsonify({'success': False, 'error': 'Request text required'}), 400
         
