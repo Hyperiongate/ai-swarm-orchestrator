@@ -970,17 +970,25 @@ class ProjectManager:
 
 _project_manager = None
 
-def get_project_manager(storage_root=None):
+def get_project_manager(storage_root=None, force_reload=False):
     """
     Get the ProjectManager singleton instance.
     
-    UPDATED February 1, 2026: Proper persistent storage
+    UPDATED February 1, 2026: Proper persistent storage + force reload option
     - storage_root parameter now optional
     - Uses environment variable or persistent disk if not specified
+    - force_reload=True will recreate the singleton (useful after deployments)
     """
     global _project_manager
+    
+    # Force reload if requested (useful after code updates)
+    if force_reload:
+        print("🔄 Force reloading ProjectManager singleton...")
+        _project_manager = None
+    
     if _project_manager is None:
         _project_manager = ProjectManager(storage_root)
+    
     return _project_manager
 
 
