@@ -1,12 +1,16 @@
 """
 Orchestration Handler - Main AI Task Processing
 Created: January 31, 2026
-Last Updated: January 31, 2026 - ADDED PROGRESSIVE FILE ANALYSIS
+Last Updated: February 1, 2026 - FIXED FILE BROWSER BUG
 
 This file handles the main /api/orchestrate endpoint that processes user requests.
 Separated from core.py to make it easier to fix and maintain.
 
 UPDATES:
+- February 1, 2026: FIXED file_contents UnboundLocalError in file browser
+  * Initialize file_contents early to prevent crashes
+  * Added complete file_ids handling for project file selection
+  * File browser now fully functional!
 - January 31, 2026: File upload contents now properly passed to Claude
 - January 31, 2026: Added progressive analysis for large Excel files (hybrid approach)
   * Files under 5MB: Full analysis
@@ -166,9 +170,17 @@ def orchestrate():
                         file.save(file_path)
                         file_paths.append(file_path)
                         print(f"📎 Saved uploaded file: {filename}")
+        
+        # ====================================================================
+        # CRITICAL FIX February 1, 2026: Initialize file_contents early
+        # This prevents UnboundLocalError when file_ids are used
+        # ====================================================================
+        file_contents = ""
+        
         # ====================================================================
         # FILE BROWSER SUPPORT - Handle file_ids from project file selection
         # Added: January 31, 2026
+        # Fixed: February 1, 2026 - file_contents initialized above
         # ====================================================================
         
         # Check if user selected files from project (file_ids parameter)
@@ -205,10 +217,7 @@ def orchestrate():
                         print(f"✅ Retrieved context for {len(file_ids)} selected file(s)")
                         
                         # Add to file_contents for AI processing
-                        if file_contents:
-                            file_contents += "\n\n" + selected_file_context
-                        else:
-                            file_contents = selected_file_context
+                        file_contents += "\n\n" + selected_file_context
                     else:
                         print(f"⚠️ No file context retrieved for file_ids: {file_ids}")
                         
@@ -220,7 +229,7 @@ def orchestrate():
         # ====================================================================
         # END FILE BROWSER SUPPORT
         # ====================================================================
-
+        
         if not user_request:
             return jsonify({'success': False, 'error': 'Request text required'}), 400
         
@@ -281,18 +290,24 @@ def orchestrate():
         # STANDARD FILE HANDLING (Small files - under 5MB)
         # ====================================================================
         
-        # Extract file contents
-        file_contents = ""
+        # Extract file contents from uploaded files (APPEND to file_contents)
+        # NOTE: file_contents already initialized above and may contain file_ids context
         if file_paths:
             try:
                 extracted = extract_multiple_files(file_paths)
                 if extracted['success'] and extracted.get('combined_text'):
-                    file_contents = extracted['combined_text']
+                    extracted_text = extracted['combined_text']
                     
                     # Check if extracted content is too long (over 50,000 chars)
-                    if len(file_contents) > 50000:
-                        print(f"⚠️ File content very large ({len(file_contents)} chars) - truncating")
-                        file_contents = file_contents[:50000] + f"\n\n... (truncated {len(file_contents) - 50000} characters for performance)"
+                    if len(extracted_text) > 50000:
+                        print(f"⚠️ File content very large ({len(extracted_text)} chars) - truncating")
+                        extracted_text = extracted_text[:50000] + f"\n\n... (truncated {len(extracted_text) - 50000} characters for performance)"
+                    
+                    # APPEND to file_contents (don't overwrite file_ids context!)
+                    if file_contents:
+                        file_contents += "\n\n" + extracted_text
+                    else:
+                        file_contents = extracted_text
                 else:
                     print(f"⚠️ File extraction returned no content")
             except Exception as extract_error:
