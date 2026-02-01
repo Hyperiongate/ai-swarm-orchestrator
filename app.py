@@ -333,16 +333,16 @@ def workflow():
 # =============================================================================
 # ONE-TIME STORAGE MIGRATION ENDPOINT - Added February 1, 2026
 # =============================================================================
-@app.route('/api/admin/migrate-storage', methods=['POST'])
+@app.route('/api/admin/migrate-storage', methods=['GET', 'POST'])
 def migrate_storage():
     """
     One-time migration endpoint to move projects from /tmp to persistent storage.
     Run this ONCE after deploying persistent storage fix.
     
     USAGE:
-    curl -X POST https://ai-swarm-orchestrator.onrender.com/api/admin/migrate-storage
+    Just visit: https://ai-swarm-orchestrator.onrender.com/api/admin/migrate-storage
     
-    Or visit in browser and it will auto-run.
+    Or use curl: curl https://ai-swarm-orchestrator.onrender.com/api/admin/migrate-storage
     """
     try:
         import migrate_project_storage
