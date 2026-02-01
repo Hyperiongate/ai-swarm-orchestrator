@@ -1347,7 +1347,7 @@ function displayProjectFiles(files) {
     var html = '';
     files.forEach(function(file, index) {
         // CRITICAL FIX: Check for BOTH file.file_id AND file.id
-        var fileId = file.file_id || file.id;
+        var fileId = file.filename || file.id;
         
         if (!fileId) {
             console.error('❌ File missing ID at index', index, ':', file);
@@ -1543,7 +1543,7 @@ function performFileAction(action) {
         .then(function(data) {
             if (data.success) {
                 var selectedFileInfo = data.files.filter(function(f) {
-                    var fileId = f.file_id || f.id;
+                    var fileId = f.filename || f.id;
                     return selectedFiles.indexOf(fileId) !== -1;
                 });
                 
