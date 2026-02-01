@@ -330,6 +330,50 @@ def workflow():
     """Workflow interface"""
     return render_template('index_workflow.html')
 
+# =============================================================================
+# ONE-TIME STORAGE MIGRATION ENDPOINT - Added February 1, 2026
+# =============================================================================
+@app.route('/api/admin/migrate-storage', methods=['POST'])
+def migrate_storage():
+    """
+    One-time migration endpoint to move projects from /tmp to persistent storage.
+    Run this ONCE after deploying persistent storage fix.
+    
+    USAGE:
+    curl -X POST https://ai-swarm-orchestrator.onrender.com/api/admin/migrate-storage
+    
+    Or visit in browser and it will auto-run.
+    """
+    try:
+        import migrate_project_storage
+        from io import StringIO
+        import sys
+        
+        # Capture output
+        old_stdout = sys.stdout
+        sys.stdout = captured_output = StringIO()
+        
+        # Run migration
+        migrate_project_storage.migrate_project_storage()
+        
+        # Restore stdout
+        sys.stdout = old_stdout
+        output = captured_output.getvalue()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Migration complete! Check logs for details.',
+            'output': output
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
 @app.route('/survey')
 def survey():
     """Survey builder interface"""
@@ -639,8 +683,6 @@ from routes.core import core_bp
 from routes.survey import survey_bp
 app.register_blueprint(core_bp)
 app.register_blueprint(survey_bp)
-from routes.orchestration_handler import orchestration_bp
-app.register_blueprint(orchestration_bp)
 
 # ============================================================================
 # BULLETPROOF PROJECT MANAGEMENT BLUEPRINT (Added January 30, 2026)
