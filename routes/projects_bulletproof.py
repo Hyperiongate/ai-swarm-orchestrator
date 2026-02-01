@@ -1,12 +1,18 @@
 """
 BULLETPROOF PROJECT API ROUTES
 Created: January 30, 2026
-Last Updated: January 31, 2026 - FIXED response format for frontend compatibility
+Last Updated: February 1, 2026 - FIXED FILE UPLOAD TO USE PERSISTENT STORAGE
 
 Complete Flask blueprint for project management.
 Integrates with ProjectManager for reliable project handling.
 
 CHANGES:
+- February 1, 2026: CRITICAL FIX - File upload now uses persistent storage!
+  * Upload route now passes FileStorage objects directly to add_file()
+  * No more temp file saving to /tmp (was causing file not found errors)
+  * add_file() handles FileStorage and saves to persistent storage automatically
+  * Removed temp file cleanup code (no longer needed)
+  * Added detailed error tracebacks for debugging
 - January 31, 2026: Fixed /api/projects/create response format
   * Now returns project_id at top level for frontend compatibility
   * Frontend expects: {success: true, project_id: "..."}
@@ -17,7 +23,7 @@ ENDPOINTS:
 - GET    /api/projects                 - List all projects
 - GET    /api/projects/<id>            - Get project details
 - PUT    /api/projects/<id>            - Update project
-- POST   /api/projects/<id>/files      - Upload files
+- POST   /api/projects/<id>/files      - Upload files (FIXED!)
 - GET    /api/projects/<id>/files      - List files
 - GET    /api/projects/<id>/files/<id> - Download file
 - DELETE /api/projects/<id>/files/<id> - Delete file
@@ -323,6 +329,12 @@ def upload_files(project_id):
     """
     Upload files to a project.
     
+    UPDATED February 1, 2026: Now passes FileStorage objects directly!
+    - No more temp file saving to /tmp
+    - FileStorage objects passed directly to add_file()
+    - add_file() handles FileStorage and saves to persistent storage
+    - Cleaner, more efficient, no temp file cleanup needed
+    
     Expects multipart/form-data with 'files' field.
     """
     try:
@@ -344,25 +356,18 @@ def upload_files(project_id):
         
         for file in files:
             if file and file.filename:
-                # Save to temp location first
+                # Secure the filename
                 filename = secure_filename(file.filename)
-                temp_path = f'/tmp/{filename}'
-                file.save(temp_path)
                 
-                try:
-                    # Add to project
-                    file_info = pm.add_file(
-                        project_id=project_id,
-                        file_path=temp_path,
-                        original_filename=filename
-                    )
-                    
-                    uploaded_files.append(file_info)
-                    
-                finally:
-                    # Clean up temp file
-                    if os.path.exists(temp_path):
-                        os.remove(temp_path)
+                # CRITICAL FIX: Pass FileStorage object directly to add_file()
+                # No temp file needed - add_file() handles FileStorage objects!
+                file_info = pm.add_file(
+                    project_id=project_id,
+                    file_path=file,  # ✅ Pass FileStorage object directly!
+                    original_filename=filename
+                )
+                
+                uploaded_files.append(file_info)
         
         return jsonify({
             'success': True,
@@ -371,7 +376,12 @@ def upload_files(project_id):
         })
     
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        import traceback
+        return jsonify({
+            'success': False, 
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
 
 
 @projects_bp.route('/api/projects/<project_id>/files', methods=['GET'])
