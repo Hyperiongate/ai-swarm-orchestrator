@@ -1,7 +1,13 @@
 """
 Database File Management - UNIFIED PRODUCTION VERSION
 Created: January 28, 2026
-Last Updated: January 31, 2026 - ADDED FILE_IDS PARAMETER SUPPORT
+Last Updated: February 1, 2026 - FIXED EXCEL FILE READING
+
+CHANGELOG February 1, 2026:
+- CRITICAL FIX: get_files_for_ai_context() now properly reads Excel files
+- Uses file_content_reader to extract Excel, Word, PDF content
+- Fixed get_file() to search both file_id AND filename columns
+- File browser now works with all file types!
 
 CHANGELOG January 31, 2026:
 - CRITICAL FIX: Added file_ids parameter to get_files_for_ai_context()
@@ -29,7 +35,8 @@ FEATURES:
 ✅ Search projects and files
 ✅ Complete project summaries
 ✅ All data persists in database
-✅ Selective file retrieval by IDs (NEW!)
+✅ Selective file retrieval by IDs
+✅ Excel/Word/PDF content extraction (NEW!)
 
 Author: Jim @ Shiftwork Solutions LLC
 """
@@ -934,6 +941,7 @@ def get_files_for_ai_context(project_id, max_files=5, max_chars_per_file=2000, f
     Extract file content for AI context.
     Returns formatted string with file information.
     
+    UPDATED February 1, 2026: Now properly reads Excel files using file_content_reader
     UPDATED January 31, 2026: Added file_ids parameter for selective file retrieval
     
     Args:
@@ -960,6 +968,7 @@ def get_files_for_ai_context(project_id, max_files=5, max_chars_per_file=2000, f
         files = pm.list_files(project_id)[:max_files]
     
     if not files:
+        print(f"⚠️ No file context retrieved for file_ids: {file_ids}")
         return ""
     
     context = "\n\n=== PROJECT FILES CONTEXT ===\n"
@@ -974,20 +983,51 @@ def get_files_for_ai_context(project_id, max_files=5, max_chars_per_file=2000, f
         if file.get('analysis_summary'):
             context += f"   Summary: {file['analysis_summary']}\n"
         
-        # Try to read file content
+        # CRITICAL FIX: Use file_content_reader to properly extract Excel and other file types
         try:
             if os.path.exists(file['file_path']):
-                with open(file['file_path'], 'r', encoding='utf-8', errors='ignore') as f:
-                    content = f.read(max_chars_per_file)
-                    if content:
-                        context += f"   Preview: {content[:max_chars_per_file]}...\n"
-        except:
-            pass
+                file_path = file['file_path']
+                file_ext = os.path.splitext(file_path)[1].lower()
+                
+                # Use file_content_reader for proper extraction
+                try:
+                    from file_content_reader import extract_file_content
+                    
+                    extracted = extract_file_content(file_path)
+                    
+                    if extracted.get('success') and extracted.get('text'):
+                        content = extracted['text']
+                        
+                        # Truncate if too long
+                        if len(content) > max_chars_per_file:
+                            content = content[:max_chars_per_file] + f"\n... (truncated {len(content) - max_chars_per_file} chars)"
+                        
+                        context += f"   Content:\n{content}\n"
+                        print(f"✅ Extracted {len(extracted['text'])} chars from {file['original_filename']}")
+                    else:
+                        # Fallback to simple text read
+                        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                            content = f.read(max_chars_per_file)
+                            if content:
+                                context += f"   Preview: {content[:max_chars_per_file]}...\n"
+                
+                except ImportError:
+                    print("⚠️ file_content_reader not available, using simple text read")
+                    # Fallback to simple text read
+                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        content = f.read(max_chars_per_file)
+                        if content:
+                            context += f"   Preview: {content[:max_chars_per_file]}...\n"
+                            
+        except Exception as e:
+            print(f"⚠️ Could not read file {file['original_filename']}: {e}")
+            context += f"   (File content could not be extracted)\n"
         
         context += "\n"
     
     context += "=== END PROJECT FILES CONTEXT ===\n\n"
     
+    print(f"✅ Generated context with {len(context)} total characters")
     return context
 
 
