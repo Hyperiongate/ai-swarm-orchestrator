@@ -941,7 +941,7 @@ def get_files_for_ai_context(project_id, max_files=5, max_chars_per_file=2000, f
     Extract file content for AI context.
     Returns formatted string with file information.
     
-    UPDATED February 1, 2026: Now properly reads Excel files using file_content_reader
+    UPDATED February 1, 2026: Now properly reads Excel files using pandas
     UPDATED January 31, 2026: Added file_ids parameter for selective file retrieval
     
     Args:
@@ -983,49 +983,81 @@ def get_files_for_ai_context(project_id, max_files=5, max_chars_per_file=2000, f
         if file.get('analysis_summary'):
             context += f"   Summary: {file['analysis_summary']}\n"
         
-        # CRITICAL FIX: Use file_content_reader to properly extract Excel and other file types
+        # CRITICAL FIX: Extract file content based on file type
         try:
             if os.path.exists(file['file_path']):
                 file_path = file['file_path']
                 file_ext = os.path.splitext(file_path)[1].lower()
                 
-                # Use file_content_reader for proper extraction
-                try:
-                    from file_content_reader import extract_file_content
-                    
-                    extracted = extract_file_content(file_path)
-                    
-                    if extracted.get('success') and extracted.get('text'):
-                        content = extracted['text']
+                content = ""
+                
+                # Handle Excel files with pandas
+                if file_ext in ['.xlsx', '.xls']:
+                    try:
+                        import pandas as pd
                         
-                        # Truncate if too long
-                        if len(content) > max_chars_per_file:
-                            content = content[:max_chars_per_file] + f"\n... (truncated {len(content) - max_chars_per_file} chars)"
+                        # Read Excel file (first sheet only for now)
+                        df = pd.read_excel(file_path, nrows=100)  # Limit to 100 rows for context
                         
-                        context += f"   Content:\n{content}\n"
-                        print(f"✅ Extracted {len(extracted['text'])} chars from {file['original_filename']}")
-                    else:
-                        # Fallback to simple text read
+                        # Convert to readable text
+                        content = f"Excel file with {len(df)} rows and {len(df.columns)} columns\n"
+                        content += f"Columns: {', '.join(df.columns.tolist())}\n\n"
+                        content += "Sample data (first 10 rows):\n"
+                        content += df.head(10).to_string()
+                        
+                        print(f"✅ Extracted {len(content)} chars from Excel file {file['original_filename']}")
+                        
+                    except Exception as excel_error:
+                        print(f"⚠️ Could not read Excel file with pandas: {excel_error}")
+                        content = f"(Excel file - {file.get('file_size', 0)} bytes - could not extract preview)"
+                
+                # Handle CSV files
+                elif file_ext == '.csv':
+                    try:
+                        import pandas as pd
+                        df = pd.read_csv(file_path, nrows=100)
+                        content = f"CSV file with {len(df)} rows and {len(df.columns)} columns\n"
+                        content += f"Columns: {', '.join(df.columns.tolist())}\n\n"
+                        content += df.head(10).to_string()
+                    except:
+                        # Fallback to text read
                         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                             content = f.read(max_chars_per_file)
-                            if content:
-                                context += f"   Preview: {content[:max_chars_per_file]}...\n"
                 
-                except ImportError:
-                    print("⚠️ file_content_reader not available, using simple text read")
-                    # Fallback to simple text read
+                # Handle Word documents
+                elif file_ext == '.docx':
+                    try:
+                        from docx import Document
+                        doc = Document(file_path)
+                        content = '\n'.join([para.text for para in doc.paragraphs[:50]])  # First 50 paragraphs
+                        print(f"✅ Extracted {len(content)} chars from Word document {file['original_filename']}")
+                    except Exception as docx_error:
+                        print(f"⚠️ Could not read Word document: {docx_error}")
+                        content = f"(Word document - {file.get('file_size', 0)} bytes - could not extract preview)"
+                
+                # Handle text files
+                elif file_ext in ['.txt', '.md', '.py', '.js', '.json', '.xml', '.html']:
                     with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                         content = f.read(max_chars_per_file)
-                        if content:
-                            context += f"   Preview: {content[:max_chars_per_file]}...\n"
+                
+                # Unknown file type
+                else:
+                    content = f"(Binary file - {file.get('file_size', 0)} bytes - type: {file_ext})"
+                
+                # Truncate if too long
+                if len(content) > max_chars_per_file:
+                    content = content[:max_chars_per_file] + f"\n... (truncated {len(content) - max_chars_per_file} chars)"
+                
+                if content:
+                    context += f"   Content:\n{content}\n"
                             
         except Exception as e:
             print(f"⚠️ Could not read file {file['original_filename']}: {e}")
-            context += f"   (File content could not be extracted)\n"
+            import traceback
+            traceback.print_exc()
+            context += f"   (File content could not be extracted: {str(e)})\n"
         
         context += "\n"
-    
-    context += "=== END PROJECT FILES CONTEXT ===\n\n"
     
     print(f"✅ Generated context with {len(context)} total characters")
     return context
