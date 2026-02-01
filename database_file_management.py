@@ -99,28 +99,52 @@ class ProjectManager:
         - Falls back to /tmp/swarm_projects for local dev
         - Creates directory structure with error handling
         """
+        print("=" * 80)
+        print("🔧 INITIALIZING PROJECT MANAGER - STORAGE DIAGNOSTICS")
+        print("=" * 80)
+        
         # Determine storage root with proper fallback chain
         if storage_root is None:
-            # 1. Try environment variable
-            storage_root = os.environ.get('STORAGE_ROOT')
+            print("📋 Storage root not provided, checking environment and paths...")
             
-            # 2. Try Render persistent disk path
-            if storage_root is None:
-                render_disk_path = '/opt/render/project/data/swarm_projects'
-                if os.path.exists('/opt/render/project'):
-                    storage_root = render_disk_path
+            # 1. Try environment variable
+            env_storage = os.environ.get('STORAGE_ROOT')
+            print(f"   1️⃣ STORAGE_ROOT environment variable: {env_storage}")
+            
+            if env_storage:
+                storage_root = env_storage
+                print(f"   ✅ Using STORAGE_ROOT from environment: {storage_root}")
+            else:
+                # 2. Check if we're on Render with mounted disk at /mnt/project
+                mnt_path = '/mnt/project/swarm_projects'
+                print(f"   2️⃣ Checking Render /mnt/project path: {mnt_path}")
+                if os.path.exists('/mnt/project'):
+                    storage_root = mnt_path
+                    print(f"   ✅ Using Render /mnt/project: {storage_root}")
                 else:
-                    # 3. Fall back to /tmp for local development
-                    storage_root = '/tmp/swarm_projects'
-                    print("⚠️  Using /tmp for file storage - files will be lost on restart!")
-                    print("   Set STORAGE_ROOT env var or configure persistent disk for production")
+                    # 3. Check /opt/render/project (alternative Render path)
+                    opt_path = '/opt/render/project/data/swarm_projects'
+                    print(f"   3️⃣ Checking /opt/render/project path: {opt_path}")
+                    if os.path.exists('/opt/render/project'):
+                        storage_root = opt_path
+                        print(f"   ✅ Using /opt/render/project: {storage_root}")
+                    else:
+                        # 4. Fall back to /tmp for local development
+                        storage_root = '/tmp/swarm_projects'
+                        print(f"   ⚠️  FALLBACK: Using /tmp (ephemeral storage!)")
+                        print(f"   ⚠️  Files will be lost on restart!")
+                        print(f"   💡 Set STORAGE_ROOT env var or configure persistent disk")
+        else:
+            print(f"📋 Storage root provided directly: {storage_root}")
         
         self.storage_root = storage_root
+        print(f"\n✅ FINAL STORAGE LOCATION: {storage_root}")
+        print("=" * 80)
         
         # Create storage directory with proper error handling
         try:
             os.makedirs(storage_root, exist_ok=True)
-            print(f"✅ Storage initialized at: {storage_root}")
+            print(f"✅ Storage directory exists/created: {storage_root}")
             
             # Verify we can write to the directory
             test_file = os.path.join(storage_root, '.write_test')
@@ -138,6 +162,7 @@ class ProjectManager:
             print(f"❌ ERROR: Failed to initialize storage: {e}")
             raise
         
+        print("=" * 80)
         self._ensure_database_tables()
     
     def _ensure_database_tables(self):
