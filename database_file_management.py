@@ -1,9 +1,17 @@
 """
 Database File Management - UNIFIED PRODUCTION VERSION
 Created: January 28, 2026
-Last Updated: February 1, 2026 - PROPER PERSISTENT STORAGE FIX
+Last Updated: February 1, 2026 - FLASK FILESTORAGE FIX
 
-CHANGELOG February 1, 2026:
+CHANGELOG February 1, 2026 (LATEST):
+- CRITICAL FIX: add_file() now handles Flask FileStorage objects!
+- Fixed file upload 500 error - was expecting file path, got FileStorage object
+- Now detects FileStorage objects using hasattr() checks
+- Properly saves uploaded files to persistent storage
+- Maintains backward compatibility with file path strings
+- Added detailed logging for debugging
+
+CHANGELOG February 1, 2026 (Earlier):
 - CRITICAL FIX: Proper persistent storage instead of /tmp
 - Uses environment variable STORAGE_ROOT if set
 - Defaults to /opt/render/project/data for Render persistent disk
@@ -32,7 +40,7 @@ PERSISTENT STORAGE CONFIGURATION:
 For production on Render:
 1. Add persistent disk in Render dashboard
 2. Set mount path to: /opt/render/project/data
-3. Set environment variable: STORAGE_ROOT=/opt/render/project/data/swarm_projects
+3. Set environment variable: STORAGE_ROOT=/opt/render/project/data/swarm_projects (or /mnt/project/swarm_projects if using existing disk)
 4. Files will persist across deployments!
 
 For local development:
@@ -42,7 +50,7 @@ For local development:
 FEATURES:
 ✅ Auto-detect new projects from keywords
 ✅ Create projects with checklists & milestones
-✅ Upload/download files to projects
+✅ Upload/download files to projects (Flask FileStorage support!)
 ✅ Track conversation history
 ✅ Manage project context (key-value storage)
 ✅ Search projects and files
@@ -50,7 +58,8 @@ FEATURES:
 ✅ All data persists in database
 ✅ Selective file retrieval by IDs
 ✅ Excel/Word/PDF content extraction
-✅ Persistent file storage (NEW!)
+✅ Persistent file storage
+✅ Flask web upload support (NEW!)
 
 Author: Jim @ Shiftwork Solutions LLC
 """
@@ -600,28 +609,75 @@ class ProjectManager:
     
     def add_file(self, project_id, file_path, original_filename=None, 
                 file_type=None, metadata=None):
-        """Add a file to a project"""
+        """
+        Add a file to a project.
+        
+        UPDATED February 1, 2026: Now handles Flask FileStorage objects!
+        - Accepts both file paths (strings) and Flask FileStorage objects
+        - Properly saves FileStorage objects to persistent storage
+        - Maintains backward compatibility with file path strings
+        
+        Args:
+            project_id: Project ID
+            file_path: Either a string path OR a Flask FileStorage object
+            original_filename: Optional filename (auto-detected from FileStorage)
+            file_type: Optional file type category
+            metadata: Optional metadata dict
+        """
         project = self.get_project(project_id)
         if not project:
             raise ValueError(f"Project {project_id} not found")
         
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(f"File not found: {file_path}")
+        # CRITICAL FIX: Detect if file_path is a Flask FileStorage object
+        is_file_storage = hasattr(file_path, 'save') and hasattr(file_path, 'filename')
         
+        print(f"📥 add_file called: is_file_storage={is_file_storage}")
+        
+        # Generate IDs and paths
         file_id = self._generate_id('FILE_')
-        if not original_filename:
-            original_filename = os.path.basename(file_path)
         
-        file_ext = os.path.splitext(original_filename)[1]
-        stored_filename = f"{file_id}{file_ext}"
-        storage_path = os.path.join(project['storage_path'], stored_filename)
+        if is_file_storage:
+            # Handle Flask FileStorage object
+            if not original_filename:
+                original_filename = file_path.filename
+            
+            file_ext = os.path.splitext(original_filename)[1]
+            stored_filename = f"{file_id}{file_ext}"
+            storage_path = os.path.join(project['storage_path'], stored_filename)
+            
+            print(f"📁 Saving FileStorage to: {storage_path}")
+            
+            # Save the uploaded file directly to persistent storage
+            file_path.save(storage_path)
+            file_size = os.path.getsize(storage_path)
+            
+            print(f"✅ FileStorage saved: {file_size} bytes")
+            
+        else:
+            # Handle regular file path (backward compatible)
+            if not os.path.exists(file_path):
+                raise FileNotFoundError(f"File not found: {file_path}")
+            
+            if not original_filename:
+                original_filename = os.path.basename(file_path)
+            
+            file_ext = os.path.splitext(original_filename)[1]
+            stored_filename = f"{file_id}{file_ext}"
+            storage_path = os.path.join(project['storage_path'], stored_filename)
+            
+            print(f"📁 Copying file to: {storage_path}")
+            
+            # Copy the file to persistent storage
+            shutil.copy2(file_path, storage_path)
+            file_size = os.path.getsize(storage_path)
+            
+            print(f"✅ File copied: {file_size} bytes")
         
-        shutil.copy2(file_path, storage_path)
-        file_size = os.path.getsize(storage_path)
-        
+        # Detect MIME type
         import mimetypes
         mime_type, _ = mimetypes.guess_type(original_filename)
         
+        # Save to database
         db = sqlite3.connect(DATABASE)
         actual_project_id = project['project_id']
         
