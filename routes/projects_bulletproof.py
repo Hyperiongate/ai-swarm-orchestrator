@@ -46,8 +46,10 @@ import sqlite3
 # Create blueprint
 projects_bp = Blueprint('projects', __name__)
 
-# Get project manager instance
-pm = get_project_manager()
+# Get project manager instance with force reload to ensure fresh storage path
+# This is critical after deployments to pick up the /mnt/project path
+pm = get_project_manager(force_reload=True)
+print(f"🔄 ProjectManager loaded with storage: {pm.storage_root}")
 
 
 # ============================================================================
