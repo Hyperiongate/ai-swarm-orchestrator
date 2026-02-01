@@ -1,17 +1,21 @@
 """
 Database File Management - UNIFIED PRODUCTION VERSION
 Created: January 28, 2026
-Last Updated: February 1, 2026 - FIXED EXCEL FILE READING
+Last Updated: February 1, 2026 - PROPER PERSISTENT STORAGE FIX
 
 CHANGELOG February 1, 2026:
-- CRITICAL FIX: get_files_for_ai_context() now properly reads Excel files
-- Uses file_content_reader to extract Excel, Word, PDF content
+- CRITICAL FIX: Proper persistent storage instead of /tmp
+- Uses environment variable STORAGE_ROOT if set
+- Defaults to /opt/render/project/data for Render persistent disk
+- Falls back to /tmp only for local development with warning
+- Auto-creates directories with write verification
+- Enhanced Excel file reading with detailed logging
 - Fixed get_file() to search both file_id AND filename columns
 - File browser now works with all file types!
 
 CHANGELOG January 31, 2026:
-- CRITICAL FIX: Added file_ids parameter to get_files_for_ai_context()
-- Now supports selective file retrieval for file browser feature
+- Added file_ids parameter to get_files_for_ai_context()
+- Supports selective file retrieval for file browser feature
 - Maintains backward compatibility
 
 CHANGELOG January 30, 2026:
@@ -24,7 +28,16 @@ CHANGELOG January 30, 2026:
 - Added checklists and milestones from project_manager.py
 - Maintains backward compatibility with existing functions
 
-This replaces the simple file tracking with a complete project management system.
+PERSISTENT STORAGE CONFIGURATION:
+For production on Render:
+1. Add persistent disk in Render dashboard
+2. Set mount path to: /opt/render/project/data
+3. Set environment variable: STORAGE_ROOT=/opt/render/project/data/swarm_projects
+4. Files will persist across deployments!
+
+For local development:
+- No configuration needed
+- Uses /tmp/swarm_projects (will warn about data loss)
 
 FEATURES:
 ✅ Auto-detect new projects from keywords
@@ -36,7 +49,8 @@ FEATURES:
 ✅ Complete project summaries
 ✅ All data persists in database
 ✅ Selective file retrieval by IDs
-✅ Excel/Word/PDF content extraction (NEW!)
+✅ Excel/Word/PDF content extraction
+✅ Persistent file storage (NEW!)
 
 Author: Jim @ Shiftwork Solutions LLC
 """
@@ -66,10 +80,55 @@ class ProjectManager:
         'new engagement', 'new implementation', 'project start'
     ]
     
-    def __init__(self, storage_root='/tmp/swarm_projects'):
-        """Initialize project manager with storage location"""
+    def __init__(self, storage_root=None):
+        """
+        Initialize project manager with storage location.
+        
+        UPDATED February 1, 2026: Proper persistent storage support
+        - Uses environment variable STORAGE_ROOT if set
+        - Defaults to /opt/render/project/data (Render persistent disk)
+        - Falls back to /tmp/swarm_projects for local dev
+        - Creates directory structure with error handling
+        """
+        # Determine storage root with proper fallback chain
+        if storage_root is None:
+            # 1. Try environment variable
+            storage_root = os.environ.get('STORAGE_ROOT')
+            
+            # 2. Try Render persistent disk path
+            if storage_root is None:
+                render_disk_path = '/opt/render/project/data/swarm_projects'
+                if os.path.exists('/opt/render/project'):
+                    storage_root = render_disk_path
+                else:
+                    # 3. Fall back to /tmp for local development
+                    storage_root = '/tmp/swarm_projects'
+                    print("⚠️  Using /tmp for file storage - files will be lost on restart!")
+                    print("   Set STORAGE_ROOT env var or configure persistent disk for production")
+        
         self.storage_root = storage_root
-        os.makedirs(storage_root, exist_ok=True)
+        
+        # Create storage directory with proper error handling
+        try:
+            os.makedirs(storage_root, exist_ok=True)
+            print(f"✅ Storage initialized at: {storage_root}")
+            
+            # Verify we can write to the directory
+            test_file = os.path.join(storage_root, '.write_test')
+            with open(test_file, 'w') as f:
+                f.write('test')
+            os.remove(test_file)
+            print(f"✅ Storage is writable")
+            
+        except PermissionError as e:
+            print(f"❌ ERROR: Cannot write to storage directory: {storage_root}")
+            print(f"   Permission denied: {e}")
+            print(f"   Please configure persistent disk or check permissions")
+            raise
+        except Exception as e:
+            print(f"❌ ERROR: Failed to initialize storage: {e}")
+            raise
+        
         self._ensure_database_tables()
     
     def _ensure_database_tables(self):
@@ -830,8 +889,14 @@ class ProjectManager:
 
 _project_manager = None
 
-def get_project_manager(storage_root='/tmp/swarm_projects'):
-    """Get the ProjectManager singleton instance"""
+def get_project_manager(storage_root=None):
+    """
+    Get the ProjectManager singleton instance.
+    
+    UPDATED February 1, 2026: Proper persistent storage
+    - storage_root parameter now optional
+    - Uses environment variable or persistent disk if not specified
+    """
     global _project_manager
     if _project_manager is None:
         _project_manager = ProjectManager(storage_root)
