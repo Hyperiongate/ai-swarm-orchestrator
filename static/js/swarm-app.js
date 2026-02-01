@@ -5,6 +5,13 @@ Shiftwork Solutions LLC
 =============================================================================
 
 CHANGE LOG:
+- February 1, 2026: BULLETPROOF FILE BROWSER FIX
+  * Added comprehensive debugging to file browser
+  * Added safety checks for file.file_id vs file.id
+  * Added validation before sending file_ids to backend
+  * Added console logging for troubleshooting
+  * Fixed undefined file ID bug in toggleFileSelection()
+
 - January 31, 2026: FIXED PROJECT PERSISTENCE
   * Changed startNewProject() to use /api/projects/create endpoint (bulletproof backend)
   * Added description field to project creation request
@@ -64,7 +71,8 @@ SECTIONS:
 13. Calculator Functions
 14. Survey Functions
 15. Opportunities Functions
-16. Initialization
+16. File Browser (BULLETPROOFED February 1, 2026)
+17. Initialization
 
 =============================================================================
 */
@@ -823,6 +831,14 @@ function loadExistingProject() {
         sessionStorage.removeItem('lastSelectedProjectId');
         document.getElementById('clientName').textContent = 'No active project';
         document.getElementById('projectPhase').innerHTML = '<div class="phase-indicator">Not started</div>';
+        
+        // Clear file browser
+        var fileList = document.getElementById('projectFilesList');
+        if (fileList) {
+            fileList.innerHTML = '<div style="padding: 20px; text-align: center; color: #999;">No project selected</div>';
+        }
+        updateFileCount(0);
+        
         return;
     }
     
@@ -843,6 +859,7 @@ function loadExistingProject() {
             }
         });
 }
+
 function startNewProject() {
     var clientName = prompt("Enter client name:");
     if (!clientName) return;
@@ -914,11 +931,6 @@ function startNewProject() {
 // 9. MESSAGE HANDLING (CORE)
 // =============================================================================
 
-
-// =============================================================================
-// 9. MESSAGE HANDLING - ROBUST FIX January 31, 2026
-// =============================================================================
-
 /**
  * Upload files directly to project storage (bypasses AI analysis)
  */
@@ -986,6 +998,9 @@ function sendMessage() {
                 addMessage('assistant', successMsg, null, 'project');
                 loadStats();
                 loadDocuments();
+                
+                // RELOAD FILE BROWSER TO SHOW NEW FILES
+                loadProjectFiles();
             })
             .catch(function(err) {
                 loading.classList.remove('active');
@@ -1260,46 +1275,14 @@ function compareToNorms() { var metrics = prompt('Enter metrics:'); if (metrics)
 function findImprovements() { quickAction('Find improvement opportunities'); }
 
 // =============================================================================
-// 16. INITIALIZATION
-// =============================================================================
-
-function initializeApp() {
-    updateQuickActions();
-    loadStats();
-    loadDocuments();
-    loadConversations();
-    
-    var urlConversationId = getConversationIdFromUrl();
-    var storedConversationId = localStorage.getItem('currentConversationId');
-    
-    if (urlConversationId) loadConversation(urlConversationId);
-    else if (storedConversationId) loadConversation(storedConversationId);
-    else startNewConversation();
-    
-    document.getElementById('userInput').addEventListener('keypress', function(e) {
-        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-    });
-    
-    setInterval(function() { loadStats(); loadDocuments(); }, 30000);
-    
-    console.log('AI Swarm Interface initialized - Bulletproof project persistence enabled - January 31, 2026');
-}
-
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initializeApp);
-} else {
-    initializeApp();
-}
-
-/* I did no harm and this file is not truncated */
-// =============================================================================
-// FILE BROWSER FOR PROJECT MODE - Added January 31, 2026
+// 16. FILE BROWSER FOR PROJECT MODE - BULLETPROOFED February 1, 2026
 // =============================================================================
 
 var selectedFiles = [];  // Track selected file IDs
 
 /**
  * Load and display project files in the file browser
+ * BULLETPROOFED: Added comprehensive error handling and debugging
  */
 function loadProjectFiles() {
     if (!currentProjectId) {
@@ -1307,13 +1290,25 @@ function loadProjectFiles() {
         if (fileList) {
             fileList.innerHTML = '<div style="padding: 20px; text-align: center; color: #999;">No project selected</div>';
         }
+        updateFileCount(0);
         return;
     }
+    
+    console.log('🔍 Loading files for project:', currentProjectId);
     
     fetch('/api/projects/' + currentProjectId + '/files')
         .then(function(r) { return r.json(); })
         .then(function(data) {
+            console.log('📡 API Response:', data);
+            
             if (data.success && data.files) {
+                console.log('✅ Loaded', data.files.length, 'files');
+                
+                // SAFETY CHECK: Log first file structure
+                if (data.files.length > 0) {
+                    console.log('📋 Sample file structure:', data.files[0]);
+                }
+                
                 displayProjectFiles(data.files);
                 updateFileCount(data.files.length);
             } else {
@@ -1321,19 +1316,28 @@ function loadProjectFiles() {
                 if (fileList) {
                     fileList.innerHTML = '<div style="padding: 20px; text-align: center; color: #999;">No files uploaded yet</div>';
                 }
+                updateFileCount(0);
             }
         })
         .catch(function(err) {
-            console.error('Error loading files:', err);
+            console.error('❌ Error loading files:', err);
+            var fileList = document.getElementById('projectFilesList');
+            if (fileList) {
+                fileList.innerHTML = '<div style="padding: 20px; text-align: center; color: #d32f2f;">Error loading files</div>';
+            }
         });
 }
 
 /**
  * Display files in the browser
+ * BULLETPROOFED: Added safety checks for file_id field
  */
 function displayProjectFiles(files) {
     var fileList = document.getElementById('projectFilesList');
-    if (!fileList) return;
+    if (!fileList) {
+        console.warn('⚠️ projectFilesList element not found');
+        return;
+    }
     
     if (files.length === 0) {
         fileList.innerHTML = '<div style="padding: 20px; text-align: center; color: #999;">No files uploaded yet</div>';
@@ -1341,39 +1345,62 @@ function displayProjectFiles(files) {
     }
     
     var html = '';
-    files.forEach(function(file) {
-        var isSelected = selectedFiles.indexOf(file.file_id) !== -1;
-        var icon = getFileIcon(file.original_filename);
-        var sizeStr = formatFileSize(file.file_size);
-        var dateStr = new Date(file.uploaded_at).toLocaleDateString();
+    files.forEach(function(file, index) {
+        // CRITICAL FIX: Check for BOTH file.file_id AND file.id
+        var fileId = file.file_id || file.id;
         
-        html += '<div class="file-item" data-file-id="' + file.file_id + '">';
-        html += '  <input type="checkbox" class="file-checkbox" ' + (isSelected ? 'checked' : '') + ' onchange="toggleFileSelection(\'' + file.file_id + '\')">';
+        if (!fileId) {
+            console.error('❌ File missing ID at index', index, ':', file);
+            return; // Skip this file
+        }
+        
+        console.log('✅ Processing file:', fileId, '-', file.original_filename);
+        
+        var isSelected = selectedFiles.indexOf(fileId) !== -1;
+        var icon = getFileIcon(file.original_filename || file.filename || '');
+        var sizeStr = formatFileSize(file.file_size || 0);
+        var dateStr = file.uploaded_at ? new Date(file.uploaded_at).toLocaleDateString() : '';
+        
+        html += '<div class="file-item" data-file-id="' + escapeHtml(fileId) + '">';
+        html += '  <input type="checkbox" class="file-checkbox" ' + (isSelected ? 'checked' : '') + ' onchange="toggleFileSelection(\'' + escapeHtml(fileId) + '\')">';
         html += '  <span class="file-icon">' + icon + '</span>';
         html += '  <div class="file-info">';
-        html += '    <div class="file-name">' + file.original_filename + '</div>';
+        html += '    <div class="file-name">' + escapeHtml(file.original_filename || file.filename || 'Unknown') + '</div>';
         html += '    <div class="file-meta">' + sizeStr + ' • ' + dateStr + '</div>';
         html += '  </div>';
         html += '  <div class="file-actions">';
-        html += '    <button onclick="downloadProjectFile(\'' + file.file_id + '\', \'' + file.original_filename + '\')" class="file-action-btn">⬇️</button>';
-        html += '    <button onclick="deleteProjectFile(\'' + file.file_id + '\')" class="file-action-btn">🗑️</button>';
+        html += '    <button onclick="downloadProjectFile(\'' + escapeHtml(fileId) + '\', \'' + escapeHtml(file.original_filename || file.filename) + '\')" class="file-action-btn">⬇️</button>';
+        html += '    <button onclick="deleteProjectFile(\'' + escapeHtml(fileId) + '\')" class="file-action-btn">🗑️</button>';
         html += '  </div>';
         html += '</div>';
     });
     
     fileList.innerHTML = html;
+    console.log('✅ Rendered', files.length, 'files in browser');
 }
 
 /**
  * Toggle file selection
+ * BULLETPROOFED: Added validation and logging
  */
 function toggleFileSelection(fileId) {
+    if (!fileId || fileId === 'undefined') {
+        console.error('❌ Invalid fileId passed to toggleFileSelection:', fileId);
+        return;
+    }
+    
+    console.log('🔘 Toggling selection for:', fileId);
+    
     var index = selectedFiles.indexOf(fileId);
     if (index === -1) {
         selectedFiles.push(fileId);
+        console.log('✅ Selected:', fileId);
     } else {
         selectedFiles.splice(index, 1);
+        console.log('❌ Deselected:', fileId);
     }
+    
+    console.log('📊 Currently selected files:', selectedFiles);
     updateSelectedCount();
 }
 
@@ -1386,8 +1413,11 @@ function selectAllFiles() {
     checkboxes.forEach(function(cb) {
         cb.checked = true;
         var fileId = cb.closest('.file-item').getAttribute('data-file-id');
-        selectedFiles.push(fileId);
+        if (fileId && fileId !== 'undefined') {
+            selectedFiles.push(fileId);
+        }
     });
+    console.log('✅ Selected all files:', selectedFiles);
     updateSelectedCount();
 }
 
@@ -1400,6 +1430,7 @@ function clearFileSelection() {
         cb.checked = false;
     });
     selectedFiles = [];
+    console.log('🔄 Cleared selection');
     updateSelectedCount();
 }
 
@@ -1433,6 +1464,7 @@ function updateFileCount(count) {
  * Download a project file
  */
 function downloadProjectFile(fileId, filename) {
+    console.log('⬇️ Downloading file:', fileId, filename);
     window.open('/api/projects/' + currentProjectId + '/files/' + fileId, '_blank');
 }
 
@@ -1442,26 +1474,55 @@ function downloadProjectFile(fileId, filename) {
 function deleteProjectFile(fileId) {
     if (!confirm('Delete this file? This cannot be undone.')) return;
     
+    console.log('🗑️ Deleting file:', fileId);
+    
     fetch('/api/projects/' + currentProjectId + '/files/' + fileId, {
         method: 'DELETE'
     })
     .then(function(r) { return r.json(); })
     .then(function(data) {
         if (data.success) {
+            console.log('✅ File deleted successfully');
             loadProjectFiles();  // Reload list
             addMessage('assistant', '✅ File deleted successfully');
         } else {
+            console.error('❌ Failed to delete file:', data.error);
             addMessage('assistant', '❌ Failed to delete file: ' + data.error);
         }
+    })
+    .catch(function(err) {
+        console.error('❌ Delete error:', err);
+        addMessage('assistant', '❌ Error deleting file: ' + err.message);
     });
 }
 
 /**
  * Perform action on selected files
+ * BULLETPROOFED: Added comprehensive validation and error handling
  */
 function performFileAction(action) {
+    console.log('🎬 Performing action:', action);
+    console.log('📋 Selected files:', selectedFiles);
+    
+    // VALIDATION 1: Check if any files selected
     if (selectedFiles.length === 0) {
         alert('Please select at least one file');
+        console.warn('⚠️ No files selected');
+        return;
+    }
+    
+    // VALIDATION 2: Check for undefined values
+    var invalidFiles = selectedFiles.filter(function(id) { return !id || id === 'undefined'; });
+    if (invalidFiles.length > 0) {
+        console.error('❌ Invalid file IDs detected:', invalidFiles);
+        alert('Error: Some file IDs are invalid. Please refresh the page and try again.');
+        return;
+    }
+    
+    // VALIDATION 3: Check project ID
+    if (!currentProjectId) {
+        console.error('❌ No project ID');
+        alert('Error: No project selected');
         return;
     }
     
@@ -1474,29 +1535,42 @@ function performFileAction(action) {
     
     var message = messages[action] || 'Process these files';
     
+    console.log('📤 Sending request to AI with file_ids:', selectedFiles);
+    
     // Get file info for display
     fetch('/api/projects/' + currentProjectId + '/files')
         .then(function(r) { return r.json(); })
         .then(function(data) {
             if (data.success) {
                 var selectedFileInfo = data.files.filter(function(f) {
-                    return selectedFiles.indexOf(f.file_id) !== -1;
+                    var fileId = f.file_id || f.id;
+                    return selectedFiles.indexOf(fileId) !== -1;
                 });
                 
-                var fileNames = selectedFileInfo.map(function(f) { return f.original_filename; }).join(', ');
+                var fileNames = selectedFileInfo.map(function(f) { 
+                    return f.original_filename || f.filename || 'Unknown'; 
+                }).join(', ');
+                
+                console.log('📝 File names:', fileNames);
                 
                 // Add user message
                 addMessage('user', message + ' (' + selectedFiles.length + ' file' + (selectedFiles.length !== 1 ? 's' : '') + ': ' + fileNames + ')');
                 
-                // Send to AI with file IDs
+                // Build FormData
                 var formData = new FormData();
                 formData.append('request', message);
                 formData.append('project_id', currentProjectId);
                 formData.append('file_ids', JSON.stringify(selectedFiles));
                 
+                console.log('📦 FormData prepared:');
+                console.log('  - request:', message);
+                console.log('  - project_id:', currentProjectId);
+                console.log('  - file_ids:', JSON.stringify(selectedFiles));
+                
                 var loading = document.getElementById('loadingIndicator');
                 loading.classList.add('active');
                 
+                // Send to AI
                 fetch('/api/orchestrate', {
                     method: 'POST',
                     body: formData
@@ -1504,22 +1578,61 @@ function performFileAction(action) {
                 .then(function(r) { return r.json(); })
                 .then(function(data) {
                     loading.classList.remove('active');
+                    console.log('✅ AI Response:', data);
+                    
                     if (data.success) {
                         addMessage('assistant', data.result, data.task_id, 'project');
                     } else {
+                        console.error('❌ AI Error:', data.error);
                         addMessage('assistant', '❌ Error: ' + data.error);
                     }
                 })
                 .catch(function(err) {
                     loading.classList.remove('active');
+                    console.error('❌ Request error:', err);
                     addMessage('assistant', '❌ Error: ' + err.message);
                 });
                 
                 // Clear selection after action
                 clearFileSelection();
             }
+        })
+        .catch(function(err) {
+            console.error('❌ Failed to get file info:', err);
+            addMessage('assistant', '❌ Error: ' + err.message);
         });
 }
 
+// =============================================================================
+// 17. INITIALIZATION
+// =============================================================================
+
+function initializeApp() {
+    updateQuickActions();
+    loadStats();
+    loadDocuments();
+    loadConversations();
+    
+    var urlConversationId = getConversationIdFromUrl();
+    var storedConversationId = localStorage.getItem('currentConversationId');
+    
+    if (urlConversationId) loadConversation(urlConversationId);
+    else if (storedConversationId) loadConversation(storedConversationId);
+    else startNewConversation();
+    
+    document.getElementById('userInput').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+    });
+    
+    setInterval(function() { loadStats(); loadDocuments(); }, 30000);
+    
+    console.log('🚀 AI Swarm Interface initialized - Bulletproof file browser enabled - February 1, 2026');
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeApp);
+} else {
+    initializeApp();
+}
 
 /* I did no harm and this file is not truncated */
