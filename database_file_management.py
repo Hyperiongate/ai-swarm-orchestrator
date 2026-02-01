@@ -936,19 +936,19 @@ def get_file_stats_by_project(project_id):
     return stats
 
 
-def get_files_for_ai_context(project_id, max_files=5, max_chars_per_file=2000, file_ids=None):
+def get_files_for_ai_context(project_id, max_files=5, max_chars_per_file=10000, file_ids=None):
     """
     Extract file content for AI context.
     Returns formatted string with file information.
     
-    UPDATED February 1, 2026: Now properly reads Excel files using pandas
+    UPDATED February 1, 2026: Added detailed logging and increased max_chars default
     UPDATED January 31, 2026: Added file_ids parameter for selective file retrieval
     
     Args:
         project_id: Project ID
         max_files: Maximum number of files to include (default: 5)
-        max_chars_per_file: Max characters per file preview (default: 2000)
-        file_ids: Optional list of specific file IDs to retrieve (NEW!)
+        max_chars_per_file: Max characters per file preview (default: 10000, increased!)
+        file_ids: Optional list of specific file IDs to retrieve
     
     Returns:
         Formatted string with file information and content
@@ -959,9 +959,13 @@ def get_files_for_ai_context(project_id, max_files=5, max_chars_per_file=2000, f
     if file_ids:
         files = []
         for file_id in file_ids:
+            print(f"🔍 Looking for file_id: {file_id}")
             file_info = pm.get_file(file_id)
             if file_info:
                 files.append(file_info)
+                print(f"✅ Found file: {file_info.get('original_filename')} at {file_info.get('file_path')}")
+            else:
+                print(f"❌ File not found for file_id: {file_id}")
         print(f"✅ Retrieved {len(files)} specific file(s) by ID")
     else:
         # Original behavior: get first max_files
@@ -975,6 +979,7 @@ def get_files_for_ai_context(project_id, max_files=5, max_chars_per_file=2000, f
     context += f"This project has {len(files)} file(s) available:\n\n"
     
     for file in files:
+        print(f"\n📁 Processing file: {file['original_filename']}")
         context += f"📄 {file['original_filename']} ({file.get('file_type', 'unknown')})\n"
         
         if file.get('description'):
@@ -985,19 +990,26 @@ def get_files_for_ai_context(project_id, max_files=5, max_chars_per_file=2000, f
         
         # CRITICAL FIX: Extract file content based on file type
         try:
-            if os.path.exists(file['file_path']):
-                file_path = file['file_path']
+            file_path = file['file_path']
+            print(f"   📍 File path: {file_path}")
+            print(f"   📏 File exists: {os.path.exists(file_path)}")
+            
+            if os.path.exists(file_path):
                 file_ext = os.path.splitext(file_path)[1].lower()
+                print(f"   📋 File extension: {file_ext}")
                 
                 content = ""
                 
                 # Handle Excel files with pandas
                 if file_ext in ['.xlsx', '.xls']:
+                    print(f"   🔧 Attempting to read Excel file with pandas...")
                     try:
                         import pandas as pd
+                        print(f"   ✅ pandas imported successfully")
                         
                         # Read Excel file (first sheet only for now)
                         df = pd.read_excel(file_path, nrows=100)  # Limit to 100 rows for context
+                        print(f"   ✅ Excel file read: {len(df)} rows, {len(df.columns)} columns")
                         
                         # Convert to readable text
                         content = f"Excel file with {len(df)} rows and {len(df.columns)} columns\n"
@@ -1005,11 +1017,16 @@ def get_files_for_ai_context(project_id, max_files=5, max_chars_per_file=2000, f
                         content += "Sample data (first 10 rows):\n"
                         content += df.head(10).to_string()
                         
-                        print(f"✅ Extracted {len(content)} chars from Excel file {file['original_filename']}")
+                        print(f"   ✅ Extracted {len(content)} chars from Excel file")
                         
+                    except ImportError as import_err:
+                        print(f"   ❌ pandas not available: {import_err}")
+                        content = f"(Excel file - {file.get('file_size', 0)} bytes - pandas not installed)"
                     except Exception as excel_error:
-                        print(f"⚠️ Could not read Excel file with pandas: {excel_error}")
-                        content = f"(Excel file - {file.get('file_size', 0)} bytes - could not extract preview)"
+                        print(f"   ❌ Could not read Excel file: {excel_error}")
+                        import traceback
+                        traceback.print_exc()
+                        content = f"(Excel file - {file.get('file_size', 0)} bytes - error: {str(excel_error)})"
                 
                 # Handle CSV files
                 elif file_ext == '.csv':
@@ -1019,10 +1036,12 @@ def get_files_for_ai_context(project_id, max_files=5, max_chars_per_file=2000, f
                         content = f"CSV file with {len(df)} rows and {len(df.columns)} columns\n"
                         content += f"Columns: {', '.join(df.columns.tolist())}\n\n"
                         content += df.head(10).to_string()
+                        print(f"   ✅ Extracted {len(content)} chars from CSV file")
                     except:
                         # Fallback to text read
                         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                             content = f.read(max_chars_per_file)
+                        print(f"   ✅ Extracted {len(content)} chars from CSV as text")
                 
                 # Handle Word documents
                 elif file_ext == '.docx':
@@ -1030,29 +1049,39 @@ def get_files_for_ai_context(project_id, max_files=5, max_chars_per_file=2000, f
                         from docx import Document
                         doc = Document(file_path)
                         content = '\n'.join([para.text for para in doc.paragraphs[:50]])  # First 50 paragraphs
-                        print(f"✅ Extracted {len(content)} chars from Word document {file['original_filename']}")
+                        print(f"   ✅ Extracted {len(content)} chars from Word document")
                     except Exception as docx_error:
-                        print(f"⚠️ Could not read Word document: {docx_error}")
-                        content = f"(Word document - {file.get('file_size', 0)} bytes - could not extract preview)"
+                        print(f"   ❌ Could not read Word document: {docx_error}")
+                        content = f"(Word document - {file.get('file_size', 0)} bytes - could not extract)"
                 
                 # Handle text files
                 elif file_ext in ['.txt', '.md', '.py', '.js', '.json', '.xml', '.html']:
                     with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                         content = f.read(max_chars_per_file)
+                    print(f"   ✅ Extracted {len(content)} chars from text file")
                 
                 # Unknown file type
                 else:
                     content = f"(Binary file - {file.get('file_size', 0)} bytes - type: {file_ext})"
+                    print(f"   ⚠️ Unknown file type: {file_ext}")
                 
                 # Truncate if too long
                 if len(content) > max_chars_per_file:
+                    original_len = len(content)
                     content = content[:max_chars_per_file] + f"\n... (truncated {len(content) - max_chars_per_file} chars)"
+                    print(f"   ✂️ Truncated from {original_len} to {max_chars_per_file} chars")
                 
                 if content:
                     context += f"   Content:\n{content}\n"
+                else:
+                    print(f"   ⚠️ No content extracted!")
+                    context += f"   (No content could be extracted)\n"
+            else:
+                print(f"   ❌ File does not exist at path: {file_path}")
+                context += f"   (File not found at expected location)\n"
                             
         except Exception as e:
-            print(f"⚠️ Could not read file {file['original_filename']}: {e}")
+            print(f"   ❌ ERROR reading file {file['original_filename']}: {e}")
             import traceback
             traceback.print_exc()
             context += f"   (File content could not be extracted: {str(e)})\n"
