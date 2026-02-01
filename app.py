@@ -685,6 +685,14 @@ app.register_blueprint(core_bp)
 app.register_blueprint(survey_bp)
 
 # ============================================================================
+# ORCHESTRATION HANDLER BLUEPRINT (Main AI Processing) - February 1, 2026
+# ============================================================================
+from routes.orchestration_handler import orchestration_bp
+app.register_blueprint(orchestration_bp)
+print("✅ Orchestration Handler API registered")
+# ============================================================================
+
+# ============================================================================
 # BULLETPROOF PROJECT MANAGEMENT BLUEPRINT (Added January 30, 2026)
 # ============================================================================
 print("🔍 DEBUG: About to import bulletproof project routes...")
