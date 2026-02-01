@@ -585,11 +585,22 @@ class ProjectManager:
         }
     
     def get_file(self, file_id):
-        """Get file information"""
+        """
+        Get file information by file_id OR filename.
+        UPDATED February 1, 2026: Now searches both file_id and filename columns
+        This fixes the file browser bug where frontend sends filename instead of file_id
+        """
         db = sqlite3.connect(DATABASE)
         db.row_factory = sqlite3.Row
         
-        row = db.execute('SELECT * FROM project_files WHERE file_id = ? AND is_deleted = 0', (file_id,)).fetchone()
+        # CRITICAL FIX: Try both file_id AND filename columns
+        # Frontend may send either depending on API response format
+        row = db.execute('''
+            SELECT * FROM project_files 
+            WHERE (file_id = ? OR filename = ?) 
+            AND is_deleted = 0
+        ''', (file_id, file_id)).fetchone()
+        
         db.close()
         
         if not row:
