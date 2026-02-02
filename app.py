@@ -852,6 +852,18 @@ except ImportError as e:
 except Exception as e:
     print(f"⚠️  Predictive Intelligence registration failed: {e}")
 
+# ============================================================================
+# SELF-OPTIMIZATION ENGINE BLUEPRINT (Added February 2, 2026 - PHASE 3)
+# ============================================================================
+try:
+    from routes.optimization import optimization_bp
+    app.register_blueprint(optimization_bp)
+    print("✅ Self-Optimization Engine API registered")
+except ImportError as e:
+    print(f"ℹ️  Self-Optimization Engine routes not found: {e}")
+except Exception as e:
+    print(f"⚠️  Self-Optimization Engine registration failed: {e}")
+
 # Sprint 3 blueprints
 try:
     from project_dashboard import dashboard_bp
