@@ -389,12 +389,19 @@ Please analyze these files and respond to the user's request. Be specific and re
                     document_id = None
                     
                                                                   
-                      try:
+                    try:
                         from document_creation_helper import create_analysis_document
                         
                         # Get analyzed file names
                         analyzed_files = []
-                        if file_ids:
+                        if file_ids_param:
+                            # Parse file_ids if needed
+                            if isinstance(file_ids_param, str):
+                                import json
+                                file_ids = json.loads(file_ids_param)
+                            else:
+                                file_ids = file_ids_param
+                            
                             from database_file_management import get_project_manager
                             pm = get_project_manager()
                             for fid in file_ids:
@@ -1011,7 +1018,7 @@ Be comprehensive and professional."""
             
             should_create, doc_type = should_create_document(user_request)
             if should_create and actual_output and not actual_output.startswith('Error'):
-            try:
+                try:
                     from docx import Document
                     from docx.shared import Pt
                     doc = Document()
