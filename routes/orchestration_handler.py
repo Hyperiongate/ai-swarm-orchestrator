@@ -380,6 +380,158 @@ Please analyze these files and respond to the user's request. Be specific and re
                     actual_output = gpt_response.get('content', '')
                     formatted_output = convert_markdown_to_html(actual_output)
                     
+                    # ================================================================
+                    # CREATE PROFESSIONAL DOCUMENT - February 1, 2026
+                    # Use docx-js for professional formatting
+                    # ================================================================
+                    document_created = False
+                    document_url = None
+                    document_id = None
+                    
+                    try:
+                        # Get analyzed file names
+                        analyzed_files = []
+                        if file_ids:
+                            from database_file_management import get_project_manager
+                            pm = get_project_manager()
+                            for fid in file_ids:
+                                file_info = pm.get_file(fid)
+                                if file_info:
+                                    analyzed_files.append(file_info.get('original_filename', 'Unknown'))
+                        
+                        file_names_str = ", ".join(analyzed_files) if analyzed_files else "Uploaded Files"
+                        
+                        # Escape special characters for JavaScript
+                        safe_output = actual_output.replace('\\', '\\\\').replace('`', '\\`').replace('$', '\\$').replace('"', '\\"')
+                        safe_filename = file_names_str.replace('\\', '\\\\').replace('"', '\\"')
+                        
+                        # Create JavaScript for docx generation
+                        docx_script = f"""
+const {{ Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType }} = require('docx');
+const fs = require('fs');
+
+const doc = new Document({{
+  styles: {{
+    default: {{ document: {{ run: {{ font: "Arial", size: 24 }} }} }},
+    paragraphStyles: [
+      {{ id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal", quickFormat: true,
+        run: {{ size: 32, bold: true, font: "Arial" }},
+        paragraph: {{ spacing: {{ before: 240, after: 240 }}, outlineLevel: 0 }} }},
+      {{ id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", quickFormat: true,
+        run: {{ size: 28, bold: true, font: "Arial" }},
+        paragraph: {{ spacing: {{ before: 180, after: 180 }}, outlineLevel: 1 }} }},
+    ]
+  }},
+  sections: [{{
+    properties: {{
+      page: {{
+        size: {{ width: 12240, height: 15840 }},
+        margin: {{ top: 1440, right: 1440, bottom: 1440, left: 1440 }}
+      }}
+    }},
+    children: [
+      new Paragraph({{
+        text: "SHIFTWORK SOLUTIONS LLC",
+        heading: HeadingLevel.HEADING_1,
+        alignment: AlignmentType.CENTER,
+        spacing: {{ after: 400 }}
+      }}),
+      new Paragraph({{
+        text: "File Analysis Report",
+        heading: HeadingLevel.HEADING_2,
+        alignment: AlignmentType.CENTER,
+        spacing: {{ after: 400 }}
+      }}),
+      new Paragraph({{
+        children: [
+          new TextRun({{ text: "File(s) Analyzed: ", bold: true }}),
+          new TextRun({{ text: "{safe_filename}" }})
+        ],
+        spacing: {{ after: 120 }}
+      }}),
+      new Paragraph({{
+        children: [
+          new TextRun({{ text: "Date: ", bold: true }}),
+          new TextRun({{ text: "{datetime.now().strftime('%B %d, %Y')}" }})
+        ],
+        spacing: {{ after: 120 }}
+      }}),
+      new Paragraph({{
+        children: [
+          new TextRun({{ text: "Analyzed by: ", bold: true }}),
+          new TextRun({{ text: "AI Swarm Orchestrator" }})
+        ],
+        spacing: {{ after: 400 }}
+      }}),
+      new Paragraph({{
+        text: "Analysis Results",
+        heading: HeadingLevel.HEADING_2,
+        spacing: {{ before: 400, after: 200 }}
+      }}),
+      new Paragraph({{
+        text: "{safe_output}",
+        spacing: {{ after: 120 }}
+      }})
+    ]
+  }}]
+}});
+
+Packer.toBuffer(doc).then(buffer => {{
+  fs.writeFileSync('/tmp/file_analysis.docx', buffer);
+  console.log('Document created successfully');
+}});
+"""
+                        
+                        # Write and execute the script
+                        script_path = '/tmp/create_analysis_doc.js'
+                        with open(script_path, 'w') as f:
+                            f.write(docx_script)
+                        
+                        import subprocess
+                        result = subprocess.run(['node', script_path], 
+                                              capture_output=True, 
+                                              text=True, 
+                                              timeout=10)
+                        
+                        if result.returncode == 0 and os.path.exists('/tmp/file_analysis.docx'):
+                            # Save to database
+                            file_size = os.path.getsize('/tmp/file_analysis.docx')
+                            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                            filename = f'file_analysis_{timestamp}.docx'
+                            
+                            # Move to permanent location
+                            final_path = f'/tmp/{filename}'
+                            os.rename('/tmp/file_analysis.docx', final_path)
+                            
+                            document_id = save_generated_document(
+                                filename=filename,
+                                original_name=f"File Analysis - {file_names_str[:50]}",
+                                document_type='docx',
+                                file_path=final_path,
+                                file_size=file_size,
+                                task_id=task_id,
+                                conversation_id=conversation_id,
+                                project_id=project_id,
+                                title=f"File Analysis Report",
+                                description=f"AI analysis of {file_names_str}",
+                                category='report'
+                            )
+                            
+                            document_created = True
+                            document_url = f'/api/generated-documents/{document_id}/download'
+                            print(f"✅ Created professional analysis document: {filename}")
+                        else:
+                            print(f"⚠️ Document creation failed: {result.stderr}")
+                    
+                    except Exception as doc_error:
+                        print(f"⚠️ Could not create analysis document: {doc_error}")
+                        import traceback
+                        traceback.print_exc()
+                    
+                    # ================================================================
+                    # END DOCUMENT CREATION
+                    # ================================================================
+                    
                     total_time = time.time() - overall_start
                     db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
                               ('completed', 'gpt4_file_handler', total_time, task_id))
@@ -396,7 +548,12 @@ Please analyze these files and respond to the user's request. Be specific and re
                         'result': formatted_output,
                         'orchestrator': 'gpt4_file_handler',
                         'execution_time': total_time,
-                        'message': '📎 File analyzed by GPT-4'
+                        'message': '📎 File analyzed by GPT-4',
+                        'document_created': document_created,
+                        'document_url': document_url,
+                        'document_id': document_id,
+                        'document_type': 'docx' if document_created else None
+                    })  'message': '📎 File analyzed by GPT-4'
                     })
                 else:
                     print(f"⚠️ GPT-4 analysis failed: {gpt_response.get('content', 'Unknown error')}")
@@ -443,7 +600,8 @@ Please respond to the user's follow-up question based on these files."""
                         db.close()
                         
                         add_message(conversation_id, 'assistant', actual_output, task_id,
-                                   {'orchestrator': 'gpt4_file_handler', 'file_analysis': True, 'execution_time': total_time})
+                               {'orchestrator': 'gpt4_file_handler', 'file_analysis': True, 'execution_time': total_time,
+                                'document_created': document_created, 'document_id': document_id})
                         
                         return jsonify({
                             'success': True,
