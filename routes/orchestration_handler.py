@@ -183,7 +183,7 @@ def orchestrate():
         # Fixed: February 1, 2026 - file_contents initialized above
         # ====================================================================
         
-         Check if user selected files from project (file_ids parameter)
+        # Check if user selected files from project (file_ids parameter)
         file_ids_param = None
         if request.is_json:
             file_ids_param = data.get('file_ids')
