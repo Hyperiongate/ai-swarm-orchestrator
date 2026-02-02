@@ -401,9 +401,11 @@ Please analyze these files and respond to the user's request. Be specific and re
                         
                         file_names_str = ", ".join(analyzed_files) if analyzed_files else "Uploaded Files"
                         
-                        # Escape special characters for JavaScript
-                        safe_output = actual_output.replace('\\', '\\\\').replace('`', '\\`').replace('$', '\\$').replace('"', '\\"')
-                        safe_filename = file_names_str.replace('\\', '\\\\').replace('"', '\\"')
+                        # Escape special characters for JavaScript string
+                        import json
+                        # Use JSON encoding which handles all escaping properly
+                        safe_output = json.dumps(actual_output)[1:-1] 
+                        safe_filename = json.dumps(file_names_str)[1:-1]
                         
                         # Create JavaScript for docx generation
                         docx_script = f"""
