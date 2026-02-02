@@ -183,12 +183,18 @@ def orchestrate():
         # Fixed: February 1, 2026 - file_contents initialized above
         # ====================================================================
         
-        # Check if user selected files from project (file_ids parameter)
+         Check if user selected files from project (file_ids parameter)
         file_ids_param = None
         if request.is_json:
             file_ids_param = data.get('file_ids')
         else:
             file_ids_param = request.form.get('file_ids')
+        
+        # 🔍 DIAGNOSTIC STEP 1: Log initial file_ids detection
+        print(f"🔍 DIAGNOSTIC STEP 1: file_ids_param = {file_ids_param}")
+        print(f"🔍 DIAGNOSTIC STEP 1: file_ids_param type = {type(file_ids_param)}")
+        print(f"🔍 DIAGNOSTIC STEP 1: project_id = {project_id}")
+        print(f"🔍 DIAGNOSTIC STEP 1: request.is_json = {request.is_json}")
         
         if file_ids_param and project_id:
             try:
@@ -198,6 +204,10 @@ def orchestrate():
                     file_ids = json.loads(file_ids_param)
                 else:
                     file_ids = file_ids_param
+                
+                # 🔍 DIAGNOSTIC STEP 2: Log parsed file_ids
+                print(f"🔍 DIAGNOSTIC STEP 2: Parsed file_ids = {file_ids}")
+                print(f"🔍 DIAGNOSTIC STEP 2: Number of files = {len(file_ids) if file_ids else 0}")
                 
                 if file_ids and len(file_ids) > 0:
                     print(f"📎 User selected {len(file_ids)} file(s) from project {project_id}")
@@ -213,11 +223,25 @@ def orchestrate():
                         max_chars_per_file=10000  # Allow up to 10k chars per file
                     )
                     
+                    # 🔍 DIAGNOSTIC STEP 3: Log retrieved context
+                    print(f"🔍 DIAGNOSTIC STEP 3: selected_file_context returned")
+                    print(f"🔍 DIAGNOSTIC STEP 3: Context length = {len(selected_file_context) if selected_file_context else 0}")
+                    if selected_file_context:
+                        print(f"🔍 DIAGNOSTIC STEP 3: Context preview (first 200 chars):")
+                        print(f"{selected_file_context[:200]}")
+                    else:
+                        print(f"🔍 DIAGNOSTIC STEP 3: Context is EMPTY/NONE")
+                    
                     if selected_file_context:
                         print(f"✅ Retrieved context for {len(file_ids)} selected file(s)")
                         
                         # Add to file_contents for AI processing
                         file_contents += "\n\n" + selected_file_context
+                        
+                        # 🔍 DIAGNOSTIC STEP 3 (continued): Log file_contents after adding
+                        print(f"🔍 DIAGNOSTIC STEP 3: file_contents now has {len(file_contents)} chars")
+                        print(f"🔍 DIAGNOSTIC STEP 3: file_contents preview (first 200 chars):")
+                        print(f"{file_contents[:200]}")
                     else:
                         print(f"⚠️ No file context retrieved for file_ids: {file_ids}")
                         
@@ -314,7 +338,15 @@ def orchestrate():
                 print(f"⚠️ Could not extract file contents: {extract_error}")
         
         overall_start = time.time()
+        # 🔍 DIAGNOSTIC STEP 4: Check if file_contents will route to GPT-4
+        print(f"🔍 DIAGNOSTIC STEP 4: Checking file_contents for GPT-4 routing")
+        print(f"🔍 DIAGNOSTIC STEP 4: file_contents is truthy = {bool(file_contents)}")
+        print(f"🔍 DIAGNOSTIC STEP 4: file_contents length = {len(file_contents) if file_contents else 0}")
         
+        # Route file analysis to GPT-4 (better for file handling)
+        if file_contents:
+            print(f"🔍 DIAGNOSTIC STEP 4: ROUTING TO GPT-4! file_contents has {len(file_contents)} chars")
+            print(f"📎 File content detected ({len(file_contents)} chars) - routing to GPT-4")
         # Route file analysis to GPT-4 (better for file handling)
         if file_contents:
             print(f"📎 File content detected ({len(file_contents)} chars) - routing to GPT-4")
