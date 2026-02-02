@@ -1,0 +1,227 @@
+"""
+CONVERSATIONAL DELIVERABLE HANDLER
+Created: February 2, 2026
+Last Updated: February 2, 2026
+
+This module detects when user requests a deliverable (like "I need an implementation manual")
+and launches an intelligent conversational flow to gather information and generate it.
+
+Works with collective intelligence to ask learned questions.
+
+Author: Jim @ Shiftwork Solutions LLC (managed by Claude Sonnet 4)
+"""
+
+from typing import Dict, Any, Optional, List, Tuple
+import re
+
+
+class ConversationalDeliverableHandler:
+    """
+    Handles conversational deliverable requests.
+    Detects intent, asks questions, generates deliverables.
+    """
+    
+    def __init__(self):
+        # Deliverable patterns to detect
+        self.deliverable_patterns = {
+            'implementation_manual': [
+                r'(?i)implementation\s+manual',
+                r'(?i)need.*manual',
+                r'(?i)create.*manual',
+                r'(?i)generate.*manual'
+            ],
+            'survey': [
+                r'(?i)employee\s+survey',
+                r'(?i)create.*survey',
+                r'(?i)need.*survey'
+            ],
+            'executive_summary': [
+                r'(?i)executive\s+summary',
+                r'(?i)client.*summary',
+                r'(?i)project.*summary'
+            ]
+        }
+    
+    def detect_deliverable_request(self, user_request: str) -> Optional[str]:
+        """
+        Detect if user is requesting a deliverable.
+        
+        Args:
+            user_request: User's message
+            
+        Returns:
+            Deliverable type or None
+        """
+        for deliverable_type, patterns in self.deliverable_patterns.items():
+            for pattern in patterns:
+                if re.search(pattern, user_request):
+                    return deliverable_type
+        
+        return None
+    
+    def build_conversational_response(self, 
+                                     deliverable_type: str,
+                                     questions: List[Dict],
+                                     answers_so_far: Dict = None) -> Dict:
+        """
+        Build conversational response to gather information.
+        
+        Args:
+            deliverable_type: Type of deliverable
+            questions: List of questions to ask
+            answers_so_far: Answers collected so far
+            
+        Returns:
+            Response with next question or generation trigger
+        """
+        answers_so_far = answers_so_far or {}
+        
+        # Find next unanswered question
+        next_question = None
+        for q in questions:
+            if q['id'] not in answers_so_far:
+                next_question = q
+                break
+        
+        if not next_question:
+            # All questions answered, ready to generate
+            return {
+                'action': 'generate',
+                'deliverable_type': deliverable_type,
+                'answers': answers_so_far,
+                'message': "Thanks! I have all the information I need. Generating your implementation manual now..."
+            }
+        
+        # Build conversational question
+        question_text = self._make_conversational(next_question, len(answers_so_far), len(questions))
+        
+        return {
+            'action': 'ask_question',
+            'question': next_question,
+            'question_text': question_text,
+            'progress': {
+                'answered': len(answers_so_far),
+                'total': len(questions),
+                'percent': int((len(answers_so_far) / len(questions)) * 100)
+            }
+        }
+    
+    def _make_conversational(self, question: Dict, progress: int, total: int) -> str:
+        """Make question sound conversational, not like a form"""
+        question_text = question['text']
+        
+        # Add progress indicator if not first question
+        if progress > 0:
+            prefix = f"Great! ({progress}/{total}) "
+        else:
+            prefix = ""
+        
+        # Add context if important
+        if question.get('importance', 0) >= 0.9 and question.get('learned_from'):
+            suffix = f"\n\n💡 *Why I'm asking:* {question['learned_from']}"
+        else:
+            suffix = ""
+        
+        # Add options if available
+        if question.get('options'):
+            options_text = "\n\nOptions: " + ", ".join(question['options'])
+        else:
+            options_text = ""
+        
+        return f"{prefix}{question_text}{options_text}{suffix}"
+    
+    def parse_answer(self, user_response: str, question: Dict) -> Any:
+        """
+        Parse user's answer based on question type.
+        
+        Args:
+            user_response: User's text response
+            question: Question being answered
+            
+        Returns:
+            Parsed answer
+        """
+        input_type = question.get('input_type', 'text')
+        
+        if input_type == 'boolean':
+            # Detect yes/no
+            response_lower = user_response.lower().strip()
+            if any(word in response_lower for word in ['yes', 'y', 'yeah', 'yep', 'sure', 'correct', 'true']):
+                return True
+            elif any(word in response_lower for word in ['no', 'n', 'nope', 'nah', 'false', 'not']):
+                return False
+            return None
+        
+        elif input_type == 'number':
+            # Extract number
+            numbers = re.findall(r'\d+', user_response)
+            if numbers:
+                return int(numbers[0])
+            return None
+        
+        elif input_type == 'date':
+            # Just store as text for now
+            return user_response.strip()
+        
+        else:
+            # Text - just return cleaned
+            return user_response.strip()
+
+
+def detect_and_handle_deliverable_request(user_request: str, 
+                                          conversation_context: Dict = None) -> Optional[Dict]:
+    """
+    Main function to detect and handle deliverable requests.
+    
+    Args:
+        user_request: User's message
+        conversation_context: Current conversation state
+        
+    Returns:
+        Response dict or None if not a deliverable request
+    """
+    handler = ConversationalDeliverableHandler()
+    
+    # Check if this is a deliverable request
+    deliverable_type = handler.detect_deliverable_request(user_request)
+    
+    if not deliverable_type:
+        return None
+    
+    # Get conversation state
+    conv_state = conversation_context or {}
+    deliverable_state = conv_state.get('deliverable_generation', {})
+    
+    # If no state, this is a new request
+    if not deliverable_state:
+        return {
+            'is_deliverable_request': True,
+            'deliverable_type': deliverable_type,
+            'action': 'start_questionnaire',
+            'message': f"I'll help you create a {deliverable_type.replace('_', ' ')}. Let me ask you a few questions to gather the necessary information."
+        }
+    
+    # If we have state, user is answering a question
+    current_question = deliverable_state.get('current_question')
+    answers = deliverable_state.get('answers', {})
+    
+    if current_question:
+        # Parse the answer
+        parsed_answer = handler.parse_answer(user_request, current_question)
+        
+        if parsed_answer is not None:
+            # Store answer
+            answers[current_question['id']] = parsed_answer
+            
+            return {
+                'is_deliverable_request': True,
+                'deliverable_type': deliverable_type,
+                'action': 'answer_received',
+                'answer': parsed_answer,
+                'answers_so_far': answers
+            }
+    
+    return None
+
+
+# I did no harm and this file is not truncated
