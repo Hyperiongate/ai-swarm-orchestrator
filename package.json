@@ -1,0 +1,8 @@
+{
+  "name": "ai-swarm-orchestrator",
+  "version": "1.0.0",
+  "description": "AI Swarm Orchestrator with document generation",
+  "dependencies": {
+    "docx": "^8.5.0"
+  }
+}
