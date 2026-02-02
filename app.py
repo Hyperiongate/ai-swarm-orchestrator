@@ -840,6 +840,18 @@ except ImportError as e:
 except Exception as e:
     print(f"⚠️  Adaptive Learning Engine registration failed: {e}")
 
+# ============================================================================
+# PREDICTIVE INTELLIGENCE BLUEPRINT (Added February 2, 2026 - PHASE 2)
+# ============================================================================
+try:
+    from routes.predictive import predictive_bp
+    app.register_blueprint(predictive_bp)
+    print("✅ Predictive Intelligence API registered")
+except ImportError as e:
+    print(f"ℹ️  Predictive Intelligence routes not found: {e}")
+except Exception as e:
+    print(f"⚠️  Predictive Intelligence registration failed: {e}")
+
 # Sprint 3 blueprints
 try:
     from project_dashboard import dashboard_bp
