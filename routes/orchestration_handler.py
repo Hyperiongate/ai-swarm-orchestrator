@@ -553,8 +553,7 @@ Packer.toBuffer(doc).then(buffer => {{
                         'document_url': document_url,
                         'document_id': document_id,
                         'document_type': 'docx' if document_created else None
-                    })  'message': '📎 File analyzed by GPT-4'
-                    })
+                   
                 else:
                     print(f"⚠️ GPT-4 analysis failed: {gpt_response.get('content', 'Unknown error')}")
                     db.close()
