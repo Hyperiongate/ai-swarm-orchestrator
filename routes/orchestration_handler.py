@@ -1024,7 +1024,7 @@ Be comprehensive and professional."""
             
             should_create, doc_type = should_create_document(user_request)
             if should_create and actual_output and not actual_output.startswith('Error'):
-                try:
+            try:
                     from docx import Document
                     from docx.shared import Pt
                     doc = Document()
