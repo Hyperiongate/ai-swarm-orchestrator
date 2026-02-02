@@ -278,7 +278,7 @@ def index():
 # This route allows users to download desktop apps from the Marketing tab:
 # - LinkedIn Poster (linkedin_poster.pyw) - 120 pre-written posts for 12 groups
 # - Cost Calculator (cost_of_time_calculator_v3_3_2.pyw)
-# - Survey App (SurveySelector_v87_FINAL.pyw)
+# - Survey App (SurveySelector_v88_FIXED.pyw)
 # 
 # Files are served from the /downloads folder in your repository
 # =============================================================================
