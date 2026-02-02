@@ -828,6 +828,18 @@ except ImportError as e:
 except Exception as e:
     print(f"⚠️  Implementation Manual Generator registration failed: {e}")
 
+# ============================================================================
+# ADAPTIVE LEARNING ENGINE BLUEPRINT (Added February 2, 2026 - PHASE 1)
+# ============================================================================
+try:
+    from routes.learning import learning_bp
+    app.register_blueprint(learning_bp)
+    print("✅ Adaptive Learning Engine API registered")
+except ImportError as e:
+    print(f"ℹ️  Adaptive Learning Engine routes not found: {e}")
+except Exception as e:
+    print(f"⚠️  Adaptive Learning Engine registration failed: {e}")
+
 # Sprint 3 blueprints
 try:
     from project_dashboard import dashboard_bp
