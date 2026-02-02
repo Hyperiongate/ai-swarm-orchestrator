@@ -1167,7 +1167,7 @@ def get_files_for_ai_context(project_id, max_files=5, max_chars_per_file=10000, 
                         
                         # Convert to readable text
                         content = f"Excel file with {len(df)} rows and {len(df.columns)} columns\n"
-                        content += f"Columns: {', '.join(df.columns.tolist())}\n\n"
+                        content += f"Columns: {', '.join([str(col) for col in df.columns.tolist()])}\n\n"
                         content += "Sample data (first 10 rows):\n"
                         content += df.head(10).to_string()
                         
