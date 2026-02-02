@@ -104,9 +104,30 @@ def get_status():
                 'templates_available': templates
             },
             'pattern_breakdown': pattern_breakdown,
-            'available_deliverables': [
-                'implementation_manual'
-            ]
+            'capabilities': {
+                'document_generation': [
+                    {
+                        'type': 'implementation_manual',
+                        'name': 'Implementation Manual',
+                        'description': 'Complete implementation manual for schedule changes',
+                        'action': 'generate'
+                    }
+                ],
+                'document_analysis': [
+                    {
+                        'type': 'oaf',
+                        'name': 'Operations Assessment Feedback (OAF)',
+                        'description': 'Analyze operational assessments with learned intelligence',
+                        'action': 'analyze'
+                    },
+                    {
+                        'type': 'eaf',
+                        'name': 'Employee Assessment Feedback (EAF)',
+                        'description': 'Analyze employee surveys with normative comparisons',
+                        'action': 'analyze'
+                    }
+                ]
+            }
         })
     except Exception as e:
         return jsonify({
@@ -319,6 +340,69 @@ def get_patterns():
         }), 500
 
 
+@collective_bp.route('/api/collective/analyze-document', methods=['POST'])
+def analyze_document():
+    """
+    Analyze an uploaded document using collective intelligence.
+    
+    Body:
+    {
+        "document_content": "Full text of document",
+        "document_type": "eaf" or "oaf",
+        "metadata": {
+            "client_name": "Acme Corp",
+            "industry": "Manufacturing",
+            ...
+        }
+    }
+    
+    Returns intelligent analysis with insights and recommendations.
+    """
+    try:
+        data = request.get_json() or {}
+        document_content = data.get('document_content', '')
+        document_type = data.get('document_type', '')
+        metadata = data.get('metadata', {})
+        
+        if not document_content:
+            return jsonify({
+                'success': False,
+                'error': 'No document content provided'
+            }), 400
+        
+        if not document_type:
+            return jsonify({
+                'success': False,
+                'error': 'No document type specified',
+                'supported_types': ['eaf', 'oaf']
+            }), 400
+        
+        # Get knowledge base from app
+        knowledge_base = getattr(current_app, 'knowledge_base', None)
+        
+        ci = get_collective_intelligence(knowledge_base=knowledge_base)
+        analysis = ci.analyze_document(document_content, document_type, metadata)
+        
+        if 'error' in analysis:
+            return jsonify({
+                'success': False,
+                'error': analysis['error'],
+                'supported_types': analysis.get('supported_types', [])
+            }), 400
+        
+        return jsonify({
+            'success': True,
+            'document_type': document_type,
+            'analysis': analysis,
+            'message': f'{document_type.upper()} analysis complete'
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 @collective_bp.route('/api/collective/conversational-generate', methods=['POST'])
 def conversational_generate():
     """
@@ -340,12 +424,16 @@ def conversational_generate():
         deliverable_type = None
         if 'implementation manual' in user_request.lower():
             deliverable_type = 'implementation_manual'
+        elif 'oaf' in user_request.lower() or 'operations assessment' in user_request.lower():
+            deliverable_type = 'oaf'
+        elif 'eaf' in user_request.lower() or 'employee assessment' in user_request.lower() or 'employee feedback' in user_request.lower():
+            deliverable_type = 'eaf'
         
         if not deliverable_type:
             return jsonify({
                 'success': False,
                 'error': 'Could not determine deliverable type from request',
-                'suggestion': 'Try: "I need an implementation manual"'
+                'suggestion': 'Try: "I need an implementation manual" or "I need an OAF" or "I need an EAF"'
             }), 400
         
         # Get questionnaire
