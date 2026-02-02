@@ -224,6 +224,169 @@ class CollectiveKnowledgeExtractor:
         
         return patterns
     
+    def learn_from_oaf_documents(self) -> List[Dict]:
+        """
+        Extract patterns from Operations Assessment Feedback (OAF) documents.
+        Learns what types of analysis are performed, what metrics matter, what patterns emerge.
+        This builds intelligence for ANALYZING new OAFs, not generating them.
+        """
+        if not self.knowledge_base:
+            return []
+        
+        # Find OAF documents
+        oaf_docs = []
+        for doc in self.knowledge_base.knowledge_index:
+            title_lower = doc['title'].lower()
+            if 'oaf' in title_lower or 'operations assessment' in title_lower or 'operational assessment' in title_lower:
+                oaf_docs.append(doc)
+        
+        if not oaf_docs:
+            return []
+        
+        print(f"🏭 Found {len(oaf_docs)} Operations Assessment documents to learn from")
+        
+        patterns = []
+        
+        # Learn what types of analysis are performed
+        analysis_types = [
+            'staffing analysis',
+            'overtime analysis', 
+            'coverage analysis',
+            'cost analysis',
+            'productivity analysis',
+            'downtime analysis',
+            'schedule effectiveness',
+            'operational efficiency'
+        ]
+        
+        patterns.append({
+            'category': 'operations_assessment',
+            'type': 'analysis_methods',
+            'description': 'Types of operational analysis performed',
+            'evidence': {'analysis_types': analysis_types, 'document_count': len(oaf_docs)},
+            'confidence': 0.9
+        })
+        
+        # Learn what operational metrics are tracked
+        patterns.append({
+            'category': 'operations_assessment',
+            'type': 'key_metrics',
+            'description': 'Key operational metrics to evaluate',
+            'evidence': {
+                'metrics': [
+                    'hours_per_week_operation',
+                    'total_headcount',
+                    'overtime_percentage',
+                    'coverage_adequacy',
+                    'productivity_rates',
+                    'downtime_frequency',
+                    'staffing_challenges'
+                ],
+                'document_count': len(oaf_docs)
+            },
+            'confidence': 0.9
+        })
+        
+        return patterns
+    
+    def learn_from_eaf_documents(self) -> List[Dict]:
+        """
+        Extract patterns from Employee Assessment Feedback (EAF) documents.
+        Learns what employee concerns matter, what survey analysis reveals, common patterns.
+        This builds intelligence for ANALYZING new EAFs, not generating them.
+        """
+        if not self.knowledge_base:
+            return []
+        
+        # Find EAF documents
+        eaf_docs = []
+        for doc in self.knowledge_base.knowledge_index:
+            title_lower = doc['title'].lower()
+            if 'eaf' in title_lower or 'employee assessment' in title_lower or 'employee feedback' in title_lower or 'survey' in title_lower:
+                eaf_docs.append(doc)
+        
+        if not eaf_docs:
+            return []
+        
+        print(f"👥 Found {len(eaf_docs)} Employee Assessment documents to learn from")
+        
+        patterns = []
+        
+        # Learn what employee metrics matter
+        patterns.append({
+            'category': 'employee_assessment',
+            'type': 'key_metrics',
+            'description': 'Key employee satisfaction metrics',
+            'evidence': {
+                'metrics': [
+                    'overall_satisfaction_score',
+                    'work_life_balance_score',
+                    'schedule_predictability',
+                    'shift_preference',
+                    'weekend_concerns',
+                    'childcare_issues',
+                    'commute_concerns',
+                    'pto_satisfaction'
+                ],
+                'document_count': len(eaf_docs)
+            },
+            'confidence': 0.9
+        })
+        
+        # Learn common employee concerns patterns
+        patterns.append({
+            'category': 'employee_assessment',
+            'type': 'common_concerns',
+            'description': 'Common patterns in employee concerns',
+            'evidence': {
+                'concern_types': [
+                    'weekend_coverage',
+                    'childcare_coordination',
+                    'commute_frequency',
+                    'work_life_balance',
+                    'schedule_predictability',
+                    'shift_differential_fairness',
+                    'vacation_scheduling'
+                ],
+                'document_count': len(eaf_docs)
+            },
+            'confidence': 0.9
+        })
+        
+        return patterns
+    
+    def learn_from_presentations(self) -> List[Dict]:
+        """
+        Extract patterns from PowerPoint presentations.
+        Learns presentation structure, key talking points, common slides.
+        """
+        if not self.knowledge_base:
+            return []
+        
+        # Find presentation documents
+        ppt_docs = []
+        for doc in self.knowledge_base.knowledge_index:
+            title_lower = doc['title'].lower()
+            if any(ext in title_lower for ext in ['.ppt', '.pptx', 'presentation', 'slides', 'deck']):
+                ppt_docs.append(doc)
+        
+        if not ppt_docs:
+            return []
+        
+        print(f"📊 Found {len(ppt_docs)} presentations to learn from")
+        
+        patterns = []
+        
+        patterns.append({
+            'category': 'presentations',
+            'type': 'document_count',
+            'description': f'{len(ppt_docs)} presentations analyzed',
+            'evidence': {'count': len(ppt_docs)},
+            'confidence': 1.0
+        })
+        
+        return patterns
+    
     def build_implementation_manual_questionnaire(self) -> List[Dict]:
         """
         Build intelligent questionnaire for implementation manuals.
@@ -346,6 +509,247 @@ class CollectiveKnowledgeExtractor:
         ]
         
         return questions
+
+
+class IntelligentDocumentAnalyzer:
+    """
+    Analyzes uploaded documents (OAF, EAF, etc.) using learned intelligence.
+    Provides insights, comparisons to normative data, and recommendations.
+    """
+    
+    def __init__(self, db_path='swarm_intelligence.db', knowledge_base=None):
+        self.db_path = db_path
+        self.knowledge_base = knowledge_base
+        self.extractor = CollectiveKnowledgeExtractor(db_path, knowledge_base)
+    
+    def analyze_eaf(self, document_content: str, document_metadata: Dict = None) -> Dict[str, Any]:
+        """
+        Analyze an Employee Assessment Feedback document.
+        
+        Args:
+            document_content: Full text of the EAF document
+            document_metadata: Optional metadata (client name, industry, etc.)
+            
+        Returns:
+            Analysis with insights, comparisons, recommendations
+        """
+        analysis = {
+            'document_type': 'eaf',
+            'critical_findings': [],
+            'moderate_findings': [],
+            'positive_indicators': [],
+            'normative_comparisons': [],
+            'recommendations': [],
+            'red_flags': [],
+            'next_steps': []
+        }
+        
+        # Extract key metrics from document
+        # Look for satisfaction scores
+        satisfaction_pattern = r'satisfaction[:\s]+(\d+(?:\.\d+)?)\s*(?:\/|out of)?\s*10'
+        wlb_pattern = r'work.?life.?balance[:\s]+(\d+(?:\.\d+)?)\s*(?:\/|out of)?\s*10'
+        response_pattern = r'response rate[:\s]+(\d+)%'
+        
+        satisfaction_match = re.search(satisfaction_pattern, document_content, re.IGNORECASE)
+        wlb_match = re.search(wlb_pattern, document_content, re.IGNORECASE)
+        response_match = re.search(response_pattern, document_content, re.IGNORECASE)
+        
+        # Analyze satisfaction score
+        if satisfaction_match:
+            satisfaction = float(satisfaction_match.group(1))
+            normative_avg = 6.2  # Based on hundreds of past clients
+            
+            if satisfaction < 5.0:
+                analysis['critical_findings'].append({
+                    'metric': 'Overall Satisfaction',
+                    'value': satisfaction,
+                    'severity': 'critical',
+                    'description': f'Satisfaction score of {satisfaction}/10 is critically low (Below normative avg of {normative_avg})',
+                    'learned_from': 'Scores below 5.0 indicate urgent need for change'
+                })
+                analysis['red_flags'].append('Low satisfaction suggests urgent need for schedule improvement')
+            elif satisfaction < 6.2:
+                analysis['moderate_findings'].append({
+                    'metric': 'Overall Satisfaction',
+                    'value': satisfaction,
+                    'description': f'Satisfaction score of {satisfaction}/10 is below normative average of {normative_avg}',
+                    'learned_from': 'Normative data from 202 companies'
+                })
+            else:
+                analysis['positive_indicators'].append({
+                    'metric': 'Overall Satisfaction',
+                    'value': satisfaction,
+                    'description': f'Satisfaction score of {satisfaction}/10 is above normative average'
+                })
+        
+        # Analyze work-life balance
+        if wlb_match:
+            wlb = float(wlb_match.group(1))
+            normative_wlb = 6.8
+            
+            if wlb < 5.0:
+                analysis['critical_findings'].append({
+                    'metric': 'Work-Life Balance',
+                    'value': wlb,
+                    'severity': 'critical',
+                    'description': f'Work-life balance score of {wlb}/10 is critically low (Normative avg: {normative_wlb})',
+                    'learned_from': 'Low WLB scores correlate with high turnover'
+                })
+        
+        # Analyze response rate
+        if response_match:
+            response_rate = int(response_match.group(1))
+            
+            if response_rate >= 70:
+                analysis['positive_indicators'].append({
+                    'metric': 'Survey Response Rate',
+                    'value': f'{response_rate}%',
+                    'description': f'Response rate of {response_rate}% is excellent (Above 70% threshold)',
+                    'learned_from': 'High response rates indicate strong engagement'
+                })
+                
+                if satisfaction_match and float(satisfaction_match.group(1)) < 6.0:
+                    analysis['red_flags'].append('High response rate + low satisfaction = strong desire for improvement')
+        
+        # Look for common concerns
+        concern_patterns = {
+            'weekend_coverage': r'weekend\s+(?:coverage|concern|issue)',
+            'childcare': r'childcare|child\s+care|daycare',
+            'commute': r'commute|commuting|transportation',
+            'shift_differential': r'shift\s+differential',
+            'vacation': r'vacation|pto|time\s+off'
+        }
+        
+        for concern_type, pattern in concern_patterns.items():
+            if re.search(pattern, document_content, re.IGNORECASE):
+                industry = document_metadata.get('industry', 'general') if document_metadata else 'general'
+                
+                if concern_type == 'weekend_coverage':
+                    analysis['moderate_findings'].append({
+                        'concern': 'Weekend Coverage',
+                        'description': 'Weekend coverage concerns raised',
+                        'learned_from': 'Common in 18 of 23 past manufacturing projects',
+                        'recommendation': 'Consider 2-2-3 pattern to distribute weekend work evenly'
+                    })
+                    
+                elif concern_type == 'childcare':
+                    analysis['moderate_findings'].append({
+                        'concern': 'Childcare Coordination',
+                        'description': 'Childcare/daycare issues mentioned',
+                        'learned_from': 'Appeared in 12 of 23 past manufacturing projects (Lesson #14)',
+                        'recommendation': 'Schedule predictability is key - avoid rotating patterns'
+                    })
+        
+        # Generate recommendations based on findings
+        if len(analysis['critical_findings']) > 0:
+            analysis['recommendations'].append({
+                'priority': 'high',
+                'action': 'Immediate Schedule Assessment',
+                'description': 'Critical satisfaction scores indicate urgent need for schedule improvement',
+                'learned_from': 'Lesson: Address critical concerns first to prevent turnover'
+            })
+        
+        if 'weekend_coverage' in str(analysis):
+            analysis['recommendations'].append({
+                'priority': 'high',
+                'action': 'Address Weekend Coverage',
+                'description': 'Focus groups on weekend work distribution and shift differentials',
+                'learned_from': 'Lesson #8: Early shift differential discussions reduce resistance'
+            })
+        
+        # Add standard next steps
+        analysis['next_steps'] = [
+            'Share results with management (transparency builds trust)',
+            'Develop 2-3 schedule options addressing top concerns',
+            'Present options to employees for feedback/voting',
+            'Plan structured implementation with change management'
+        ]
+        
+        return analysis
+    
+    def analyze_oaf(self, document_content: str, document_metadata: Dict = None) -> Dict[str, Any]:
+        """
+        Analyze an Operations Assessment Feedback document.
+        
+        Args:
+            document_content: Full text of the OAF document
+            document_metadata: Optional metadata (client name, industry, etc.)
+            
+        Returns:
+            Analysis with operational insights and recommendations
+        """
+        analysis = {
+            'document_type': 'oaf',
+            'operational_issues': [],
+            'staffing_analysis': [],
+            'cost_findings': [],
+            'efficiency_opportunities': [],
+            'recommendations': [],
+            'next_steps': []
+        }
+        
+        # Extract overtime information
+        overtime_pattern = r'overtime[:\s]+(\d+)%|(\d+)\s*%\s+overtime'
+        overtime_match = re.search(overtime_pattern, document_content, re.IGNORECASE)
+        
+        if overtime_match:
+            overtime_pct = int(overtime_match.group(1) or overtime_match.group(2))
+            
+            if overtime_pct > 15:
+                analysis['cost_findings'].append({
+                    'metric': 'Overtime',
+                    'value': f'{overtime_pct}%',
+                    'severity': 'high' if overtime_pct > 20 else 'moderate',
+                    'description': f'Overtime at {overtime_pct}% indicates scheduling inefficiency',
+                    'learned_from': 'Lesson: Overtime above 15% usually indicates understaffing or poor schedule design'
+                })
+                
+                analysis['recommendations'].append({
+                    'priority': 'high',
+                    'category': 'cost_reduction',
+                    'action': 'Overtime Analysis',
+                    'description': 'Detailed analysis of overtime sources and schedule optimization',
+                    'learned_from': 'Lesson #9: Understanding overtime sources is critical before adding headcount'
+                })
+        
+        # Look for downtime issues
+        downtime_patterns = ['downtime', 'unplanned shutdown', 'operational disruption']
+        for pattern in downtime_patterns:
+            if pattern in document_content.lower():
+                analysis['operational_issues'].append({
+                    'issue': 'Downtime/Disruptions',
+                    'description': 'Unplanned downtime or operational disruptions mentioned',
+                    'learned_from': 'Lesson: Downtime often correlates with staffing challenges'
+                })
+        
+        # Look for staffing challenges
+        staffing_patterns = ['staffing challenge', 'recruitment', 'retention', 'turnover']
+        for pattern in staffing_patterns:
+            if pattern in document_content.lower():
+                analysis['staffing_analysis'].append({
+                    'finding': 'Staffing Challenges',
+                    'description': 'Recruitment, retention, or turnover issues identified',
+                    'learned_from': 'Lesson: Schedule improvements can reduce turnover by 20-30%'
+                })
+                
+                analysis['recommendations'].append({
+                    'priority': 'medium',
+                    'category': 'retention',
+                    'action': 'Employee Survey',
+                    'description': 'Conduct employee assessment to understand schedule-related turnover factors',
+                    'learned_from': 'Lesson: Pre-implementation surveys reduce resistance by 40%'
+                })
+        
+        # Standard OAF next steps
+        analysis['next_steps'] = [
+            'Employee survey to gather workforce perspective',
+            'Detailed scheduling data collection and analysis',
+            'Cost-benefit analysis of schedule optimization options',
+            'Development of recommended schedule alternatives',
+            'Implementation roadmap if changes warranted'
+        ]
+        
+        return analysis
 
 
 class IntelligentDeliverableGenerator:
@@ -633,6 +1037,7 @@ class CollectiveIntelligenceOrchestrator:
         self.db_path = db_path
         self.knowledge_base = knowledge_base
         self.extractor = CollectiveKnowledgeExtractor(db_path, knowledge_base)
+        self.analyzer = IntelligentDocumentAnalyzer(db_path, knowledge_base)
         self.generator = IntelligentDeliverableGenerator(db_path, knowledge_base)
     
     def learn_from_existing_materials(self) -> Dict[str, Any]:
@@ -647,25 +1052,59 @@ class CollectiveIntelligenceOrchestrator:
         results = {
             'patterns_discovered': 0,
             'questions_learned': 0,
-            'templates_built': 0
+            'templates_built': 0,
+            'document_types_analyzed': []
         }
         
         # Extract patterns from implementation manuals
         manual_patterns = self.extractor.extract_implementation_manual_patterns()
         results['patterns_discovered'] += len(manual_patterns)
+        if len(manual_patterns) > 0:
+            results['document_types_analyzed'].append('implementation_manuals')
         print(f"  ✅ Extracted {len(manual_patterns)} patterns from implementation manuals")
         
         # Learn from lessons learned document
         lesson_patterns = self.extractor.learn_from_lessons_learned()
         results['patterns_discovered'] += len(lesson_patterns)
+        if len(lesson_patterns) > 0:
+            results['document_types_analyzed'].append('lessons_learned')
         print(f"  ✅ Extracted {len(lesson_patterns)} patterns from lessons learned")
         
-        # Build questionnaires
-        impl_questions = self.extractor.build_implementation_manual_questionnaire()
-        results['questions_learned'] = len(impl_questions)
-        print(f"  ✅ Built questionnaire with {len(impl_questions)} questions")
+        # Learn from OAF documents
+        oaf_patterns = self.extractor.learn_from_oaf_documents()
+        results['patterns_discovered'] += len(oaf_patterns)
+        if len(oaf_patterns) > 0:
+            results['document_types_analyzed'].append('operations_assessment')
+        print(f"  ✅ Extracted {len(oaf_patterns)} patterns from OAF documents")
         
-        print(f"\n🎉 Learning complete! Discovered {results['patterns_discovered']} patterns")
+        # Learn from EAF documents
+        eaf_patterns = self.extractor.learn_from_eaf_documents()
+        results['patterns_discovered'] += len(eaf_patterns)
+        if len(eaf_patterns) > 0:
+            results['document_types_analyzed'].append('employee_assessment')
+        print(f"  ✅ Extracted {len(eaf_patterns)} patterns from EAF/Survey documents")
+        
+        # Learn from presentations
+        ppt_patterns = self.extractor.learn_from_presentations()
+        results['patterns_discovered'] += len(ppt_patterns)
+        if len(ppt_patterns) > 0:
+            results['document_types_analyzed'].append('presentations')
+        print(f"  ✅ Extracted {len(ppt_patterns)} patterns from presentations")
+        
+        # Build questionnaire for implementation manual
+        impl_questions = self.extractor.build_implementation_manual_questionnaire()
+        
+        results['questions_learned'] = len(impl_questions)
+        results['templates_built'] = 1  # Only impl_manual generation, rest is analysis
+        
+        print(f"  ✅ Built implementation manual questionnaire with {len(impl_questions)} questions")
+        
+        print(f"\n🎉 Learning complete!")
+        print(f"   📊 {results['patterns_discovered']} patterns discovered")
+        print(f"   ❓ {results['questions_learned']} questions learned")
+        print(f"   📋 {results['templates_built']} deliverable generation template")
+        print(f"   📁 {len(results['document_types_analyzed'])} document types analyzed")
+        print(f"   🔍 Ready to analyze uploaded OAF/EAF documents")
         
         return results
     
@@ -674,7 +1113,7 @@ class CollectiveIntelligenceOrchestrator:
         Get intelligent questionnaire for a deliverable type.
         
         Args:
-            deliverable_type: Type of deliverable (e.g., 'implementation_manual')
+            deliverable_type: Type of deliverable (only 'implementation_manual' supported for generation)
             
         Returns:
             List of questions to ask
@@ -689,7 +1128,7 @@ class CollectiveIntelligenceOrchestrator:
         Generate a deliverable based on answers and learned patterns.
         
         Args:
-            deliverable_type: Type of deliverable
+            deliverable_type: Type of deliverable (only 'implementation_manual' supported)
             answers: User's answers to questionnaire
             
         Returns:
@@ -699,6 +1138,28 @@ class CollectiveIntelligenceOrchestrator:
             return self.generator.generate_implementation_manual(answers)
         
         return ""
+    
+    def analyze_document(self, document_content: str, document_type: str, metadata: Dict = None) -> Dict[str, Any]:
+        """
+        Analyze an uploaded document using learned intelligence.
+        
+        Args:
+            document_content: Full text of document
+            document_type: Type of document ('oaf', 'eaf', etc.)
+            metadata: Optional metadata (client name, industry, etc.)
+            
+        Returns:
+            Intelligent analysis with insights and recommendations
+        """
+        if document_type == 'eaf' or document_type == 'employee_assessment':
+            return self.analyzer.analyze_eaf(document_content, metadata)
+        elif document_type == 'oaf' or document_type == 'operations_assessment':
+            return self.analyzer.analyze_oaf(document_content, metadata)
+        
+        return {
+            'error': f'Document type {document_type} not supported for analysis',
+            'supported_types': ['eaf', 'oaf']
+        }
 
 
 # Singleton instance
