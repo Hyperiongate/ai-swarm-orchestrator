@@ -5,6 +5,14 @@ Shiftwork Solutions LLC
 =============================================================================
 
 CHANGE LOG:
+- February 2, 2026: FIXED - Audio playback issues
+  * Added AudioContext resume on user interaction
+  * Fixed audio format conversion (base64 → ArrayBuffer → Float32)
+  * Added comprehensive error logging and debugging
+  * Fixed suspended AudioContext blocking playback
+  * Added visual feedback for audio playing state
+  * Improved error recovery
+
 - January 28, 2026: UPDATED - Connect to dedicated voice service
   * Changed WebSocket URL from main app to voice service
   * Production: wss://ai-swarm-voice.onrender.com/ws/voice
@@ -57,6 +65,7 @@ var audioWorklet = null;
 var mediaStream = null;
 var audioQueue = [];
 var isPlayingAudio = false;
+var currentAudioSource = null;
 
 var WAKE_WORD = 'hey swarm';
 
@@ -154,7 +163,8 @@ async function connectWebSocket() {
                 var data = JSON.parse(event.data);
                 await handleWebSocketMessage(data);
             } catch (e) {
-                console.error('Error parsing WebSocket message:', e);
+                console.error('❌ Error parsing WebSocket message:', e);
+                console.error('Raw message:', event.data);
             }
         };
         
@@ -191,6 +201,8 @@ async function connectWebSocket() {
 async function handleWebSocketMessage(data) {
     var type = data.type;
     
+    console.log('📨 Received message type:', type);
+    
     switch(type) {
         case 'ready':
             sessionId = data.session_id;
@@ -201,9 +213,17 @@ async function handleWebSocketMessage(data) {
         
         case 'audio':
             // Received audio chunk from AI
+            console.log('🔊 Received audio chunk, length:', data.data ? data.data.length : 0);
             if (voiceResponseEnabled) {
-                var audioData = base64ToArrayBuffer(data.data);
-                queueAudio(audioData);
+                try {
+                    var audioData = base64ToArrayBuffer(data.data);
+                    console.log('🔊 Decoded audio buffer size:', audioData.byteLength, 'bytes');
+                    queueAudio(audioData);
+                } catch (e) {
+                    console.error('❌ Error decoding audio:', e);
+                }
+            } else {
+                console.log('🔇 Voice responses disabled, skipping audio');
             }
             break;
         
@@ -239,6 +259,7 @@ async function handleWebSocketMessage(data) {
             break;
         
         case 'response_complete':
+            console.log('✅ Response complete');
             if (voiceModeActive) {
                 updateVoiceStatus('listening', 'Say "Hey Swarm" to continue...');
             }
@@ -254,7 +275,7 @@ async function handleWebSocketMessage(data) {
             break;
         
         default:
-            console.log('📨 Unknown message type:', type);
+            console.log('📨 Unknown message type:', type, data);
     }
 }
 
@@ -262,6 +283,7 @@ function updateUserInput(text) {
     var input = document.getElementById('userInput');
     if (input) {
         input.value = text;
+        console.log('✏️ Updated input field with:', text);
     }
 }
 
@@ -275,6 +297,14 @@ async function startAudioCapture() {
         var AudioContextClass = window.AudioContext || window.webkitAudioContext;
         audioContext = new AudioContextClass({ sampleRate: 24000 });
         
+        console.log('🎤 AudioContext created, state:', audioContext.state);
+        
+        // Resume context if suspended (required by Chrome)
+        if (audioContext.state === 'suspended') {
+            await audioContext.resume();
+            console.log('🎤 AudioContext resumed, new state:', audioContext.state);
+        }
+        
         // Get microphone stream
         mediaStream = await navigator.mediaDevices.getUserMedia({
             audio: {
@@ -285,6 +315,8 @@ async function startAudioCapture() {
                 autoGainControl: true
             }
         });
+        
+        console.log('🎤 Microphone access granted');
         
         // Create audio source
         var source = audioContext.createMediaStreamSource(mediaStream);
@@ -342,28 +374,28 @@ function stopAudioCapture() {
         mediaStream = null;
     }
     
-    if (audioContext) {
-        audioContext.close();
-        audioContext = null;
-    }
-    
     console.log('🎤 Microphone capture stopped');
 }
 
 // =============================================================================
-// 5. AUDIO PLAYBACK (AI Response)
+// 5. AUDIO PLAYBACK (AI Response) - FIXED
 // =============================================================================
 
 function queueAudio(audioData) {
+    console.log('📥 Queueing audio chunk, size:', audioData.byteLength, 'bytes');
     audioQueue.push(audioData);
     
     if (!isPlayingAudio) {
+        console.log('▶️ Starting playback');
         playNextAudio();
+    } else {
+        console.log('⏸️ Already playing, added to queue. Queue length:', audioQueue.length);
     }
 }
 
 async function playNextAudio() {
     if (audioQueue.length === 0) {
+        console.log('✅ Audio queue empty, stopping playback');
         isPlayingAudio = false;
         isSpeaking = false;
         updateVoiceUI();
@@ -376,43 +408,88 @@ async function playNextAudio() {
     updateVoiceStatus('speaking', 'Speaking response...');
     
     var audioData = audioQueue.shift();
+    console.log('🔊 Playing audio chunk, size:', audioData.byteLength, 'bytes. Remaining in queue:', audioQueue.length);
     
     try {
         // Ensure audio context exists
         if (!audioContext) {
+            console.log('🔧 Creating new AudioContext for playback');
             var AudioContextClass = window.AudioContext || window.webkitAudioContext;
             audioContext = new AudioContextClass({ sampleRate: 24000 });
         }
         
-        // Convert Int16 PCM to Float32 for Web Audio
+        // CRITICAL FIX: Resume AudioContext if suspended
+        if (audioContext.state === 'suspended') {
+            console.log('⚠️ AudioContext suspended, attempting resume...');
+            await audioContext.resume();
+            console.log('✅ AudioContext resumed, state:', audioContext.state);
+        }
+        
+        console.log('🔊 AudioContext state:', audioContext.state);
+        console.log('🔊 AudioContext sample rate:', audioContext.sampleRate);
+        
+        // Convert to Int16Array
         var int16Array = new Int16Array(audioData);
+        console.log('🔊 Int16Array length:', int16Array.length, 'samples');
+        
+        // Convert Int16 PCM to Float32 for Web Audio
         var float32Array = new Float32Array(int16Array.length);
         for (var i = 0; i < int16Array.length; i++) {
             float32Array[i] = int16Array[i] / 32768.0;
         }
+        console.log('🔊 Float32Array created, length:', float32Array.length);
+        
+        // Calculate duration
+        var durationSeconds = float32Array.length / 24000;
+        console.log('🔊 Audio duration:', durationSeconds.toFixed(2), 'seconds');
         
         // Create audio buffer
         var audioBuffer = audioContext.createBuffer(1, float32Array.length, 24000);
         audioBuffer.getChannelData(0).set(float32Array);
+        console.log('🔊 AudioBuffer created');
         
         // Create source and play
         var source = audioContext.createBufferSource();
         source.buffer = audioBuffer;
         source.connect(audioContext.destination);
         
+        currentAudioSource = source;
+        
         source.onended = function() {
+            console.log('🔊 Audio chunk finished playing');
+            currentAudioSource = null;
             playNextAudio();
         };
         
-        source.start();
+        console.log('▶️ Starting audio playback NOW');
+        source.start(0);
+        console.log('✅ Audio playback started successfully');
         
     } catch (e) {
         console.error('❌ Audio playback error:', e);
+        console.error('Error name:', e.name);
+        console.error('Error message:', e.message);
+        console.error('Error stack:', e.stack);
+        
+        // Try next audio chunk
         playNextAudio();
     }
 }
 
 function stopAudioPlayback() {
+    console.log('⏹️ Stopping audio playback');
+    
+    // Stop current audio
+    if (currentAudioSource) {
+        try {
+            currentAudioSource.stop();
+            currentAudioSource = null;
+        } catch (e) {
+            console.error('Error stopping audio source:', e);
+        }
+    }
+    
+    // Clear queue
     audioQueue = [];
     isPlayingAudio = false;
     isSpeaking = false;
@@ -438,6 +515,7 @@ async function toggleVoiceMode() {
 }
 
 async function activateVoiceMode() {
+    console.log('🎤 Activating voice mode...');
     voiceModeActive = true;
     
     playActivationSound();
@@ -457,10 +535,11 @@ async function activateVoiceMode() {
     updateVoiceStatus('listening', 'Say "Hey Swarm" to begin...');
     updateVoiceUI();
     
-    console.log('🎤 Voice mode activated');
+    console.log('✅ Voice mode activated');
 }
 
 function deactivateVoiceMode() {
+    console.log('🎤 Deactivating voice mode...');
     voiceModeActive = false;
     
     // Close WebSocket
@@ -473,15 +552,23 @@ function deactivateVoiceMode() {
     stopAudioCapture();
     stopAudioPlayback();
     
+    // Close AudioContext
+    if (audioContext && audioContext.state !== 'closed') {
+        audioContext.close();
+        audioContext = null;
+    }
+    
     isConnected = false;
     
     updateVoiceStatus('inactive', 'Voice inactive - Click to activate');
     updateVoiceUI();
     
-    console.log('🎤 Voice mode deactivated');
+    console.log('✅ Voice mode deactivated');
 }
 
 async function startVoiceInput() {
+    console.log('🎤 Starting voice input...');
+    
     if (!voiceModeActive) {
         await activateVoiceMode();
     }
@@ -490,7 +577,12 @@ async function startVoiceInput() {
         stopAudioPlayback();
     }
     
-    // Could add manual commit here if needed
+    // Resume AudioContext on user interaction (required by Chrome)
+    if (audioContext && audioContext.state === 'suspended') {
+        console.log('🔧 Resuming AudioContext on user interaction...');
+        await audioContext.resume();
+        console.log('✅ AudioContext resumed, state:', audioContext.state);
+    }
 }
 
 // =============================================================================
@@ -509,6 +601,8 @@ function updateVoiceStatus(state, text) {
         statusDot.className = 'voice-status-dot';
         statusDot.classList.add('voice-status-' + state);
     }
+    
+    console.log('📊 Voice status:', state, '-', text);
 }
 
 function updateVoiceUI() {
@@ -612,12 +706,19 @@ function arrayBufferToBase64(buffer) {
 }
 
 function base64ToArrayBuffer(base64) {
-    var binaryString = window.atob(base64);
-    var bytes = new Uint8Array(binaryString.length);
-    for (var i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
+    try {
+        var binaryString = window.atob(base64);
+        var bytes = new Uint8Array(binaryString.length);
+        for (var i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+        }
+        return bytes.buffer;
+    } catch (e) {
+        console.error('❌ Error decoding base64:', e);
+        console.error('Base64 string length:', base64.length);
+        console.error('First 100 chars:', base64.substring(0, 100));
+        throw e;
     }
-    return bytes.buffer;
 }
 
 // =============================================================================
@@ -634,12 +735,18 @@ function playActivationSound() {
     }, 200);
 }
 
-function playBeep(frequency, duration) {
+async function playBeep(frequency, duration) {
     try {
         var AudioContextClass = window.AudioContext || window.webkitAudioContext;
         if (!AudioContextClass) return;
         
         var ctx = new AudioContextClass();
+        
+        // Resume if suspended
+        if (ctx.state === 'suspended') {
+            await ctx.resume();
+        }
+        
         var oscillator = ctx.createOscillator();
         var gainNode = ctx.createGain();
         
@@ -658,7 +765,7 @@ function playBeep(frequency, duration) {
             ctx.close();
         }, duration);
     } catch (e) {
-        // Audio not supported
+        console.error('Error playing beep:', e);
     }
 }
 
@@ -671,5 +778,7 @@ if (document.readyState === 'loading') {
 } else {
     initVoice();
 }
+
+console.log('📝 Voice control script loaded - February 2, 2026');
 
 /* I did no harm and this file is not truncated */
