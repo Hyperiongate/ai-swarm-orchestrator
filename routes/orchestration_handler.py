@@ -388,20 +388,7 @@ Please analyze these files and respond to the user's request. Be specific and re
                     document_url = None
                     document_id = None
                     
-                    try:
-                        # Get analyzed file names
-                        analyzed_files = []
-                        if file_ids:
-                            from database_file_management import get_project_manager
-                            pm = get_project_manager()
-                            for fid in file_ids:
-                                file_info = pm.get_file(fid)
-                                if file_info:
-                                    analyzed_files.append(file_info.get('original_filename', 'Unknown'))
-                        
-                        file_names_str = ", ".join(analyzed_files) if analyzed_files else "Uploaded Files"
-                        
-                                                
+                                                                  
                       try:
                         from document_creation_helper import create_analysis_document
                         
