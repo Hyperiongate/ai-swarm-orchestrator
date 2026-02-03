@@ -14,8 +14,13 @@ Author: Jim @ Shiftwork Solutions LLC (managed by Claude Sonnet 4)
 from flask import Blueprint, request, jsonify, render_template
 from werkzeug.utils import secure_filename
 import os
+import sys
 import json
 from datetime import datetime
+
+# Ensure parent directory is in path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from document_ingestion_engine import get_document_ingestor
 
 # Create blueprint
@@ -393,11 +398,6 @@ def get_extract_detail(extract_id):
         }), 500
 
 
-# HTML page route (outside /api prefix)
-@ingest_bp.route('/manage', methods=['GET'])
-def manage_page():
-    """Render knowledge management UI page"""
-    return render_template('knowledge_management.html')
 
 
 # I did no harm and this file is not truncated
