@@ -510,6 +510,76 @@ def fix_patterns_table():
             'traceback': traceback.format_exc()
         }), 500
 
+@app.route('/api/admin/diagnose-databases', methods=['GET'])
+def diagnose_databases():
+    """
+    Find all swarm_intelligence.db files and show their contents.
+    """
+    import os
+    import sqlite3
+    from pathlib import Path
+    
+    results = {}
+    
+    # Search for database files
+    search_paths = [
+        '.',
+        '/opt/render/project/src',
+        '/mnt/project',
+        '/tmp'
+    ]
+    
+    for search_path in search_paths:
+        try:
+            path = Path(search_path)
+            if path.exists():
+                # Look for swarm_intelligence.db files
+                for db_file in path.rglob('swarm_intelligence.db'):
+                    db_path = str(db_file.absolute())
+                    
+                    try:
+                        db = sqlite3.connect(db_path)
+                        cursor = db.cursor()
+                        
+                        # Count documents
+                        cursor.execute('SELECT COUNT(*) FROM knowledge_extracts')
+                        doc_count = cursor.fetchone()[0]
+                        
+                        # Get file size
+                        file_size = os.path.getsize(db_path)
+                        
+                        db.close()
+                        
+                        results[db_path] = {
+                            'exists': True,
+                            'documents': doc_count,
+                            'size_bytes': file_size,
+                            'size_mb': round(file_size / 1024 / 1024, 2)
+                        }
+                    except Exception as e:
+                        results[db_path] = {
+                            'exists': True,
+                            'error': str(e)
+                        }
+        except:
+            pass
+    
+    # Also check what path document_ingestion_engine is using
+    try:
+        from document_ingestion_engine import get_document_ingestor
+        ingestor = get_document_ingestor()
+        results['api_uses_path'] = ingestor.db_path
+    except:
+        results['api_uses_path'] = 'error_loading'
+    
+    # Check current working directory
+    results['current_directory'] = os.getcwd()
+    
+    return jsonify({
+        'success': True,
+        'databases_found': results
+    })
+
 @app.route('/survey')
 def survey():
     """Survey builder interface"""
