@@ -392,7 +392,7 @@ def bootstrap_knowledge_endpoint():
         sys.stdout = captured_output = StringIO()
         
         # Run bootstrap
-        result = bootstrap_knowledge.bootstrap_knowledge_base()
+        result = bootstrap_knowledge.bootstrap_knowledge_base(project_path='./project_files')
         
         # Restore stdout
         sys.stdout = old_stdout
