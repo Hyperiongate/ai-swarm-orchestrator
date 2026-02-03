@@ -1,7 +1,7 @@
 """
 KNOWLEDGE INGESTION ROUTES
 Created: February 2, 2026
-Last Updated: February 3, 2026
+Last Updated: February 3, 2026 - Added PowerPoint support
 
 Flask API endpoints for document ingestion system.
 Allows uploading documents, viewing knowledge base stats, browsing patterns.
@@ -17,6 +17,7 @@ import os
 import sys
 import json
 from datetime import datetime
+import tempfile
 
 # Multiple import attempts with debugging
 try:
@@ -51,10 +52,10 @@ except ImportError as e1:
 # Create blueprint
 ingest_bp = Blueprint('ingest', __name__, url_prefix='/api/ingest')
 
-# Allowed file extensions
+# Allowed file extensions - UPDATED with PowerPoint support
 ALLOWED_EXTENSIONS = {
     'txt', 'md', 'pdf', 'docx', 'doc', 
-    'xlsx', 'xls', 'csv', 'json'
+    'xlsx', 'xls', 'csv', 'json', 'pptx', 'ppt'
 }
 
 def allowed_file(filename):
@@ -115,8 +116,54 @@ def ingest_document():
             'upload_date': datetime.now().isoformat()
         }
         
-        # Read file content
-        content = file.read().decode('utf-8', errors='ignore')
+        # Read file content - UPDATED with PowerPoint support
+        if file.filename.lower().endswith(('.pptx', '.ppt')):
+            # Extract text from PowerPoint
+            try:
+                from pptx import Presentation
+                
+                # Save to temporary file
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.pptx') as tmp:
+                    file.save(tmp.name)
+                    tmp_path = tmp.name
+                
+                try:
+                    prs = Presentation(tmp_path)
+                    slide_texts = []
+                    
+                    for slide_num, slide in enumerate(prs.slides, 1):
+                        slide_content = []
+                        for shape in slide.shapes:
+                            if hasattr(shape, "text"):
+                                text = shape.text.strip()
+                                if text:
+                                    slide_content.append(text)
+                        
+                        if slide_content:
+                            slide_texts.append(f"[Slide {slide_num}]\n" + '\n'.join(slide_content))
+                    
+                    content = '\n\n'.join(slide_texts)
+                    
+                    if not content:
+                        content = "[PowerPoint file with no extractable text]"
+                    
+                finally:
+                    # Clean up temp file
+                    os.unlink(tmp_path)
+                    
+            except ImportError:
+                return jsonify({
+                    'success': False,
+                    'error': 'PowerPoint support not installed. Contact administrator.'
+                }), 500
+            except Exception as e:
+                return jsonify({
+                    'success': False,
+                    'error': f'Failed to extract PowerPoint content: {str(e)}'
+                }), 500
+        else:
+            # Regular text extraction for other file types
+            content = file.read().decode('utf-8', errors='ignore')
         
         # Ingest document
         ingestor = get_document_ingestor()
