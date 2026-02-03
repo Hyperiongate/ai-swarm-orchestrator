@@ -864,40 +864,23 @@ except ImportError as e:
 except Exception as e:
     print(f"⚠️  Self-Optimization Engine registration failed: {e}")
 
-# ============================================================================
-# COLLECTIVE INTELLIGENCE BLUEPRINT (Added February 2, 2026 - PHASE 4)
-# ============================================================================
-try:
-    from routes.collective import collective_bp
-    app.register_blueprint(collective_bp)
-    print("✅ Collective Intelligence API registered")
-except ImportError as e:
-    print(f"ℹ️  Collective Intelligence routes not found: {e}")
-except Exception as e:
-    print(f"⚠️  Collective Intelligence registration failed: {e}")
 
 # ============================================================================
-# COLLECTIVE INTELLIGENCE BLUEPRINT (Added February 2, 2026 - PHASE 4)
+# KNOWLEDGE INGESTION SYSTEM BLUEPRINT (Added February 2, 2026)
 # ============================================================================
-try:
-    from routes.collective import collective_bp
-    app.register_blueprint(collective_bp)
-    print("✅ Collective Intelligence API registered")
-except ImportError as e:
-    print(f"ℹ️  Collective Intelligence routes not found: {e}")
-except Exception as e:
-    print(f"⚠️  Collective Intelligence registration failed: {e}")
-
-# Add after your other blueprint registrations:
 try:
     from routes.ingest import ingest_bp
     app.register_blueprint(ingest_bp)
     print("✅ Knowledge Ingestion API registered")
 except ImportError as e:
     print(f"ℹ️  Knowledge Ingestion routes not found: {e}")
+except Exception as e:
+    print(f"⚠️  Knowledge Ingestion registration failed: {e}")
 
+# Add HTML route for Knowledge Management UI
 @app.route('/knowledge')
 def knowledge_management():
+    """Knowledge Management interface - Shoulders of Giants system"""
     return render_template('knowledge_management.html')
 
 # Sprint 3 blueprints
