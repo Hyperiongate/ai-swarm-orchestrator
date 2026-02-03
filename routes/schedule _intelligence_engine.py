@@ -17,6 +17,7 @@ Author: Jim @ Shiftwork Solutions LLC (managed by Claude Sonnet 4)
 
 import pandas as pd
 import sqlite3
+import os
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 import re
@@ -81,13 +82,33 @@ class SchedulePatternLibrary:
         db.commit()
         db.close()
     
-    def load_from_definitive_schedules(self, excel_path: str = '/mnt/project/Definitive_Schedules_v2.xlsx') -> int:
+    def load_from_definitive_schedules(self, excel_path: str = None) -> int:
         """
         Load all schedule patterns from Definitive Schedules Excel file.
         
         Returns:
             Number of patterns loaded
         """
+        # Try multiple possible paths
+        if excel_path is None:
+            possible_paths = [
+                './project_files/Definitive Schedules v2.xlsx',
+                './project_files/Definitive_Schedules_v2.xlsx',
+                '/app/project_files/Definitive Schedules v2.xlsx',
+                'project_files/Definitive Schedules v2.xlsx',
+                '/mnt/project/Definitive_Schedules_v2.xlsx'
+            ]
+            
+            excel_path = None
+            for path in possible_paths:
+                if pd and os.path.exists(path):
+                    excel_path = path
+                    break
+        
+        if not excel_path or not os.path.exists(excel_path):
+            print(f"⚠️  Definitive Schedules file not found")
+            return 0
+        
         print(f"📊 Loading schedule patterns from {excel_path}...")
         
         try:
