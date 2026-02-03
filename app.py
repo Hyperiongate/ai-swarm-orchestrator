@@ -876,6 +876,18 @@ except ImportError as e:
 except Exception as e:
     print(f"⚠️  Collective Intelligence registration failed: {e}")
 
+# ============================================================================
+# COLLECTIVE INTELLIGENCE BLUEPRINT (Added February 2, 2026 - PHASE 4)
+# ============================================================================
+try:
+    from routes.collective import collective_bp
+    app.register_blueprint(collective_bp)
+    print("✅ Collective Intelligence API registered")
+except ImportError as e:
+    print(f"ℹ️  Collective Intelligence routes not found: {e}")
+except Exception as e:
+    print(f"⚠️  Collective Intelligence registration failed: {e}")
+
 # Sprint 3 blueprints
 try:
     from project_dashboard import dashboard_bp
