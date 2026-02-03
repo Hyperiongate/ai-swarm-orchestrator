@@ -1,7 +1,7 @@
 """
 DOCUMENT INGESTION ENGINE 
 Created: February 2, 2026
-Last Updated: February 2, 2026
+Last Updated: February 3, 2026 - CRITICAL FIX: Use KNOWLEDGE_DB_PATH env var for persistent storage
 
 Extracts knowledge from documents and stores permanently in database.
 No more file management - upload once, learn forever.
@@ -14,6 +14,7 @@ Author: Jim @ Shiftwork Solutions LLC (managed by Claude Sonnet 4)
 import hashlib
 import json
 import re
+import os
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 import sqlite3
@@ -24,8 +25,12 @@ class DocumentIngestor:
     Ingests documents and extracts knowledge permanently to database.
     """
     
-    def __init__(self, db_path='swarm_intelligence.db'):
+    def __init__(self, db_path=None):
+        # CRITICAL: Use environment variable for persistent storage
+        if db_path is None:
+            db_path = os.environ.get('KNOWLEDGE_DB_PATH', 'swarm_intelligence.db')
         self.db_path = db_path
+        print(f"📚 Knowledge Database: {self.db_path}")
         self._ensure_tables()
     
     def _ensure_tables(self):
