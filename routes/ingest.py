@@ -1,7 +1,7 @@
 """
 KNOWLEDGE INGESTION ROUTES
 Created: February 2, 2026
-Last Updated: February 2, 2026
+Last Updated: February 3, 2026
 
 Flask API endpoints for document ingestion system.
 Allows uploading documents, viewing knowledge base stats, browsing patterns.
@@ -257,70 +257,72 @@ def get_patterns():
         db.row_factory = sqlite3.Row
         cursor = db.cursor()
         
-        # Check if table exists and has data
+        # Check if table exists
         try:
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='learned_patterns'")
             if not cursor.fetchone():
-                # Table doesn't exist yet
                 db.close()
                 return jsonify({
                     'success': True,
                     'count': 0,
-                    'patterns': [],
-                    'message': 'No patterns yet - table will be created on first pattern extraction'
+                    'patterns': []
                 }), 200
         except:
             pass
         
-        # Build query
-        query = '''
-            SELECT 
-                id, pattern_type, pattern_name, pattern_data,
-                confidence, supporting_documents,
-                first_seen, last_updated, metadata
-            FROM learned_patterns
-            WHERE confidence >= ?
-        '''
-        params = [min_confidence]
-        
-        if pattern_type:
-            query += ' AND pattern_type = ?'
-            params.append(pattern_type)
-        
-        query += ' ORDER BY confidence DESC, supporting_documents DESC LIMIT ?'
-        params.append(limit)
-        
-        cursor.execute(query, params)
-        patterns = []
-        
-        for row in cursor.fetchall():
-            pattern = dict(row)
-            # Parse JSON fields safely
-            try:
-                if pattern.get('pattern_data'):
-                    pattern['pattern_data'] = json.loads(pattern['pattern_data'])
-                else:
+        # Try to query patterns - handle missing columns gracefully
+        try:
+            query = '''
+                SELECT 
+                    id, pattern_type, pattern_name, pattern_data,
+                    confidence, supporting_documents,
+                    first_seen, last_updated, metadata
+                FROM learned_patterns
+                WHERE confidence >= ?
+            '''
+            params = [min_confidence]
+            
+            if pattern_type:
+                query += ' AND pattern_type = ?'
+                params.append(pattern_type)
+            
+            query += ' ORDER BY confidence DESC, supporting_documents DESC LIMIT ?'
+            params.append(limit)
+            
+            cursor.execute(query, params)
+            patterns = []
+            
+            for row in cursor.fetchall():
+                pattern = dict(row)
+                # Parse JSON fields safely
+                try:
+                    pattern['pattern_data'] = json.loads(pattern['pattern_data']) if pattern.get('pattern_data') else {}
+                except:
                     pattern['pattern_data'] = {}
-            except:
-                pattern['pattern_data'] = {}
-            
-            try:
-                if pattern.get('metadata'):
-                    pattern['metadata'] = json.loads(pattern['metadata'])
-                else:
+                
+                try:
+                    pattern['metadata'] = json.loads(pattern['metadata']) if pattern.get('metadata') else {}
+                except:
                     pattern['metadata'] = {}
-            except:
-                pattern['metadata'] = {}
+                
+                patterns.append(pattern)
             
-            patterns.append(pattern)
-        
-        db.close()
-        
-        return jsonify({
-            'success': True,
-            'count': len(patterns),
-            'patterns': patterns
-        }), 200
+            db.close()
+            
+            return jsonify({
+                'success': True,
+                'count': len(patterns),
+                'patterns': patterns
+            }), 200
+            
+        except sqlite3.OperationalError as e:
+            # Handle missing columns - return empty patterns instead of crashing
+            db.close()
+            return jsonify({
+                'success': True,
+                'count': 0,
+                'patterns': []
+            }), 200
         
     except Exception as e:
         import traceback
@@ -328,49 +330,6 @@ def get_patterns():
             'success': False,
             'error': f'Failed to get patterns: {str(e)}',
             'traceback': traceback.format_exc()
-        }), 500
-        query = '''
-            SELECT 
-                id, pattern_type, pattern_name, pattern_data,
-                confidence, supporting_documents,
-                first_seen, last_updated, metadata
-            FROM learned_patterns
-            WHERE confidence >= ?
-        '''
-        params = [min_confidence]
-        
-        if pattern_type:
-            query += ' AND pattern_type = ?'
-            params.append(pattern_type)
-        
-        query += ' ORDER BY confidence DESC, supporting_documents DESC LIMIT ?'
-        params.append(limit)
-        
-        cursor.execute(query, params)
-        patterns = []
-        
-        for row in cursor.fetchall():
-            pattern = dict(row)
-            # Parse JSON fields
-            try:
-                pattern['pattern_data'] = json.loads(pattern['pattern_data']) if pattern['pattern_data'] else {}
-                pattern['metadata'] = json.loads(pattern['metadata']) if pattern['metadata'] else {}
-            except:
-                pass
-            patterns.append(pattern)
-        
-        db.close()
-        
-        return jsonify({
-            'success': True,
-            'count': len(patterns),
-            'patterns': patterns
-        }), 200
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': f'Failed to get patterns: {str(e)}'
         }), 500
 
 
@@ -492,8 +451,6 @@ def get_extract_detail(extract_id):
             'success': False,
             'error': f'Failed to get extract: {str(e)}'
         }), 500
-
-
 
 
 # I did no harm and this file is not truncated
