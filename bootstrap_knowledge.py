@@ -1,15 +1,10 @@
 """
-BOOTSTRAP KNOWLEDGE BASE
-Created: February 2, 2026
-Last Updated: February 2, 2026
+BOOTSTRAP KNOWLEDGE BASE - AUTO-DISCOVERY VERSION
+Created: February 3, 2026
+Last Updated: February 3, 2026
 
-One-time script to load ALL existing Shiftwork Solutions knowledge from /mnt/project/
-into the permanent knowledge database.
-
-This is the "Genesis Moment" - building the foundation for cumulative learning.
-
-Usage:
-    python bootstrap_knowledge.py
+Automatically discovers and ingests ALL files from project_files directory.
+No hardcoded filenames - works with whatever files exist!
 
 Author: Jim @ Shiftwork Solutions LLC (managed by Claude Sonnet 4)
 """
@@ -18,224 +13,10 @@ import os
 import sys
 from pathlib import Path
 from document_ingestion_engine import get_document_ingestor
-import mimetypes
-
-# Document mapping: file -> (type, metadata)
-DOCUMENTS_TO_INGEST = {
-    # Implementation Manuals
-    'Implementation_Manual.docx': {
-        'type': 'implementation_manual',
-        'metadata': {
-            'client': 'Generic Template',
-            'industry': 'General',
-            'project_type': 'Implementation'
-        }
-    },
-    'Implementation_Manual_Sample.docx': {
-        'type': 'implementation_manual',
-        'metadata': {
-            'client': 'Sample Client',
-            'industry': 'General',
-            'project_type': 'Implementation'
-        }
-    },
-    'Implementation_Manual_Sample_2.docx': {
-        'type': 'implementation_manual',
-        'metadata': {
-            'client': 'Sample Client 2',
-            'industry': 'General',
-            'project_type': 'Implementation'
-        }
-    },
-    'Andersen_Implementation_Manual.docx': {
-        'type': 'implementation_manual',
-        'metadata': {
-            'client': 'Andersen',
-            'industry': 'Manufacturing',
-            'project_type': 'Implementation'
-        }
-    },
-    
-    # Lessons Learned (Most Important!)
-    'Shiftwork_Solutions_Lessons_Learned.md': {
-        'type': 'lessons_learned',
-        'metadata': {
-            'client': 'Shiftwork Solutions',
-            'industry': 'All',
-            'project_type': 'Internal Knowledge'
-        }
-    },
-    
-    # Knowledge Bases
-    'Knowledge_base_from_pages': {
-        'type': 'knowledge_base',
-        'metadata': {
-            'client': 'Shiftwork Solutions',
-            'industry': 'All',
-            'project_type': 'Website Content'
-        }
-    },
-    'Overall_summary': {
-        'type': 'knowledge_base',
-        'metadata': {
-            'client': 'Shiftwork Solutions',
-            'industry': 'All',
-            'project_type': 'Business Summary'
-        }
-    },
-    
-    # Contracts & Proposals
-    'Contract_without_name_Corp_A_2025.docx': {
-        'type': 'contract',
-        'metadata': {
-            'client': 'Corp A',
-            'industry': 'Unknown',
-            'project_type': 'Contract'
-        }
-    },
-    'Shiftwork_Solutions_LLC_-_Contract.docx': {
-        'type': 'contract',
-        'metadata': {
-            'client': 'Generic',
-            'industry': 'General',
-            'project_type': 'Contract Template'
-        }
-    },
-    'Scope_of_work_by_AI.docx': {
-        'type': 'proposal',
-        'metadata': {
-            'client': 'AI Generated',
-            'industry': 'General',
-            'project_type': 'Scope of Work'
-        }
-    },
-    
-    # Assessments
-    'Survey_evaluation': {
-        'type': 'assessment',
-        'metadata': {
-            'client': 'Generic',
-            'industry': 'General',
-            'project_type': 'Survey Evaluation'
-        }
-    },
-    
-    # Data Collection
-    'Data_Collection.docx': {
-        'type': 'process',
-        'metadata': {
-            'client': 'Generic',
-            'industry': 'General',
-            'project_type': 'Data Collection Process'
-        }
-    },
-    'Schedule_Survey_.docx': {
-        'type': 'survey',
-        'metadata': {
-            'client': 'Generic',
-            'industry': 'General',
-            'project_type': 'Schedule Survey Template'
-        }
-    },
-    
-    # Communication Templates
-    'Project_kickoff_bulletin.docx': {
-        'type': 'communication',
-        'metadata': {
-            'client': 'Generic',
-            'industry': 'General',
-            'project_type': 'Project Kickoff'
-        }
-    },
-    'Session_Handoff_SwingShift.docx': {
-        'type': 'communication',
-        'metadata': {
-            'client': 'SwingShift',
-            'industry': 'General',
-            'project_type': 'Session Handoff'
-        }
-    },
-    
-    # Executive Summaries
-    'Example_Client_facing_executive_summary_Andersen_2025.docx': {
-        'type': 'executive_summary',
-        'metadata': {
-            'client': 'Andersen',
-            'industry': 'Manufacturing',
-            'project_type': 'Executive Summary'
-        }
-    },
-    
-    # Company Info
-    'Shiftwork_Solutions_LLC_Company_Profile_-_All_Industry__002_.docx': {
-        'type': 'company_profile',
-        'metadata': {
-            'client': 'Shiftwork Solutions',
-            'industry': 'All',
-            'project_type': 'Company Profile'
-        }
-    },
-    'Jims_bio.docx': {
-        'type': 'company_profile',
-        'metadata': {
-            'client': 'Shiftwork Solutions',
-            'industry': 'All',
-            'project_type': 'Bio'
-        }
-    },
-    
-    # AI Systems Documentation
-    'AI_SWARM_ORCHESTRATOR_COMPLETE_SUMMARY_2026-01-31.md': {
-        'type': 'technical_documentation',
-        'metadata': {
-            'client': 'Shiftwork Solutions',
-            'industry': 'Technology',
-            'project_type': 'AI System Documentation'
-        }
-    },
-    'AI_Swarm_File_Structure.md': {
-        'type': 'technical_documentation',
-        'metadata': {
-            'client': 'Shiftwork Solutions',
-            'industry': 'Technology',
-            'project_type': 'System Architecture'
-        }
-    },
-    'The_Code': {
-        'type': 'technical_documentation',
-        'metadata': {
-            'client': 'Shiftwork Solutions',
-            'industry': 'Technology',
-            'project_type': 'Source Code Documentation'
-        }
-    },
-    
-    # Reference Materials
-    'THE_ESSENTIAL_GUIDE_TO_SHIFTWORK_OPERATIONS_EXCELLENCE.pdf': {
-        'type': 'reference',
-        'metadata': {
-            'client': 'Shiftwork Solutions',
-            'industry': 'All',
-            'project_type': 'Best Practices Guide'
-        }
-    },
-    
-    # Schedule Data
-    'Definitive_Schedules_v2.xlsx': {
-        'type': 'schedule_data',
-        'metadata': {
-            'client': 'Shiftwork Solutions',
-            'industry': 'All',
-            'project_type': 'Schedule Library'
-        }
-    }
-}
 
 
 def read_file_content(filepath):
-    """
-    Read file content with appropriate handling for different file types.
-    """
+    """Read file content with appropriate handling for different file types."""
     file_ext = filepath.suffix.lower()
     
     # Text-based files
@@ -244,44 +25,83 @@ def read_file_content(filepath):
             with open(filepath, 'r', encoding='utf-8') as f:
                 return f.read()
         except:
-            # Try with different encoding
             with open(filepath, 'r', encoding='latin-1') as f:
                 return f.read()
     
-    # Word documents - extract text representation
+    # For now, just note file type for binary files
     elif file_ext in ['.docx', '.doc']:
-        try:
-            # For now, just read as binary and note it's a Word doc
-            # In production, you'd use python-docx to extract text
-            return f"[Word Document: {filepath.name}]\n\nThis is a Word document that would be processed with python-docx library."
-        except:
-            return f"[Word Document: {filepath.name}] - Could not read"
-    
-    # PDFs - note for future processing
+        return f"[Word Document: {filepath.name}]\n\nWord document that would be processed with python-docx library."
     elif file_ext == '.pdf':
-        return f"[PDF Document: {filepath.name}]\n\nThis is a PDF document that would be processed with PyPDF2 or similar library."
-    
-    # Excel files
+        return f"[PDF Document: {filepath.name}]\n\nPDF document."
     elif file_ext in ['.xlsx', '.xls']:
-        return f"[Excel Spreadsheet: {filepath.name}]\n\nThis is an Excel file that would be processed with pandas or openpyxl."
-    
-    # Unknown
+        return f"[Excel Spreadsheet: {filepath.name}]\n\nExcel file."
     else:
-        return f"[Unknown File Type: {filepath.name}]\n\nFile type: {file_ext}"
+        return f"[File: {filepath.name}]\n\nFile type: {file_ext}"
+
+
+def detect_document_type(filename):
+    """Auto-detect document type based on filename."""
+    name_lower = filename.lower()
+    
+    if 'implementation' in name_lower and 'manual' in name_lower:
+        return 'implementation_manual', 'Implementation Client', 'General'
+    elif 'lesson' in name_lower:
+        return 'lessons_learned', 'Shiftwork Solutions', 'All'
+    elif 'contract' in name_lower:
+        return 'contract', 'Generic Client', 'General'
+    elif 'survey' in name_lower or ('schedule' in name_lower and 'survey' in name_lower):
+        return 'survey', 'Generic', 'General'
+    elif 'executive' in name_lower and 'summary' in name_lower:
+        return 'executive_summary', 'Client', 'General'
+    elif 'profile' in name_lower or 'bio' in name_lower:
+        return 'company_profile', 'Shiftwork Solutions', 'All'
+    elif 'swarm' in name_lower or 'ai_' in name_lower or name_lower.endswith('.md'):
+        return 'technical_documentation', 'Shiftwork Solutions', 'Technology'
+    elif 'knowledge' in name_lower or 'summary' in name_lower:
+        return 'knowledge_base', 'Shiftwork Solutions', 'All'
+    elif name_lower.endswith('.pdf'):
+        return 'reference', 'Shiftwork Solutions', 'All'
+    elif 'schedule' in name_lower and name_lower.endswith(('.xlsx', '.xls')):
+        return 'schedule_data', 'Shiftwork Solutions', 'All'
+    elif 'data' in name_lower or 'collection' in name_lower:
+        return 'process', 'Generic', 'General'
+    elif 'kickoff' in name_lower or 'handoff' in name_lower or 'session' in name_lower:
+        return 'communication', 'Generic', 'General'
+    elif 'scope' in name_lower:
+        return 'proposal', 'Generic', 'General'
+    elif 'evaluation' in name_lower or 'assessment' in name_lower:
+        return 'assessment', 'Generic', 'General'
+    else:
+        return 'generic', 'Unknown', 'General'
 
 
 def bootstrap_knowledge_base(project_path='/mnt/project/project_files'):
     """
     Bootstrap the knowledge base by ingesting all existing documents.
+    Automatically discovers all files in the directory.
     """
     project_path = Path(project_path)
     ingestor = get_document_ingestor()
     
     print("=" * 80)
-    print("🧠 BOOTSTRAPPING KNOWLEDGE BASE")
+    print("🧠 BOOTSTRAPPING KNOWLEDGE BASE - AUTO-DISCOVERY")
     print("=" * 80)
     print(f"\nScanning directory: {project_path}")
-    print(f"Documents to ingest: {len(DOCUMENTS_TO_INGEST)}\n")
+    
+    # Check directory exists
+    if not project_path.exists():
+        return {
+            'success': False,
+            'error': f'Directory not found: {project_path}',
+            'success': [],
+            'failed': [],
+            'already_ingested': []
+        }
+    
+    # Get all files (excluding hidden files and directories)
+    all_files = [f for f in project_path.iterdir() if f.is_file() and not f.name.startswith('.')]
+    
+    print(f"Found {len(all_files)} files to process\n")
     
     results = {
         'success': [],
@@ -289,40 +109,36 @@ def bootstrap_knowledge_base(project_path='/mnt/project/project_files'):
         'already_ingested': []
     }
     
-    for filename, doc_info in DOCUMENTS_TO_INGEST.items():
-        filepath = project_path / filename
+    for filepath in all_files:
+        filename = filepath.name
         
         print(f"\n📄 Processing: {filename}")
-        print(f"   Type: {doc_info['type']}")
-        print(f"   Client: {doc_info['metadata'].get('client', 'N/A')}")
         
-        # Check if file exists
-        if not filepath.exists():
-            print(f"   ⚠️  File not found: {filepath}")
-            results['failed'].append({
-                'filename': filename,
-                'error': 'File not found'
-            })
-            continue
+        doc_type, client, industry = detect_document_type(filename)
+        print(f"   Type: {doc_type}")
+        print(f"   Client: {client}")
         
         try:
             # Read file content
             content = read_file_content(filepath)
             
-            # Add filename to metadata
-            metadata = doc_info['metadata'].copy()
-            metadata['document_name'] = filename
-            metadata['bootstrap_date'] = '2026-02-02'
+            # Create metadata
+            metadata = {
+                'document_name': filename,
+                'client': client,
+                'industry': industry,
+                'bootstrap_date': '2026-02-03'
+            }
             
             # Ingest document
             result = ingestor.ingest_document(
                 content=content,
-                document_type=doc_info['type'],
+                document_type=doc_type,
                 metadata=metadata
             )
             
             if result.get('already_ingested'):
-                print(f"   ℹ️  Already ingested: {filename}")
+                print(f"   ℹ️  Already ingested")
                 results['already_ingested'].append(filename)
             elif result.get('success'):
                 print(f"   ✅ SUCCESS!")
