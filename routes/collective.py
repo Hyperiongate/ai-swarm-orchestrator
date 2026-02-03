@@ -49,27 +49,45 @@ def learn_from_materials():
                     self._load_project_files()
                 
                 def _load_project_files(self):
-                    """Load files from /mnt/project/ directory"""
+                    """Load files from project_files/ directory"""
                     import os
                     import json
                     
-                    project_dir = '/mnt/project/'
-                    if os.path.exists(project_dir):
-                        for filename in os.listdir(project_dir):
-                            filepath = os.path.join(project_dir, filename)
-                            if os.path.isfile(filepath):
-                                try:
-                                    # Try to read file
-                                    with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-                                        content = f.read()
-                                    
-                                    self.knowledge_index.append({
-                                        'title': filename,
-                                        'content': content,
-                                        'filepath': filepath
-                                    })
-                                except:
-                                    pass  # Skip files that can't be read
+                    # Try multiple possible locations
+                    possible_dirs = [
+                        './project_files/',
+                        '/app/project_files/',
+                        'project_files/',
+                        '/mnt/project/'
+                    ]
+                    
+                    project_dir = None
+                    for dir_path in possible_dirs:
+                        if os.path.exists(dir_path):
+                            project_dir = dir_path
+                            print(f"📁 Found project files at: {dir_path}")
+                            break
+                    
+                    if not project_dir:
+                        print("⚠️  No project_files directory found")
+                        return
+                    
+                    for filename in os.listdir(project_dir):
+                        filepath = os.path.join(project_dir, filename)
+                        if os.path.isfile(filepath):
+                            try:
+                                # Try to read file
+                                with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                                    content = f.read()
+                                
+                                self.knowledge_index.append({
+                                    'title': filename,
+                                    'content': content,
+                                    'filepath': filepath
+                                })
+                                print(f"  ✅ Loaded: {filename}")
+                            except Exception as e:
+                                print(f"  ⚠️  Could not read {filename}: {e}")
             
             knowledge_base = SimpleKnowledgeBase()
             print(f"📚 Created temporary knowledge base with {len(knowledge_base.knowledge_index)} files")
