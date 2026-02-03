@@ -270,7 +270,7 @@ def read_file_content(filepath):
         return f"[Unknown File Type: {filepath.name}]\n\nFile type: {file_ext}"
 
 
-def bootstrap_knowledge_base(project_path='/mnt/project'):
+def bootstrap_knowledge_base(project_path='/mnt/project/project_files'):
     """
     Bootstrap the knowledge base by ingesting all existing documents.
     """
