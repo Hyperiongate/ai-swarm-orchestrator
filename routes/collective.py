@@ -32,16 +32,47 @@ def learn_from_materials():
     Trigger learning from existing project materials.
     
     This analyzes all files in the knowledge base and extracts patterns.
-    Should be run once initially, then periodically as new files are added.
+    
+    NOTE: With auto-learning enabled, this happens automatically.
+    You can still trigger it manually anytime.
     """
     try:
         # Get knowledge base from app
         knowledge_base = getattr(current_app, 'knowledge_base', None)
+        
+        # If knowledge base not initialized, try to create a simple one
         if not knowledge_base:
-            return jsonify({
-                'success': False,
-                'error': 'Knowledge base not available'
-            }), 500
+            # Create minimal knowledge base structure for learning
+            class SimpleKnowledgeBase:
+                def __init__(self):
+                    self.knowledge_index = []
+                    self._load_project_files()
+                
+                def _load_project_files(self):
+                    """Load files from /mnt/project/ directory"""
+                    import os
+                    import json
+                    
+                    project_dir = '/mnt/project/'
+                    if os.path.exists(project_dir):
+                        for filename in os.listdir(project_dir):
+                            filepath = os.path.join(project_dir, filename)
+                            if os.path.isfile(filepath):
+                                try:
+                                    # Try to read file
+                                    with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                                        content = f.read()
+                                    
+                                    self.knowledge_index.append({
+                                        'title': filename,
+                                        'content': content,
+                                        'filepath': filepath
+                                    })
+                                except:
+                                    pass  # Skip files that can't be read
+            
+            knowledge_base = SimpleKnowledgeBase()
+            print(f"📚 Created temporary knowledge base with {len(knowledge_base.knowledge_index)} files")
         
         ci = get_collective_intelligence(knowledge_base=knowledge_base)
         results = ci.learn_from_existing_materials()
@@ -49,8 +80,112 @@ def learn_from_materials():
         return jsonify({
             'success': True,
             'results': results,
-            'message': f"Learned from existing materials: {results['patterns_discovered']} patterns discovered"
+            'message': f"Learned from existing materials: {results['patterns_discovered']} patterns discovered",
+            'note': 'Auto-learning can run this automatically - see /api/collective/auto-learning/status'
         })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@collective_bp.route('/api/collective/auto-learning/status', methods=['GET'])
+def get_auto_learning_status():
+    """
+    Get status of automatic learning system.
+    
+    Shows when learning last ran, how it's configured, etc.
+    """
+    try:
+        from auto_learning_trigger import get_auto_learning_trigger
+        
+        trigger = get_auto_learning_trigger()
+        status = trigger.get_auto_learning_status()
+        
+        return jsonify({
+            'success': True,
+            'auto_learning': status
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@collective_bp.route('/api/collective/auto-learning/configure', methods=['POST'])
+def configure_auto_learning():
+    """
+    Configure automatic learning.
+    
+    Body:
+    {
+        "enabled": true,
+        "frequency_hours": 168  // How often to re-learn (default: weekly)
+    }
+    """
+    try:
+        from auto_learning_trigger import get_auto_learning_trigger
+        
+        data = request.get_json() or {}
+        
+        trigger = get_auto_learning_trigger()
+        
+        # Enable/disable
+        if 'enabled' in data:
+            if data['enabled']:
+                trigger.enable_auto_learning()
+            else:
+                trigger.disable_auto_learning()
+        
+        # Set frequency
+        if 'frequency_hours' in data:
+            trigger.set_learning_frequency(data['frequency_hours'])
+        
+        # Get updated status
+        status = trigger.get_auto_learning_status()
+        
+        return jsonify({
+            'success': True,
+            'auto_learning': status,
+            'message': 'Auto-learning configuration updated'
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@collective_bp.route('/api/collective/auto-learning/trigger', methods=['POST'])
+def trigger_auto_learning():
+    """
+    Manually trigger auto-learning check.
+    
+    This checks if learning should run and runs it if conditions are met.
+    Useful for testing or forcing a learning cycle.
+    """
+    try:
+        from auto_learning_trigger import get_auto_learning_trigger
+        
+        knowledge_base = getattr(current_app, 'knowledge_base', None)
+        
+        trigger = get_auto_learning_trigger()
+        result = trigger.check_and_trigger(knowledge_base)
+        
+        if result:
+            return jsonify({
+                'success': True,
+                'learning_triggered': True,
+                'result': result
+            })
+        else:
+            return jsonify({
+                'success': True,
+                'learning_triggered': False,
+                'message': 'No trigger conditions met'
+            })
     except Exception as e:
         return jsonify({
             'success': False,
