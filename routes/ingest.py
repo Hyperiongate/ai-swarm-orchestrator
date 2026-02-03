@@ -257,7 +257,78 @@ def get_patterns():
         db.row_factory = sqlite3.Row
         cursor = db.cursor()
         
+        # Check if table exists and has data
+        try:
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='learned_patterns'")
+            if not cursor.fetchone():
+                # Table doesn't exist yet
+                db.close()
+                return jsonify({
+                    'success': True,
+                    'count': 0,
+                    'patterns': [],
+                    'message': 'No patterns yet - table will be created on first pattern extraction'
+                }), 200
+        except:
+            pass
+        
         # Build query
+        query = '''
+            SELECT 
+                id, pattern_type, pattern_name, pattern_data,
+                confidence, supporting_documents,
+                first_seen, last_updated, metadata
+            FROM learned_patterns
+            WHERE confidence >= ?
+        '''
+        params = [min_confidence]
+        
+        if pattern_type:
+            query += ' AND pattern_type = ?'
+            params.append(pattern_type)
+        
+        query += ' ORDER BY confidence DESC, supporting_documents DESC LIMIT ?'
+        params.append(limit)
+        
+        cursor.execute(query, params)
+        patterns = []
+        
+        for row in cursor.fetchall():
+            pattern = dict(row)
+            # Parse JSON fields safely
+            try:
+                if pattern.get('pattern_data'):
+                    pattern['pattern_data'] = json.loads(pattern['pattern_data'])
+                else:
+                    pattern['pattern_data'] = {}
+            except:
+                pattern['pattern_data'] = {}
+            
+            try:
+                if pattern.get('metadata'):
+                    pattern['metadata'] = json.loads(pattern['metadata'])
+                else:
+                    pattern['metadata'] = {}
+            except:
+                pattern['metadata'] = {}
+            
+            patterns.append(pattern)
+        
+        db.close()
+        
+        return jsonify({
+            'success': True,
+            'count': len(patterns),
+            'patterns': patterns
+        }), 200
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'success': False,
+            'error': f'Failed to get patterns: {str(e)}',
+            'traceback': traceback.format_exc()
+        }), 500
         query = '''
             SELECT 
                 id, pattern_type, pattern_name, pattern_data,
