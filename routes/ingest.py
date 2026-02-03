@@ -18,10 +18,35 @@ import sys
 import json
 from datetime import datetime
 
-# Ensure parent directory is in path for imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from document_ingestion_engine import get_document_ingestor
+# Multiple import attempts with debugging
+try:
+    # Attempt 1: Direct import
+    from document_ingestion_engine import get_document_ingestor
+    print("✅ Knowledge Ingestion: Direct import succeeded")
+except ImportError as e1:
+    print(f"⚠️  Direct import failed: {e1}")
+    try:
+        # Attempt 2: Add parent to path
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from document_ingestion_engine import get_document_ingestor
+        print("✅ Knowledge Ingestion: Path-adjusted import succeeded")
+    except ImportError as e2:
+        print(f"⚠️  Path-adjusted import failed: {e2}")
+        try:
+            # Attempt 3: Add root directory explicitly
+            root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+            sys.path.insert(0, root_dir)
+            from document_ingestion_engine import get_document_ingestor
+            print("✅ Knowledge Ingestion: Root directory import succeeded")
+        except ImportError as e3:
+            print(f"❌ All import attempts failed!")
+            print(f"   Error 1: {e1}")
+            print(f"   Error 2: {e2}")
+            print(f"   Error 3: {e3}")
+            print(f"   Current directory: {os.getcwd()}")
+            print(f"   Script directory: {os.path.dirname(__file__)}")
+            print(f"   Files in root: {os.listdir(root_dir) if 'root_dir' in locals() else 'N/A'}")
+            raise
 
 # Create blueprint
 ingest_bp = Blueprint('ingest', __name__, url_prefix='/api/ingest')
