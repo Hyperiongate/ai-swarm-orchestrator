@@ -374,6 +374,49 @@ def migrate_storage():
             'traceback': traceback.format_exc()
         }), 500
 
+@app.route('/api/admin/bootstrap-knowledge', methods=['GET'])
+def bootstrap_knowledge_endpoint():
+    """
+    One-time endpoint to bootstrap knowledge base.
+    Just visit this URL to load all existing documents.
+    
+    USAGE: https://ai-swarm-orchestrator.onrender.com/api/admin/bootstrap-knowledge
+    """
+    try:
+        import bootstrap_knowledge
+        from io import StringIO
+        import sys
+        
+        # Capture output
+        old_stdout = sys.stdout
+        sys.stdout = captured_output = StringIO()
+        
+        # Run bootstrap
+        result = bootstrap_knowledge.bootstrap_knowledge_base()
+        
+        # Restore stdout
+        sys.stdout = old_stdout
+        output = captured_output.getvalue()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Bootstrap complete! Check output for details.',
+            'output': output,
+            'results': {
+                'successful': len(result['success']),
+                'already_ingested': len(result['already_ingested']),
+                'failed': len(result['failed'])
+            }
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
 @app.route('/survey')
 def survey():
     """Survey builder interface"""
