@@ -417,6 +417,61 @@ def bootstrap_knowledge_endpoint():
             'traceback': traceback.format_exc()
         }), 500
 
+@app.route('/api/admin/list-project-files', methods=['GET'])
+def list_project_files():
+    """
+    Diagnostic endpoint to see what files are actually accessible.
+    """
+    import os
+    from pathlib import Path
+    
+    results = {}
+    
+    # Check multiple possible locations
+    locations_to_check = [
+        '/mnt/project',
+        '/mnt/project/project_files',
+        'project_files',
+        './project_files',
+        os.path.join(os.getcwd(), 'project_files')
+    ]
+    
+    for location in locations_to_check:
+        try:
+            path = Path(location)
+            if path.exists():
+                if path.is_dir():
+                    files = [f.name for f in path.iterdir() if f.is_file()]
+                    results[str(location)] = {
+                        'exists': True,
+                        'is_dir': True,
+                        'file_count': len(files),
+                        'files': files[:10],  # First 10 files
+                        'total_files': len(files)
+                    }
+                else:
+                    results[str(location)] = {
+                        'exists': True,
+                        'is_dir': False,
+                        'note': 'This is a file, not a directory'
+                    }
+            else:
+                results[str(location)] = {
+                    'exists': False
+                }
+        except Exception as e:
+            results[str(location)] = {
+                'error': str(e)
+            }
+    
+    # Also check current working directory
+    results['current_working_directory'] = os.getcwd()
+    
+    return jsonify({
+        'success': True,
+        'locations_checked': results
+    })
+
 @app.route('/survey')
 def survey():
     """Survey builder interface"""
