@@ -888,6 +888,18 @@ except ImportError as e:
 except Exception as e:
     print(f"⚠️  Collective Intelligence registration failed: {e}")
 
+# Add after your other blueprint registrations:
+try:
+    from routes.ingest import ingest_bp
+    app.register_blueprint(ingest_bp)
+    print("✅ Knowledge Ingestion API registered")
+except ImportError as e:
+    print(f"ℹ️  Knowledge Ingestion routes not found: {e}")
+
+@app.route('/knowledge')
+def knowledge_management():
+    return render_template('knowledge_management.html')
+
 # Sprint 3 blueprints
 try:
     from project_dashboard import dashboard_bp
