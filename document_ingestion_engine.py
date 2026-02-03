@@ -433,5 +433,16 @@ def get_document_ingestor() -> DocumentIngestor:
         _ingestor = DocumentIngestor()
     return _ingestor
 
+@app.route('/api/admin/migrate-storage', methods=['GET', 'POST'])
+```
 
+3. **Add the code from `BOOTSTRAP_ENDPOINT.py`** right after that migrate-storage endpoint
+
+4. **Commit and push to GitHub**
+
+5. **Wait ~5 minutes for Render to deploy**
+
+6. **Visit this URL in your browser:**
+```
+   https://ai-swarm-orchestrator.onrender.com/api/admin/bootstrap-knowledge
 # I did no harm and this file is not truncated
