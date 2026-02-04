@@ -1084,6 +1084,21 @@ except Exception as e:
     print(f"⚠️  Knowledge Ingestion registration failed: {e}")
 
 # ============================================================================
+# CONVERSATION LEARNING SYSTEM BLUEPRINT (Added February 4, 2026)
+# Combines automatic background learning + manual extraction
+# ============================================================================
+try:
+    from routes.conversation_learning import learning_bp
+    app.register_blueprint(learning_bp)
+    print("✅ Unified Conversation Learning API registered")
+    print("   - Automatic: learn_from_conversation()")
+    print("   - Manual: /api/conversations/{id}/extract-lessons")
+except ImportError as e:
+    print(f"ℹ️  Conversation Learning routes not found: {e}")
+except Exception as e:
+    print(f"⚠️  Conversation Learning registration failed: {e}")
+
+# ============================================================================
 # KNOWLEDGE BACKUP SYSTEM BLUEPRINT (Added February 4, 2026)
 # ============================================================================
 try:
