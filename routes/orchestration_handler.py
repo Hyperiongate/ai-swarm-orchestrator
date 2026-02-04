@@ -377,15 +377,15 @@ def orchestrate():
             db.commit()
 
         # ====================================================================
-            # LEARNING LOOP ENHANCEMENT - Initialize Intelligence Engine
-            # February 4, 2026
-            # ====================================================================
-            intelligence = None
-            try:
-                intelligence = EnhancedIntelligence()
-                print("🧠 EnhancedIntelligence initialized")
-            except Exception as intel_error:
-                print(f"⚠️ EnhancedIntelligence init failed (non-critical): {intel_error}")
+        # LEARNING LOOP ENHANCEMENT - Initialize Intelligence Engine
+        # February 4, 2026 - FOR ALL CONVERSATIONS
+        # ====================================================================
+        intelligence = None
+        try:
+            intelligence = EnhancedIntelligence()
+            print("🧠 EnhancedIntelligence initialized")
+        except Exception as intel_error:
+            print(f"⚠️ EnhancedIntelligence init failed (non-critical): {intel_error}")
             
             from orchestration.ai_clients import call_gpt4
             
