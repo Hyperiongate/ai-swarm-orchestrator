@@ -467,11 +467,13 @@ Please analyze these files and respond to the user's request. Be specific and re
                     
                     add_message(conversation_id, 'assistant', actual_output, task_id,
                                {'orchestrator': 'gpt4_file_handler', 'file_analysis': True, 'execution_time': total_time})
-
-                    # Record outcome for learning system
-                    from learning_integration_wrapper import record_orchestration_outcome
-                    record_orchestration_outcome(task_id, orchestrator, user_request, total_time, consensus_result, knowledge_applied, specialist_results)
                  
+                    # Auto-learn from this conversation
+                    try:
+                        learn_from_conversation(user_request, actual_output)
+                    except Exception as learn_error:
+                        print(f"⚠️ Auto-learning failed (non-critical): {learn_error}")
+                  
                     return jsonify({
                         'success': True,
                         'task_id': task_id,
