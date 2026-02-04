@@ -76,7 +76,8 @@ from database import (
     delete_generated_document,
     get_document_stats,
     get_schedule_context,        
-    save_schedule_context         
+    save_schedule_context    
+    add_avoidance_pattern
 )
 from orchestration import (
     analyze_task_with_sonnet,
@@ -1347,7 +1348,36 @@ def submit_feedback():
                 db.execute('INSERT INTO learning_records (pattern_type, success_rate, times_applied, pattern_data) VALUES (?, ?, ?, ?)',
                           (pattern_key, avg_rating / 5.0, 1, json.dumps({'orchestrator': orchestrator, 'task_type': task_type,
                                                                         'last_rating': avg_rating, 'last_consensus': consensus_score})))
+            # ================================================================
+            # FIX #3: Store Poor Performance as Avoidance Pattern
+            # February 4, 2026
+            # ================================================================
+            if avg_rating < 2.5:  # Poor performance threshold
+                avoid_pattern = {
+                    'approach_used': orchestrator,
+                    'task_type': task_type,
+                    'what_failed': improvement_categories,
+                    'user_comment': user_comment,
+                    'timestamp': datetime.now().isoformat(),
+                    'avg_rating': avg_rating
+                }
+                
+                # Determine severity based on rating
+                if avg_rating < 1.5:
+                    severity = 'high'
+                elif avg_rating < 2.0:
+                    severity = 'medium'
+                else:
+                    severity = 'low'
+                
+                try:
+                    add_avoidance_pattern(avoid_pattern, severity)
+                    print(f"🚫 Added avoidance pattern (severity: {severity})")
+                except Exception as avoid_error:
+                    print(f"⚠️ Could not add avoidance pattern: {avoid_error}")
             
+            db.commit()
+         
             db.commit()
             return jsonify({'success': True, 'message': 'Feedback recorded - system is learning!',
                            'consensus_was_accurate': consensus_was_accurate, 'learning_updated': True})
