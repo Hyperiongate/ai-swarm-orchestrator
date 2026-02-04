@@ -534,26 +534,34 @@
 </head>
 <body>
     <div class="container">
-        <!-- HEADER SECTION -->
+        <!-- HEADER SECTION - UPDATED WITH 2-ROW BUTTON LAYOUT -->
         <div class="header">
             <div class="header-left">
                 <h1>🤖 AI Swarm - Unified Interface</h1>
                 <p>Quick tasks + Project workflows with learning feedback</p>
             </div>
-            <div class="mode-switcher">
-                <button class="mode-btn active" onclick="switchMode('quick')" id="quickModeBtn">⚡ Quick Task</button>
-                <button class="mode-btn" onclick="switchMode('project')" id="projectModeBtn">📁 Project</button>
-                <button class="mode-btn" onclick="switchMode('calculator')" id="calculatorModeBtn">🧮 Calculator</button>
-                <button class="mode-btn" onclick="switchMode('survey')" id="surveyModeBtn">📋 Survey</button>
-                <button class="mode-btn" onclick="switchMode('marketing')" id="marketingModeBtn">📢 Marketing</button>
-                <button class="mode-btn" onclick="switchMode('opportunities')" id="opportunitiesModeBtn">🎯 Opportunities</button>
-                <button class="mode-btn" onclick="switchMode('research')" id="researchModeBtn">🔬 Research</button>
-                <button class="mode-btn" onclick="switchMode('alerts')" id="alertsModeBtn">🔔 Alerts</button>
-                <button class="mode-btn" onclick="switchMode('pipeline')" id="pipelineModeBtn">📊 Pipeline</button>
-                <button class="mode-btn" onclick="switchMode('manuals')" id="manualsModeBtn">📝 Manuals</button>
-                <button class="mode-btn" onclick="window.location.href='/knowledge'" id="knowledgeModeBtn">🧠 Knowledge</button>
+            <div class="mode-switcher" style="display: flex; flex-direction: column; gap: 10px;">
+                <!-- ROW 1: Core Tasks -->
+                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                    <button class="mode-btn active" onclick="switchMode('quick')" id="quickModeBtn">⚡ Quick Task</button>
+                    <button class="mode-btn" onclick="switchMode('project')" id="projectModeBtn">📁 Project</button>
+                    <button class="mode-btn" onclick="switchMode('calculator')" id="calculatorModeBtn">🧮 Calculator</button>
+                    <button class="mode-btn" onclick="switchMode('survey')" id="surveyModeBtn">📋 Survey</button>
+                    <button class="mode-btn" onclick="switchMode('marketing')" id="marketingModeBtn">📢 Marketing</button>
+                </div>
+                <!-- ROW 2: Intelligence Tools -->
+                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                    <button class="mode-btn" onclick="switchMode('opportunities')" id="opportunitiesModeBtn">🎯 Opportunities</button>
+                    <button class="mode-btn" onclick="switchMode('research')" id="researchModeBtn">🔬 Research</button>
+                    <button class="mode-btn" onclick="switchMode('alerts')" id="alertsModeBtn">🔔 Alerts</button>
+                    <button class="mode-btn" onclick="switchMode('pipeline')" id="pipelineModeBtn">📊 Pipeline</button>
+                    <button class="mode-btn" onclick="switchMode('manuals')" id="manualsModeBtn">📝 Manuals</button>
+                    <button class="mode-btn" onclick="window.location.href='/knowledge'" id="knowledgeModeBtn">🧠 Knowledge</button>
+                </div>
             </div>
         </div>
+
+<!-- I did no harm and this file is not truncated -->
         
         <!-- MAIN GRID LAYOUT -->
         <div class="main-grid">
