@@ -1,36 +1,27 @@
 """
-Task Analysis Module - WITH SYSTEM CAPABILITIES AND FILE ATTACHMENT AWARENESS
+Task Analysis Module - WITH UNIFIED KNOWLEDGE BASE (Project Files + Knowledge Management)
 Created: January 21, 2026
-Last Updated: January 30, 2026 - FIXED FILE CONTENTS DISPLAY
+Last Updated: February 3, 2026 - UNIFIED KNOWLEDGE INTEGRATION
 
 CHANGELOG:
+- February 3, 2026: UNIFIED KNOWLEDGE BASE INTEGRATION
+  * Now searches BOTH project_files (35 docs) AND Knowledge Management DB (42 docs)
+  * Total of 77+ documents available to every conversation
+  * AI acts as senior partner with access to ALL accumulated wisdom
+  * Proactive insights: "Based on Acme project..." "Your Lessons Learned says..."
+  * Cumulative intelligence - gets smarter with every uploaded document
+
 - January 30, 2026: CRITICAL FIX - FILE CONTENTS IN USER REQUEST
   * Moved file contents from system context INTO the user request
   * AI can no longer give reflexive "I don't see files" responses
-  * File contents are now IMPOSSIBLE to miss - part of the actual request
-  * This fixes the pattern-matching issue where AI ignores system context
 
 - January 30, 2026: CRITICAL FIX - FILE CONTENTS NOW VISIBLE TO AI
   * Added file_contents parameter to analyze_task_with_sonnet()
-  * AI now receives ACTUAL FILE CONTENTS in the prompt, not just paths
-  * This fixes the "I can't see files" issue - AI can now read uploaded files
-  * File contents are displayed prominently at the top of the prompt
+  * AI now receives ACTUAL FILE CONTENTS in the prompt
 
 - January 29, 2026: FILE ATTACHMENT AWARENESS FIX
-  * CRITICAL: AI now receives explicit information about attached files
+  * AI now receives explicit information about attached files
   * When files are uploaded, AI is told: filenames, paths, and file count
-  * This fixes the "I can't accept files" issue when files ARE attached
-  * Added file_paths parameter to analyze_task_with_sonnet()
-  * AI now knows: "USER HAS ATTACHED X FILES - you must work with them"
-
-- January 29, 2026: SYSTEM CAPABILITIES FIX
-  * Added get_system_capabilities_prompt() injection
-  * AI knows what it can do (files, folders, documents, etc.)
-  * Capabilities injected into EVERY prompt for Sonnet and Opus
-
-CRITICAL: When files are attached, the AI must be explicitly told about them.
-The capabilities prompt says "you CAN accept files" but we must also say
-"files ARE attached to this request" when they actually are.
 
 Author: Jim @ Shiftwork Solutions LLC
 """
@@ -85,105 +76,223 @@ def get_learning_context():
         return ""
 
 
-def check_knowledge_base_first(user_request, knowledge_base):
+def search_knowledge_management_db(user_request, max_results=5):
     """
-    Check project knowledge base before invoking AI.
-    Returns knowledge context and confidence scores.
-    """
-    if not knowledge_base:
-        return {
-            'has_relevant_knowledge': False,
-            'knowledge_context': '',
-            'knowledge_confidence': 0.0,
-            'knowledge_sources': [],
-            'should_proceed_to_ai': True,
-            'reason': 'Knowledge base not initialized'
-        }
+    Search the Knowledge Management database (uploaded documents).
+    Returns extracted knowledge from the 42+ documents in swarm_intelligence.db
     
+    This is the "Shoulders of Giants" cumulative learning system.
+    """
     try:
-        print("🔍 Searching project knowledge base...")
+        import sqlite3
         
-        if hasattr(knowledge_base, 'semantic_search'):
-            search_results = knowledge_base.semantic_search(user_request, max_results=5)
-        else:
-            search_results = knowledge_base.search(user_request, max_results=5)
+        # Use environment variable for database path (matches document_ingestion_engine.py)
+        db_path = os.environ.get('KNOWLEDGE_DB_PATH', 'swarm_intelligence.db')
         
-        if not search_results:
-            return {
-                'has_relevant_knowledge': False,
-                'knowledge_context': '',
-                'knowledge_confidence': 0.0,
-                'knowledge_sources': [],
-                'should_proceed_to_ai': True,
-                'reason': 'No relevant knowledge found'
-            }
+        db = sqlite3.connect(db_path)
+        db.row_factory = sqlite3.Row
+        cursor = db.cursor()
         
-        top_score = search_results[0].get('score', 0)
+        # Check if table exists
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='knowledge_extracts'")
+        if not cursor.fetchone():
+            db.close()
+            return []
         
-        if top_score >= 50:
-            confidence = 0.9
-        elif top_score >= 25:
-            confidence = 0.75
-        elif top_score >= 10:
-            confidence = 0.6
-        else:
-            confidence = 0.4
+        # Simple keyword search across all documents
+        # TODO: Could be enhanced with semantic search later
+        search_terms = user_request.lower().split()[:10]  # Use first 10 words
         
-        knowledge_context = knowledge_base.get_context_for_task(
-            user_request, 
-            max_context=5000,
-            max_results=3
-        )
+        results = []
+        for term in search_terms:
+            if len(term) < 3:  # Skip very short words
+                continue
+                
+            cursor.execute('''
+                SELECT 
+                    id, document_name, document_type, client, industry,
+                    extracted_data, extracted_at
+                FROM knowledge_extracts
+                WHERE LOWER(extracted_data) LIKE ?
+                   OR LOWER(document_name) LIKE ?
+                   OR LOWER(client) LIKE ?
+                LIMIT ?
+            ''', (f'%{term}%', f'%{term}%', f'%{term}%', max_results))
+            
+            results.extend([dict(row) for row in cursor.fetchall()])
         
-        knowledge_sources = [r['filename'] for r in search_results[:3]]
+        db.close()
         
-        print(f"  ✅ Found {len(search_results)} relevant documents")
-        print(f"  📊 Confidence: {confidence*100:.0f}%")
+        # Deduplicate by id
+        seen = set()
+        unique_results = []
+        for r in results:
+            if r['id'] not in seen:
+                seen.add(r['id'])
+                unique_results.append(r)
         
-        return {
-            'has_relevant_knowledge': True,
-            'knowledge_context': knowledge_context,
-            'knowledge_confidence': confidence,
-            'knowledge_sources': knowledge_sources,
-            'should_proceed_to_ai': True,
-            'reason': f'Found {len(search_results)} documents',
-            'top_relevance': search_results[0].get('relevance_type', 'Relevant')
-        }
+        return unique_results[:max_results]
         
     except Exception as e:
-        print(f"⚠️ Knowledge search error: {e}")
+        print(f"⚠️ Knowledge Management DB search error: {e}")
+        return []
+
+
+def check_knowledge_base_unified(user_request, project_knowledge_base):
+    """
+    UNIFIED knowledge search across BOTH sources:
+    1. Project files knowledge base (35 documents)
+    2. Knowledge Management DB (42+ uploaded documents)
+    
+    This gives the AI access to ALL accumulated wisdom - 77+ documents total.
+    """
+    all_sources = []
+    all_context = []
+    max_confidence = 0.0
+    
+    # ============================================================
+    # SOURCE 1: Project Files Knowledge Base (35 documents)
+    # ============================================================
+    if project_knowledge_base:
+        try:
+            print("🔍 Searching project files knowledge base...")
+            
+            if hasattr(project_knowledge_base, 'semantic_search'):
+                search_results = project_knowledge_base.semantic_search(user_request, max_results=3)
+            else:
+                search_results = project_knowledge_base.search(user_request, max_results=3)
+            
+            if search_results:
+                top_score = search_results[0].get('score', 0)
+                
+                if top_score >= 50:
+                    confidence = 0.9
+                elif top_score >= 25:
+                    confidence = 0.75
+                elif top_score >= 10:
+                    confidence = 0.6
+                else:
+                    confidence = 0.4
+                
+                max_confidence = max(max_confidence, confidence)
+                
+                kb_context = project_knowledge_base.get_context_for_task(
+                    user_request, 
+                    max_context=3000,
+                    max_results=3
+                )
+                
+                if kb_context:
+                    all_context.append("=== PROJECT FILES KNOWLEDGE ===")
+                    all_context.append(kb_context)
+                
+                all_sources.extend([r['filename'] for r in search_results[:3]])
+                
+                print(f"  ✅ Found {len(search_results)} relevant project files")
+                print(f"  📊 Confidence: {confidence*100:.0f}%")
+                
+        except Exception as e:
+            print(f"⚠️ Project knowledge search error: {e}")
+    
+    # ============================================================
+    # SOURCE 2: Knowledge Management Database (42+ documents)
+    # ============================================================
+    print("🔍 Searching uploaded documents (Knowledge Management DB)...")
+    km_results = search_knowledge_management_db(user_request, max_results=3)
+    
+    if km_results:
+        # Build context from Knowledge Management results
+        km_context_parts = ["=== UPLOADED DOCUMENTS (Knowledge Management) ==="]
+        
+        for idx, doc in enumerate(km_results, 1):
+            doc_name = doc['document_name']
+            doc_type = doc['document_type']
+            client = doc['client'] or 'Unknown'
+            
+            # Parse extracted_data JSON
+            try:
+                extracted = json.loads(doc['extracted_data'])
+                insights = extracted.get('insights', [])
+                patterns = extracted.get('patterns', [])
+                
+                km_context_parts.append(f"\n📄 Document {idx}: {doc_name}")
+                km_context_parts.append(f"   Type: {doc_type} | Client: {client}")
+                
+                # Add insights
+                if insights:
+                    km_context_parts.append(f"   Insights: {len(insights)} found")
+                    for insight in insights[:2]:  # Top 2 insights
+                        if isinstance(insight, dict):
+                            insight_type = insight.get('type', 'general')
+                            km_context_parts.append(f"     - {insight_type}")
+                
+                # Add patterns
+                if patterns:
+                    km_context_parts.append(f"   Patterns: {len(patterns)} found")
+                    for pattern in patterns[:2]:  # Top 2 patterns
+                        if isinstance(pattern, dict):
+                            pattern_name = pattern.get('name', 'unknown')
+                            km_context_parts.append(f"     - {pattern_name}")
+                
+            except:
+                km_context_parts.append(f"\n📄 Document {idx}: {doc_name} (Type: {doc_type})")
+        
+        km_context = '\n'.join(km_context_parts)
+        all_context.append(km_context)
+        all_sources.extend([doc['document_name'] for doc in km_results])
+        
+        # Estimate confidence based on number of results
+        km_confidence = min(0.8, len(km_results) * 0.25)
+        max_confidence = max(max_confidence, km_confidence)
+        
+        print(f"  ✅ Found {len(km_results)} relevant uploaded documents")
+        print(f"  📊 Confidence: {km_confidence*100:.0f}%")
+    
+    # ============================================================
+    # COMBINE RESULTS
+    # ============================================================
+    if not all_sources:
         return {
             'has_relevant_knowledge': False,
             'knowledge_context': '',
             'knowledge_confidence': 0.0,
             'knowledge_sources': [],
             'should_proceed_to_ai': True,
-            'reason': f'Error: {str(e)}'
+            'reason': 'No relevant knowledge found in either source'
         }
+    
+    combined_context = '\n\n'.join(all_context)
+    
+    print(f"📚 UNIFIED KNOWLEDGE: {len(all_sources)} documents from {len(all_context)} sources")
+    print(f"   Overall Confidence: {max_confidence*100:.0f}%")
+    
+    return {
+        'has_relevant_knowledge': True,
+        'knowledge_context': combined_context,
+        'knowledge_confidence': max_confidence,
+        'knowledge_sources': list(set(all_sources)),  # Deduplicate
+        'should_proceed_to_ai': True,
+        'reason': f'Found {len(all_sources)} relevant documents across both knowledge bases',
+        'source_breakdown': {
+            'project_files': len([s for s in all_sources if 'project_files' in str(s)]),
+            'uploaded_docs': len(km_results)
+        }
+    }
 
 
 def analyze_task_with_sonnet(user_request, knowledge_base=None, file_paths=None, file_contents=None):
     """
-    Sonnet analyzes task WITH system capabilities + project knowledge + FILE ATTACHMENTS.
+    Sonnet analyzes task WITH unified knowledge + system capabilities + FILE ATTACHMENTS.
     
-    CRITICAL FIX (January 30, 2026 - FINAL):
-    - File contents now added to USER REQUEST, not system context
-    - This prevents AI from giving reflexive "I don't see files" responses
-    - AI must acknowledge files because they're part of the actual request
+    NOW SEARCHES BOTH:
+    - Project files knowledge base (35 documents)
+    - Knowledge Management DB (42+ uploaded documents)
     
-    CRITICAL FIX (January 30, 2026):
-    - Now accepts file_contents parameter with ACTUAL file text
-    - AI can now READ the files, not just see that they exist
-    - File contents displayed prominently at TOP of prompt
-    
-    CRITICAL FIX (January 29, 2026):
-    - Injects SYSTEM CAPABILITIES so AI knows what it can do
-    - AI now aware of file handling, folders, document creation, etc.
-    - When files are attached, AI is explicitly informed about them
+    Total: 77+ documents available for every request!
     
     Args:
         user_request (str): The user's request
-        knowledge_base: Knowledge base instance (optional)
+        knowledge_base: Project knowledge base instance (optional)
         file_paths (list): List of file paths that were uploaded (optional)
         file_contents (str): Extracted contents from uploaded files (optional)
     
@@ -195,8 +304,8 @@ def analyze_task_with_sonnet(user_request, knowledge_base=None, file_paths=None,
     from orchestration.system_capabilities import get_system_capabilities_prompt
     capabilities = get_system_capabilities_prompt()
     
-    # Check project knowledge
-    kb_check = check_knowledge_base_first(user_request, knowledge_base)
+    # 🎯 NEW: Unified knowledge search across BOTH sources
+    kb_check = check_knowledge_base_unified(user_request, knowledge_base)
     learning_context = get_learning_context()
     
     # Build prompt with CAPABILITIES FIRST (so AI knows what it can do)
@@ -204,14 +313,24 @@ def analyze_task_with_sonnet(user_request, knowledge_base=None, file_paths=None,
 
 You are the primary orchestrator in an AI swarm system for Shiftwork Solutions LLC.
 
+🎯 CRITICAL: You have access to extensive accumulated knowledge from:
+   - Project files (implementation manuals, contracts, proposals)
+   - Uploaded documents (lessons learned, assessments, client work)
+   - Total: 77+ documents spanning hundreds of projects
+
+When relevant knowledge is available, you should:
+- Reference specific projects: "Based on the Acme implementation..."
+- Apply lessons learned: "Your Lessons Learned document warns about..."
+- Suggest proven approaches: "In the Kellogg's project, this was solved by..."
+- Act like a senior partner with 30 years of consulting experience
+
 {learning_context}
 
 {kb_check['knowledge_context']}
 
 """
     
-    # 🔧 CRITICAL FIX (January 30, 2026 - FINAL): Store file contents to add to USER REQUEST
-    # This prevents the AI from pattern-matching on "can you see the file" and saying no
+    # File contents handling (existing code - unchanged)
     file_section = ""
     if file_contents:
         file_section = f"""
@@ -224,8 +343,6 @@ You are the primary orchestrator in an AI swarm system for Shiftwork Solutions L
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
-    
-    # 🔧 Add file path information (metadata about files) - only if no contents
     elif file_paths and len(file_paths) > 0:
         analysis_prompt += f"""
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -259,7 +376,7 @@ INSTRUCTIONS FOR HANDLING ATTACHED FILES:
 
 """
     
-    # 🔧 CRITICAL: Add user request WITH file contents (not before)
+    # Add user request WITH file contents
     analysis_prompt += f"""USER REQUEST: {user_request}{file_section}
 
 """
@@ -267,15 +384,19 @@ INSTRUCTIONS FOR HANDLING ATTACHED FILES:
     if kb_check['has_relevant_knowledge']:
         analysis_prompt += f"""
 KNOWLEDGE BASE STATUS:
-✅ Relevant project knowledge found (Confidence: {kb_check['knowledge_confidence']*100:.0f}%)
-📚 Sources: {', '.join(kb_check['knowledge_sources'][:2])}
-
-Use this knowledge to inform your analysis.
+✅ Relevant knowledge found (Confidence: {kb_check['knowledge_confidence']*100:.0f}%)
+📚 Sources ({len(kb_check['knowledge_sources'])}): {', '.join(kb_check['knowledge_sources'][:3])}
 """
+        if kb_check.get('source_breakdown'):
+            breakdown = kb_check['source_breakdown']
+            analysis_prompt += f"   - Project files: {breakdown.get('project_files', 0)}\n"
+            analysis_prompt += f"   - Uploaded docs: {breakdown.get('uploaded_docs', 0)}\n"
+        
+        analysis_prompt += "\nACT AS A SENIOR PARTNER: Reference this knowledge proactively when relevant.\n"
     else:
         analysis_prompt += f"""
 KNOWLEDGE BASE STATUS:
-ℹ️  No directly relevant project knowledge found
+ℹ️  No directly relevant knowledge found
 """
     
     analysis_prompt += """
@@ -356,18 +477,9 @@ Respond ONLY with valid JSON:
 
 def handle_with_opus(user_request, sonnet_analysis, knowledge_base=None, file_paths=None, file_contents=None):
     """
-    Opus handles complex requests WITH system capabilities + knowledge + FILES.
+    Opus handles complex requests WITH unified knowledge + system capabilities + FILES.
     
-    CRITICAL FIX (January 30, 2026 - FINAL):
-    - File contents now added to USER REQUEST, not system context
-    
-    CRITICAL FIX (January 30, 2026):
-    - Now accepts file_contents parameter with ACTUAL file text
-    - Opus can now READ the files, not just see that they exist
-    
-    CRITICAL FIX (January 29, 2026):
-    - Injects SYSTEM CAPABILITIES so Opus knows what it can do
-    - When files are attached, Opus is explicitly informed
+    NOW SEARCHES BOTH knowledge sources for complete context.
     
     Args:
         user_request (str): The user's request
@@ -381,7 +493,8 @@ def handle_with_opus(user_request, sonnet_analysis, knowledge_base=None, file_pa
     from orchestration.system_capabilities import get_system_capabilities_prompt
     capabilities = get_system_capabilities_prompt()
     
-    kb_check = check_knowledge_base_first(user_request, knowledge_base)
+    # 🎯 NEW: Unified knowledge search
+    kb_check = check_knowledge_base_unified(user_request, knowledge_base)
     learning_context = get_learning_context()
     
     # Build prompt with CAPABILITIES FIRST
@@ -389,13 +502,15 @@ def handle_with_opus(user_request, sonnet_analysis, knowledge_base=None, file_pa
 
 You are the strategic supervisor in the AI Swarm for Shiftwork Solutions LLC.
 
+🎯 You have access to 77+ documents of accumulated expertise. Act as a senior consulting partner.
+
 {learning_context}
 
 {kb_check['knowledge_context']}
 
 """
     
-    # 🔧 CRITICAL FIX (January 30, 2026 - FINAL): Store file contents for USER REQUEST
+    # File handling (existing code - unchanged)
     file_section = ""
     if file_contents:
         file_section = f"""
@@ -408,7 +523,6 @@ You are the strategic supervisor in the AI Swarm for Shiftwork Solutions LLC.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
-    # 🔧 Add file path information (metadata about files)
     elif file_paths and len(file_paths) > 0:
         opus_prompt += f"""
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -427,8 +541,8 @@ ATTACHED FILES:
     
     if kb_check['has_relevant_knowledge']:
         opus_prompt += f"""
-KNOWLEDGE: Relevant expertise available (Confidence: {kb_check['knowledge_confidence']*100:.0f}%)
-Sources: {', '.join(kb_check['knowledge_sources'])}
+KNOWLEDGE: {len(kb_check['knowledge_sources'])} relevant documents (Confidence: {kb_check['knowledge_confidence']*100:.0f}%)
+Sources: {', '.join(kb_check['knowledge_sources'][:3])}
 """
     
     opus_prompt += f"""
@@ -440,7 +554,7 @@ SONNET'S ANALYSIS:
 {json.dumps(sonnet_analysis, indent=2)}
 
 Provide strategic response with:
-1. Deep analysis
+1. Deep analysis (reference specific projects/documents when relevant)
 2. Specialist assignments
 3. Expected workflow
 4. Learning for Sonnet
@@ -503,13 +617,6 @@ Respond in JSON:
 def execute_specialist_task(specialist_ai, task_description, knowledge_context="", file_paths=None, file_contents=None):
     """
     Execute task with specialist AI.
-    
-    CRITICAL FIX (January 30, 2026 - FINAL):
-    - File contents now part of the task description
-    
-    CRITICAL FIX (January 30, 2026):
-    - Now accepts file_contents parameter
-    - Specialists can now READ file contents
     
     Args:
         specialist_ai (str): Name of the specialist AI to use
