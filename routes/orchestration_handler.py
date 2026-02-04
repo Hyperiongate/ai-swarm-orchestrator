@@ -36,7 +36,9 @@ from werkzeug.utils import secure_filename
 from database import (
     get_db, create_conversation, get_conversation, add_message,
     get_conversation_context, save_generated_document,
-    get_schedule_context, save_schedule_context
+    get_schedule_context, save_schedule_context,
+    get_client_profile_context, add_avoidance_pattern, get_avoidance_context,
+    update_client_profile
 )
 from orchestration import (
     analyze_task_with_sonnet,
@@ -970,7 +972,38 @@ Please respond to the user's follow-up question based on these files."""
                     print(f"🧠 Retrieved learning context ({len(learning_context)} chars)")
             except Exception as learn_ctx_error:
                 print(f"⚠️ Could not get learning context (non-critical): {learn_ctx_error}")
+             # ================================================================
+            # FIX #2: CLIENT PROFILE CONTEXT
+            # February 4, 2026: Inject accumulated client knowledge
+            # ================================================================
+            client_profile_context = ""
+            if project_id:
+                try:
+                    # Get project to find client name
+                    db_temp = get_db()
+                    project = db_temp.execute('SELECT client_name FROM projects WHERE project_id = ?', (project_id,)).fetchone()
+                    db_temp.close()
+                    
+                    if project and project['client_name']:
+                        client_profile_context = get_client_profile_context(project['client_name'])
+                        if client_profile_context:
+                            print(f"👤 Retrieved client profile for {project['client_name']}")
+                except Exception as profile_error:
+                    print(f"⚠️ Could not get client profile (non-critical): {profile_error}")
             
+            # ================================================================
+            # FIX #3: AVOIDANCE PATTERNS CONTEXT
+            # February 4, 2026: Inject patterns to avoid
+            # ================================================================
+            avoidance_context = ""
+            try:
+                avoidance_context = get_avoidance_context(days=30, limit=5)
+                if avoidance_context:
+                    print(f"🚫 Retrieved {avoidance_context.count('⚠️') + avoidance_context.count('🚫')} avoidance patterns")
+            except Exception as avoid_error:
+                print(f"⚠️ Could not get avoidance context (non-critical): {avoid_error}")
+
+              
             # Get smart defaults from user history
             smart_defaults = {}
             if intelligence:
@@ -1037,7 +1070,7 @@ This project folder contains: {file_stats.get('total_files', 0)} files
                 else:
                     file_section = ""
 
-                completion_prompt = f"""{knowledge_context}{project_context}{file_context}{conversation_history}{learning_context}{file_section}
+                completion_prompt = f"""{knowledge_context}{project_context}{file_context}{conversation_history}{learning_context}{client_profile_context}{avoidance_context}{file_section}
 
 USER REQUEST: {user_request}
 
@@ -1160,7 +1193,37 @@ Be comprehensive and professional."""
                     intelligence.learn_from_interaction(user_request, actual_output, user_feedback=None)
                     print("✅ EnhancedIntelligence learned from this interaction")
                 except Exception as learn_error:
-                    print(f"⚠️ EnhancedIntelligence learning failed (non-critical): {learn_error}")        
+                    print(f"⚠️ EnhancedIntelligence learning failed (non-critical): {learn_error}")   
+
+            # ================================================================
+            # FIX #2: UPDATE CLIENT PROFILE
+            # February 4, 2026: Build cumulative client knowledge
+            # ================================================================
+            if project_id:
+                try:
+                    # Get project to find client name
+                    db_temp = get_db()
+                    project = db_temp.execute('SELECT client_name, industry FROM projects WHERE project_id = ?', (project_id,)).fetchone()
+                    db_temp.close()
+                    
+                    if project and project['client_name']:
+                        interaction_data = {
+                            'approach': orchestrator,
+                            'approach_worked': True,  # Assume success unless feedback says otherwise
+                            'industry': project['industry'],
+                            'preferences': {}
+                        }
+                        
+                        # Detect preferences from request
+                        if 'dupont' in user_request.lower():
+                            interaction_data['preferences']['schedule_type'] = 'DuPont'
+                        elif '12 hour' in user_request.lower() or '12-hour' in user_request.lower():
+                            interaction_data['preferences']['shift_length'] = 12
+                        
+                        update_client_profile(project['client_name'], interaction_data)
+                        print(f"👤 Updated profile for {project['client_name']}")
+                except Exception as profile_update_error:
+                    print(f"⚠️ Client profile update failed (non-critical): {profile_update_error}")
                         
             # Auto-learn from this conversation
             try:
