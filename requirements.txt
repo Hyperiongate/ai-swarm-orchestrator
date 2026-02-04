@@ -91,4 +91,5 @@ plotly>=5.18.0
 # ==========================================
 # pytesseract>=0.3.10        # OCR for images
 # Note: Also requires Tesseract OCR binary to be installed on system
+python-pptx==0.6.23
 # I did no harm and this file is not truncated
