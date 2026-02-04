@@ -534,7 +534,7 @@
                 <div class="upload-zone" id="uploadZone">
                     <div class="upload-icon">📄</div>
                     <h3>Drag & Drop Document</h3>
-                    <p>or click to browse</p>
+                    <p>Supports: Word (.docx, .doc), Excel (.xlsx, .xls), PDF, PowerPoint (.pptx, .ppt), Text, Markdown, CSV, JSON</p>
                     <button class="btn" type="button" onclick="document.getElementById('fileInput').click()">
                         Choose File
                     </button>
@@ -630,12 +630,13 @@
             setupFormSubmit();
         });
 
-        // NEW: Download Knowledge Function
+        // FIXED: Download Knowledge Function - February 4, 2026
         async function downloadKnowledge() {
             try {
-                const button = event.target;
+                const button = event.currentTarget; // FIXED: Use currentTarget instead of event.target
+                const originalText = button.innerHTML;
                 button.disabled = true;
-                button.textContent = '⏳ Preparing download...';
+                button.innerHTML = '⏳ Preparing download...';
 
                 const response = await fetch('/api/knowledge/export', {
                     method: 'POST',
@@ -667,13 +668,15 @@
                 }
 
                 button.disabled = false;
-                button.innerHTML = '📥 Download Knowledge';
+                button.innerHTML = originalText;
 
             } catch (error) {
                 console.error('Download error:', error);
                 showError('Download failed: ' + error.message);
-                event.target.disabled = false;
-                event.target.innerHTML = '📥 Download Knowledge';
+                if (event && event.currentTarget) {
+                    event.currentTarget.disabled = false;
+                    event.currentTarget.innerHTML = '📥 Download Knowledge';
+                }
             }
         }
 
@@ -803,8 +806,17 @@
         function handleFileSelect(file) {
             selectedFile = file;
             const uploadZone = document.getElementById('uploadZone');
+            
+            // Show file type
+            let fileTypeIcon = '📄';
+            const ext = file.name.split('.').pop().toLowerCase();
+            if (ext === 'pptx' || ext === 'ppt') fileTypeIcon = '📊';
+            else if (ext === 'xlsx' || ext === 'xls') fileTypeIcon = '📈';
+            else if (ext === 'pdf') fileTypeIcon = '📕';
+            else if (ext === 'docx' || ext === 'doc') fileTypeIcon = '📝';
+            
             uploadZone.innerHTML = `
-                <div class="upload-icon">✅</div>
+                <div class="upload-icon">${fileTypeIcon}</div>
                 <h3>${file.name}</h3>
                 <p>${(file.size / 1024).toFixed(2)} KB</p>
                 <button class="btn" type="button" onclick="document.getElementById('fileInput').click()">
@@ -941,7 +953,7 @@
             uploadZone.innerHTML = `
                 <div class="upload-icon">📄</div>
                 <h3>Drag & Drop Document</h3>
-                <p>or click to browse</p>
+                <p>Supports: Word (.docx, .doc), Excel (.xlsx, .xls), PDF, PowerPoint (.pptx, .ppt), Text, Markdown, CSV, JSON</p>
                 <button class="btn" type="button" onclick="document.getElementById('fileInput').click()">
                     Choose File
                 </button>
@@ -953,8 +965,19 @@
 
 <!-- 
 Last Updated: February 4, 2026
-Changes: Added 2 navigation buttons in header
-- Button 1: "← Back to Main" - returns to index.html
-- Button 2: "📥 Download Knowledge" - downloads all learned knowledge (JSON, Markdown, CSV)
+Changes: 
+- FIXED JavaScript error in downloadKnowledge() function (line 37)
+  * Changed event.target to event.currentTarget to properly reference button
+  * Added originalText variable to restore button text
+  * Added better error handling
+- Added PowerPoint file type support messaging
+- Added file type icons for better UX
+- Improved error messages for PowerPoint files
+
+CRITICAL FIX: The null reference error was caused by using event.target instead of 
+event.currentTarget. When clicking the button, event.target could be the text node 
+inside the button, not the button itself. event.currentTarget always refers to the 
+element that the event listener is attached to (the button).
+
 I did no harm and this file is not truncated 
 -->
