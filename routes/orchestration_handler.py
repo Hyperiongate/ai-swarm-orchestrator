@@ -1110,8 +1110,7 @@ Be comprehensive and professional."""
             except Exception as learn_error:
                 print(f"⚠️ Auto-learning failed (non-critical): {learn_error}")
             
-            return jsonify({
-                'success': True, 'task_id': task_id, 'conversation_id': conversation_id,      
+             
             
             return jsonify({
                 'success': True, 'task_id': task_id, 'conversation_id': conversation_id,
