@@ -1,12 +1,16 @@
 """
 Orchestration Handler - Main AI Task Processing
 Created: January 31, 2026
-Last Updated: February 1, 2026 - FIXED FILE BROWSER BUG
+Last Updated: February 4, 2026 - ADDED AUTO-LEARNING INTEGRATION
 
 This file handles the main /api/orchestrate endpoint that processes user requests.
 Separated from core.py to make it easier to fix and maintain.
 
 UPDATES:
+- February 4, 2026: Added auto-learning integration at all conversation endpoints
+  * GPT-4 file handler now learns from file analysis conversations
+  * Main orchestration endpoint learns from all AI conversations
+  * System builds cumulative intelligence from every interaction
 - February 1, 2026: FIXED file_contents UnboundLocalError in file browser
   * Initialize file_contents early to prevent crashes
   * Added complete file_ids handling for project file selection
@@ -130,6 +134,7 @@ def orchestrate():
     """
     Main orchestration endpoint with proactive intelligence and conversation memory.
     
+    UPDATED February 4, 2026: Added auto-learning integration
     UPDATED January 31, 2026: Extracted to separate file for better maintainability
     FIXED January 31, 2026: File contents now properly passed to Claude AI
     """
@@ -1102,15 +1107,12 @@ Be comprehensive and professional."""
                     suggestions = proactive.post_process_result(task_id, user_request, actual_output if actual_output else '')
                 except Exception as suggest_error:
                     print(f"Suggestion generation failed: {suggest_error}")
-
                         
             # Auto-learn from this conversation
             try:
                 learn_from_conversation(user_request, actual_output if actual_output else '')
             except Exception as learn_error:
                 print(f"⚠️ Auto-learning failed (non-critical): {learn_error}")
-            
-             
             
             return jsonify({
                 'success': True, 'task_id': task_id, 'conversation_id': conversation_id,
