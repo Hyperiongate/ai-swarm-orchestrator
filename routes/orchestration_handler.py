@@ -46,6 +46,7 @@ from code_assistant_agent import get_code_assistant
 from orchestration.proactive_agent import ProactiveAgent
 from schedule_request_handler_combined import get_combined_schedule_handler
 from progressive_file_analyzer import get_progressive_analyzer
+from conversation_learning import learn_from_conversation  # Auto-learning from conversations
 
 # Create blueprint
 orchestration_bp = Blueprint('orchestration', __name__)
