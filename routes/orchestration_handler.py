@@ -57,7 +57,7 @@ from conversation_learning import learn_from_conversation  # Auto-learning from 
 # Import learning systems to close the loop
 # ============================================================================
 from orchestration.task_analysis import get_learning_context
-from orchestration.enhanced_intelligence import EnhancedIntelligence
+from enhanced_intelligence import EnhancedIntelligence
 
 # Create blueprint
 orchestration_bp = Blueprint('orchestration', __name__)
