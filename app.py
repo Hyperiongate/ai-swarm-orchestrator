@@ -1083,6 +1083,18 @@ except ImportError as e:
 except Exception as e:
     print(f"⚠️  Knowledge Ingestion registration failed: {e}")
 
+# ============================================================================
+# KNOWLEDGE BACKUP SYSTEM BLUEPRINT (Added February 4, 2026)
+# ============================================================================
+try:
+    from knowledge_backup_routes import knowledge_backup_bp
+    app.register_blueprint(knowledge_backup_bp)
+    print("✅ Knowledge Backup System API registered")
+except ImportError as e:
+    print(f"ℹ️  Knowledge Backup routes not found: {e}")
+except Exception as e:
+    print(f"⚠️  Knowledge Backup registration failed: {e}")
+
 # Add HTML route for Knowledge Management UI
 @app.route('/knowledge')
 def knowledge_management():
