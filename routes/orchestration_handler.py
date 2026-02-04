@@ -52,6 +52,13 @@ from schedule_request_handler_combined import get_combined_schedule_handler
 from progressive_file_analyzer import get_progressive_analyzer
 from conversation_learning import learn_from_conversation  # Auto-learning from conversations
 
+# ============================================================================
+# LEARNING LOOP ENHANCEMENT - February 4, 2026
+# Import learning systems to close the loop
+# ============================================================================
+from task_analysis import get_learning_context
+from enhanced_intelligence import EnhancedIntelligence
+
 # Create blueprint
 orchestration_bp = Blueprint('orchestration', __name__)
 
@@ -368,6 +375,17 @@ def orchestrate():
                                (user_request, 'processing', conversation_id))
             task_id = cursor.lastrowid
             db.commit()
+
+        # ====================================================================
+        # LEARNING LOOP ENHANCEMENT - Initialize Intelligence Engine
+        # February 4, 2026
+        # ====================================================================
+        intelligence = None
+        try:
+            intelligence = EnhancedIntelligence()
+            print("🧠 EnhancedIntelligence initialized")
+        except Exception as intel_error:
+            print(f"⚠️ EnhancedIntelligence init failed (non-critical): {intel_error}")
             
             from orchestration.ai_clients import call_gpt4
             
@@ -938,6 +956,28 @@ Please respond to the user's follow-up question based on these files."""
             from orchestration.ai_clients import call_claude_opus, call_claude_sonnet
             knowledge_context = get_knowledge_context_for_prompt(knowledge_base, user_request)
 
+         # ================================================================
+            # LEARNING LOOP ENHANCEMENT - Get Past Learnings
+            # February 4, 2026: Retrieve learned patterns from database
+            # ================================================================
+            learning_context = ""
+            try:
+                learning_context = get_learning_context()
+                if learning_context:
+                    print(f"🧠 Retrieved learning context ({len(learning_context)} chars)")
+            except Exception as learn_ctx_error:
+                print(f"⚠️ Could not get learning context (non-critical): {learn_ctx_error}")
+            
+            # Get smart defaults from user history
+            smart_defaults = {}
+            if intelligence:
+                try:
+                    smart_defaults = intelligence.get_smart_defaults('general')
+                    if smart_defaults and any(v for v in smart_defaults.values() if v):
+                        print(f"🎯 Retrieved smart defaults: {list(smart_defaults.keys())}")
+                except Exception as defaults_error:
+                    print(f"⚠️ Could not get smart defaults (non-critical): {defaults_error}")
+
             # Build project context
             project_context = ""
             if project_id:
@@ -994,7 +1034,7 @@ This project folder contains: {file_stats.get('total_files', 0)} files
                 else:
                     file_section = ""
 
-                completion_prompt = f"""{knowledge_context}{project_context}{file_context}{conversation_history}{file_section}
+                completion_prompt = f"""{knowledge_context}{project_context}{file_context}{conversation_history}{learning_context}{file_section}
 
 USER REQUEST: {user_request}
 
@@ -1107,6 +1147,17 @@ Be comprehensive and professional."""
                     suggestions = proactive.post_process_result(task_id, user_request, actual_output if actual_output else '')
                 except Exception as suggest_error:
                     print(f"Suggestion generation failed: {suggest_error}")
+
+            # ================================================================
+            # LEARNING LOOP ENHANCEMENT - Store What We Learned
+            # February 4, 2026: Complete the loop by storing new patterns
+            # ================================================================
+            if intelligence and actual_output and not actual_output.startswith('Error'):
+                try:
+                    intelligence.learn_from_interaction(user_request, actual_output, user_feedback=None)
+                    print("✅ EnhancedIntelligence learned from this interaction")
+                except Exception as learn_error:
+                    print(f"⚠️ EnhancedIntelligence learning failed (non-critical): {learn_error}")        
                         
             # Auto-learn from this conversation
             try:
