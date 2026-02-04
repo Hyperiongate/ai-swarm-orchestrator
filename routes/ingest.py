@@ -1,12 +1,17 @@
 """
 KNOWLEDGE INGESTION ROUTES
 Created: February 2, 2026
-Last Updated: February 3, 2026 - Added PowerPoint support
+Last Updated: February 4, 2026 - FIXED PowerPoint temp file handling
 
 Flask API endpoints for document ingestion system.
 Allows uploading documents, viewing knowledge base stats, browsing patterns.
 
 Part of "Shoulders of Giants" cumulative learning system.
+
+CRITICAL FIX - February 4, 2026:
+- Fixed temp file handling for PowerPoint uploads
+- Must close temp file before python-pptx can open it
+- Added proper cleanup in finally block
 
 Author: Jim @ Shiftwork Solutions LLC (managed by Claude Sonnet 4)
 """
@@ -116,16 +121,17 @@ def ingest_document():
             'upload_date': datetime.now().isoformat()
         }
         
-        # Read file content - UPDATED with PowerPoint support
+        # Read file content - FIXED PowerPoint support (February 4, 2026)
         if file.filename.lower().endswith(('.pptx', '.ppt')):
             # Extract text from PowerPoint
             try:
                 from pptx import Presentation
                 
-                # Save to temporary file
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.pptx') as tmp:
-                    file.save(tmp.name)
-                    tmp_path = tmp.name
+                # Save to temporary file - FIXED: Must close before reading
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.pptx')
+                tmp_path = tmp.name
+                file.save(tmp_path)
+                tmp.close()  # CRITICAL: Close the file so python-pptx can open it
                 
                 try:
                     prs = Presentation(tmp_path)
@@ -149,7 +155,10 @@ def ingest_document():
                     
                 finally:
                     # Clean up temp file
-                    os.unlink(tmp_path)
+                    try:
+                        os.unlink(tmp_path)
+                    except:
+                        pass
                     
             except ImportError:
                 return jsonify({
