@@ -99,6 +99,7 @@ from werkzeug.utils import secure_filename
 import shutil
 from code_assistant_agent import get_code_assistant
 from orchestration.proactive_agent import ProactiveAgent
+from conversation_learning import learn_from_conversation
 
 core_bp = Blueprint('core', __name__)
 
