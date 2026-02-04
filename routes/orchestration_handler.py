@@ -386,6 +386,9 @@ def orchestrate():
             print("🧠 EnhancedIntelligence initialized")
         except Exception as intel_error:
             print(f"⚠️ EnhancedIntelligence init failed (non-critical): {intel_error}")
+            import traceback
+            print(traceback.format_exc())
+            intelligence = None  # Explicitly set to None on failure
             
             from orchestration.ai_clients import call_gpt4
             
