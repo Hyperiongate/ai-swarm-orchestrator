@@ -1102,6 +1102,22 @@ Be comprehensive and professional."""
                     suggestions = proactive.post_process_result(task_id, user_request, actual_output if actual_output else '')
                 except Exception as suggest_error:
                     print(f"Suggestion generation failed: {suggest_error}")
+
+              suggestions = []
+            if proactive:
+                try:
+                    suggestions = proactive.post_process_result(task_id, user_request, actual_output if actual_output else '')
+                except Exception as suggest_error:
+                    print(f"Suggestion generation failed: {suggest_error}")
+            
+            # Auto-learn from this conversation
+            try:
+                learn_from_conversation(user_request, actual_output if actual_output else '')
+            except Exception as learn_error:
+                print(f"⚠️ Auto-learning failed (non-critical): {learn_error}")
+            
+            return jsonify({
+                'success': True, 'task_id': task_id, 'conversation_id': conversation_id,      
             
             return jsonify({
                 'success': True, 'task_id': task_id, 'conversation_id': conversation_id,
