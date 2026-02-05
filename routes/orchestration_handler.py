@@ -266,7 +266,7 @@ def orchestrate():
                     conversation_id = create_conversation(mode=mode, project_id=project_id)
                 
                 # Download file from cloud using STREAMING (prevents RAM crash!)
-                handler = get_cloud_file_handler()
+                handler = get_cloud_handler()
                 result = handler.handle_cloud_link(cloud_url, user_request, project_id)
                 
                 if not result['success']:
