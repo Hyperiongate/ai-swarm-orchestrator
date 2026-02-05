@@ -1,9 +1,21 @@
 """
 AI SWARM ORCHESTRATOR - Main Application   
 Created: January 18, 2026
-Last Updated: January 30, 2026 - ADDED BULLETPROOF PROJECT MANAGEMENT
+Last Updated: February 5, 2026 - INCREASED FILE UPLOAD LIMIT TO 100MB
+
+CRITICAL UPDATE (February 5, 2026):
+- Added Flask MAX_CONTENT_LENGTH configuration
+- Increased file upload limit from default to 100MB
+- Allows large Excel files (56MB+) to be uploaded to project folders
+- Required for Definitive Schedules v2.xlsx (56.22 MB) and similar large files
+
 @app.route('/survey')
 CHANGES IN THIS VERSION:
+- February 5, 2026: INCREASED FILE UPLOAD LIMIT TO 100MB
+  * Added app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
+  * Allows uploading large files (56MB+) to project folders
+  * Frontend and backend file size validations updated
+  
 - January 30, 2026: ADDED BULLETPROOF PROJECT MANAGEMENT
   * Added projects_bp blueprint for complete project lifecycle management
   * Project creation, updates, search, and retrieval
@@ -129,8 +141,19 @@ from database_survey_additions import add_surveys_table
 import os
 from flask import send_from_directory
 import os
+
 # Initialize Flask
 app = Flask(__name__)
+
+# ============================================================================
+# CRITICAL FILE UPLOAD CONFIGURATION (Added February 5, 2026)
+# ============================================================================
+# This setting controls the maximum size of uploaded files
+# Default Flask limit is typically 16MB, which blocks large Excel files
+# Setting to 100MB to allow files like Definitive Schedules v2.xlsx (56.22 MB)
+app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
+print("📤 File Upload Limit: 100MB (allows large project files)")
+# ============================================================================
 
 # CRITICAL: Configure session for schedule conversation memory (Added January 26, 2026)
 # This is REQUIRED for the new pattern-based schedule system to work
@@ -737,7 +760,8 @@ def health():
     
     return jsonify({
         'status': 'healthy',
-        'version': 'Sprint 3 Complete + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator + LinkedIn Poster + Bulletproof Projects',
+        'version': 'Sprint 3 Complete + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator + LinkedIn Poster + Bulletproof Projects + 100MB Upload Limit',
+        'file_upload_limit': '100MB',
         'orchestrators': {
             'sonnet': 'configured' if ANTHROPIC_API_KEY else 'missing',
             'opus': 'configured' if ANTHROPIC_API_KEY else 'missing'
