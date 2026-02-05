@@ -1,13 +1,14 @@
 """
 Orchestration Handler - Main AI Task Processing
 Created: January 31, 2026
-Last Updated: February 5, 2026 - FIXED SYNTAX ERROR (line 532 bracket mismatch)
+Last Updated: February 5, 2026 - FIXED SYNTAX ERROR (incomplete try block at line 401)
 
 This file handles the main /api/orchestrate endpoint that processes user requests.
 Separated from core.py to make it easier to fix and maintain.
 
 UPDATES:
-- February 5, 2026: FIXED syntax error - duplicate code blocks removed, brackets matched properly
+- February 5, 2026: FIXED syntax error - completed try/except block around Excel size detection
+- February 5, 2026: FIXED syntax error (duplicate code blocks, bracket mismatch) 
 - February 4, 2026: Added auto-learning integration at all conversation endpoints
   * GPT-4 file handler now learns from file analysis conversations
   * Main orchestration endpoint learns from all AI conversations
@@ -148,7 +149,7 @@ def orchestrate():
     """
     Main orchestration endpoint with proactive intelligence and conversation memory.
     
-    UPDATED February 5, 2026: Fixed syntax error (duplicate code blocks, bracket mismatch)
+    UPDATED February 5, 2026: Fixed syntax error (incomplete try block for Excel detection)
     UPDATED February 4, 2026: Added auto-learning integration
     UPDATED January 31, 2026: Extracted to separate file for better maintainability
     FIXED January 31, 2026: File contents now properly passed to Claude AI
@@ -345,9 +346,9 @@ def orchestrate():
                     
                     # Check if extracted content is too long (over 50,000 chars)
                     # UPDATED February 5, 2026: Increased from 50,000 to 200,000 chars for large files
-                if len(extracted_text) > 200000:
-                    print(f"⚠️ File content very large ({len(extracted_text)} chars) - truncating")
-                    extracted_text = extracted_text[:200000] + f"\n\n... (truncated {len(extracted_text) - 200000} characters for performance)"
+                    if len(extracted_text) > 200000:
+                        print(f"⚠️ File content very large ({len(extracted_text)} chars) - truncating")
+                        extracted_text = extracted_text[:200000] + f"\n\n... (truncated {len(extracted_text) - 200000} characters for performance)"
                                     
                     # APPEND to file_contents (don't overwrite file_ids context!)
                     if file_contents:
@@ -397,21 +398,32 @@ def orchestrate():
             
             from orchestration.ai_clients import call_gpt4
             
+            # ================================================================
+            # FIXED February 5, 2026: Complete try/except block for Excel size detection
+            # ================================================================
             # Determine if this is a large Excel file
-is_large_excel = False
-row_count_estimate = 0
-if file_paths:
-    for fp in file_paths:
-        if fp.endswith(('.xlsx', '.xls')):
-            # Estimate rows from file size (rough: 1MB ≈ 1000-2000 rows)
-            file_size_mb = os.path.getsize(fp) / (1024 * 1024)
-            row_count_estimate = int(file_size_mb * 1500)  # Conservative estimate
-            if file_size_mb > 5:
-                is_large_excel = True
-                break
+            is_large_excel = False
+            row_count_estimate = 0
+            try:
+                if file_paths:
+                    for fp in file_paths:
+                        if fp.endswith(('.xlsx', '.xls')):
+                            # Estimate rows from file size (rough: 1MB ≈ 1000-2000 rows)
+                            file_size_mb = os.path.getsize(fp) / (1024 * 1024)
+                            row_count_estimate = int(file_size_mb * 1500)  # Conservative estimate
+                            if file_size_mb > 5:
+                                is_large_excel = True
+                                break
+            except Exception as excel_detect_error:
+                print(f"⚠️ Excel size detection failed (non-critical): {excel_detect_error}")
+                is_large_excel = False
+                row_count_estimate = 0
+            # ================================================================
+            # END FIX
+            # ================================================================
 
-if is_large_excel and row_count_estimate > 0:
-    file_analysis_prompt = f"""The user uploaded a LARGE Excel file (approximately {row_count_estimate:,} rows) and asked: {user_request}
+            if is_large_excel and row_count_estimate > 0:
+                file_analysis_prompt = f"""The user uploaded a LARGE Excel file (approximately {row_count_estimate:,} rows) and asked: {user_request}
 
 IMPORTANT: This is a substantial dataset. Provide a COMPREHENSIVE analysis including:
 1. Overall structure and data types
@@ -425,8 +437,8 @@ Here are the file contents (showing a representative sample):
 {file_contents}
 
 Provide a DETAILED, THOROUGH analysis. The user expects substantial insights from this large dataset."""
-else:
-    file_analysis_prompt = f"""The user has uploaded files and asked: {user_request}
+            else:
+                file_analysis_prompt = f"""The user has uploaded files and asked: {user_request}
 
 Here are the file contents:
 
