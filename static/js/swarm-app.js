@@ -1650,7 +1650,7 @@ if (document.readyState === 'loading') {
  * Load pattern recognition data and display dashboard
  */
 function loadPatternRecognition() {
-    fetch('/api/patterns/insights')
+    fetch('/api/intelligence/patterns/dashboard')
         .then(function(r) { return r.json(); })
         .then(function(data) {
             if (data.success) {
