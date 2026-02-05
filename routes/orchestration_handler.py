@@ -1,7 +1,7 @@
 """
 Orchestration Handler - Main AI Task Processing
 Created: January 31, 2026
-Last Updated: February 5, 2026 - RUTHLESS DEEP ANALYSIS + FIXED GPT-4 TOKEN LIMIT
+Last Updated: February 5, 2026 - INCREASED PROGRESSIVE ANALYSIS FROM 100 TO 500 ROWS
 
 This file handles the main /api/orchestrate endpoint that processes user requests.
 Separated from core.py to make it easier to fix and maintain.
@@ -17,6 +17,11 @@ CRITICAL KNOWN ISSUE - February 5, 2026:
 WORKAROUND: For large Excel files (5MB+), use FILE UPLOAD instead of selecting from project!
 
 UPDATES:
+- February 5, 2026: INCREASED PROGRESSIVE ANALYSIS from 100 to 500 rows for initial analysis
+  * Large files now get 5x more data in first pass (100 → 500 rows)
+  * Provides much deeper operational insights from the start
+  * Still allows user to request more rows if needed
+  * Fixes the "compacting" issue where analysis was too shallow
 - February 5, 2026: FIXED GPT-4 token limit (was 8000, max is 4096)
 - February 5, 2026: RUTHLESS ANALYSIS ENHANCEMENT - No more shallow summaries!
   * Prompt now demands specific numbers, percentages, and dollar amounts
@@ -44,7 +49,7 @@ UPDATES:
 - January 31, 2026: File upload contents now properly passed to Claude
 - January 31, 2026: Added progressive analysis for large Excel files (hybrid approach)
   * Files under 5MB: Full analysis
-  * Files 5-25MB: Analyze first 100 rows, ask user if they want more
+  * Files 5-25MB: Analyze first 500 rows, ask user if they want more
   * Files over 25MB: Rejected with helpful message
   * User can request: "next 500", "next 1000", "analyze all"
 
@@ -173,6 +178,7 @@ def orchestrate():
     """
     Main orchestration endpoint with proactive intelligence and conversation memory.
     
+    UPDATED February 5, 2026: Increased progressive analysis from 100 to 500 rows
     UPDATED February 5, 2026: Fixed syntax error (incomplete try block for Excel detection)
     UPDATED February 4, 2026: Added auto-learning integration
     UPDATED January 31, 2026: Extracted to separate file for better maintainability
@@ -1612,14 +1618,19 @@ Be comprehensive and professional."""
 
 def handle_large_excel_initial(file_path, user_request, conversation_id, project_id, mode, file_info, overall_start):
     """
-    Handle initial upload of a large Excel file - analyze first 100 rows.
+    Handle initial upload of a large Excel file - analyze first 500 rows.
+    
+    UPDATED: February 5, 2026 - Increased from 100 to 500 rows
     Added: January 31, 2026
     """
     try:
         analyzer = get_progressive_analyzer()
         
-        # Extract first 100 rows
-        chunk_result = analyzer.extract_excel_chunk(file_path, start_row=0, num_rows=100)
+        # ================================================================
+        # CRITICAL FIX: February 5, 2026
+        # Changed from 100 rows to 500 rows for deeper initial analysis
+        # ================================================================
+        chunk_result = analyzer.extract_excel_chunk(file_path, start_row=0, num_rows=500)
         
         if not chunk_result['success']:
             return jsonify({
@@ -1671,7 +1682,7 @@ CLIENT FILE: {file_info['file_size_mb']}MB Excel file with {chunk_result['total_
 CLIENT REQUEST: {user_request}
 {sheets_summary}
 
-⚠️ CRITICAL: You're analyzing FIRST 100 ROWS. DO NOT provide weak summaries like "there is data" or "hours vary by day."
+⚠️ CRITICAL: You're analyzing FIRST 500 ROWS. DO NOT provide weak summaries like "there is data" or "hours vary by day."
 
 REQUIRED ANALYSIS DEPTH:
 
@@ -1712,7 +1723,7 @@ REQUIRED ANALYSIS DEPTH:
    - What data would help you give better recommendations?
    - Are there other worksheets that matter?
 
-FIRST 100 ROWS DATA:
+FIRST 500 ROWS DATA:
 {chunk_result['summary']}
 
 {chunk_result['text_preview']}
@@ -1739,7 +1750,7 @@ If you need more data to give a proper analysis, SAY EXACTLY WHAT YOU NEED and w
             db.close()
             
             add_message(conversation_id, 'assistant', full_response, task_id,
-                       {'orchestrator': 'gpt4_progressive_excel', 'rows_analyzed': 100, 
+                       {'orchestrator': 'gpt4_progressive_excel', 'rows_analyzed': 500, 
                         'total_rows': chunk_result['total_rows'], 'execution_time': total_time})
             
             return jsonify({
@@ -1750,7 +1761,7 @@ If you need more data to give a proper analysis, SAY EXACTLY WHAT YOU NEED and w
                 'orchestrator': 'gpt4_progressive_excel',
                 'execution_time': total_time,
                 'progressive_analysis': True,
-                'rows_analyzed': 100,
+                'rows_analyzed': 500,
                 'total_rows': chunk_result['total_rows'],
                 'rows_remaining': chunk_result['rows_remaining']
             })
