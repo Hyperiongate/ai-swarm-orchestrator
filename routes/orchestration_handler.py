@@ -84,6 +84,7 @@ from orchestration.proactive_agent import ProactiveAgent
 from schedule_request_handler_combined import get_combined_schedule_handler
 from progressive_file_analyzer import get_progressive_analyzer
 from conversation_learning import learn_from_conversation  # Auto-learning from conversations
+from cloud_file_handler import get_cloud_file_handler
 
 # ============================================================================
 from background_file_processor import get_background_processor
@@ -110,6 +111,19 @@ def convert_markdown_to_html(text):
     html = markdown.markdown(text, extensions=['extra', 'nl2br'])
     return f'<div style="line-height: 1.8; color: #333;">{html}</div>'
 
+def is_cloud_link(text):
+    """Check if text contains a cloud storage link"""
+    if not text:
+        return False
+    text_lower = text.lower()
+    cloud_indicators = [
+        'drive.google.com',
+        'docs.google.com',
+        'dropbox.com',
+        'onedrive',
+        '1drv.ms'
+    ]
+    return any(indicator in text_lower for indicator in cloud_indicators)
 
 def should_create_document(user_request):
     """Determine if we should create a downloadable document"""
@@ -230,6 +244,46 @@ def orchestrate():
         # This prevents UnboundLocalError when file_ids are used
         # ====================================================================
         file_contents = ""
+     # ====================================================================
+        # CLOUD LINK DETECTION - February 5, 2026
+        # Check if user provided a cloud storage link instead of file upload
+        # Downloads file using streaming to prevent RAM crashes
+        # ====================================================================
+        if is_cloud_link(user_request):
+            print(f"🔗 Cloud storage link detected in request")
+            
+            # Extract URL from request
+            import re
+            url_pattern = r'https?://[^\s]+'
+            urls = re.findall(url_pattern, user_request)
+            
+            if urls:
+                cloud_url = urls[0]  # Use first URL found
+                print(f"🔗 Processing cloud link: {cloud_url[:50]}...")
+                
+                # Create conversation if needed
+                if not conversation_id:
+                    conversation_id = create_conversation(mode=mode, project_id=project_id)
+                
+                # Download file from cloud using STREAMING (prevents RAM crash!)
+                handler = get_cloud_file_handler()
+                result = handler.handle_cloud_link(cloud_url, user_request, project_id)
+                
+                if not result['success']:
+                    return jsonify({
+                        'success': False,
+                        'error': f"Could not download file from {result['service']}: {result['error']}",
+                        'conversation_id': conversation_id
+                    }), 400
+                
+                # File downloaded successfully - add to file_paths for processing
+                file_paths = [result['file_path']]
+                print(f"✅ Downloaded {result['file_size'] / (1024*1024):.1f}MB from {result['service']}")
+                
+                # Continue to normal file processing below...
+        # ====================================================================
+        # END CLOUD LINK DETECTION
+        # ====================================================================
         
         # ====================================================================
         # FILE BROWSER SUPPORT - Handle file_ids from project file selection
