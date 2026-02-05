@@ -1,7 +1,7 @@
 """
 Enhanced Intelligence Module
 Created: January 22, 2026
-Last Updated: January 22, 2026 - SPRINT 3: Learning & Memory
+Last Updated: February 5, 2026 - ADDED PATTERN RECOGNITION DASHBOARD
 
 This module provides advanced intelligence features:
 - User preference learning
@@ -9,6 +9,7 @@ This module provides advanced intelligence features:
 - Predictive suggestions based on history
 - Smart defaults from past behavior
 - Continuous improvement loop
+- Pattern recognition dashboard (NEW)
 
 Author: Jim @ Shiftwork Solutions LLC (managed by Claude)
 """
@@ -317,6 +318,152 @@ class EnhancedIntelligence:
             'interactions_analyzed': len(self.session_context),
             'learning_active': True
         }
+    
+    def get_all_patterns(self):
+        """
+        Get all discovered patterns for dashboard display
+        
+        ADDED: February 5, 2026
+        
+        Returns:
+            dict with categorized patterns and statistics
+        """
+        from collections import Counter
+        
+        db = get_db()
+        
+        # Get all tasks from last 90 days
+        ninety_days_ago = (datetime.now() - timedelta(days=90)).strftime('%Y-%m-%d')
+        
+        tasks = db.execute('''
+            SELECT user_request, result, created_at, metadata
+            FROM tasks
+            WHERE created_at >= ?
+            AND status = 'completed'
+            ORDER BY created_at DESC
+        ''', (ninety_days_ago,)).fetchall()
+        
+        # Initialize pattern counters
+        industries = Counter()
+        schedule_types = Counter()
+        shift_lengths = Counter()
+        time_patterns = Counter()
+        request_lengths = []
+        
+        total_tasks = len(tasks)
+        
+        # Analyze each task
+        for task in tasks:
+            request = task['user_request'].lower()
+            request_lengths.append(len(task['user_request']))
+            
+            # Count industries
+            industry_keywords = {
+                'pharmaceutical': ['pharma', 'pharmaceutical', 'drug', 'medicine'],
+                'food processing': ['food', 'processing', 'beverage', 'dairy'],
+                'manufacturing': ['manufacturing', 'factory', 'plant', 'production'],
+                'mining': ['mining', 'mine', 'extraction'],
+                'distribution': ['distribution', 'warehouse', 'logistics']
+            }
+            
+            for industry, keywords in industry_keywords.items():
+                if any(kw in request for kw in keywords):
+                    industries[industry] += 1
+            
+            # Count schedule types
+            schedule_keywords = {
+                'DuPont': ['dupont'],
+                'Panama': ['panama'],
+                'Pitman': ['pitman'],
+                '2-2-3': ['2-2-3', '223'],
+                'Southern Swing': ['southern swing', 'southern']
+            }
+            
+            for schedule, keywords in schedule_keywords.items():
+                if any(kw in request for kw in keywords):
+                    schedule_types[schedule] += 1
+            
+            # Count shift lengths
+            if '12 hour' in request or '12-hour' in request:
+                shift_lengths['12-hour'] += 1
+            elif '8 hour' in request or '8-hour' in request:
+                shift_lengths['8-hour'] += 1
+            elif '10 hour' in request or '10-hour' in request:
+                shift_lengths['10-hour'] += 1
+            
+            # Time patterns (day of week)
+            try:
+                created = datetime.strptime(task['created_at'], '%Y-%m-%d %H:%M:%S')
+                day_name = created.strftime('%A')
+                time_patterns[day_name] += 1
+            except:
+                pass
+        
+        db.close()
+        
+        # Calculate confidence scores (percentage of total tasks)
+        def calc_confidence(count, total):
+            if total == 0:
+                return 0
+            return round((count / total) * 100, 1)
+        
+        # Build response
+        patterns = {
+            'summary': {
+                'total_patterns': (
+                    len([i for i in industries if industries[i] > 0]) +
+                    len([s for s in schedule_types if schedule_types[s] > 0]) +
+                    len([l for l in shift_lengths if shift_lengths[l] > 0])
+                ),
+                'high_confidence_patterns': (
+                    len([i for i in industries if calc_confidence(industries[i], total_tasks) > 60]) +
+                    len([s for s in schedule_types if calc_confidence(schedule_types[s], total_tasks) > 60])
+                ),
+                'total_interactions': total_tasks
+            },
+            'schedule_preferences': [
+                {
+                    'type': 'schedule_type',
+                    'value': schedule,
+                    'count': count,
+                    'confidence': calc_confidence(count, total_tasks)
+                }
+                for schedule, count in schedule_types.most_common(5)
+                if count > 0
+            ] + [
+                {
+                    'type': 'shift_length',
+                    'value': length,
+                    'count': count,
+                    'confidence': calc_confidence(count, total_tasks)
+                }
+                for length, count in shift_lengths.most_common(3)
+                if count > 0
+            ],
+            'industry_focus': [
+                {
+                    'industry': industry,
+                    'count': count,
+                    'confidence': calc_confidence(count, total_tasks)
+                }
+                for industry, count in industries.most_common(5)
+                if count > 0
+            ],
+            'time_patterns': [
+                {
+                    'day': day,
+                    'count': count,
+                    'percentage': calc_confidence(count, total_tasks)
+                }
+                for day, count in time_patterns.most_common(7)
+            ],
+            'communication_style': {
+                'avg_message_length': round(sum(request_lengths) / len(request_lengths)) if request_lengths else 0,
+                'style': 'concise' if (sum(request_lengths) / len(request_lengths) if request_lengths else 100) < 100 else 'detailed'
+            }
+        }
+        
+        return patterns
 
 
 # I did no harm and this file is not truncated
