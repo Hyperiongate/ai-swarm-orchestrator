@@ -1,9 +1,18 @@
 """
 Database File Management - UNIFIED PRODUCTION VERSION
 Created: January 28, 2026
-Last Updated: February 1, 2026 - FLASK FILESTORAGE FIX
+Last Updated: February 5, 2026 - FIXED FILE SELECTION EXCEL EXTRACTION
 
-CHANGELOG February 1, 2026 (LATEST):
+CHANGELOG February 5, 2026 (LATEST):
+- CRITICAL FIX: get_files_for_ai_context() now uses file_content_reader!
+- File selection now has SAME quality as file uploads
+- Reads ALL rows (not just 100)
+- Gets proper column names
+- Handles multiple Excel worksheets
+- Increased max_chars_per_file from 10K to 50K
+- No more "Unnamed" columns or limited extraction!
+
+CHANGELOG February 1, 2026:
 - CRITICAL FIX: add_file() now handles Flask FileStorage objects!
 - Fixed file upload 500 error - was expecting file path, got FileStorage object
 - Now detects FileStorage objects using hasattr() checks
@@ -57,9 +66,10 @@ FEATURES:
 ✅ Complete project summaries
 ✅ All data persists in database
 ✅ Selective file retrieval by IDs
-✅ Excel/Word/PDF content extraction
+✅ Excel/Word/PDF content extraction (FULL extraction, not limited!)
 ✅ Persistent file storage
-✅ Flask web upload support (NEW!)
+✅ Flask web upload support
+✅ File selection = File upload quality (FIXED!)
 
 Author: Jim @ Shiftwork Solutions LLC
 """
@@ -1090,26 +1100,33 @@ def get_file_stats_by_project(project_id):
     return stats
 
 
-def get_files_for_ai_context(project_id, max_files=5, max_chars_per_file=10000, file_ids=None):
+def get_files_for_ai_context(project_id, max_files=5, max_chars_per_file=50000, file_ids=None):
     """
-    Extract file content for AI context.
-    Returns formatted string with file information.
+    Extract file content for AI context - USES SAME LOGIC AS FILE UPLOADS
     
-    UPDATED February 1, 2026: Added detailed logging and increased max_chars default
+    FIXED February 5, 2026: Now uses file_content_reader for consistent extraction!
+    - Reads ALL rows (not just 100)
+    - Gets proper column names
+    - Handles multiple worksheets
+    - Same quality as drag & drop uploads
+    - Increased default max_chars from 10K to 50K
+    
     UPDATED January 31, 2026: Added file_ids parameter for selective file retrieval
     
     Args:
         project_id: Project ID
         max_files: Maximum number of files to include (default: 5)
-        max_chars_per_file: Max characters per file preview (default: 10000, increased!)
+        max_chars_per_file: Max characters per file preview (default: 50000, increased!)
         file_ids: Optional list of specific file IDs to retrieve
     
     Returns:
         Formatted string with file information and content
     """
+    from file_content_reader import extract_file_content
+    
     pm = get_project_manager()
     
-    # NEW: If file_ids specified, get only those specific files
+    # If file_ids specified, get only those specific files
     if file_ids:
         files = []
         for file_id in file_ids:
@@ -1142,94 +1159,48 @@ def get_files_for_ai_context(project_id, max_files=5, max_chars_per_file=10000, 
         if file.get('analysis_summary'):
             context += f"   Summary: {file['analysis_summary']}\n"
         
-        # CRITICAL FIX: Extract file content based on file type
+        # ================================================================
+        # CRITICAL FIX February 5, 2026: Use file_content_reader (same as uploads!)
+        # This gives us the SAME quality extraction as drag & drop file uploads
+        # ================================================================
         try:
             file_path = file['file_path']
             print(f"   📍 File path: {file_path}")
             print(f"   📏 File exists: {os.path.exists(file_path)}")
             
             if os.path.exists(file_path):
-                file_ext = os.path.splitext(file_path)[1].lower()
-                print(f"   📋 File extension: {file_ext}")
+                # Use the SAME extraction logic as file uploads
+                extraction_result = extract_file_content(file_path)
                 
-                content = ""
-                
-                # Handle Excel files with pandas
-                if file_ext in ['.xlsx', '.xls']:
-                    print(f"   🔧 Attempting to read Excel file with pandas...")
-                    try:
-                        import pandas as pd
-                        print(f"   ✅ pandas imported successfully")
-                        
-                        # Read Excel file (first sheet only for now)
-                        df = pd.read_excel(file_path, nrows=100)  # Limit to 100 rows for context
-                        print(f"   ✅ Excel file read: {len(df)} rows, {len(df.columns)} columns")
-                        
-                        # Convert to readable text
-                        content = f"Excel file with {len(df)} rows and {len(df.columns)} columns\n"
-                        content += f"Columns: {', '.join([str(col) for col in df.columns.tolist()])}\n\n"
-                        content += "Sample data (first 10 rows):\n"
-                        content += df.head(10).to_string()
-                        
-                        print(f"   ✅ Extracted {len(content)} chars from Excel file")
-                        
-                    except ImportError as import_err:
-                        print(f"   ❌ pandas not available: {import_err}")
-                        content = f"(Excel file - {file.get('file_size', 0)} bytes - pandas not installed)"
-                    except Exception as excel_error:
-                        print(f"   ❌ Could not read Excel file: {excel_error}")
-                        import traceback
-                        traceback.print_exc()
-                        content = f"(Excel file - {file.get('file_size', 0)} bytes - error: {str(excel_error)})"
-                
-                # Handle CSV files
-                elif file_ext == '.csv':
-                    try:
-                        import pandas as pd
-                        df = pd.read_csv(file_path, nrows=100)
-                        content = f"CSV file with {len(df)} rows and {len(df.columns)} columns\n"
-                        content += f"Columns: {', '.join(df.columns.tolist())}\n\n"
-                        content += df.head(10).to_string()
-                        print(f"   ✅ Extracted {len(content)} chars from CSV file")
-                    except:
-                        # Fallback to text read
-                        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                            content = f.read(max_chars_per_file)
-                        print(f"   ✅ Extracted {len(content)} chars from CSV as text")
-                
-                # Handle Word documents
-                elif file_ext == '.docx':
-                    try:
-                        from docx import Document
-                        doc = Document(file_path)
-                        content = '\n'.join([para.text for para in doc.paragraphs[:50]])  # First 50 paragraphs
-                        print(f"   ✅ Extracted {len(content)} chars from Word document")
-                    except Exception as docx_error:
-                        print(f"   ❌ Could not read Word document: {docx_error}")
-                        content = f"(Word document - {file.get('file_size', 0)} bytes - could not extract)"
-                
-                # Handle text files
-                elif file_ext in ['.txt', '.md', '.py', '.js', '.json', '.xml', '.html']:
-                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                        content = f.read(max_chars_per_file)
-                    print(f"   ✅ Extracted {len(content)} chars from text file")
-                
-                # Unknown file type
-                else:
-                    content = f"(Binary file - {file.get('file_size', 0)} bytes - type: {file_ext})"
-                    print(f"   ⚠️ Unknown file type: {file_ext}")
-                
-                # Truncate if too long
-                if len(content) > max_chars_per_file:
-                    original_len = len(content)
-                    content = content[:max_chars_per_file] + f"\n... (truncated {len(content) - max_chars_per_file} chars)"
-                    print(f"   ✂️ Truncated from {original_len} to {max_chars_per_file} chars")
-                
-                if content:
+                if extraction_result['success']:
+                    content = extraction_result['text']
+                    
+                    # Add metadata about what was extracted
+                    if extraction_result.get('data'):
+                        data = extraction_result['data']
+                        if 'sheets' in data:
+                            # Excel file - show which sheets were found
+                            context += f"   📊 Excel file with {data['num_sheets']} worksheet(s): {', '.join(data['sheet_names'])}\n"
+                        elif 'num_pages' in data:
+                            # PDF file
+                            context += f"   📄 PDF with {data['num_pages']} page(s)\n"
+                        elif 'num_paragraphs' in data:
+                            # Word document
+                            context += f"   📝 Word document with {data['num_paragraphs']} paragraph(s)\n"
+                    
+                    print(f"   ✅ Extracted {len(content)} chars using file_content_reader")
+                    
+                    # Truncate if too long
+                    if len(content) > max_chars_per_file:
+                        original_len = len(content)
+                        content = content[:max_chars_per_file] + f"\n\n... (truncated {len(content) - max_chars_per_file} chars for performance)\n"
+                        print(f"   ✂️ Truncated from {original_len} to {max_chars_per_file} chars")
+                    
                     context += f"   Content:\n{content}\n"
                 else:
-                    print(f"   ⚠️ No content extracted!")
-                    context += f"   (No content could be extracted)\n"
+                    # Extraction failed
+                    print(f"   ❌ Extraction failed: {extraction_result.get('error')}")
+                    context += f"   (Could not extract content: {extraction_result.get('error')})\n"
             else:
                 print(f"   ❌ File does not exist at path: {file_path}")
                 context += f"   (File not found at expected location)\n"
@@ -1340,6 +1311,7 @@ if __name__ == '__main__':
     print("  - Track conversations")
     print("  - Manage project context")
     print("  - Get complete project summaries")
-    print("  - Retrieve files by IDs (NEW!)")
+    print("  - Retrieve files by IDs with FULL extraction!")
+    print("  - File selection = File upload quality! (FIXED)")
 
 # I did no harm and this file is not truncated
