@@ -4,6 +4,14 @@ Created: February 5, 2026
 Last Updated: February 5, 2026 - ADDED GOOGLE SERVICE ACCOUNT AUTHENTICATION
 
 CHANGE LOG:
+- February 5, 2026 (v4): CRITICAL FIX - MIME type priority over URL pattern
+  * File with MIME type application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+    is a regular uploaded .xlsx file, NOT a Google Workspace file
+  * Only files with MIME type application/vnd.google-apps.* need export_media()
+  * Regular files (even if URL contains "spreadsheets") use get_media() for direct download
+  * This fixes 403 error when downloading uploaded Excel files from Google Drive
+  * Root cause: _is_google_sheet(url) was overriding MIME type detection
+
 - February 5, 2026 (v3): MAJOR FIX - Google Drive API authentication
   * HTTP 432 error: Google blocks unauthenticated server-side downloads
   * Added Google Service Account authentication via GOOGLE_SERVICE_ACCOUNT_JSON env var
@@ -204,9 +212,12 @@ class CloudFileHandler:
             
             # Determine if this is a Google Workspace file (Sheets, Docs, etc.)
             # These need to be EXPORTED, not downloaded directly
+            # CRITICAL: MIME type takes priority over URL pattern!
+            # A regular .xlsx uploaded to Drive has spreadsheet MIME but is NOT a Google Workspace file
+            # Only Google Workspace files (application/vnd.google-apps.*) need export
             is_google_workspace = mime_type.startswith('application/vnd.google-apps.')
             
-            if is_google_workspace or self._is_google_sheet(url):
+            if is_google_workspace:
                 # Google Sheets/Docs: Export to a standard format
                 print(f"📊 Google Workspace file detected - exporting to xlsx...")
                 
