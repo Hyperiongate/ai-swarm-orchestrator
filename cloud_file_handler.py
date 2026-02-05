@@ -169,7 +169,7 @@ class CloudFileHandler:
             print(f"🌐 Starting streaming download from {service}...")
             print(f"📥 Download URL: {download_url[:100]}...")
             
-            response = requests.get(download_url, stream=True, timeout=60)
+            response = requests.get(download_url, stream=True, timeout=(30, 300))
             response.raise_for_status()
             
             # Check content length
