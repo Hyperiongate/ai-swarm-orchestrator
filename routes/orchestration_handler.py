@@ -86,6 +86,8 @@ from progressive_file_analyzer import get_progressive_analyzer
 from conversation_learning import learn_from_conversation  # Auto-learning from conversations
 
 # ============================================================================
+from background_file_processor import get_background_processor
+import uuid
 # LEARNING LOOP ENHANCEMENT - February 4, 2026
 # Import learning systems to close the loop
 # ============================================================================
@@ -357,8 +359,71 @@ def orchestrate():
                         'suggestion': 'Please reduce file size by:\n- Filtering to specific date range\n- Removing unnecessary columns\n- Splitting into multiple smaller files\n- Exporting only relevant sheets'
                     }), 413
                 
-                # Handle large files with progressive analysis
-                if file_info.get('is_large') and file_info.get('file_type') in ['.xlsx', '.xls']:
+                # Handle VERY large files with background processing (>50MB)
+                if file_info.get('file_size_mb', 0) > 50 and file_info.get('file_type') in ['.xlsx', '.xls']:
+                    print(f"🔄 TRIGGERING BACKGROUND PROCESSING for {os.path.basename(file_path)}")
+                    
+                    # Create conversation and task
+                    if not conversation_id:
+                        conversation_id = create_conversation(mode=mode, project_id=project_id)
+                    
+                    db = get_db()
+                    cursor = db.execute('INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
+                                       (user_request, 'processing_background', conversation_id))
+                    task_id = cursor.lastrowid
+                    db.commit()
+                    db.close()
+                    
+                    # Submit to background processor
+                    processor = get_background_processor()
+                    result = processor.submit_job(
+                        job_id=f"JOB_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}",
+                        file_path=file_path,
+                        user_request=user_request,
+                        conversation_id=conversation_id,
+                        task_id=task_id,
+                        user_name="User"
+                    )
+                    
+                    if result['success']:
+                        # Post initial message
+                        initial_msg = f"""🔄 **Processing large file in background**
+
+**File:** {os.path.basename(file_path)} ({file_info['file_size_mb']}MB)
+**Estimated time:** ~{result['estimated_minutes']} minutes
+
+I'm analyzing all rows in the background. I'll post the complete analysis here when finished.
+
+You can continue using the app while I work on this!"""
+                        
+                        add_message(conversation_id, 'assistant', initial_msg, task_id,
+                                   {'orchestrator': 'background_processor', 'job_id': result['job_id']})
+                        
+                        return jsonify({
+                            'success': True,
+                            'task_id': task_id,
+                            'conversation_id': conversation_id,
+                            'result': convert_markdown_to_html(initial_msg),
+                            'orchestrator': 'background_processor',
+                            'job_id': result['job_id'],
+                            'background_processing': True,
+                            'estimated_minutes': result['estimated_minutes']
+                        })
+                    else:
+                        # Background submission failed - fall back to progressive
+                        print(f"⚠️ Background processing failed: {result.get('error')}, falling back to progressive")
+                        return handle_large_excel_initial(
+                            file_path=file_path,
+                            user_request=user_request,
+                            conversation_id=conversation_id,
+                            project_id=project_id,
+                            mode=mode,
+                            file_info=file_info,
+                            overall_start=overall_start
+                        )
+                
+                # Handle moderately large files with progressive analysis (5-50MB)
+                elif file_info.get('is_large') and file_info.get('file_type') in ['.xlsx', '.xls']:
                     print(f"🔄 TRIGGERING PROGRESSIVE ANALYSIS for {os.path.basename(file_path)}")
                     return handle_large_excel_initial(
                         file_path=file_path,
