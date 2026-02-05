@@ -29,6 +29,7 @@ import base64
 from voice_realtime_handler import get_voice_handler
 from database import create_conversation, add_message, get_conversation
 from config import OPENAI_API_KEY
+from voice_learning_integration import get_voice_learning_integration  # Phase 1: Voice Learning
 
 voice_bp = Blueprint('voice', __name__)
 sock = Sock()
@@ -192,6 +193,45 @@ Keep your response SHORT and NATURAL for spoken delivery."""
                         
                         # Save to conversation
                         add_message(conversation_id, 'user', text)
+                        
+                        # ============================================================
+                        # PHASE 1: VOICE LEARNING INTEGRATION - February 5, 2026
+                        # Learn from voice conversations (tone, urgency, engagement)
+                        # ============================================================
+                        try:
+                            # Get the last assistant message for learning
+                            from database import get_messages
+                            messages = get_messages(conversation_id, limit=2)
+                            
+                            if len(messages) >= 2:
+                                # Find user and assistant messages
+                                user_msg = None
+                                assistant_msg = None
+                                
+                                for msg in messages:
+                                    if msg['role'] == 'user':
+                                        user_msg = msg['content']
+                                    elif msg['role'] == 'assistant':
+                                        assistant_msg = msg['content']
+                                
+                                if user_msg and assistant_msg:
+                                    voice_learning = get_voice_learning_integration()
+                                    learned = voice_learning.learn_from_voice_exchange(
+                                        user_msg,
+                                        assistant_msg,
+                                        {
+                                            'conversation_id': conversation_id,
+                                            'session_id': session_id,
+                                            'wake_word_used': True  # Assume wake word was used in voice mode
+                                        }
+                                    )
+                                    
+                                    if learned:
+                                        print(f"🎤 Learned from voice conversation")
+                        
+                        except Exception as voice_learn_error:
+                            print(f"⚠️ Voice learning failed (non-critical): {voice_learn_error}")
+                        # ============================================================
                     
                     elif event_type == "wake.command":
                         # Wake word detected with command
