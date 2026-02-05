@@ -1,12 +1,19 @@
 """
 Orchestration Handler - Main AI Task Processing
 Created: January 31, 2026
-Last Updated: February 5, 2026 - ENHANCED FILE ANALYSIS WITH CONSULTING-GRADE PROMPTS
+Last Updated: February 5, 2026 - RUTHLESS DEEP ANALYSIS + ALL WORKSHEETS
 
 This file handles the main /api/orchestrate endpoint that processes user requests.
 Separated from core.py to make it easier to fix and maintain.
 
 UPDATES:
+- February 5, 2026: RUTHLESS ANALYSIS ENHANCEMENT - No more shallow summaries!
+  * Prompt now demands specific numbers, percentages, and dollar amounts
+  * Forces operational insights (shift patterns, coverage gaps, overtime risks)
+  * Requires actionable recommendations with quantified impact
+  * Checks ALL worksheets in Excel files (not just first sheet)
+  * Increased tokens: 4000→6000 (progressive), 8000 (full file)
+  * Analysis tone: "You are Jim Goodwin" - consulting engagement mindset
 - February 5, 2026: MAJOR ENHANCEMENT - Replaced weak generic analysis prompts with powerful 
   consulting-grade prompts that leverage Shiftwork Solutions' 30+ years of expertise
   * Large Excel files now get 7-point deep analysis (not surface observations)
@@ -437,9 +444,25 @@ def orchestrate():
             # ================================================================
 
             if is_large_excel and row_count_estimate > 0:
-                file_analysis_prompt = f"""You are a senior consultant at Shiftwork Solutions LLC with 30+ years of experience analyzing workforce data for 24/7 operations.
+                # Check all worksheets
+                import pandas as pd
+                try:
+                    if file_paths and file_paths[0].endswith(('.xlsx', '.xls')):
+                        excel_file = pd.ExcelFile(file_paths[0])
+                        sheet_names = excel_file.sheet_names
+                        num_sheets = len(sheet_names)
+                        sheets_info = f"\n📋 **FILE CONTAINS {num_sheets} WORKSHEET(S):** {', '.join(sheet_names)}\nAnalyze ALL worksheets that contain relevant data.\n"
+                    else:
+                        sheets_info = ""
+                except:
+                    sheets_info = ""
+                
+                file_analysis_prompt = f"""You are Jim Goodwin, owner of Shiftwork Solutions LLC with 30+ years analyzing workforce operations for hundreds of clients.
+
+This is a CONSULTING ENGAGEMENT worth $16,500/week. The client expects DEEP, ACTIONABLE ANALYSIS - not surface observations.
 
 The user uploaded a LARGE Excel file (approximately {row_count_estimate:,} rows) and asked: {user_request}
+{sheets_info}
 
 CRITICAL INSTRUCTIONS - THIS IS A CONSULTING ENGAGEMENT:
 Your analysis must be ACTIONABLE and SPECIFIC - not generic observations. Treat this like a $16,500/week consulting project.
@@ -450,6 +473,7 @@ REQUIRED DEPTH OF ANALYSIS:
    - Exact row/column counts and date ranges covered
    - Data quality issues (missing values, anomalies, data entry errors)
    - Granularity (hourly? daily? weekly?)
+   - ALL WORKSHEETS reviewed (not just first sheet)
 
 2. STATISTICAL ANALYSIS (with actual numbers):
    - Mean, median, std deviation for key metrics
@@ -1536,43 +1560,76 @@ def handle_large_excel_initial(file_path, user_request, conversation_id, project
         # Build analysis prompt
         from orchestration.ai_clients import call_gpt4
         
-        analysis_prompt = f"""You are a senior consultant at Shiftwork Solutions LLC with 30+ years of experience analyzing workforce data for 24/7 operations.
+        # First, check ALL worksheets in the file
+        import pandas as pd
+        try:
+            excel_file = pd.ExcelFile(file_path)
+            sheet_names = excel_file.sheet_names
+            num_sheets = len(sheet_names)
+            sheets_summary = f"\n📋 **FILE CONTAINS {num_sheets} WORKSHEET(S):** {', '.join(sheet_names)}\n"
+        except:
+            sheets_summary = ""
+            num_sheets = 1
+        
+        analysis_prompt = f"""You are Jim Goodwin, owner of Shiftwork Solutions LLC with 30+ years analyzing workforce operations for hundreds of clients.
 
-The user uploaded a LARGE Excel file ({file_info['file_size_mb']}MB, {chunk_result['total_rows']:,} rows) and asked: {user_request}
+This is a CONSULTING ENGAGEMENT worth $16,500/week. The client expects DEEP, ACTIONABLE ANALYSIS - not surface observations.
 
-⚠️ IMPORTANT: This file is too large to analyze all at once. You're seeing the FIRST 100 ROWS as a preview.
+CLIENT FILE: {file_info['file_size_mb']}MB Excel file with {chunk_result['total_rows']:,} rows
+CLIENT REQUEST: {user_request}
+{sheets_summary}
 
-PROVIDE INITIAL INSIGHTS based on this sample:
+⚠️ CRITICAL: You're analyzing FIRST 100 ROWS. DO NOT provide weak summaries like "there is data" or "hours vary by day."
 
-1. **Data Structure** (from sample):
-   - Columns present and their meanings
-   - Date range covered in this sample
-   - Data quality observations
+REQUIRED ANALYSIS DEPTH:
 
-2. **Initial Patterns** (from first 100 rows):
-   - High-level trends visible
-   - Department/category breakdown
-   - Any immediate red flags
+1. **SPECIFIC NUMBERS - NO VAGUE STATEMENTS:**
+   ❌ BAD: "Hours vary across departments"
+   ✅ GOOD: "Maintenance: 194,539.69 hrs (33% of total), POP/Samples/VAS: 259,373.57 hrs (44% of total)"
+   
+   - Calculate EXACT percentages, ratios, rates
+   - Identify SPECIFIC peak/trough values with dates
+   - Compute variance/std deviation where relevant
 
-3. **Statistical Preview** (from sample):
-   - Key metrics (totals, averages from sample)
-   - Distribution characteristics
-   - Notable outliers
+2. **OPERATIONAL PATTERNS (Shiftwork Expertise):**
+   - Which days show 20%+ spikes? What's the business reason?
+   - Are weekend patterns different? (7-day vs 5-day operation?)
+   - Hour distribution suggests what shift pattern? (8hr/10hr/12hr?)
+   - Where are coverage gaps? (Low volume days = understaffing risk)
+   - Coefficient of variation by department (high = poor scheduling)
 
-4. **What Full Analysis Would Reveal**:
-   - Patterns that need full dataset
-   - Seasonal trends requiring more data
-   - Statistical confidence requiring larger sample
+3. **COST ANALYSIS:**
+   - Total annual labor cost estimate (assume $30/hr loaded rate)
+   - Top 3 cost centers with dollar amounts
+   - Overtime risk score: Where's the variability causing premium pay?
+   - Estimated weekly cost if hours distributed evenly vs actual pattern
 
-FILE SAMPLE (First 100 rows):
+4. **RED FLAGS & PROBLEMS:**
+   - Departments with >30% day-to-day variance (scheduling failure)
+   - Single-day spikes >2x average (crisis mode / poor planning)
+   - Sustained weekend gaps (7-day staffing inadequate)
+   - Workload imbalances (some areas 3x others)
 
+5. **ACTIONABLE RECOMMENDATIONS:**
+   - SPECIFIC: "Move 15% of Wed Maintenance hours to Mon/Tue to smooth demand"
+   - QUANTIFIED: "Expected savings: $47K/year by reducing variance"
+   - PRIORITIZED: "Fix #1: Inventory Control wed spike - highest cost exposure"
+
+6. **CLARIFYING QUESTIONS (if needed):**
+   - What's not clear from this sample?
+   - What data would help you give better recommendations?
+   - Are there other worksheets that matter?
+
+FIRST 100 ROWS DATA:
 {chunk_result['summary']}
 
 {chunk_result['text_preview']}
 
-DELIVER INSIGHTS FROM THIS PREVIEW, noting what additional analysis would require more data."""
+DO NOT SUMMARIZE. ANALYZE. Provide consulting-grade insights a client would pay $16,500/week to receive.
 
-        gpt_response = call_gpt4(analysis_prompt, max_tokens=4000)
+If you need more data to give a proper analysis, SAY EXACTLY WHAT YOU NEED and why."""
+
+        gpt_response = call_gpt4(analysis_prompt, max_tokens=6000)
         
         if not gpt_response.get('error') and gpt_response.get('content'):
             ai_analysis = gpt_response.get('content', '')
