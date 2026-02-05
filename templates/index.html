@@ -1,506 +1,2104 @@
-"""
-CLOUD FILE HANDLER - Stream downloads from cloud storage
-Created: February 5, 2026
-Last Updated: February 5, 2026 - ADDED GOOGLE SERVICE ACCOUNT AUTHENTICATION
-
-CHANGE LOG:
-- February 5, 2026 (v4): CRITICAL FIX - MIME type priority over URL pattern
-  * File with MIME type application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
-    is a regular uploaded .xlsx file, NOT a Google Workspace file
-  * Only files with MIME type application/vnd.google-apps.* need export_media()
-  * Regular files (even if URL contains "spreadsheets") use get_media() for direct download
-  * This fixes 403 error when downloading uploaded Excel files from Google Drive
-  * Root cause: _is_google_sheet(url) was overriding MIME type detection
-
-- February 5, 2026 (v3): MAJOR FIX - Google Drive API authentication
-  * HTTP 432 error: Google blocks unauthenticated server-side downloads
-  * Added Google Service Account authentication via GOOGLE_SERVICE_ACCOUNT_JSON env var
-  * Uses google-api-python-client for proper authenticated downloads
-  * Falls back to unauthenticated requests.get() for Dropbox/OneDrive
-  * Streaming download preserved to prevent RAM exhaustion on large files
-  * Service account credentials loaded from environment variable (JSON string)
-  * Requires: google-api-python-client, google-auth in requirements.txt
-  * Requires: GOOGLE_SERVICE_ACCOUNT_JSON env var in Render
-  * Requires: Google Sheet shared with service account email (Viewer access)
-
-- February 5, 2026 (v2): FIXED Google Drive URL regex
-  * Enhanced regex to handle /spreadsheets/d/FILE_ID/ format
-  * Now supports both /d/FILE_ID/ and /spreadsheets/d/FILE_ID/
-  * Handles /export?format= URLs for Google Sheets
-
-- February 5, 2026 (v1): Initial creation
-  * Streaming downloads from Google Drive, Dropbox, OneDrive
-  * 8KB chunk streaming to prevent RAM exhaustion
-  * 500MB max file size, 5-minute download timeout
-
-This module handles streaming downloads from cloud storage services
-to prevent RAM exhaustion on large files (56MB+).
-
-Author: Jim @ Shiftwork Solutions LLC
-"""
-
-import requests
-import re
-import os
-import io
-import json
-import tempfile
-from typing import Dict, Tuple, Optional
-from urllib.parse import urlparse, parse_qs
-
-# Google API imports for authenticated downloads
-try:
-    from google.oauth2 import service_account
-    from googleapiclient.discovery import build
-    from googleapiclient.http import MediaIoBaseDownload
-    GOOGLE_API_AVAILABLE = True
-except ImportError:
-    GOOGLE_API_AVAILABLE = False
-    print("⚠️ Google API libraries not installed. Install: google-api-python-client google-auth")
-
-
-class CloudFileHandler:
-    """
-    Handles downloads from Google Drive, Dropbox, OneDrive
-    Uses streaming to prevent RAM exhaustion
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <!--
+    =============================================================================
+    INDEX.HTML - AI Swarm Unified Interface
+    Shiftwork Solutions LLC
+    =============================================================================
     
-    For Google Drive: Uses Service Account authentication to avoid HTTP 432 blocks
-    For Dropbox/OneDrive: Uses direct URL conversion with requests
-    """
+    CHANGE LOG:
+    - January 24, 2026: FIXED Industry Input - Changed from free-text prompt to 
+      dropdown selection in addNewLead() function. Added modal dialog for lead 
+      entry with proper industry dropdown matching the 16 industries in the 
+      scoring database. This prevents typos like "parmaceutical" that caused 
+      industry matching to fail.
     
-    def __init__(self):
-        self.chunk_size = 8192  # 8KB chunks for streaming
-        self.max_file_size = 500 * 1024 * 1024  # 500MB absolute max
-        self._drive_service = None  # Cached Google Drive service
-        
-    def _get_drive_service(self):
-        """
-        Initialize Google Drive API service using service account credentials.
-        Credentials are loaded from GOOGLE_SERVICE_ACCOUNT_JSON environment variable.
-        
-        Returns: Google Drive API service object, or None if not configured
-        """
-        if self._drive_service is not None:
-            return self._drive_service
-            
-        if not GOOGLE_API_AVAILABLE:
-            print("❌ Google API libraries not available")
-            return None
-        
-        # Load service account JSON from environment variable
-        sa_json = os.environ.get('GOOGLE_SERVICE_ACCOUNT_JSON')
-        if not sa_json:
-            print("❌ GOOGLE_SERVICE_ACCOUNT_JSON environment variable not set")
-            return None
-        
-        try:
-            # Parse the JSON string into credentials
-            sa_info = json.loads(sa_json)
-            credentials = service_account.Credentials.from_service_account_info(
-                sa_info,
-                scopes=['https://www.googleapis.com/auth/drive.readonly']
-            )
-            
-            # Build the Drive API service
-            self._drive_service = build('drive', 'v3', credentials=credentials)
-            print("✅ Google Drive API service initialized with service account")
-            return self._drive_service
-            
-        except json.JSONDecodeError as e:
-            print(f"❌ Invalid JSON in GOOGLE_SERVICE_ACCOUNT_JSON: {e}")
-            return None
-        except Exception as e:
-            print(f"❌ Failed to initialize Google Drive API: {e}")
-            return None
-        
-    def detect_service(self, url: str) -> Optional[str]:
-        """
-        Detect which cloud storage service from URL
-        Returns: 'google_drive', 'dropbox', 'onedrive', or None
-        """
-        url_lower = url.lower()
-        
-        if 'drive.google.com' in url_lower or 'docs.google.com' in url_lower:
-            return 'google_drive'
-        elif 'dropbox.com' in url_lower:
-            return 'dropbox'
-        elif 'onedrive' in url_lower or '1drv.ms' in url_lower:
-            return 'onedrive'
-        
-        return None
+    - January 23, 2026: Added Client Intelligence Dashboard (Pipeline Mode)
+      * Added "📊 Pipeline" mode button in header
+      * Added Pipeline Info Panel in sidebar with:
+        - Pipeline summary (leads by stage, high priority count)
+        - Kanban-style pipeline view
+        - Lead cards with scores and actions
+        - Quick actions: Add Lead, Import from Alerts, View All
+      * Lead scoring based on 202-company normative database
+      * Actions: Draft Email, Draft Proposal, Research Deeper
     
-    def extract_google_drive_id(self, url: str) -> Optional[str]:
-        """
-        Extract file ID from Google Drive URL
-        
-        Handles multiple URL formats:
-        - https://drive.google.com/file/d/FILE_ID/view
-        - https://drive.google.com/open?id=FILE_ID
-        - https://docs.google.com/spreadsheets/d/FILE_ID/edit
-        - https://docs.google.com/spreadsheets/d/FILE_ID/export?format=xlsx
-        """
-        # Pattern 1: /d/FILE_ID/ (works for /file/d/, /spreadsheets/d/, etc.)
-        match = re.search(r'/d/([a-zA-Z0-9_-]+)', url)
-        if match:
-            return match.group(1)
-        
-        # Pattern 2: ?id=FILE_ID
-        match = re.search(r'[?&]id=([a-zA-Z0-9_-]+)', url)
-        if match:
-            return match.group(1)
-        
-        return None
+    - January 23, 2026: Added Alert System Panel
+    - January 23, 2026: Added Research Agent Panel
+    - January 23, 2026: Added Voice Control System
+    - January 22, 2026: Added Persistent Conversation Memory System
     
-    def _is_google_sheet(self, url: str) -> bool:
-        """Check if the URL points to a Google Sheets document (not a regular file)"""
-        return 'spreadsheets' in url.lower() or 'docs.google.com/spreadsheets' in url.lower()
+    FILE STRUCTURE:
+    /templates/index.html              - This file (HTML structure)
+    /static/css/swarm-styles.css       - All CSS styles
+    /static/js/swarm-app.js            - Core JavaScript functionality
+    /static/js/swarm-voice.js          - Voice control module
     
-    def download_google_drive_authenticated(self, url: str) -> Tuple[Optional[str], Dict]:
-        """
-        Download file from Google Drive using Service Account authentication.
-        This avoids the HTTP 432 error that blocks unauthenticated server downloads.
+    =============================================================================
+    -->
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Swarm - Unified Interface | Shiftwork Solutions</title>
+    <link rel="stylesheet" href="/static/css/swarm-styles.css">
+    <style>
+        /* Research Panel Styles */
+        .research-info {
+            display: none;
+            padding: 15px;
+            background: linear-gradient(135deg, #e8f5e9 0%, #e3f2fd 100%);
+            border-radius: 10px;
+            margin-bottom: 15px;
+        }
+        .research-info h3 { margin-bottom: 10px; color: #2e7d32; }
+        .research-status {
+            padding: 10px;
+            background: white;
+            border-radius: 6px;
+            font-size: 12px;
+            margin-bottom: 15px;
+            border-left: 3px solid #4caf50;
+        }
+        .research-status.error { border-left-color: #f44336; background: #ffebee; }
+        .research-btn {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 8px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 13px;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .research-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+        .research-btn.news { background: linear-gradient(135deg, #1976d2 0%, #42a5f5 100%); color: white; }
+        .research-btn.regulations { background: linear-gradient(135deg, #7b1fa2 0%, #ab47bc 100%); color: white; }
+        .research-btn.studies { background: linear-gradient(135deg, #388e3c 0%, #66bb6a 100%); color: white; }
+        .research-btn.competitors { background: linear-gradient(135deg, #f57c00 0%, #ffb74d 100%); color: white; }
+        .research-btn.leads { background: linear-gradient(135deg, #d32f2f 0%, #ef5350 100%); color: white; }
+        .research-btn.briefing { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px; font-size: 14px; }
+        .research-section-title { font-size: 13px; font-weight: 600; color: #555; margin: 15px 0 8px 0; padding-bottom: 5px; border-bottom: 1px solid #e0e0e0; }
         
-        For Google Sheets: Uses export to xlsx format
-        For regular files: Uses direct media download
+        /* Alert Panel Styles */
+        .alerts-info {
+            display: none;
+            padding: 15px;
+            background: linear-gradient(135deg, #fff3e0 0%, #ffebee 100%);
+            border-radius: 10px;
+            margin-bottom: 15px;
+        }
+        .alerts-info h3 { margin-bottom: 10px; color: #e65100; }
+        .alerts-status {
+            padding: 10px;
+            background: white;
+            border-radius: 6px;
+            font-size: 12px;
+            margin-bottom: 15px;
+            border-left: 3px solid #ff9800;
+        }
+        .alerts-status.error { border-left-color: #f44336; background: #ffebee; }
+        .alert-counts { display: flex; gap: 10px; margin-bottom: 15px; }
+        .alert-count-badge {
+            flex: 1;
+            text-align: center;
+            padding: 10px 5px;
+            border-radius: 8px;
+            color: white;
+            font-weight: 700;
+        }
+        .alert-count-badge.critical { background: linear-gradient(135deg, #d32f2f 0%, #f44336 100%); }
+        .alert-count-badge.high { background: linear-gradient(135deg, #f57c00 0%, #ff9800 100%); }
+        .alert-count-badge.unread { background: linear-gradient(135deg, #1976d2 0%, #42a5f5 100%); }
+        .alert-count-badge .count { font-size: 24px; display: block; }
+        .alert-count-badge .label { font-size: 10px; opacity: 0.9; }
+        .alert-btn {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 8px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+        .alert-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+        .alert-btn.run-scan { background: linear-gradient(135deg, #388e3c 0%, #66bb6a 100%); color: white; }
+        .alert-btn.view-jobs { background: linear-gradient(135deg, #7b1fa2 0%, #ab47bc 100%); color: white; }
+        .alert-btn.add-monitor { background: linear-gradient(135deg, #f57c00 0%, #ffb74d 100%); color: white; }
+        .alert-list { max-height: 250px; overflow-y: auto; margin-top: 10px; }
+        .alert-item {
+            padding: 10px;
+            background: white;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            border-left: 3px solid #667eea;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .alert-item:hover { background: #f5f5f5; }
+        .alert-item.critical { border-left-color: #d32f2f; }
+        .alert-item.high { border-left-color: #f57c00; }
+        .alert-item.medium { border-left-color: #1976d2; }
+        .alert-item.low { border-left-color: #388e3c; }
+        .alert-item-title { font-size: 12px; font-weight: 600; color: #333; margin-bottom: 3px; }
+        .alert-item-summary { font-size: 11px; color: #666; }
+        .alert-item-meta { font-size: 10px; color: #999; margin-top: 5px; }
+        .alert-item-actions { display: flex; gap: 5px; margin-top: 8px; }
+        .alert-item-actions button { padding: 4px 8px; font-size: 10px; border: none; border-radius: 4px; cursor: pointer; }
+        .alert-item-actions .dismiss-btn { background: #f0f0f0; color: #666; }
+        .alert-item-actions .action-btn { background: #667eea; color: white; }
+        .section-title { font-size: 13px; font-weight: 600; color: #555; margin: 15px 0 8px 0; padding-bottom: 5px; border-bottom: 1px solid #e0e0e0; }
         
-        Returns: (local_filepath, metadata)
-        """
-        metadata = {
-            'service': 'google_drive',
-            'original_url': url,
-            'success': False,
-            'error': None,
-            'size_bytes': 0,
-            'filename': None
+        /* Pipeline Dashboard Styles - Added January 23, 2026 */
+        .pipeline-info {
+            display: none;
+            padding: 15px;
+            background: linear-gradient(135deg, #e3f2fd 0%, #f3e5f5 100%);
+            border-radius: 10px;
+            margin-bottom: 15px;
+        }
+        .pipeline-info h3 { margin-bottom: 10px; color: #1565c0; }
+        .pipeline-status {
+            padding: 10px;
+            background: white;
+            border-radius: 6px;
+            font-size: 12px;
+            margin-bottom: 15px;
+            border-left: 3px solid #2196f3;
+        }
+        .pipeline-status.error { border-left-color: #f44336; background: #ffebee; }
+        .pipeline-summary { display: flex; gap: 8px; margin-bottom: 15px; flex-wrap: wrap; }
+        .pipeline-stage-badge {
+            flex: 1;
+            min-width: 60px;
+            text-align: center;
+            padding: 8px 4px;
+            border-radius: 6px;
+            color: white;
+            font-weight: 600;
+        }
+        .pipeline-stage-badge.detected { background: #9e9e9e; }
+        .pipeline-stage-badge.qualified { background: #2196f3; }
+        .pipeline-stage-badge.contacted { background: #ff9800; }
+        .pipeline-stage-badge.proposal { background: #9c27b0; }
+        .pipeline-stage-badge .stage-count { font-size: 20px; display: block; }
+        .pipeline-stage-badge .stage-name { font-size: 9px; opacity: 0.9; text-transform: uppercase; }
+        .pipeline-btn {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 8px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+        .pipeline-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+        .pipeline-btn.add-lead { background: linear-gradient(135deg, #4caf50 0%, #81c784 100%); color: white; }
+        .pipeline-btn.import-alerts { background: linear-gradient(135deg, #ff9800 0%, #ffb74d 100%); color: white; }
+        .pipeline-btn.view-all { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+        .lead-list { max-height: 300px; overflow-y: auto; margin-top: 10px; }
+        .lead-card {
+            padding: 12px;
+            background: white;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            border-left: 4px solid #667eea;
+            cursor: pointer;
+            transition: all 0.2s;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .lead-card:hover { transform: translateX(3px); box-shadow: 0 3px 10px rgba(0,0,0,0.15); }
+        .lead-card.grade-a { border-left-color: #4caf50; }
+        .lead-card.grade-b { border-left-color: #2196f3; }
+        .lead-card.grade-c { border-left-color: #ff9800; }
+        .lead-card.grade-d { border-left-color: #f44336; }
+        .lead-card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px; }
+        .lead-card-company { font-size: 13px; font-weight: 600; color: #333; }
+        .lead-card-score { 
+            font-size: 11px; 
+            font-weight: 700; 
+            padding: 2px 8px; 
+            border-radius: 12px; 
+            color: white;
+        }
+        .lead-card-score.high { background: #4caf50; }
+        .lead-card-score.medium { background: #ff9800; }
+        .lead-card-score.low { background: #9e9e9e; }
+        .lead-card-industry { font-size: 11px; color: #666; margin-bottom: 4px; }
+        .lead-card-stage { 
+            display: inline-block;
+            font-size: 10px; 
+            padding: 2px 6px; 
+            border-radius: 4px; 
+            background: #e0e0e0;
+            color: #555;
+            text-transform: uppercase;
+        }
+        .lead-card-actions { display: flex; gap: 4px; margin-top: 8px; }
+        .lead-card-actions button { 
+            flex: 1;
+            padding: 5px; 
+            font-size: 10px; 
+            border: none; 
+            border-radius: 4px; 
+            cursor: pointer;
+            background: #f0f0f0;
+            color: #555;
+            transition: all 0.2s;
+        }
+        .lead-card-actions button:hover { background: #667eea; color: white; }
+        .high-priority-banner {
+            background: linear-gradient(135deg, #4caf50 0%, #81c784 100%);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            margin-bottom: 12px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .high-priority-banner .count { font-size: 18px; font-weight: 700; }
+
+        /* Manual Generator Styles - Added January 28, 2026 */
+        .manuals-info {
+            display: none;
+            padding: 15px;
+            background: linear-gradient(135deg, #e8eaf6 0%, #f3e5f5 100%);
+            border-radius: 10px;
+            margin-bottom: 15px;
+        }
+        .manuals-info h3 { margin-bottom: 10px; color: #5e35b1; }
+        .manuals-status {
+            padding: 10px;
+            background: white;
+            border-radius: 6px;
+            font-size: 12px;
+            margin-bottom: 15px;
+            border-left: 3px solid #667eea;
+        }
+        .manuals-status.error { border-left-color: #f44336; background: #ffebee; }
+        .manuals-btn {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 8px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 13px;
+            transition: all 0.2s;
+            color: white;
+        }
+        .manuals-btn:hover { 
+            transform: translateY(-1px); 
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15); 
+        }
+        .manuals-btn.new-manual { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+        }
+        .manuals-btn.view-all { 
+            background: linear-gradient(135deg, #1976d2 0%, #42a5f5 100%); 
+        }
+        .manuals-btn.lessons { 
+            background: linear-gradient(135deg, #f57c00 0%, #ffb74d 100%); 
+        }
+        .manuals-list { 
+            max-height: 300px; 
+            overflow-y: auto; 
+            margin-top: 10px; 
+        }
+        .manual-card {
+            padding: 12px;
+            background: white;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            border-left: 4px solid #667eea;
+            cursor: pointer;
+            transition: all 0.2s;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .manual-card:hover { 
+            transform: translateX(3px); 
+            box-shadow: 0 3px 10px rgba(0,0,0,0.15); 
+        }
+        .manual-card-client { 
+            font-size: 13px; 
+            font-weight: 600; 
+            color: #333; 
+            margin-bottom: 4px;
+        }
+        .manual-card-status { 
+            font-size: 10px; 
+            padding: 2px 6px; 
+            border-radius: 4px; 
+            background: #e0e0e0;
+            color: #555;
+            text-transform: uppercase;
+            display: inline-block;
+        }
+        .manual-card-progress {
+            margin-top: 8px;
+            height: 4px;
+            background: #e0e0e0;
+            border-radius: 2px;
+            overflow: hidden;
+        }
+        .manual-card-progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            transition: width 0.3s;
         }
         
-        # Get authenticated Drive service
-        drive_service = self._get_drive_service()
-        if not drive_service:
-            metadata['error'] = (
-                "Google Drive API not configured. "
-                "Set GOOGLE_SERVICE_ACCOUNT_JSON environment variable in Render "
-                "and share the file with the service account email."
-            )
-            return None, metadata
-        
-        # Extract file ID
-        file_id = self.extract_google_drive_id(url)
-        if not file_id:
-            metadata['error'] = "Could not extract file ID from Google Drive URL"
-            return None, metadata
-        
-        print(f"🔑 Authenticated download for file ID: {file_id}")
-        
-        try:
-            # First, get file metadata to determine type and name
-            file_metadata = drive_service.files().get(
-                fileId=file_id,
-                fields='id, name, mimeType, size'
-            ).execute()
-            
-            file_name = file_metadata.get('name', f'file_{file_id}')
-            mime_type = file_metadata.get('mimeType', '')
-            file_size = file_metadata.get('size')
-            
-            print(f"📄 File: {file_name}")
-            print(f"📋 MIME type: {mime_type}")
-            if file_size:
-                print(f"📊 Size: {int(file_size) / 1024 / 1024:.2f}MB")
-            
-            metadata['filename'] = file_name
-            
-            # Determine if this is a Google Workspace file (Sheets, Docs, etc.)
-            # These need to be EXPORTED, not downloaded directly
-            # CRITICAL: MIME type takes priority over URL pattern!
-            # A regular .xlsx uploaded to Drive has spreadsheet MIME but is NOT a Google Workspace file
-            # Only Google Workspace files (application/vnd.google-apps.*) need export
-            is_google_workspace = mime_type.startswith('application/vnd.google-apps.')
-            
-            if is_google_workspace:
-                # Google Sheets/Docs: Export to a standard format
-                print(f"📊 Google Workspace file detected - exporting to xlsx...")
-                
-                # Determine export format based on type
-                if 'spreadsheet' in mime_type or self._is_google_sheet(url):
-                    export_mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-                    suffix = '.xlsx'
-                    if not file_name.endswith('.xlsx'):
-                        file_name = file_name + '.xlsx'
-                elif 'document' in mime_type:
-                    export_mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-                    suffix = '.docx'
-                    if not file_name.endswith('.docx'):
-                        file_name = file_name + '.docx'
-                elif 'presentation' in mime_type:
-                    export_mime = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
-                    suffix = '.pptx'
-                    if not file_name.endswith('.pptx'):
-                        file_name = file_name + '.pptx'
-                else:
-                    export_mime = 'application/pdf'
-                    suffix = '.pdf'
-                    if not file_name.endswith('.pdf'):
-                        file_name = file_name + '.pdf'
-                
-                metadata['filename'] = file_name
-                
-                # Export the file
-                request_obj = drive_service.files().export_media(
-                    fileId=file_id,
-                    mimeType=export_mime
-                )
-            else:
-                # Regular file (uploaded Excel, PDF, etc.): Direct download
-                print(f"📥 Regular file - downloading directly...")
-                suffix = os.path.splitext(file_name)[1] or '.tmp'
-                
-                request_obj = drive_service.files().get_media(fileId=file_id)
-            
-            # Create temp file and download with streaming
-            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-            
-            # Use MediaIoBaseDownload for chunked/streamed download
-            downloader = MediaIoBaseDownload(temp_file, request_obj, chunksize=1024*1024)
-            
-            done = False
-            bytes_downloaded = 0
-            while not done:
-                status, done = downloader.next_chunk()
-                if status:
-                    progress = int(status.progress() * 100)
-                    bytes_downloaded = status.resumable_progress if hasattr(status, 'resumable_progress') else 0
-                    print(f"⬇️  Download progress: {progress}%")
-            
-            temp_file.close()
-            
-            # Get actual file size
-            actual_size = os.path.getsize(temp_file.name)
-            metadata['success'] = True
-            metadata['size_bytes'] = actual_size
-            
-            print(f"✅ Download complete: {actual_size / 1024 / 1024:.2f}MB")
-            print(f"📁 Saved to: {temp_file.name}")
-            
-            return temp_file.name, metadata
-            
-        except Exception as e:
-            error_str = str(e)
-            
-            # Provide helpful error messages for common issues
-            if '404' in error_str or 'not found' in error_str.lower():
-                metadata['error'] = (
-                    f"File not found (404). Make sure the Google Sheet is shared with "
-                    f"the service account email address (check GOOGLE_SERVICE_ACCOUNT_JSON for client_email)."
-                )
-            elif '403' in error_str or 'forbidden' in error_str.lower():
-                metadata['error'] = (
-                    f"Access denied (403). The file must be shared with the service account email. "
-                    f"Go to the Google Sheet → Share → add the service account email as Viewer."
-                )
-            elif '401' in error_str or 'unauthorized' in error_str.lower():
-                metadata['error'] = (
-                    f"Authentication failed (401). Check that GOOGLE_SERVICE_ACCOUNT_JSON "
-                    f"contains valid service account credentials."
-                )
-            else:
-                metadata['error'] = f"Google Drive API error: {error_str}"
-            
-            print(f"❌ Download failed: {metadata['error']}")
-            return None, metadata
-    
-    def convert_dropbox_url(self, url: str) -> Tuple[Optional[str], Optional[str]]:
-        """
-        Convert Dropbox share URL to direct download URL
-        """
-        # Dropbox: change dl=0 to dl=1 for direct download
-        if 'dl=0' in url:
-            download_url = url.replace('dl=0', 'dl=1')
-        elif '?' in url:
-            download_url = url + '&dl=1'
-        else:
-            download_url = url + '?dl=1'
-        
-        # Extract filename from URL if possible
-        filename = url.split('/')[-1].split('?')[0] or 'dropbox_file'
-        
-        return download_url, filename
-    
-    def convert_onedrive_url(self, url: str) -> Tuple[Optional[str], Optional[str]]:
-        """
-        Convert OneDrive share URL to direct download URL
-        """
-        # OneDrive: replace 'view' with 'download' in URL
-        if 'view.aspx' in url:
-            download_url = url.replace('view.aspx', 'download.aspx')
-        elif 'embed' in url:
-            download_url = url.replace('embed', 'download')
-        else:
-            download_url = url + '&download=1'
-        
-        filename = 'onedrive_file'
-        
-        return download_url, filename
-    
-    def download_file_streaming(self, url: str, service: str) -> Tuple[Optional[str], Dict]:
-        """
-        Download file using streaming to prevent RAM exhaustion.
-        Used for Dropbox and OneDrive (non-authenticated).
-        
-        Returns: (local_filepath, metadata)
-        """
-        metadata = {
-            'service': service,
-            'original_url': url,
-            'success': False,
-            'error': None,
-            'size_bytes': 0,
-            'filename': None
+        /* Add Lead Modal Styles - Added January 24, 2026 */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
         }
+        .modal-overlay.active { display: flex; }
+        .modal-content {
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            width: 90%;
+            max-width: 450px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+        }
+        .modal-header {
+            font-size: 18px;
+            font-weight: 700;
+            color: #333;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: #999;
+            padding: 0;
+            line-height: 1;
+        }
+        .modal-close:hover { color: #333; }
+        .modal-form-group { margin-bottom: 18px; }
+        .modal-form-group label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: #555;
+            margin-bottom: 6px;
+        }
+        .modal-form-group label .required { color: #d32f2f; }
+        .modal-form-group input,
+        .modal-form-group select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.2s;
+            box-sizing: border-box;
+        }
+        .modal-form-group input:focus,
+        .modal-form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .modal-form-group .help-text {
+            font-size: 11px;
+            color: #888;
+            margin-top: 4px;
+        }
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 25px;
+        }
+        .modal-actions button {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .modal-actions .btn-cancel { background: #f0f0f0; color: #666; }
+        .modal-actions .btn-cancel:hover { background: #e0e0e0; }
+        .modal-actions .btn-submit {
+            background: linear-gradient(135deg, #4caf50 0%, #81c784 100%);
+            color: white;
+        }
+        .modal-actions .btn-submit:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(76, 175, 80, 0.4);
+        }
+        /* FILE BROWSER STYLES - Added January 31, 2026 */
+.file-item {
+    display: flex;
+    align-items: center;
+    padding: 12px;
+    border-bottom: 1px solid #eee;
+    transition: background 0.2s;
+}
+
+.file-item:hover {
+    background: #f9f9f9;
+}
+
+.file-item:last-child {
+    border-bottom: none;
+}
+
+.file-checkbox {
+    margin-right: 12px;
+    cursor: pointer;
+    width: 18px;
+    height: 18px;
+}
+
+.file-icon {
+    font-size: 24px;
+    margin-right: 12px;
+}
+
+.file-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.file-name {
+    font-weight: 500;
+    color: #333;
+    margin-bottom: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.file-meta {
+    font-size: 12px;
+    color: #999;
+}
+
+.file-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.file-action-btn {
+    background: none;
+    border: 1px solid #ddd;
+    padding: 6px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s;
+}
+
+.file-action-btn:hover {
+    background: #f5f5f5;
+    border-color: #999;
+}
+
+.file-action-group button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.file-action-group button:not(:disabled):hover {
+    opacity: 0.9;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- HEADER SECTION - UPDATED WITH 2-ROW BUTTON LAYOUT -->
+        <div class="header">
+            <div class="header-left">
+                <h1>🤖 AI Swarm - Unified Interface</h1>
+                <p>Quick tasks + Project workflows with learning feedback</p>
+            </div>
+            <div class="mode-switcher" style="display: flex; flex-direction: column; gap: 10px;">
+                <!-- ROW 1: Core Tasks -->
+                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                    <button class="mode-btn active" onclick="switchMode('quick')" id="quickModeBtn">⚡ Quick Task</button>
+                    <button class="mode-btn" onclick="switchMode('project')" id="projectModeBtn">📁 Project</button>
+                    <button class="mode-btn" onclick="switchMode('calculator')" id="calculatorModeBtn">🧮 Calculator</button>
+                    <button class="mode-btn" onclick="switchMode('survey')" id="surveyModeBtn">📋 Survey</button>
+                    <button class="mode-btn" onclick="switchMode('marketing')" id="marketingModeBtn">📢 Marketing</button>
+                </div>
+                <!-- ROW 2: Intelligence Tools -->
+                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                    <button class="mode-btn" onclick="switchMode('opportunities')" id="opportunitiesModeBtn">🎯 Opportunities</button>
+                    <button class="mode-btn" onclick="switchMode('research')" id="researchModeBtn">🔬 Research</button>
+                    <button class="mode-btn" onclick="switchMode('alerts')" id="alertsModeBtn">🔔 Alerts</button>
+                    <button class="mode-btn" onclick="switchMode('pipeline')" id="pipelineModeBtn">📊 Pipeline</button>
+                    <button class="mode-btn" onclick="switchMode('manuals')" id="manualsModeBtn">📝 Manuals</button>
+                    <button class="mode-btn" onclick="window.location.href='/knowledge'" id="knowledgeModeBtn">🧠 Knowledge</button>
+                </div>
+            </div>
+        </div>
+
+<!-- I did no harm and this file is not truncated -->
         
-        try:
-            # Convert to direct download URL
-            if service == 'dropbox':
-                download_url, filename = self.convert_dropbox_url(url)
-            elif service == 'onedrive':
-                download_url, filename = self.convert_onedrive_url(url)
-            else:
-                raise ValueError(f"Unsupported service for unauthenticated download: {service}")
+        <!-- MAIN GRID LAYOUT -->
+        <div class="main-grid">
             
-            if not download_url:
-                raise ValueError(f"Could not convert {service} URL to download link")
-            
-            metadata['filename'] = filename
-            
-            # Start streaming download
-            print(f"🌐 Starting streaming download from {service}...")
-            print(f"📥 Download URL: {download_url[:100]}...")
-            
-            response = requests.get(download_url, stream=True, timeout=(30, 300))
-            response.raise_for_status()
-            
-            # Check content length
-            content_length = response.headers.get('content-length')
-            if content_length:
-                file_size = int(content_length)
-                metadata['size_bytes'] = file_size
+            <!-- SIDEBAR -->
+            <div class="sidebar">
                 
-                if file_size > self.max_file_size:
-                    raise ValueError(f"File too large: {file_size / 1024 / 1024:.1f}MB (max 500MB)")
+                <!-- VOICE CONTROL SECTION -->
+                <div class="voice-control-section" id="voiceControlSection">
+                    <div class="voice-control-header">
+                        <h3>🎤 Voice Control</h3>
+                    </div>
+                    <button class="voice-activate-btn" id="voiceActivateBtn" onclick="toggleVoiceMode()">
+                        🎤 Activate Voice
+                    </button>
+                    <div class="voice-status-indicator">
+                        <span class="voice-status-dot" id="voiceStatusDot"></span>
+                        <span class="voice-status-text" id="voiceStatusText">Voice inactive - Click to activate</span>
+                    </div>
+                    <div class="voice-waveform" id="voiceWaveform">
+                        <span class="wave-bar"></span>
+                        <span class="wave-bar"></span>
+                        <span class="wave-bar"></span>
+                        <span class="wave-bar"></span>
+                        <span class="wave-bar"></span>
+                    </div>
+                    <div class="voice-response-toggle-container">
+                        <span class="voice-response-label" id="voiceResponseLabel">Voice responses ON</span>
+                        <label class="voice-toggle-switch">
+                            <input type="checkbox" id="voiceResponseToggle" checked onchange="toggleVoiceResponse()">
+                            <span class="voice-toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="voice-hint" id="voiceHint">
+                        Click <strong>Activate Voice</strong> to start
+                    </div>
+                </div>
                 
-                print(f"📊 File size: {file_size / 1024 / 1024:.2f}MB")
-            
-            # Get better filename from headers if available
-            content_disposition = response.headers.get('content-disposition')
-            if content_disposition:
-                match = re.search(r'filename="?([^"]+)"?', content_disposition)
-                if match:
-                    filename = match.group(1)
-                    metadata['filename'] = filename
-            
-            # Create temp file
-            suffix = os.path.splitext(filename)[1] or '.tmp'
-            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-            
-            # Stream download in chunks
-            bytes_downloaded = 0
-            for chunk in response.iter_content(chunk_size=self.chunk_size):
-                if chunk:
-                    temp_file.write(chunk)
-                    bytes_downloaded += len(chunk)
-                    
-                    # Progress indicator every 10MB
-                    if bytes_downloaded % (10 * 1024 * 1024) < self.chunk_size:
-                        print(f"⬇️  Downloaded: {bytes_downloaded / 1024 / 1024:.1f}MB")
-            
-            temp_file.close()
-            
-            metadata['success'] = True
-            metadata['size_bytes'] = bytes_downloaded
-            
-            print(f"✅ Download complete: {bytes_downloaded / 1024 / 1024:.2f}MB")
-            print(f"📁 Saved to: {temp_file.name}")
-            
-            return temp_file.name, metadata
-            
-        except requests.exceptions.RequestException as e:
-            metadata['error'] = f"Network error: {str(e)}"
-            print(f"❌ Download failed: {metadata['error']}")
-            return None, metadata
-            
-        except ValueError as e:
-            metadata['error'] = str(e)
-            print(f"❌ Download failed: {metadata['error']}")
-            return None, metadata
-            
-        except Exception as e:
-            metadata['error'] = f"Unexpected error: {str(e)}"
-            print(f"❌ Download failed: {metadata['error']}")
-            return None, metadata
+                <!-- CONVERSATIONS SECTION (Memory Feature) -->
+                <div class="conversations-section">
+                    <div class="conversations-header">
+                        <h3>💬 Conversations</h3>
+                        <button class="new-conversation-btn" onclick="startNewConversation()" title="Start new conversation">➕ New</button>
+                    </div>
+                    <div class="conversations-list" id="conversationsList">
+                        <div class="conversations-loading">Loading conversations...</div>
+                    </div>
+                </div>
+                
+                <!-- Stats Section -->
+                <h3>📊 System Stats</h3>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value" id="totalTasks">0</div>
+                        <div class="stat-label">Tasks</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="avgRating">-</div>
+                        <div class="stat-label">Avg Rating</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="knowledgeDocs">22</div>
+                        <div class="stat-label">Documents</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="consensusAccuracy">-</div>
+                        <div class="stat-label">Accuracy</div>
+                    </div>
+                </div>
+                
+                <!-- Project Info Panel (project mode only) -->
+                <div class="project-info" id="projectInfo">
+                    <h3 style="margin-bottom: 10px;">Current Project</h3>
+                    <label>Select Existing Project</label>
+                    <select id="existingProjects" onchange="loadExistingProject()" style="width: 100%; padding: 8px; margin-bottom: 10px; border: 2px solid #e0e0e0; border-radius: 6px;">
+                        <option value="">-- Select Project --</option>
+                    </select>
+                    <label>Client</label>
+                    <span id="clientName">No active project</span>
+                    <label>Phase</label>
+                    <span id="projectPhase"><div class="phase-indicator">Not started</div></span>
+                    <button onclick="startNewProject()" style="width: 100%; padding: 10px; margin-top: 10px; background: #667eea; color: white; border: none; border-radius: 8px; cursor: pointer;">+ New Project</button>
+                    <!-- ============================================================================
+     CLOUD LINK INPUT - Add this BEFORE the FILE BROWSER section (before line 487)
+     Date: February 5, 2026
+     Location: In the "Project Info Panel" section, after the "New Project" button
+     ============================================================================ -->
+
+<!-- CLOUD LINK INPUT FOR LARGE FILES -->
+<div class="cloud-link-section" style="margin-top: 20px; padding: 15px; background: linear-gradient(135deg, #e3f2fd 0%, #f3e5f5 100%); border-radius: 10px; border: 2px solid #2196f3;">
+    <h4 style="margin: 0 0 10px 0; color: #1565c0; font-size: 15px; font-weight: 700;">
+        🔗 Large File Analysis
+    </h4>
     
-    def process_cloud_link(self, url: str) -> Tuple[Optional[str], Dict]:
-        """
-        Main entry point: detect service and download file
+    <p style="color: #555; font-size: 12px; margin-bottom: 12px; line-height: 1.4;">
+        <strong>For files over 5MB:</strong> Upload to Google Drive or Dropbox, then paste the share link below.
+    </p>
+    
+    <div style="display: flex; gap: 8px; align-items: stretch; margin-bottom: 10px;">
+        <input 
+            type="text" 
+            id="cloudLinkInput"
+            placeholder="Paste Google Drive or Dropbox link here..."
+            style="flex: 1; padding: 10px 12px; border: 2px solid #2196f3; border-radius: 8px; font-size: 13px; font-family: inherit;"
+        />
         
-        For Google Drive: Uses authenticated API download (avoids HTTP 432)
-        For Dropbox/OneDrive: Uses URL conversion + streaming download
-        
-        Returns: (local_filepath, metadata)
-        """
-        print(f"🔗 Processing cloud link: {url[:80]}...")
-        
-        service = self.detect_service(url)
-        
-        if not service:
-            return None, {
-                'success': False,
-                'error': 'Unsupported cloud storage service. Use Google Drive, Dropbox, or OneDrive.',
-                'original_url': url
+        <button 
+            onclick="handleCloudLink()"
+            style="padding: 10px 16px; background: linear-gradient(135deg, #2196f3 0%, #1976d2 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; white-space: nowrap; transition: all 0.2s;"
+            onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(33,150,243,0.4)';"
+            onmouseout="this.style.transform=''; this.style.boxShadow='';"
+        >
+            📥 Analyze
+        </button>
+    </div>
+    
+    <div id="cloudLinkStatus" style="font-size: 12px; color: #666; min-height: 20px;"></div>
+    
+    <details style="margin-top: 12px;">
+        <summary style="cursor: pointer; color: #1976d2; font-size: 12px; font-weight: 600; padding: 4px 0;">
+            ℹ️ How to get a shareable link
+        </summary>
+        <div style="margin-top: 8px; padding: 10px; background: white; border-radius: 6px; font-size: 11px; line-height: 1.5; border: 1px solid #e0e0e0;">
+            <p style="margin: 0 0 8px 0;"><strong>📁 Google Drive:</strong></p>
+            <ol style="margin: 0 0 10px 0; padding-left: 18px;">
+                <li>Right-click file → "Share"</li>
+                <li>Click "Change to anyone with the link"</li>
+                <li>Copy link and paste above</li>
+            </ol>
+            
+            <p style="margin: 0 0 8px 0;"><strong>📦 Dropbox:</strong></p>
+            <ol style="margin: 0 0 10px 0; padding-left: 18px;">
+                <li>Right-click file → "Copy link"</li>
+                <li>Paste the link above</li>
+            </ol>
+            
+            <p style="margin: 0; padding: 8px; background: #e8f5e9; border-radius: 4px; color: #2e7d32; font-weight: 600;">
+                ✅ Your file stays in your cloud - we download it for analysis only
+            </p>
+        </div>
+    </details>
+</div>
+
+<!-- JAVASCRIPT FOR CLOUD LINK HANDLING -->
+<script>
+/**
+ * Handle cloud storage link submission
+ * This integrates with your existing orchestrate endpoint
+ */
+function handleCloudLink() {
+    const input = document.getElementById('cloudLinkInput');
+    const statusDiv = document.getElementById('cloudLinkStatus');
+    const link = input.value.trim();
+    
+    // Validate link
+    if (!link) {
+        statusDiv.innerHTML = '<span style="color: #d32f2f;">❌ Please paste a link</span>';
+        return;
+    }
+    
+    // Check if it's a valid cloud storage link
+    const validServices = ['drive.google.com', 'docs.google.com', 'dropbox.com', 'onedrive', '1drv.ms'];
+    const isValidLink = validServices.some(service => link.toLowerCase().includes(service));
+    
+    if (!isValidLink) {
+        statusDiv.innerHTML = '<span style="color: #d32f2f;">❌ Please use a Google Drive, Dropbox, or OneDrive link</span>';
+        return;
+    }
+    
+    // Show loading state
+    statusDiv.innerHTML = '<span style="color: #1976d2;">⏳ Downloading from cloud storage...</span>';
+    
+    // Get current project/conversation context
+    const urlParams = new URLSearchParams(window.location.search);
+    const projectId = urlParams.get('project') || getCurrentProjectId();
+    const conversationId = window.currentConversationId || null;
+    
+    // Send to backend - the orchestration handler will detect the link
+    const requestText = `Please analyze this file: ${link}`;
+    
+    // Call your existing orchestrate endpoint
+    fetch('/api/orchestrate', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            request: requestText,
+            project_id: projectId,
+            conversation_id: conversationId,
+            mode: 'project'
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            statusDiv.innerHTML = '<span style="color: #2e7d32;">✅ File downloaded and being analyzed!</span>';
+            
+            // Clear input
+            input.value = '';
+            
+            // Refresh messages if function exists
+            if (typeof loadMessages === 'function' && data.conversation_id) {
+                loadMessages(data.conversation_id);
             }
-        
-        print(f"🔗 Detected service: {service}")
-        
-        # Route to appropriate download method
-        if service == 'google_drive':
-            # Use authenticated Google Drive API (fixes HTTP 432 error)
-            return self.download_google_drive_authenticated(url)
-        else:
-            # Use streaming download for Dropbox/OneDrive
-            return self.download_file_streaming(url, service)
+            
+            // Clear status after 3 seconds
+            setTimeout(() => {
+                statusDiv.innerHTML = '';
+            }, 3000);
+        } else {
+            statusDiv.innerHTML = `<span style="color: #d32f2f;">❌ ${data.error || 'Download failed'}</span>`;
+        }
+    })
+    .catch(error => {
+        console.error('Cloud link error:', error);
+        statusDiv.innerHTML = '<span style="color: #d32f2f;">❌ Network error. Please try again.</span>';
+    });
+}
 
+// Helper function to get current project ID
+function getCurrentProjectId() {
+    const select = document.getElementById('existingProjects');
+    return select ? select.value : null;
+}
 
-# Singleton instance
-_cloud_handler = None
+// Allow Enter key to submit
+document.addEventListener('DOMContentLoaded', function() {
+    const cloudInput = document.getElementById('cloudLinkInput');
+    if (cloudInput) {
+        cloudInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                handleCloudLink();
+            }
+        });
+    }
+});
+</script>
 
-def get_cloud_handler() -> CloudFileHandler:
-    """Get singleton instance of CloudFileHandler"""
-    global _cloud_handler
-    if _cloud_handler is None:
-        _cloud_handler = CloudFileHandler()
-    return _cloud_handler
-
-
-# Test function
-if __name__ == '__main__':
-    handler = get_cloud_handler()
+<!-- ============================================================================
+     END CLOUD LINK INPUT
+     ============================================================================ -->
+                    <!-- FILE BROWSER - Added January 31, 2026 -->
+<div class="file-browser-panel" style="margin-top: 20px;">
+    <div class="file-browser-header" style="display: flex; justify-content: space-between; align-items: center; padding: 15px; background: #f5f5f5; border-radius: 8px 8px 0 0;">
+        <div>
+            <h3 style="margin: 0 0 5px 0; font-size: 16px;">📁 Project Files</h3>
+            <div id="projectFileCount" style="font-size: 12px; color: #666;">0 files</div>
+        </div>
+        <div>
+            <button onclick="selectAllFiles()" style="padding: 6px 12px; margin-right: 5px; font-size: 12px; background: #fff; border: 1px solid #ddd; border-radius: 4px; cursor: pointer;">✓ Select All</button>
+            <button onclick="clearFileSelection()" style="padding: 6px 12px; font-size: 12px; background: #fff; border: 1px solid #ddd; border-radius: 4px; cursor: pointer;">Clear</button>
+        </div>
+    </div>
     
-    # Test URL parsing
-    test_urls = [
-        'https://drive.google.com/file/d/1ABC123/view',
-        'https://docs.google.com/spreadsheets/d/15RonrpruOOx-A8mUsdviR8ZlIjJql3SQ/edit?usp=drive_link',
-        'https://docs.google.com/spreadsheets/d/15RonrpruOOx-A8mUsdviR8ZlIjJql3SQ/export?format=xlsx',
-        'https://www.dropbox.com/s/abc123/file.xlsx?dl=0'
-    ]
+    <div id="projectFilesList" class="files-list" style="max-height: 300px; overflow-y: auto; border: 1px solid #ddd; border-top: none;">
+        <div style="padding: 20px; text-align: center; color: #999;">No project selected</div>
+    </div>
     
-    for url in test_urls:
-        print(f"\n🧪 Testing: {url}")
-        service = handler.detect_service(url)
-        print(f"   Service: {service}")
-        
-        if service == 'google_drive':
-            file_id = handler.extract_google_drive_id(url)
-            print(f"   File ID: {file_id}")
-            is_sheet = handler._is_google_sheet(url)
-            print(f"   Is Google Sheet: {is_sheet}")
+    <div class="file-browser-footer" style="padding: 15px; background: #f5f5f5; border: 1px solid #ddd; border-top: none; border-radius: 0 0 8px 8px;">
+        <div id="selectedFileCount" style="font-size: 12px; color: #666; margin-bottom: 10px;">0 files selected</div>
+        <div class="file-action-group" style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button onclick="performFileAction('analyze')" disabled style="flex: 1; padding: 8px 12px; background: #2196f3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px;">🔍 Analyze</button>
+            <button onclick="performFileAction('summarize')" disabled style="flex: 1; padding: 8px 12px; background: #4caf50; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px;">📝 Summarize</button>
+            <button onclick="performFileAction('extract')" disabled style="flex: 1; padding: 8px 12px; background: #ff9800; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px;">📊 Extract Data</button>
+            <button onclick="performFileAction('compare')" disabled style="flex: 1; padding: 8px 12px; background: #9c27b0; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px;">⚖️ Compare</button>
+        </div>
+    </div>
+</div>
 
-# I did no harm and this file is not truncated
+                </div>
+                
+                <!-- Marketing Info Panel (marketing mode only) -->
+                <div class="marketing-info" id="marketingInfo" style="display: none;">
+                    <h3 style="margin-bottom: 10px;">Marketing Hub</h3>
+                                    <!-- NEW: LinkedIn Poster Desktop App Section - Added January 29, 2026 -->
+                <div style="background: #e3f2fd; padding: 12px; border-radius: 8px; margin-bottom: 15px; border-left: 3px solid #0077b5;">
+                    <h4 style="font-size: 13px; margin-bottom: 8px; color: #0077b5; font-weight: 600;">📱 LinkedIn Poster Tool</h4>
+                    <p style="font-size: 11px; color: #666; margin-bottom: 10px; line-height: 1.4;">
+                        Desktop app with 120 pre-written posts tailored to 12 LinkedIn groups. Select group → Copy post → Paste to LinkedIn. Tracks posting history.
+                    </p>
+                    <a href="/downloads/linkedin_poster.pyw" 
+                       download 
+                       style="display: block; width: 100%; padding: 10px; background: #0077b5; color: white; text-align: center; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 13px; transition: all 0.2s;">
+                        ⬇️ Download LinkedIn Poster
+                    </a>
+                    <p style="font-size: 10px; color: #888; margin-top: 8px; line-height: 1.3;">
+                        <strong>Requirements:</strong> Python 3.x (tkinter included by default)
+                    </p>
+                </div>
+                    <div style="font-size: 12px; margin-bottom: 15px;">
+                        <div style="font-weight: 600; margin-bottom: 5px;">Platform Status:</div>
+                        <div id="platformStatus" style="padding: 10px; background: #f0f0f0; border-radius: 6px;">Loading...</div>
+                    </div>
+                    <h4 style="font-size: 14px; margin-bottom: 8px;">💡 AI Initiative</h4>
+                    <button onclick="generateMarketingIdea()" style="width: 100%; padding: 12px; margin-bottom: 15px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 10px; cursor: pointer; font-weight: 700; font-size: 14px; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);">🚀 "Hey Jim, I have an idea!"</button>
+                    <h4 style="font-size: 14px; margin-bottom: 8px;">Quick Actions</h4>
+                    <button onclick="generateSocialPost()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #0077b5; color: white; border: none; border-radius: 6px; cursor: pointer;">📝 Generate LinkedIn Post</button>
+                    <button onclick="conductResearch()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #764ba2; color: white; border: none; border-radius: 6px; cursor: pointer;">🔍 Market Research</button>
+                    <button onclick="analyzeCompetitors()" style="width: 100%; padding: 8px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer;">📊 Competitive Analysis</button>
+                </div>
+                
+                <!-- Calculator Panel (calculator mode only) -->
+                <!-- Calculator Panel (calculator mode only) -->
+                <div class="calculator-info" id="calculatorInfo" style="display: none;">
+                    <h3 style="margin-bottom: 10px;">💰 Cost Calculator</h3>
+                    
+                    <!-- NEW: Desktop App Section -->
+                    <div style="background: #f0f7ff; padding: 12px; border-radius: 8px; margin-bottom: 15px; border-left: 3px solid #667eea;">
+                        <h4 style="font-size: 13px; margin-bottom: 8px; color: #667eea; font-weight: 600;">📊 Desktop Calculator</h4>
+                        <p style="font-size: 11px; color: #666; margin-bottom: 10px; line-height: 1.4;">
+                            Full-featured Cost of Time Calculator with Excel/PDF export, staffing analysis, and schedule comparison.
+                        </p>
+                        <a href="/downloads/cost_of_time_calculator_v3_3_2.pyw" 
+                           download 
+                           style="display: block; width: 100%; padding: 10px; background: #667eea; color: white; text-align: center; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 13px; transition: all 0.2s;">
+                            ⬇️ Download Calculator App
+                        </a>
+                        <p style="font-size: 10px; color: #888; margin-top: 8px; line-height: 1.3;">
+                            <strong>Requirements:</strong> Python 3.8+ with matplotlib, openpyxl, reportlab
+                        </p>
+                    </div>
+                    
+                    <!-- EXISTING: Quick Calculations (unchanged) -->
+                    <h4 style="font-size: 14px; margin-bottom: 8px;">⚡ Quick Calculations</h4>
+                    <button onclick="calculateOvertimeCost()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer;">💰 Overtime Cost</button>
+                    <button onclick="compareHireVsOT()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #764ba2; color: white; border: none; border-radius: 6px; cursor: pointer;">👥 Hire vs OT</button>
+                    <button onclick="scheduleImpact()" style="width: 100%; padding: 8px; background: #0077b5; color: white; border: none; border-radius: 6px; cursor: pointer;">📊 Schedule Impact</button>
+                </div>
+
+<!-- I did no harm and this file is not truncated -->
+                
+                <!-- Survey Panel (survey mode only) -->
+                <!-- Survey Panel (survey mode only) -->
+                <div class="survey-info" id="surveyInfo" style="display: none;">
+                    <h3 style="margin-bottom: 10px;">📋 Survey Builder</h3>
+                    
+                    <!-- NEW: Desktop App Section -->
+                    <div style="background: #f0fff4; padding: 12px; border-radius: 8px; margin-bottom: 15px; border-left: 3px solid #4caf50;">
+                        <h4 style="font-size: 13px; margin-bottom: 8px; color: #4caf50; font-weight: 600;">📊 Survey Processing App</h4>
+                        <p style="font-size: 11px; color: #666; margin-bottom: 10px; line-height: 1.4;">
+                            Professional survey crosstab tool with PDF reports, Excel export, PowerPoint integration, and benchmark comparisons.
+                        </p>
+                        <a href="/downloads/SurveySelector_v88_FIXED.pyw" 
+                           download 
+                           style="display: block; width: 100%; padding: 10px; background: #4caf50; color: white; text-align: center; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 13px; transition: all 0.2s;">
+                            ⬇️ Download Survey App
+                        </a>
+                        <p style="font-size: 10px; color: #888; margin-top: 8px; line-height: 1.3;">
+                            <strong>Requirements:</strong> Python 3.8+ with pandas, python-docx, reportlab, openpyxl, python-pptx
+                        </p>
+                    </div>
+                    
+                    <!-- EXISTING: Question Bank (unchanged) -->
+                    <div style="font-size: 12px; margin-bottom: 15px;">
+                        <div style="font-weight: 600; margin-bottom: 5px;">Question Bank:</div>
+                        <div id="questionBankStatus" style="padding: 10px; background: #f0f0f0; border-radius: 6px;">Loading...</div>
+                    </div>
+                    
+                    <!-- EXISTING: Quick Actions (unchanged) -->
+                    <h4 style="font-size: 14px; margin-bottom: 8px;">⚡ Quick Actions</h4>
+                    <a href="/survey" style="display: block; width: 100%; padding: 8px; margin-bottom: 8px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer; text-align: center; text-decoration: none; font-weight: 600;">➕ Create Survey</a>
+                    <button onclick="viewSurveyResults()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #0077b5; color: white; border: none; border-radius: 6px; cursor: pointer;">📊 View Results</button>
+                    <button onclick="exportSurveyData()" style="width: 100%; padding: 8px; background: #764ba2; color: white; border: none; border-radius: 6px; cursor: pointer;">📤 Export Data</button>
+                </div>
+
+<!-- I did no harm and this file is not truncated -->
+                
+                <!-- Opportunities Panel (opportunities mode only) -->
+                <div class="opportunities-info" id="opportunitiesInfo" style="display: none;">
+                    <h3 style="margin-bottom: 10px;">🎯 Opportunity Finder</h3>
+                    <div style="font-size: 12px; margin-bottom: 15px;">
+                        <div style="font-weight: 600; margin-bottom: 5px;">Database Status:</div>
+                        <div id="normativeStatus" style="padding: 10px; background: #f0f0f0; border-radius: 6px;">Loading...</div>
+                    </div>
+                    <h4 style="font-size: 14px; margin-bottom: 8px;">Quick Analysis</h4>
+                    <button onclick="analyzeScheduleOpportunities()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer;">📊 Analyze Current Schedule</button>
+                    <button onclick="compareToNorms()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #764ba2; color: white; border: none; border-radius: 6px; cursor: pointer;">📈 Compare to Industry</button>
+                    <button onclick="findImprovements()" style="width: 100%; padding: 8px; background: #0077b5; color: white; border: none; border-radius: 6px; cursor: pointer;">💡 Find Improvements</button>
+                </div>
+                
+                <!-- Research Panel (research mode only) -->
+                <div class="research-info" id="researchInfo" style="display: none;">
+                    <h3>🔬 Research Agent</h3>
+                    <div class="research-status" id="researchStatus">
+                        <strong>Status:</strong> Checking...
+                    </div>
+                    
+                    <div class="research-section-title">📋 Daily Intelligence</div>
+                    <button class="research-btn briefing" onclick="getDailyBriefing()">📰 Get Daily Briefing</button>
+                    
+                    <div class="research-section-title">🔍 Quick Research</div>
+                    <button class="research-btn news" onclick="searchIndustryNews()">📰 Industry News</button>
+                    <button class="research-btn regulations" onclick="searchRegulations()">⚖️ Regulations & Compliance</button>
+                    <button class="research-btn studies" onclick="searchStudies()">🔬 Research Studies</button>
+                    
+                    <div class="research-section-title">📊 Competitive Intelligence</div>
+                    <button class="research-btn competitors" onclick="searchCompetitors()">🏢 Competitor Analysis</button>
+                    <button class="research-btn leads" onclick="searchLeads()">🎯 Find Potential Leads</button>
+                    
+                    <div class="research-section-title">🔎 Custom Search</div>
+                    <input type="text" id="researchQuery" placeholder="Enter research topic..." style="width: 100%; padding: 10px; border: 2px solid #e0e0e0; border-radius: 6px; margin-bottom: 8px; box-sizing: border-box;">
+                    <button class="research-btn" style="background: linear-gradient(135deg, #455a64 0%, #78909c 100%); color: white;" onclick="customResearch()">🔍 Research Topic</button>
+                </div>
+                
+                <!-- Alerts Panel (alerts mode only) -->
+                <div class="alerts-info" id="alertsInfo" style="display: none;">
+                    <h3>🔔 Alert System</h3>
+                    <div class="alerts-status" id="alertsStatus">
+                        <strong>Status:</strong> Checking...
+                    </div>
+                    
+                    <div class="alert-counts" id="alertCounts">
+                        <div class="alert-count-badge critical">
+                            <span class="count" id="criticalCount">0</span>
+                            <span class="label">Critical</span>
+                        </div>
+                        <div class="alert-count-badge high">
+                            <span class="count" id="highCount">0</span>
+                            <span class="label">High</span>
+                        </div>
+                        <div class="alert-count-badge unread">
+                            <span class="count" id="unreadCount">0</span>
+                            <span class="label">Unread</span>
+                        </div>
+                    </div>
+                    
+                    <div class="section-title">⚡ Quick Actions</div>
+                    <button class="alert-btn run-scan" onclick="runLeadScan()">🎯 Run Lead Scan Now</button>
+                    <button class="alert-btn view-jobs" onclick="viewScheduledJobs()">📅 View Scheduled Jobs</button>
+                    <button class="alert-btn add-monitor" onclick="addMonitoredClient()">➕ Add Client to Monitor</button>
+                    
+                    <div class="section-title">📋 Recent Alerts</div>
+                    <div class="alert-list" id="alertList">
+                        <div style="text-align: center; color: #999; padding: 20px;">Loading alerts...</div>
+                    </div>
+                </div>
+                
+                <!-- Pipeline Dashboard Panel (pipeline mode only) - NEW January 23, 2026 -->
+                <div class="pipeline-info" id="pipelineInfo" style="display: none;">
+                    <h3>📊 Lead Pipeline</h3>
+                    <div class="pipeline-status" id="pipelineStatus">
+                        <strong>Status:</strong> Checking...
+                    </div>
+                    
+                    <div class="high-priority-banner" id="highPriorityBanner" style="display: none;">
+                        <span class="count" id="highPriorityCount">0</span>
+                        <span>High-Priority Leads (Score ≥70)</span>
+                    </div>
+                    
+                    <div class="pipeline-summary" id="pipelineSummary">
+                        <div class="pipeline-stage-badge detected">
+                            <span class="stage-count" id="detectedCount">0</span>
+                            <span class="stage-name">Detected</span>
+                        </div>
+                        <div class="pipeline-stage-badge qualified">
+                            <span class="stage-count" id="qualifiedCount">0</span>
+                            <span class="stage-name">Qualified</span>
+                        </div>
+                        <div class="pipeline-stage-badge contacted">
+                            <span class="stage-count" id="contactedCount">0</span>
+                            <span class="stage-name">Contacted</span>
+                        </div>
+                        <div class="pipeline-stage-badge proposal">
+                            <span class="stage-count" id="proposalCount">0</span>
+                            <span class="stage-name">Proposal</span>
+                        </div>
+                    </div>
+                    
+                    <div class="section-title">⚡ Quick Actions</div>
+                    <button class="pipeline-btn add-lead" onclick="openAddLeadModal()">➕ Add New Lead</button>
+                    <button class="pipeline-btn import-alerts" onclick="importLeadsFromAlerts()">📥 Import from Alerts</button>
+                    <button class="pipeline-btn view-all" onclick="viewAllLeads()">👁️ View All Leads</button>
+                    
+                    <div class="section-title">🔥 Top Leads</div>
+                    <div class="lead-list" id="topLeadsList">
+                        <div style="text-align: center; color: #999; padding: 20px;">Loading leads...</div>
+                    </div>
+                </div>
+
+                                <!-- Implementation Manual Generator Panel - NEW January 28, 2026 -->
+                <div class="manuals-info" id="manualsInfo" style="display: none;">
+                    <h3>📝 Manual Generator</h3>
+                    <div class="manuals-status" id="manualsStatus">
+                        <strong>Status:</strong> Checking...
+                    </div>
+                    
+                    <div class="manuals-summary" id="manualsSummary">
+                        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px; border-radius: 8px; margin-bottom: 10px;">
+                            <div style="font-size: 24px; font-weight: 700;" id="activeManualsCount">0</div>
+                            <div style="font-size: 11px; opacity: 0.9;">Active Manual Projects</div>
+                        </div>
+                        <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+                            <div style="flex: 1; background: #e3f2fd; padding: 10px; border-radius: 6px; text-align: center;">
+                                <div style="font-size: 18px; font-weight: 700; color: #1976d2;" id="draftingCount">0</div>
+                                <div style="font-size: 9px; color: #666;">Drafting</div>
+                            </div>
+                            <div style="flex: 1; background: #f3e5f5; padding: 10px; border-radius: 6px; text-align: center;">
+                                <div style="font-size: 18px; font-weight: 700; color: #9c27b0;" id="completeCount">0</div>
+                                <div style="font-size: 9px; color: #666;">Complete</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="section-title">⚡ Quick Actions</div>
+                    <button class="manuals-btn new-manual" onclick="startNewManual()">➕ New Manual</button>
+                    <button class="manuals-btn view-all" onclick="viewAllManuals()">👁️ View All Manuals</button>
+                    <button class="manuals-btn lessons" onclick="viewLessons()">💡 View Lessons Learned</button>
+                    
+                    <div class="section-title">📌 Recent Projects</div>
+                    <div class="manuals-list" id="recentManualsList">
+                        <div style="text-align: center; color: #999; padding: 20px;">Loading...</div>
+                    </div>
+                </div>
+                
+                <!-- Quick Actions Section -->
+                <h3 style="margin-top: 20px;">Quick Actions</h3>
+                <ul class="quick-actions" id="quickActions"></ul>
+
+                <!-- Pattern Recognition Dashboard Button -->
+                <button onclick="loadPatternRecognition()" style="width: 100%; padding: 10px; margin: 15px 0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 13px;">
+                    📊 My Pattern Dashboard
+                </button>
+                
+                <!-- Generated Documents Section -->
+                <h3 style="margin-top: 20px;">📄 Documents</h3>
+                <div id="documentsList" style="font-size: 12px; max-height: 200px; overflow-y: auto;">
+                    <div style="color: #999; padding: 10px; text-align: center;">No documents yet</div>
+                </div>
+                <button onclick="refreshDocuments()" style="width: 100%; padding: 8px; margin-top: 10px; background: #f0f0f0; border: 1px solid #e0e0e0; border-radius: 6px; cursor: pointer; font-size: 12px; color: #666;">🔄 Refresh</button>
+            </div>
+            
+            <!-- MAIN CONTENT AREA -->
+            <div class="main-content">
+                
+                <!-- MEMORY STATUS INDICATOR (Memory Feature) -->
+                <div class="memory-indicator" id="memoryIndicator">
+                    <div class="memory-status warning" id="memoryStatus">
+                        <span class="memory-icon">⚠️</span>
+                        <span class="memory-text">Initializing conversation memory...</span>
+                    </div>
+                </div>
+                
+                <!-- Conversation Display -->
+                <div class="conversation" id="conversation">
+                    <div class="message assistant">
+                        <div class="message-header">
+                            🤖 AI Swarm
+                            <span class="mode-indicator quick" id="initialModeIndicator">⚡ Quick Task Mode</span>
+                        </div>
+                        <div class="message-content">
+                            <strong>Welcome to the unified AI Swarm interface!</strong>
+                            <p style="margin-top: 10px;">Choose your mode:</p>
+                            <ul style="margin-top: 10px; margin-left: 20px;">
+                                <li><strong>⚡ Quick Task Mode:</strong> One-off requests, document creation, analysis</li>
+                                <li><strong>📁 Project Mode:</strong> Full consulting engagements with context tracking</li>
+                                <li><strong>🔬 Research Mode:</strong> Real-time industry intelligence and news</li>
+                                <li><strong>🔔 Alerts Mode:</strong> Autonomous monitoring and notifications</li>
+                                <li><strong>📊 Pipeline Mode:</strong> Lead scoring and sales pipeline management</li>
+                            </ul>
+                            <p style="margin-top: 15px;"><strong>Features:</strong></p>
+                            <ul style="margin-top: 5px; margin-left: 20px;">
+                                <li>✅ 22 knowledge documents (30+ years expertise)</li>
+                                <li>✅ Professional formatting</li>
+                                <li>✅ Feedback & learning on every response</li>
+                                <li>✅ Multi-AI consensus validation</li>
+                                <li>✅ Conversation memory across sessions</li>
+                                <li>✅ Voice control - say "Hey Swarm" to command</li>
+                                <li>✅ Research Agent - real-time web intelligence</li>
+                                <li>✅ Alert System - automated lead & competitor monitoring</li>
+                                <li>✅ Pipeline Dashboard - lead scoring based on 202 past clients</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Loading Indicator -->
+                <div class="loading" id="loadingIndicator">
+                    <div class="loading-spinner"></div>
+                    <div class="loading-text">AI Swarm is thinking... Searching knowledge base and generating response...</div>
+                </div>
+                
+                <!-- Input Area -->
+                <div class="input-area">
+                    <textarea id="userInput" placeholder="Type your request here... or say 'Hey Swarm'"></textarea>
+                    <div style="display: flex; flex-direction: column; gap: 10px;">
+                        <button onclick="sendMessage()">Send</button>
+                        <button class="voice-input-btn" id="voiceInputBtn" onclick="startVoiceInput()" title="Click to speak your message">🎤</button>
+                        <label for="fileUpload" style="padding: 10px 20px; background: #e0e0e0; color: #333; border: none; border-radius: 10px; font-weight: 600; cursor: pointer; text-align: center; transition: background 0.2s;">📎 Upload Files</label>
+                        <input type="file" id="fileUpload" multiple accept=".pdf,.docx,.xlsx,.csv,.txt,.png,.jpg,.jpeg" style="display: none;" onchange="handleFileUpload(event)">
+                    </div>
+                </div>
+                
+                <!-- File Preview Area -->
+                <div id="filePreview" style="margin-top: 10px; display: none;">
+                    <div style="font-size: 12px; font-weight: 600; color: #667eea; margin-bottom: 5px;">Attached Files:</div>
+                    <div id="fileList" style="display: flex; flex-wrap: wrap; gap: 8px;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Add Lead Modal - Added January 24, 2026 -->
+    <div class="modal-overlay" id="addLeadModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <span>➕ Add New Lead</span>
+                <button class="modal-close" onclick="closeAddLeadModal()">&times;</button>
+            </div>
+            <form id="addLeadForm" onsubmit="submitNewLead(event)">
+                <div class="modal-form-group">
+                    <label>Company Name <span class="required">*</span></label>
+                    <input type="text" id="leadCompanyName" required placeholder="e.g., Acme Manufacturing">
+                </div>
+                <div class="modal-form-group">
+                    <label>Industry <span class="required">*</span></label>
+                    <select id="leadIndustry" required>
+                        <option value="">-- Select Industry --</option>
+                        <option value="food_processing">Food Processing</option>
+                        <option value="manufacturing">Manufacturing</option>
+                        <option value="pharmaceutical">Pharmaceutical</option>
+                        <option value="mining">Mining</option>
+                        <option value="consumer_products">Consumer Products</option>
+                        <option value="beverage">Beverage</option>
+                        <option value="utilities">Utilities</option>
+                        <option value="paper_packaging">Paper & Packaging</option>
+                        <option value="technology">Technology</option>
+                        <option value="oil_gas_energy">Oil, Gas & Energy</option>
+                        <option value="chemicals">Chemicals</option>
+                        <option value="automotive">Automotive</option>
+                        <option value="transportation">Transportation</option>
+                        <option value="healthcare">Healthcare</option>
+                        <option value="government_mint">Government / Mint</option>
+                        <option value="gaming_hospitality">Gaming & Hospitality</option>
+                        <option value="other">Other</option>
+                    </select>
+                    <div class="help-text">Select the industry that best matches this lead</div>
+                </div>
+                <div class="modal-form-group">
+                    <label>Estimated Employees</label>
+                    <input type="number" id="leadHeadcount" placeholder="e.g., 500" min="1">
+                    <div class="help-text">Optional - helps with lead scoring</div>
+                </div>
+                <div class="modal-form-group">
+                    <label>Notes</label>
+                    <input type="text" id="leadNotes" placeholder="e.g., Referred by John Smith">
+                    <div class="help-text">Optional - any additional context</div>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn-cancel" onclick="closeAddLeadModal()">Cancel</button>
+                    <button type="submit" class="btn-submit">Add Lead</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- External JavaScript -->
+    <script src="/static/js/swarm-app.js"></script>
+    <script src="/static/js/swarm-voice.js"></script>
+    <script src="/static/js/conversation-learning-ui.js"></script>
+    
+    <!-- Research Agent, Alert System & Pipeline Dashboard JavaScript -->
+    <script>
+    // =============================================================================
+    // RESEARCH AGENT FUNCTIONS
+    // =============================================================================
+    
+    function checkResearchStatus() {
+        fetch('/api/research/status')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var statusDiv = document.getElementById('researchStatus');
+                if (data.available) {
+                    statusDiv.innerHTML = '<strong>✅ Status:</strong> Online<br><small>' + data.capabilities.length + ' research capabilities available</small>';
+                    statusDiv.className = 'research-status';
+                } else {
+                    statusDiv.innerHTML = '<strong>⚠️ Status:</strong> Offline<br><small>TAVILY_API_KEY not configured</small>';
+                    statusDiv.className = 'research-status error';
+                }
+            })
+            .catch(function(err) {
+                var statusDiv = document.getElementById('researchStatus');
+                statusDiv.innerHTML = '<strong>❌ Status:</strong> Error connecting';
+                statusDiv.className = 'research-status error';
+            });
+    }
+    
+    function displayResearchResults(title, data) {
+        var content = '<h3>' + title + '</h3>';
+        if (data.summary) {
+            content += '<p style="margin: 10px 0; padding: 10px; background: #f5f5f5; border-radius: 6px;"><strong>Summary:</strong> ' + data.summary + '</p>';
+        }
+        if (data.results && data.results.length > 0) {
+            content += '<div style="margin-top: 15px;">';
+            data.results.forEach(function(result, idx) {
+                content += '<div style="padding: 12px; background: white; border-left: 3px solid #667eea; margin-bottom: 10px; border-radius: 0 6px 6px 0;">';
+                content += '<strong>' + (idx + 1) + '. ' + result.title + '</strong><br>';
+                content += '<p style="font-size: 13px; color: #555; margin: 5px 0;">' + result.content.substring(0, 200) + '...</p>';
+                content += '<a href="' + result.url + '" target="_blank" style="font-size: 12px; color: #667eea;">🔗 Read more</a>';
+                content += '</div>';
+            });
+            content += '</div>';
+        } else {
+            content += '<p style="color: #999;">No results found.</p>';
+        }
+        addMessage('assistant', content, null, 'research');
+    }
+    
+    function getDailyBriefing() {
+        addMessage('user', '📰 Get Daily Intelligence Briefing');
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        document.querySelector('.loading-text').textContent = 'Generating daily briefing...';
+        
+        fetch('/api/research/briefing')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                loading.classList.remove('active');
+                if (data.success && data.briefing) {
+                    var content = '<h3>📰 Daily Intelligence Briefing</h3>';
+                    content += '<p style="font-size: 12px; color: #666;">Generated: ' + data.briefing.generated_at + '</p>';
+                    data.briefing.sections.forEach(function(section) {
+                        content += '<div style="margin-top: 15px;"><h4>' + section.title + '</h4>';
+                        if (section.summary) content += '<p style="font-size: 13px; color: #555; margin: 5px 0;">' + section.summary + '</p>';
+                        if (section.items && section.items.length > 0) {
+                            section.items.forEach(function(item) {
+                                content += '<div style="padding: 10px; background: #f9f9f9; margin: 5px 0; border-radius: 6px;"><strong style="font-size: 13px;">' + item.title + '</strong><br><a href="' + item.url + '" target="_blank" style="font-size: 11px; color: #667eea;">🔗 Read more</a></div>';
+                            });
+                        }
+                        content += '</div>';
+                    });
+                    addMessage('assistant', content, null, 'research');
+                } else {
+                    addMessage('assistant', '❌ Could not generate briefing: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(function(err) { loading.classList.remove('active'); addMessage('assistant', '❌ Error: ' + err.message); });
+    }
+    
+    function searchIndustryNews() {
+        addMessage('user', '📰 Search Industry News');
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        fetch('/api/research/industry-news').then(function(r) { return r.json(); }).then(function(data) {
+            loading.classList.remove('active');
+            if (data.success) displayResearchResults('📰 Industry News', data);
+            else addMessage('assistant', '❌ Error: ' + data.error);
+        }).catch(function(err) { loading.classList.remove('active'); addMessage('assistant', '❌ Error: ' + err.message); });
+    }
+    
+    function searchRegulations() {
+        addMessage('user', '⚖️ Search Regulations & Compliance');
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        fetch('/api/research/regulations').then(function(r) { return r.json(); }).then(function(data) {
+            loading.classList.remove('active');
+            if (data.success) displayResearchResults('⚖️ Regulatory Updates', data);
+            else addMessage('assistant', '❌ Error: ' + data.error);
+        }).catch(function(err) { loading.classList.remove('active'); addMessage('assistant', '❌ Error: ' + err.message); });
+    }
+    
+    function searchStudies() {
+        addMessage('user', '🔬 Search Research Studies');
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        fetch('/api/research/studies').then(function(r) { return r.json(); }).then(function(data) {
+            loading.classList.remove('active');
+            if (data.success) displayResearchResults('🔬 Research Studies', data);
+            else addMessage('assistant', '❌ Error: ' + data.error);
+        }).catch(function(err) { loading.classList.remove('active'); addMessage('assistant', '❌ Error: ' + err.message); });
+    }
+    
+    function searchCompetitors() {
+        addMessage('user', '🏢 Competitor Analysis');
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        fetch('/api/research/competitors').then(function(r) { return r.json(); }).then(function(data) {
+            loading.classList.remove('active');
+            if (data.success) displayResearchResults('🏢 Competitor Analysis', data);
+            else addMessage('assistant', '❌ Error: ' + data.error);
+        }).catch(function(err) { loading.classList.remove('active'); addMessage('assistant', '❌ Error: ' + err.message); });
+    }
+    
+    function searchLeads() {
+        var industry = prompt('Enter industry to search (or leave blank for general):', '');
+        addMessage('user', '🎯 Find Potential Leads' + (industry ? ' in ' + industry : ''));
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        var url = '/api/research/leads' + (industry ? '?industry=' + encodeURIComponent(industry) : '');
+        fetch(url).then(function(r) { return r.json(); }).then(function(data) {
+            loading.classList.remove('active');
+            if (data.success) displayResearchResults('🎯 Potential Leads', data);
+            else addMessage('assistant', '❌ Error: ' + data.error);
+        }).catch(function(err) { loading.classList.remove('active'); addMessage('assistant', '❌ Error: ' + err.message); });
+    }
+    
+    function customResearch() {
+        var query = document.getElementById('researchQuery').value.trim();
+        if (!query) { alert('Please enter a research topic'); return; }
+        addMessage('user', '🔍 Research: ' + query);
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        fetch('/api/research/topic', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ topic: query }) })
+            .then(function(r) { return r.json(); }).then(function(data) {
+                loading.classList.remove('active');
+                if (data.success) { displayResearchResults('🔍 Research: ' + query, data); document.getElementById('researchQuery').value = ''; }
+                else addMessage('assistant', '❌ Error: ' + data.error);
+            }).catch(function(err) { loading.classList.remove('active'); addMessage('assistant', '❌ Error: ' + err.message); });
+    }
+    
+    // =============================================================================
+    // ALERT SYSTEM FUNCTIONS
+    // =============================================================================
+    
+    function checkAlertStatus() {
+        fetch('/api/alerts/status')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var statusDiv = document.getElementById('alertsStatus');
+                if (data.available) {
+                    var emailStatus = data.email_enabled ? '✅ Email ON' : '⚠️ Email OFF';
+                    statusDiv.innerHTML = '<strong>✅ Status:</strong> Online<br><small>' + emailStatus + ' | Recipient: ' + (data.alert_recipient || 'Not set') + '</small>';
+                    statusDiv.className = 'alerts-status';
+                    loadAlertCounts();
+                    loadRecentAlerts();
+                } else {
+                    statusDiv.innerHTML = '<strong>⚠️ Status:</strong> Not initialized';
+                    statusDiv.className = 'alerts-status error';
+                }
+            })
+            .catch(function(err) {
+                var statusDiv = document.getElementById('alertsStatus');
+                statusDiv.innerHTML = '<strong>❌ Status:</strong> Error connecting';
+                statusDiv.className = 'alerts-status error';
+            });
+    }
+    
+    function loadAlertCounts() {
+        fetch('/api/alerts/counts')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.success) {
+                    document.getElementById('criticalCount').textContent = data.critical_count || 0;
+                    document.getElementById('highCount').textContent = data.high_count || 0;
+                    document.getElementById('unreadCount').textContent = data.total_unread || 0;
+                }
+            });
+    }
+    
+    function loadRecentAlerts() {
+        fetch('/api/alerts?limit=10&unread=true')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var listDiv = document.getElementById('alertList');
+                if (data.success && data.alerts && data.alerts.length > 0) {
+                    var html = '';
+                    data.alerts.forEach(function(alert) {
+                        html += '<div class="alert-item ' + alert.priority + '" onclick="viewAlert(' + alert.id + ')">';
+                        html += '<div class="alert-item-title">' + alert.title + '</div>';
+                        html += '<div class="alert-item-summary">' + (alert.summary || '').substring(0, 80) + '...</div>';
+                        html += '<div class="alert-item-meta">' + alert.category + ' • ' + formatTimeAgo(alert.created_at) + '</div>';
+                        html += '<div class="alert-item-actions">';
+                        html += '<button class="dismiss-btn" onclick="event.stopPropagation(); dismissAlert(' + alert.id + ')">Dismiss</button>';
+                        html += '<button class="action-btn" onclick="event.stopPropagation(); viewAlert(' + alert.id + ')">View</button>';
+                        html += '</div></div>';
+                    });
+                    listDiv.innerHTML = html;
+                } else {
+                    listDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No unread alerts 🎉</div>';
+                }
+            });
+    }
+    
+    function formatTimeAgo(dateStr) {
+        var date = new Date(dateStr);
+        var now = new Date();
+        var diff = Math.floor((now - date) / 1000);
+        if (diff < 60) return 'just now';
+        if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+        if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+        return Math.floor(diff / 86400) + 'd ago';
+    }
+    
+    function viewAlert(alertId) {
+        fetch('/api/alerts/' + alertId)
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.success && data.alert) {
+                    var alert = data.alert;
+                    var content = '<h3>🔔 Alert Details</h3>';
+                    content += '<div style="padding: 15px; background: #f9f9f9; border-radius: 8px; margin: 10px 0;">';
+                    content += '<strong style="font-size: 16px;">' + alert.title + '</strong><br>';
+                    content += '<span style="font-size: 12px; color: #666;">Priority: <strong>' + alert.priority.toUpperCase() + '</strong> | Category: ' + alert.category + '</span>';
+                    content += '</div>';
+                    content += '<p>' + (alert.summary || '') + '</p>';
+                    if (alert.details) content += '<div style="padding: 10px; background: white; border: 1px solid #e0e0e0; border-radius: 6px; margin: 10px 0;">' + alert.details + '</div>';
+                    if (alert.source_url) content += '<p><a href="' + alert.source_url + '" target="_blank" style="color: #667eea;">🔗 View Source</a></p>';
+                    content += '<div style="margin-top: 15px;"><button onclick="convertAlertToLead(' + alert.id + ')" style="padding: 10px 20px; background: linear-gradient(135deg, #4caf50 0%, #81c784 100%); color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">📊 Convert to Lead</button></div>';
+                    addMessage('assistant', content, null, 'alerts');
+                    fetch('/api/alerts/' + alertId + '/read', { method: 'POST' });
+                    loadAlertCounts();
+                    loadRecentAlerts();
+                }
+            });
+    }
+    
+    function dismissAlert(alertId) {
+        fetch('/api/alerts/' + alertId + '/dismiss', { method: 'POST' })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.success) {
+                    loadAlertCounts();
+                    loadRecentAlerts();
+                }
+            });
+    }
+    
+    function runLeadScan() {
+        addMessage('user', '🎯 Run Lead Scan Now');
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        document.querySelector('.loading-text').textContent = 'Running lead scan... This may take a minute...';
+        
+        fetch('/api/alerts/jobs')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var leadJob = data.jobs.find(function(j) { return j.job_name === 'daily_lead_scan'; });
+                if (leadJob) {
+                    return fetch('/api/alerts/jobs/' + leadJob.id + '/run', { method: 'POST' });
+                } else {
+                    throw new Error('Lead scan job not found');
+                }
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                loading.classList.remove('active');
+                if (data.success) {
+                    addMessage('assistant', '✅ Lead scan completed! Found ' + data.alerts_generated + ' new alerts.\n\nCheck the Recent Alerts section for details.');
+                    loadAlertCounts();
+                    loadRecentAlerts();
+                } else {
+                    addMessage('assistant', '❌ Lead scan failed: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(function(err) {
+                loading.classList.remove('active');
+                addMessage('assistant', '❌ Error: ' + err.message);
+            });
+    }
+    
+    function viewScheduledJobs() {
+        addMessage('user', '📅 View Scheduled Jobs');
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        
+        fetch('/api/alerts/jobs')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                loading.classList.remove('active');
+                if (data.success) {
+                    var content = '<h3>📅 Scheduled Jobs</h3>';
+                    content += '<div style="margin-top: 15px;">';
+                    data.jobs.forEach(function(job) {
+                        var statusBadge = job.is_enabled ? '✅ Enabled' : '⚠️ Disabled';
+                        content += '<div style="padding: 12px; background: white; border-left: 3px solid ' + (job.is_enabled ? '#4caf50' : '#ff9800') + '; margin-bottom: 10px; border-radius: 0 6px 6px 0;">';
+                        content += '<strong>' + job.job_name + '</strong> <span style="font-size: 11px;">(' + statusBadge + ')</span><br>';
+                        content += '<span style="font-size: 12px; color: #666;">Type: ' + job.job_type + ' | Schedule: ' + job.schedule_type + ' at ' + job.schedule_time + '</span><br>';
+                        if (job.last_run_at) content += '<span style="font-size: 11px; color: #999;">Last run: ' + job.last_run_at + ' (' + job.last_result + ')</span>';
+                        content += '</div>';
+                    });
+                    content += '</div>';
+                    addMessage('assistant', content, null, 'alerts');
+                }
+            });
+    }
+    
+    function addMonitoredClient() {
+        var clientName = prompt('Enter client name to monitor:', '');
+        if (!clientName) return;
+        var searchTerms = prompt('Enter custom search terms (or leave blank to use client name):', '');
+        
+        fetch('/api/alerts/monitored/client', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ name: clientName, search_terms: searchTerms || null })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                addMessage('assistant', '✅ Now monitoring: ' + clientName + '\n\nThe system will check for news about this client during scheduled scans.');
+            } else {
+                addMessage('assistant', '❌ Error: ' + data.error);
+            }
+        });
+    }
+    
+    // =============================================================================
+    // PIPELINE DASHBOARD FUNCTIONS - Updated January 24, 2026
+    // =============================================================================
+    
+    function checkPipelineStatus() {
+        fetch('/api/intelligence/status')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var statusDiv = document.getElementById('pipelineStatus');
+                if (data.available) {
+                    statusDiv.innerHTML = '<strong>✅ Status:</strong> Online<br><small>' + data.past_clients_in_database + ' past clients in scoring database</small>';
+                    statusDiv.className = 'pipeline-status';
+                    loadPipelineSummary();
+                    loadTopLeads();
+                } else {
+                    statusDiv.innerHTML = '<strong>⚠️ Status:</strong> Not initialized';
+                    statusDiv.className = 'pipeline-status error';
+                }
+            })
+            .catch(function(err) {
+                var statusDiv = document.getElementById('pipelineStatus');
+                statusDiv.innerHTML = '<strong>❌ Status:</strong> Error connecting';
+                statusDiv.className = 'pipeline-status error';
+            });
+    }
+    
+    function loadPipelineSummary() {
+        fetch('/api/intelligence/pipeline')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.success) {
+                    var byStage = data.by_stage || {};
+                    document.getElementById('detectedCount').textContent = (byStage.detected || {}).count || 0;
+                    document.getElementById('qualifiedCount').textContent = (byStage.qualified || {}).count || 0;
+                    document.getElementById('contactedCount').textContent = (byStage.contacted || {}).count || 0;
+                    document.getElementById('proposalCount').textContent = (byStage.proposal || {}).count || 0;
+                    
+                    var highPriority = data.high_priority || 0;
+                    var banner = document.getElementById('highPriorityBanner');
+                    if (highPriority > 0) {
+                        document.getElementById('highPriorityCount').textContent = highPriority;
+                        banner.style.display = 'flex';
+                    } else {
+                        banner.style.display = 'none';
+                    }
+                }
+            });
+    }
+    
+    function loadTopLeads() {
+        fetch('/api/intelligence/leads?limit=5&min_score=0')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var listDiv = document.getElementById('topLeadsList');
+                if (data.success && data.leads && data.leads.length > 0) {
+                    var html = '';
+                    data.leads.forEach(function(lead) {
+                        var gradeClass = getGradeClass(lead.score);
+                        var scoreClass = lead.score >= 70 ? 'high' : (lead.score >= 40 ? 'medium' : 'low');
+                        html += '<div class="lead-card ' + gradeClass + '" onclick="viewLead(' + lead.id + ')">';
+                        html += '<div class="lead-card-header">';
+                        html += '<span class="lead-card-company">' + escapeHtmlPipeline(lead.company_name) + '</span>';
+                        html += '<span class="lead-card-score ' + scoreClass + '">' + lead.score + '</span>';
+                        html += '</div>';
+                        if (lead.industry) html += '<div class="lead-card-industry">' + escapeHtmlPipeline(lead.industry) + '</div>';
+                        html += '<span class="lead-card-stage">' + lead.pipeline_stage + '</span>';
+                        html += '<div class="lead-card-actions">';
+                        html += '<button onclick="event.stopPropagation(); draftEmail(' + lead.id + ')">📧 Email</button>';
+                        html += '<button onclick="event.stopPropagation(); moveLeadStage(' + lead.id + ')">➡️ Move</button>';
+                        html += '</div>';
+                        html += '</div>';
+                    });
+                    listDiv.innerHTML = html;
+                } else {
+                    listDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No leads yet. Import from alerts or add manually.</div>';
+                }
+            });
+    }
+    
+    function getGradeClass(score) {
+        if (score >= 80) return 'grade-a';
+        if (score >= 65) return 'grade-b';
+        if (score >= 50) return 'grade-c';
+        return 'grade-d';
+    }
+    
+    function escapeHtmlPipeline(text) {
+        if (!text) return '';
+        var div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+    
+    // =============================================================================
+    // ADD LEAD MODAL FUNCTIONS - Added January 24, 2026
+    // =============================================================================
+    
+    function openAddLeadModal() {
+        document.getElementById('addLeadForm').reset();
+        document.getElementById('addLeadModal').classList.add('active');
+    }
+    
+    function closeAddLeadModal() {
+        document.getElementById('addLeadModal').classList.remove('active');
+    }
+    
+    function submitNewLead(event) {
+        event.preventDefault();
+        
+        var company = document.getElementById('leadCompanyName').value.trim();
+        var industry = document.getElementById('leadIndustry').value;
+        var headcount = document.getElementById('leadHeadcount').value;
+        var notes = document.getElementById('leadNotes').value.trim();
+        
+        if (!company) {
+            alert('Please enter a company name');
+            return;
+        }
+        
+        if (!industry) {
+            alert('Please select an industry');
+            return;
+        }
+        
+        closeAddLeadModal();
+        
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        document.querySelector('.loading-text').textContent = 'Creating lead and calculating score...';
+        
+        fetch('/api/intelligence/leads', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                company_name: company,
+                industry: industry,
+                headcount: headcount ? parseInt(headcount) : null,
+                notes: notes || null,
+                source: 'manual'
+            })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            loading.classList.remove('active');
+            if (data.success) {
+                addMessage('assistant', '✅ Lead created: **' + company + '**\n\n**Score:** ' + data.score + '/100 (Grade: ' + data.grade + ')\n\nThe lead has been added to your pipeline.');
+                loadPipelineSummary();
+                loadTopLeads();
+            } else {
+                addMessage('assistant', '❌ Error: ' + data.error);
+            }
+        })
+        .catch(function(err) {
+            loading.classList.remove('active');
+            addMessage('assistant', '❌ Error: ' + err.message);
+        });
+    }
+    
+    function addNewLead() {
+        openAddLeadModal();
+    }
+    
+    function importLeadsFromAlerts() {
+        addMessage('user', '📥 Import Leads from Alerts');
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        
+        fetch('/api/intelligence/leads/import-alerts', { method: 'POST' })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                loading.classList.remove('active');
+                if (data.success) {
+                    var msg = '✅ Import complete!\n\n';
+                    msg += '• **Imported:** ' + data.imported + ' new leads\n';
+                    msg += '• **Skipped:** ' + data.skipped + ' (already in pipeline)\n';
+                    if (data.errors && data.errors.length > 0) {
+                        msg += '• **Errors:** ' + data.errors.length;
+                    }
+                    addMessage('assistant', msg);
+                    loadPipelineSummary();
+                    loadTopLeads();
+                } else {
+                    addMessage('assistant', '❌ Import failed: ' + data.error);
+                }
+            })
+            .catch(function(err) {
+                loading.classList.remove('active');
+                addMessage('assistant', '❌ Error: ' + err.message);
+            });
+    }
+    
+    function viewAllLeads() {
+        addMessage('user', '👁️ View All Leads');
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        
+        fetch('/api/intelligence/dashboard')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                loading.classList.remove('active');
+                if (data.success) {
+                    var content = '<h3>📊 Pipeline Dashboard</h3>';
+                    content += '<div style="display: flex; gap: 15px; margin: 15px 0; flex-wrap: wrap;">';
+                    data.stages.forEach(function(stage) {
+                        var stageData = data.summary.by_stage[stage.id] || { count: 0, avg_score: 0 };
+                        content += '<div style="flex: 1; min-width: 100px; padding: 15px; background: ' + stage.color + '20; border-left: 4px solid ' + stage.color + '; border-radius: 6px;">';
+                        content += '<div style="font-size: 24px; font-weight: 700; color: ' + stage.color + ';">' + stageData.count + '</div>';
+                        content += '<div style="font-size: 12px; color: #666;">' + stage.name + '</div>';
+                        content += '</div>';
+                    });
+                    content += '</div>';
+                    content += '<div style="margin-top: 20px;">';
+                    ['detected', 'qualified', 'contacted', 'proposal'].forEach(function(stageId) {
+                        var leads = data.kanban[stageId] || [];
+                        var stageInfo = data.stages.find(function(s) { return s.id === stageId; });
+                        content += '<div style="margin-bottom: 20px;">';
+                        content += '<h4 style="color: ' + stageInfo.color + '; border-bottom: 2px solid ' + stageInfo.color + '; padding-bottom: 5px;">' + stageInfo.name + ' (' + leads.length + ')</h4>';
+                        if (leads.length > 0) {
+                            leads.slice(0, 5).forEach(function(lead) {
+                                content += '<div style="padding: 10px; background: #f9f9f9; border-radius: 6px; margin: 8px 0; border-left: 3px solid ' + stageInfo.color + ';">';
+                                content += '<strong>' + lead.company_name + '</strong> ';
+                                content += '<span style="background: ' + (lead.score >= 70 ? '#4caf50' : (lead.score >= 40 ? '#ff9800' : '#9e9e9e')) + '; color: white; padding: 2px 8px; border-radius: 10px; font-size: 11px;">' + lead.score + '</span>';
+                                if (lead.industry) content += '<br><span style="font-size: 11px; color: #666;">' + lead.industry + '</span>';
+                                content += '</div>';
+                            });
+                            if (leads.length > 5) {
+                                content += '<div style="font-size: 11px; color: #999; text-align: center;">+' + (leads.length - 5) + ' more</div>';
+                            }
+                        } else {
+                            content += '<div style="color: #999; font-size: 12px; padding: 10px;">No leads in this stage</div>';
+                        }
+                        content += '</div>';
+                    });
+                    content += '</div>';
+                    addMessage('assistant', content, null, 'pipeline');
+                }
+            })
+            .catch(function(err) {
+                loading.classList.remove('active');
+                addMessage('assistant', '❌ Error: ' + err.message);
+            });
+    }
+    
+    function changeLeadStage(leadId, newStage) {
+        fetch('/api/intelligence/leads/' + leadId + '/stage', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ stage: newStage })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                addMessage('assistant', '✅ Lead moved to **' + newStage.toUpperCase() + '** stage.');
+                loadPipelineSummary();
+                loadTopLeads();
+            } else {
+                addMessage('assistant', '❌ Error: ' + data.error);
+            }
+        });
+    }
+    
+    function moveLeadStage(leadId) {
+        var stages = ['detected', 'qualified', 'contacted', 'proposal', 'won', 'lost'];
+        var newStage = prompt('Enter new stage (' + stages.join(', ') + '):', 'qualified');
+        if (newStage && stages.includes(newStage.toLowerCase())) {
+            changeLeadStage(leadId, newStage.toLowerCase());
+        }
+    }
+    
+    function convertAlertToLead(alertId) {
+        fetch('/api/intelligence/leads/from-alert', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ alert_id: alertId })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                addMessage('assistant', '✅ Alert converted to lead!\n\n**Score:** ' + data.score + '/100 (Grade: ' + data.grade + ')\n\nView it in the Pipeline dashboard.');
+                loadPipelineSummary();
+                loadTopLeads();
+            } else {
+                addMessage('assistant', '❌ Error: ' + data.error);
+            }
+        });
+    }
+    
+    // =============================================================================
+    // INITIALIZATION
+    // =============================================================================
+    
+    document.addEventListener('DOMContentLoaded', function() {
+        setTimeout(function() {
+            checkResearchStatus();
+            checkAlertStatus();
+            checkPipelineStatus();
+        }, 500);
+    });
+   // =============================================================================
+// IMPLEMENTATION MANUAL GENERATOR FUNCTIONS - Added January 28, 2026
+// =============================================================================
+
+var currentManualId = null;
+
+function checkManualsStatus() {
+    fetch('/api/manuals/status')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var statusDiv = document.getElementById('manualsStatus');
+            if (data.available) {
+                statusDiv.innerHTML = '<strong>✅ Status:</strong> Online - Conversational manual generation ready';
+                statusDiv.className = 'manuals-status';
+                loadManualsSummary();
+                loadRecentManuals();
+            } else {
+                statusDiv.innerHTML = '<strong>⚠️ Status:</strong> Not available';
+                statusDiv.className = 'manuals-status error';
+            }
+        })
+        .catch(function(err) {
+            var statusDiv = document.getElementById('manualsStatus');
+            statusDiv.innerHTML = '<strong>❌ Status:</strong> Error connecting';
+            statusDiv.className = 'manuals-status error';
+        });
+}
+
+function loadManualsSummary() {
+    fetch('/api/manuals/dashboard')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                var active = (data.status_counts.gathering_info || 0) + (data.status_counts.drafting || 0) + (data.status_counts.reviewing || 0);
+                var drafting = data.status_counts.drafting || 0;
+                var complete = data.status_counts.complete || 0;
+                
+                document.getElementById('activeManualsCount').textContent = active;
+                document.getElementById('draftingCount').textContent = drafting;
+                document.getElementById('completeCount').textContent = complete;
+            }
+        });
+}
+
+function loadRecentManuals() {
+    fetch('/api/manuals/list?status=all&limit=5')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var listDiv = document.getElementById('recentManualsList');
+            if (data.success && data.manuals && data.manuals.length > 0) {
+                var html = '';
+                data.manuals.forEach(function(manual) {
+                    var statusName = manual.project_status.replace(/_/g, ' ');
+                    var statusColor = getManualStatusColor(manual.project_status);
+                    
+                    html += '<div class="manual-card" onclick="continueManual(' + manual.id + ')" style="border-left-color: ' + statusColor + ';">';
+                    html += '<div class="manual-card-client">' + escapeHtml(manual.client_name) + '</div>';
+                    html += '<span class="manual-card-status" style="background: ' + statusColor + '20; color: ' + statusColor + ';">' + statusName + '</span>';
+                    html += '</div>';
+                });
+                listDiv.innerHTML = html;
+            } else {
+                listDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No manual projects yet</div>';
+            }
+        });
+}
+
+function getManualStatusColor(status) {
+    var colors = {
+        'gathering_info': '#2196f3',
+        'ready_to_draft': '#ff9800',
+        'drafting': '#9c27b0',
+        'reviewing': '#f44336',
+        'ready_to_finalize': '#4caf50',
+        'complete': '#607d8b'
+    };
+    return colors[status] || '#667eea';
+}
+
+function startNewManual() {
+    var clientName = prompt('What is the client name?', '');
+    if (!clientName) return;
+    
+    var facilityName = prompt('What is the facility/plant name? (optional)', '');
+    
+    addMessage('user', '📝 Create implementation manual for ' + clientName);
+    
+    var loading = document.getElementById('loadingIndicator');
+    loading.classList.add('active');
+    document.querySelector('.loading-text').textContent = 'Starting new manual project...';
+    
+    fetch('/api/manuals/start', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            client_name: clientName,
+            facility_name: facilityName || null
+        })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        loading.classList.remove('active');
+        if (data.success) {
+            currentManualId = data.manual_id;
+            
+            var msg = '✅ **Manual project started for ' + clientName + '!**\n\n';
+            msg += 'I need to ask you some questions to gather the information for the manual.\n\n';
+            
+            if (data.next_question) {
+                msg += '**Question:** ' + data.next_question.question;
+            }
+            
+            addMessage('assistant', msg);
+            loadManualsSummary();
+            loadRecentManuals();
+        } else {
+            addMessage('assistant', '❌ Error: ' + data.error);
+        }
+    })
+    .catch(function(err) {
+        loading.classList.remove('active');
+        addMessage('assistant', '❌ Error: ' + err.message);
+    });
+}
+
+function continueManual(manualId) {
+    currentManualId = manualId;
+    
+    addMessage('user', '📝 Continue Manual Project #' + manualId);
+    
+    var loading = document.getElementById('loadingIndicator');
+    loading.classList.add('active');
+    
+    fetch('/api/manuals/' + manualId)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            loading.classList.remove('active');
+            if (data.success) {
+                var manual = data.manual;
+                var msg = '📝 **' + manual.client_name + ' Implementation Manual**\n\n';
+                msg += '**Status:** ' + manual.project_status.replace(/_/g, ' ') + '\n';
+                msg += '**Progress:** ' + data.section_status.approved_sections + '/' + data.section_status.total_sections + ' sections approved\n\n';
+                
+                if (data.next_question) {
+                    msg += '**Next Question:** ' + data.next_question.question + '\n\n';
+                    msg += 'Just type your answer, or say "skip" to move on.';
+                } else if (manual.project_status === 'ready_to_draft') {
+                    msg += '✅ All information collected!\n\n';
+                    msg += 'Ready to generate draft sections. Say "generate [section name]" or "start drafting".';
+                } else if (manual.project_status === 'drafting') {
+                    msg += 'Currently working on sections.\n\n';
+                    msg += 'Sections completed: ' + data.section_status.drafted_sections + '/' + data.section_status.total_sections + '\n\n';
+                    msg += 'Say "continue drafting" to work on the next section.';
+                } else if (manual.project_status === 'ready_to_finalize') {
+                    msg += '🎉 All sections approved!\n\n';
+                    msg += 'Ready to generate the final Word document. Say "finalize manual".';
+                }
+                
+                addMessage('assistant', msg);
+            } else {
+                addMessage('assistant', '❌ Error: ' + data.error);
+            }
+        })
+        .catch(function(err) {
+            loading.classList.remove('active');
+            addMessage('assistant', '❌ Error: ' + err.message);
+        });
+}
+
+function viewAllManuals() {
+    addMessage('user', '👁️ View All Manual Projects');
+    
+    var loading = document.getElementById('loadingIndicator');
+    loading.classList.add('active');
+    
+    fetch('/api/manuals/list?status=all&limit=50')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            loading.classList.remove('active');
+            if (data.success) {
+                var msg = '# 📝 All Manual Projects\n\n';
+                
+                if (data.manuals && data.manuals.length > 0) {
+                    data.manuals.forEach(function(manual) {
+                        msg += '### ' + manual.client_name;
+                        if (manual.facility_name) msg += ' - ' + manual.facility_name;
+                        msg += '\n';
+                        msg += '- **Status:** ' + manual.project_status.replace(/_/g, ' ') + '\n';
+                        msg += '- **ID:** ' + manual.id + ' (Click to continue)\n\n';
+                    });
+                } else {
+                    msg += 'No manual projects found.';
+                }
+                
+                addMessage('assistant', msg);
+            }
+        });
+}
+
+function viewLessons() {
+    addMessage('user', '💡 View Lessons Learned');
+    
+    var loading = document.getElementById('loadingIndicator');
+    loading.classList.add('active');
+    
+    fetch('/api/manuals/lessons')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            loading.classList.remove('active');
+            if (data.success) {
+                var msg = '# 💡 Lessons Learned\n\n';
+                
+                if (data.lessons && data.lessons.length > 0) {
+                    data.lessons.forEach(function(lesson) {
+                        msg += '### ' + lesson.lesson_category + '\n';
+                        msg += lesson.lesson_text + '\n';
+                        if (lesson.industry) msg += '_Industry: ' + lesson.industry + '_\n';
+                        msg += '\n';
+                    });
+                } else {
+                    msg += 'No lessons recorded yet. As you create manuals, the system will learn and remember best practices.';
+                }
+                
+                addMessage('assistant', msg);
+            }
+        });
+}
+
+// Initialize manual generator on page load
+document.addEventListener('DOMContentLoaded', function() {
+    setTimeout(function() {
+        checkManualsStatus();
+    }, 500);
+});     
+    </script>
+</body>
+</html>
+
+<!-- 
+=============================================================================
+INDEX.HTML - AI Swarm Unified Interface
+Updated: January 24, 2026
+Changes: Added modal-based Add Lead form with industry dropdown to prevent typos
+I did no harm and this file is not truncated 
+=============================================================================
+-->
