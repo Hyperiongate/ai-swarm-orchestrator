@@ -1,7 +1,7 @@
 """
 Orchestration Handler - Main AI Task Processing
 Created: January 31, 2026
-Last Updated: February 5, 2026 - INCREASED PROGRESSIVE ANALYSIS FROM 100 TO 500 ROWS
+Last Updated: February 5, 2026 - FIXED MEMORY CRASH ON LARGE EXCEL FILES
 
 This file handles the main /api/orchestrate endpoint that processes user requests.
 Separated from core.py to make it easier to fix and maintain.
@@ -17,6 +17,12 @@ CRITICAL KNOWN ISSUE - February 5, 2026:
 WORKAROUND: For large Excel files (5MB+), use FILE UPLOAD instead of selecting from project!
 
 UPDATES:
+- February 5, 2026 (v6): CRITICAL FIX - Memory crash on large Excel cloud downloads
+  * Removed redundant pd.ExcelFile() call in handle_large_excel_initial() that loaded
+    entire 26MB+ file into memory AGAIN after chunk extraction already succeeded
+  * Now uses sheet_names from chunk_result (provided by progressive_file_analyzer v5)
+  * This was causing 500 errors after successful Google Drive download
+  * Also fixed: cloud-downloaded files now use correct user_request (not the URL wrapper)
 - February 5, 2026: INCREASED PROGRESSIVE ANALYSIS from 100 to 500 rows for initial analysis
   * Large files now get 5x more data in first pass (100 → 500 rows)
   * Provides much deeper operational insights from the start
@@ -194,6 +200,7 @@ def orchestrate():
     """
     Main orchestration endpoint with proactive intelligence and conversation memory.
     
+    UPDATED February 5, 2026 (v6): Fixed memory crash on large Excel cloud downloads
     UPDATED February 5, 2026: Increased progressive analysis from 100 to 500 rows
     UPDATED February 5, 2026: Fixed syntax error (incomplete try block for Excel detection)
     UPDATED February 4, 2026: Added auto-learning integration
@@ -244,7 +251,8 @@ def orchestrate():
         # This prevents UnboundLocalError when file_ids are used
         # ====================================================================
         file_contents = ""
-     # ====================================================================
+        
+        # ====================================================================
         # CLOUD LINK DETECTION - February 5, 2026
         # Check if user provided a cloud storage link instead of file upload
         # Downloads file using streaming to prevent RAM crashes
@@ -279,6 +287,21 @@ def orchestrate():
                 # File downloaded successfully - add to file_paths for processing
                 file_paths = [local_filepath]
                 print(f"✅ Downloaded {metadata['size_bytes'] / (1024*1024):.1f}MB from {metadata['service']}")
+                
+                # ================================================================
+                # FIX February 5, 2026 (v6): Clean user_request for cloud links
+                # The frontend wraps the URL in "Please analyze this file: <URL>"
+                # Strip the URL so the AI gets a clean analysis request
+                # ================================================================
+                clean_request = re.sub(url_pattern, '', user_request).strip()
+                if clean_request and clean_request.lower() not in ['please analyze this file:', 'please analyze this file', 'analyze this file:']:
+                    user_request = clean_request
+                else:
+                    # Default request when user just pasted a link
+                    file_basename = os.path.basename(local_filepath)
+                    user_request = f"Please analyze this file: {metadata.get('original_filename', file_basename)}"
+                print(f"📝 Clean user request: {user_request}")
+                # ================================================================
                 
                 # Continue to normal file processing below...
         # ====================================================================
@@ -1739,6 +1762,10 @@ def handle_large_excel_initial(file_path, user_request, conversation_id, project
     """
     Handle initial upload of a large Excel file - analyze first 500 rows.
     
+    UPDATED February 5, 2026 (v6): Removed redundant pd.ExcelFile() call that loaded
+    entire file into memory. Now uses sheet_names from chunk_result (provided by 
+    progressive_file_analyzer v5).
+    
     UPDATED: February 5, 2026 - Increased from 100 to 500 rows
     Added: January 31, 2026
     """
@@ -1782,16 +1809,15 @@ def handle_large_excel_initial(file_path, user_request, conversation_id, project
         # Build analysis prompt
         from orchestration.ai_clients import call_gpt4
         
-        # First, check ALL worksheets in the file
-        import pandas as pd
-        try:
-            excel_file = pd.ExcelFile(file_path)
-            sheet_names = excel_file.sheet_names
-            num_sheets = len(sheet_names)
-            sheets_summary = f"\n📋 **FILE CONTAINS {num_sheets} WORKSHEET(S):** {', '.join(sheet_names)}\n"
-        except:
-            sheets_summary = ""
-            num_sheets = 1
+        # ================================================================
+        # FIX February 5, 2026 (v6): Use sheet info from chunk_result
+        # instead of calling pd.ExcelFile() which reads the entire file AGAIN
+        # The progressive_file_analyzer v5 now includes sheet_names in results
+        # ================================================================
+        sheet_names = chunk_result.get('sheet_names', ['Sheet1'])
+        num_sheets = chunk_result.get('num_sheets', 1)
+        sheets_summary = f"\n📋 **FILE CONTAINS {num_sheets} WORKSHEET(S):** {', '.join(sheet_names)}\n"
+        # ================================================================
         
         analysis_prompt = f"""You are Jim Goodwin, owner of Shiftwork Solutions LLC with 30+ years analyzing workforce operations for hundreds of clients.
 
