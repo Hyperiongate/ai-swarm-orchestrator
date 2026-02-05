@@ -644,6 +644,166 @@
                     <label>Phase</label>
                     <span id="projectPhase"><div class="phase-indicator">Not started</div></span>
                     <button onclick="startNewProject()" style="width: 100%; padding: 10px; margin-top: 10px; background: #667eea; color: white; border: none; border-radius: 8px; cursor: pointer;">+ New Project</button>
+                    <!-- ============================================================================
+     CLOUD LINK INPUT - Add this BEFORE the FILE BROWSER section (before line 487)
+     Date: February 5, 2026
+     Location: In the "Project Info Panel" section, after the "New Project" button
+     ============================================================================ -->
+
+<!-- CLOUD LINK INPUT FOR LARGE FILES -->
+<div class="cloud-link-section" style="margin-top: 20px; padding: 15px; background: linear-gradient(135deg, #e3f2fd 0%, #f3e5f5 100%); border-radius: 10px; border: 2px solid #2196f3;">
+    <h4 style="margin: 0 0 10px 0; color: #1565c0; font-size: 15px; font-weight: 700;">
+        🔗 Large File Analysis
+    </h4>
+    
+    <p style="color: #555; font-size: 12px; margin-bottom: 12px; line-height: 1.4;">
+        <strong>For files over 5MB:</strong> Upload to Google Drive or Dropbox, then paste the share link below.
+    </p>
+    
+    <div style="display: flex; gap: 8px; align-items: stretch; margin-bottom: 10px;">
+        <input 
+            type="text" 
+            id="cloudLinkInput"
+            placeholder="Paste Google Drive or Dropbox link here..."
+            style="flex: 1; padding: 10px 12px; border: 2px solid #2196f3; border-radius: 8px; font-size: 13px; font-family: inherit;"
+        />
+        
+        <button 
+            onclick="handleCloudLink()"
+            style="padding: 10px 16px; background: linear-gradient(135deg, #2196f3 0%, #1976d2 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; white-space: nowrap; transition: all 0.2s;"
+            onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(33,150,243,0.4)';"
+            onmouseout="this.style.transform=''; this.style.boxShadow='';"
+        >
+            📥 Analyze
+        </button>
+    </div>
+    
+    <div id="cloudLinkStatus" style="font-size: 12px; color: #666; min-height: 20px;"></div>
+    
+    <details style="margin-top: 12px;">
+        <summary style="cursor: pointer; color: #1976d2; font-size: 12px; font-weight: 600; padding: 4px 0;">
+            ℹ️ How to get a shareable link
+        </summary>
+        <div style="margin-top: 8px; padding: 10px; background: white; border-radius: 6px; font-size: 11px; line-height: 1.5; border: 1px solid #e0e0e0;">
+            <p style="margin: 0 0 8px 0;"><strong>📁 Google Drive:</strong></p>
+            <ol style="margin: 0 0 10px 0; padding-left: 18px;">
+                <li>Right-click file → "Share"</li>
+                <li>Click "Change to anyone with the link"</li>
+                <li>Copy link and paste above</li>
+            </ol>
+            
+            <p style="margin: 0 0 8px 0;"><strong>📦 Dropbox:</strong></p>
+            <ol style="margin: 0 0 10px 0; padding-left: 18px;">
+                <li>Right-click file → "Copy link"</li>
+                <li>Paste the link above</li>
+            </ol>
+            
+            <p style="margin: 0; padding: 8px; background: #e8f5e9; border-radius: 4px; color: #2e7d32; font-weight: 600;">
+                ✅ Your file stays in your cloud - we download it for analysis only
+            </p>
+        </div>
+    </details>
+</div>
+
+<!-- JAVASCRIPT FOR CLOUD LINK HANDLING -->
+<script>
+/**
+ * Handle cloud storage link submission
+ * This integrates with your existing orchestrate endpoint
+ */
+function handleCloudLink() {
+    const input = document.getElementById('cloudLinkInput');
+    const statusDiv = document.getElementById('cloudLinkStatus');
+    const link = input.value.trim();
+    
+    // Validate link
+    if (!link) {
+        statusDiv.innerHTML = '<span style="color: #d32f2f;">❌ Please paste a link</span>';
+        return;
+    }
+    
+    // Check if it's a valid cloud storage link
+    const validServices = ['drive.google.com', 'docs.google.com', 'dropbox.com', 'onedrive', '1drv.ms'];
+    const isValidLink = validServices.some(service => link.toLowerCase().includes(service));
+    
+    if (!isValidLink) {
+        statusDiv.innerHTML = '<span style="color: #d32f2f;">❌ Please use a Google Drive, Dropbox, or OneDrive link</span>';
+        return;
+    }
+    
+    // Show loading state
+    statusDiv.innerHTML = '<span style="color: #1976d2;">⏳ Downloading from cloud storage...</span>';
+    
+    // Get current project/conversation context
+    const urlParams = new URLSearchParams(window.location.search);
+    const projectId = urlParams.get('project') || getCurrentProjectId();
+    const conversationId = window.currentConversationId || null;
+    
+    // Send to backend - the orchestration handler will detect the link
+    const requestText = `Please analyze this file: ${link}`;
+    
+    // Call your existing orchestrate endpoint
+    fetch('/api/orchestrate', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            request: requestText,
+            project_id: projectId,
+            conversation_id: conversationId,
+            mode: 'project'
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            statusDiv.innerHTML = '<span style="color: #2e7d32;">✅ File downloaded and being analyzed!</span>';
+            
+            // Clear input
+            input.value = '';
+            
+            // Refresh messages if function exists
+            if (typeof loadMessages === 'function' && data.conversation_id) {
+                loadMessages(data.conversation_id);
+            }
+            
+            // Clear status after 3 seconds
+            setTimeout(() => {
+                statusDiv.innerHTML = '';
+            }, 3000);
+        } else {
+            statusDiv.innerHTML = `<span style="color: #d32f2f;">❌ ${data.error || 'Download failed'}</span>`;
+        }
+    })
+    .catch(error => {
+        console.error('Cloud link error:', error);
+        statusDiv.innerHTML = '<span style="color: #d32f2f;">❌ Network error. Please try again.</span>';
+    });
+}
+
+// Helper function to get current project ID
+function getCurrentProjectId() {
+    const select = document.getElementById('existingProjects');
+    return select ? select.value : null;
+}
+
+// Allow Enter key to submit
+document.addEventListener('DOMContentLoaded', function() {
+    const cloudInput = document.getElementById('cloudLinkInput');
+    if (cloudInput) {
+        cloudInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                handleCloudLink();
+            }
+        });
+    }
+});
+</script>
+
+<!-- ============================================================================
+     END CLOUD LINK INPUT
+     ============================================================================ -->
                     <!-- FILE BROWSER - Added January 31, 2026 -->
 <div class="file-browser-panel" style="margin-top: 20px;">
     <div class="file-browser-header" style="display: flex; justify-content: space-between; align-items: center; padding: 15px; background: #f5f5f5; border-radius: 8px 8px 0 0;">
