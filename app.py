@@ -1099,6 +1099,22 @@ except Exception as e:
     print(f"⚠️  Conversation Learning registration failed: {e}")
 
 # ============================================================================
+# PHASE 1 INTELLIGENCE UPGRADES (Added February 5, 2026)
+# Voice learning, proactive curiosity, pattern recognition dashboard
+# ============================================================================
+try:
+    from routes.phase1_intelligence import intelligence_bp
+    app.register_blueprint(intelligence_bp)
+    print("✅ Phase 1 Intelligence API registered")
+    print("   - Voice conversation learning")
+    print("   - Proactive curiosity engine")
+    print("   - Pattern recognition dashboard")
+except ImportError as e:
+    print(f"ℹ️  Phase 1 Intelligence routes not found: {e}")
+except Exception as e:
+    print(f"⚠️  Phase 1 Intelligence registration failed: {e}")
+
+# ============================================================================
 # KNOWLEDGE BACKUP SYSTEM BLUEPRINT (Added February 4, 2026)
 # ============================================================================
 try:
