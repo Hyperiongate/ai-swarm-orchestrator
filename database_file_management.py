@@ -1122,7 +1122,14 @@ def get_files_for_ai_context(project_id, max_files=5, max_chars_per_file=50000, 
     Returns:
         Formatted string with file information and content
     """
-    from file_content_reader import extract_file_content
+    # Try to import file_content_reader with fallback
+    try:
+        from file_content_reader import extract_file_content
+        HAS_FILE_READER = True
+    except ImportError:
+        print("⚠️  file_content_reader not available - using pandas fallback")
+        HAS_FILE_READER = False
+        extract_file_content = None
     
     pm = get_project_manager()
     
@@ -1169,10 +1176,33 @@ def get_files_for_ai_context(project_id, max_files=5, max_chars_per_file=50000, 
             print(f"   📏 File exists: {os.path.exists(file_path)}")
             
             if os.path.exists(file_path):
-                # Use the SAME extraction logic as file uploads
-                extraction_result = extract_file_content(file_path)
+                # Use the SAME extraction logic as file uploads (if available)
+                if HAS_FILE_READER and extract_file_content:
+                    extraction_result = extract_file_content(file_path)
+                else:
+                    # Fallback: Use pandas for basic Excel extraction
+                    file_ext = os.path.splitext(file_path)[1].lower()
+                    if file_ext in ['.xlsx', '.xls']:
+                        try:
+                            import pandas as pd
+                            df = pd.read_excel(file_path)
+                            content = f"Excel file with {len(df)} rows and {len(df.columns)} columns\n"
+                            content += f"Columns: {', '.join([str(col) for col in df.columns.tolist()])}\n\n"
+                            content += "Sample data (first 50 rows):\n"
+                            content += df.head(50).to_string()
+                            extraction_result = {'success': True, 'text': content, 'data': None}
+                        except Exception as e:
+                            extraction_result = {'success': False, 'error': str(e)}
+                    else:
+                        # For non-Excel files, read as text
+                        try:
+                            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                                content = f.read(max_chars_per_file)
+                            extraction_result = {'success': True, 'text': content, 'data': None}
+                        except Exception as e:
+                            extraction_result = {'success': False, 'error': str(e)}
                 
-                if extraction_result['success']:
+                if extraction_result.get('success'):
                     content = extraction_result['text']
                     
                     # Add metadata about what was extracted
