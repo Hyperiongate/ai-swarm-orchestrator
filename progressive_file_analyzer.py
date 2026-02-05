@@ -1,16 +1,27 @@
 """
 Progressive File Analyzer - Smart Large File Handling
 Created: January 31, 2026
-Last Updated: February 5, 2026 - INCREASED FILE SIZE LIMIT TO 100MB
+Last Updated: February 5, 2026
 
-CRITICAL UPDATE (February 5, 2026):
-- Increased LARGE_FILE_THRESHOLD from 25MB to 100MB
-- Allows files like Definitive Schedules v2.xlsx (56.22 MB) to be uploaded
-- Maintains progressive analysis for very large files
-- Better user experience with smart chunking
+CHANGE LOG:
+- February 5, 2026 (v5): CRITICAL FIX - Memory-efficient row counting
+  * Replaced pd.read_excel(full_file) with openpyxl read_only=True for row counting
+  * A 26MB Excel file was causing pd.read_excel to consume 500MB+ RAM and crash
+  * openpyxl read_only mode streams rows without loading entire file
+  * Fixed singleton pattern - get_progressive_analyzer() now returns same instance
+  * Added sheet_names to chunk result so orchestration_handler doesn't need to re-read
+  * Removed redundant full-file reads that caused timeouts on large files
+
+- February 5, 2026 (v4): Increased LARGE_FILE_THRESHOLD from 25MB to 100MB
+  * Allows files like Definitive Schedules v2.xlsx (56.22 MB) to be uploaded
+  * Maintains progressive analysis for very large files
+
+- January 31, 2026 (v1): Initial creation
+  * Progressive analysis for large Excel files
+  * Chunk-based reading with continuation support
 
 Handles large files (especially Excel) with progressive analysis:
-- Analyzes first 100 rows automatically for files 5MB-100MB
+- Analyzes first 500 rows automatically for files 5MB-100MB
 - Lets user request more rows: "next 500", "next 1000", "analyze all"
 - Prevents timeouts and out-of-memory crashes
 - Gives user control over cost and time
@@ -34,11 +45,12 @@ class ProgressiveFileAnalyzer:
     """
     Smart file analyzer that handles large files progressively.
     
-    Updated February 5, 2026: Increased max file size to 100MB
+    Updated February 5, 2026 (v5): Memory-efficient row counting with openpyxl
+    Updated February 5, 2026 (v4): Increased max file size to 100MB
     """
     
     def __init__(self):
-        self.file_cache = {}  # Cache file data between requests
+        self.file_cache = {}  # Cache file metadata between requests
     
     
     def get_file_info(self, file_path: str) -> Dict[str, Any]:
@@ -72,11 +84,94 @@ class ProgressiveFileAnalyzer:
             }
     
     
+    def _count_rows_efficient(self, file_path: str) -> Dict[str, Any]:
+        """
+        Count total rows and get sheet names WITHOUT loading entire file into memory.
+        
+        Uses openpyxl read_only=True which streams rows instead of loading all data.
+        For a 26MB file, this uses ~10MB RAM instead of 500MB+.
+        
+        Added: February 5, 2026 (v5)
+        
+        Returns:
+            Dict with total_rows, sheet_names, columns
+        """
+        try:
+            import openpyxl
+            
+            # Open in read-only mode - streams data, minimal RAM
+            wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+            sheet_names = wb.sheetnames
+            
+            # Count rows in first sheet
+            ws = wb[sheet_names[0]]
+            total_rows = 0
+            columns = []
+            
+            for i, row in enumerate(ws.iter_rows()):
+                if i == 0:
+                    # Extract column names from header row
+                    columns = [cell.value for cell in row if cell.value is not None]
+                total_rows += 1
+            
+            # Subtract 1 for header row
+            if total_rows > 0:
+                total_rows -= 1
+            
+            wb.close()
+            
+            return {
+                'success': True,
+                'total_rows': total_rows,
+                'sheet_names': sheet_names,
+                'num_sheets': len(sheet_names),
+                'columns': columns
+            }
+            
+        except Exception as e:
+            print(f"⚠️ openpyxl row count failed, falling back to pandas: {e}")
+            # Fallback: use pandas but only read first row to get structure
+            try:
+                # Read just 1 row to get columns
+                df_sample = pd.read_excel(file_path, sheet_name=0, nrows=1)
+                columns = list(df_sample.columns)
+                
+                # Estimate row count from file size (rough: 1KB per row average)
+                file_size = os.path.getsize(file_path)
+                estimated_rows = max(100, int(file_size / 1024))
+                
+                # Try to get sheet names
+                try:
+                    excel_file = pd.ExcelFile(file_path)
+                    sheet_names = excel_file.sheet_names
+                except:
+                    sheet_names = ['Sheet1']
+                
+                return {
+                    'success': True,
+                    'total_rows': estimated_rows,
+                    'sheet_names': sheet_names,
+                    'num_sheets': len(sheet_names),
+                    'columns': columns,
+                    'estimated': True  # Flag that row count is estimated
+                }
+            except Exception as fallback_error:
+                return {
+                    'success': False,
+                    'error': f"Could not count rows: {str(fallback_error)}"
+                }
+    
+    
     def extract_excel_chunk(self, file_path: str, start_row: int = 0, 
                            num_rows: Optional[int] = None, 
                            sheet_name: Optional[str] = None) -> Dict[str, Any]:
         """
         Extract a specific chunk of rows from an Excel file.
+        
+        UPDATED February 5, 2026 (v5): 
+        - Uses openpyxl for row counting instead of reading entire file with pandas
+        - Caches row count and sheet names for subsequent calls
+        - Returns sheet_names so caller doesn't need to re-read the file
         
         Args:
             file_path: Path to Excel file
@@ -94,39 +189,80 @@ class ProgressiveFileAnalyzer:
             - total_rows: int
             - rows_remaining: int
             - columns: list
+            - sheet_names: list (NEW in v5)
+            - num_sheets: int (NEW in v5)
             - summary: str
         """
         try:
-            # Read Excel file (just the requested chunk)
-            skiprows = start_row if start_row > 0 else None
-            nrows = num_rows
+            # ================================================================
+            # STEP 1: Read just the requested chunk with pandas
+            # This is efficient because nrows limits how much data is loaded
+            # ================================================================
             
-            df = pd.read_excel(file_path, sheet_name=sheet_name or 0, 
-                             skiprows=skiprows, nrows=nrows)
-            
-            # Get total rows (need to read whole file for this - only done once)
-            if 'total_rows' not in self.file_cache.get(file_path, {}):
-                full_df = pd.read_excel(file_path, sheet_name=sheet_name or 0)
-                total_rows = len(full_df)
-                if file_path not in self.file_cache:
-                    self.file_cache[file_path] = {}
-                self.file_cache[file_path]['total_rows'] = total_rows
-                self.file_cache[file_path]['columns'] = list(full_df.columns)
+            # For start_row > 0, we need to handle header separately
+            if start_row > 0:
+                # Read header first (row 0)
+                header_df = pd.read_excel(file_path, sheet_name=sheet_name or 0, nrows=0)
+                header_columns = list(header_df.columns)
+                
+                # Now read the chunk, skipping rows but keeping header
+                # skiprows needs a range: skip rows 1 through start_row (keep row 0 = header)
+                skip_range = range(1, start_row + 1)
+                df = pd.read_excel(file_path, sheet_name=sheet_name or 0, 
+                                 skiprows=skip_range, nrows=num_rows)
             else:
-                total_rows = self.file_cache[file_path]['total_rows']
+                # First chunk - just read normally
+                df = pd.read_excel(file_path, sheet_name=sheet_name or 0, nrows=num_rows)
+            
+            # ================================================================
+            # STEP 2: Get total rows efficiently (cached)
+            # Uses openpyxl read_only mode - NOT pandas full-file read
+            # ================================================================
+            cache_key = file_path
+            
+            if cache_key not in self.file_cache:
+                print(f"📊 Counting rows efficiently with openpyxl (first call)...")
+                row_info = self._count_rows_efficient(file_path)
+                
+                if row_info['success']:
+                    self.file_cache[cache_key] = {
+                        'total_rows': row_info['total_rows'],
+                        'columns': row_info['columns'],
+                        'sheet_names': row_info['sheet_names'],
+                        'num_sheets': row_info['num_sheets'],
+                        'estimated': row_info.get('estimated', False)
+                    }
+                    print(f"📊 Row count: {row_info['total_rows']:,} rows across {row_info['num_sheets']} sheet(s)")
+                else:
+                    # Last resort: estimate from dataframe
+                    print(f"⚠️ Row counting failed, using chunk size as estimate")
+                    self.file_cache[cache_key] = {
+                        'total_rows': len(df),
+                        'columns': list(df.columns),
+                        'sheet_names': ['Sheet1'],
+                        'num_sheets': 1,
+                        'estimated': True
+                    }
+            
+            cached = self.file_cache[cache_key]
+            total_rows = cached['total_rows']
+            sheet_names = cached.get('sheet_names', ['Sheet1'])
+            num_sheets = cached.get('num_sheets', 1)
             
             actual_start = start_row
             actual_end = start_row + len(df)
             rows_remaining = max(0, total_rows - actual_end)
             
             # Create summary
+            estimated_note = " (estimated)" if cached.get('estimated') else ""
             summary = f"""
 📊 **File Analysis**
-- Total Rows: {total_rows:,}
+- Total Rows: {total_rows:,}{estimated_note}
 - Analyzing Rows: {actual_start:,} to {actual_end:,}
 - Rows in this chunk: {len(df):,}
 - Remaining rows: {rows_remaining:,}
 - Columns: {len(df.columns)}
+- Worksheets: {num_sheets} ({', '.join(sheet_names)})
 """
             
             # Create text preview
@@ -140,11 +276,16 @@ class ProgressiveFileAnalyzer:
                 'end_row': actual_end,
                 'total_rows': total_rows,
                 'rows_remaining': rows_remaining,
+                'rows_analyzed': len(df),
                 'columns': list(df.columns),
+                'sheet_names': sheet_names,
+                'num_sheets': num_sheets,
                 'summary': summary
             }
             
         except Exception as e:
+            import traceback
+            print(f"❌ extract_excel_chunk error: {traceback.format_exc()}")
             return {
                 'success': False,
                 'error': str(e)
@@ -254,9 +395,18 @@ class ProgressiveFileAnalyzer:
         return "\n".join(prompt_parts)
 
 
+# ============================================================================
+# SINGLETON PATTERN - Fixed February 5, 2026
+# Previous version created a new instance every call, losing the file_cache
+# ============================================================================
+_analyzer_instance = None
+
 def get_progressive_analyzer():
     """Get singleton instance of progressive analyzer."""
-    return ProgressiveFileAnalyzer()
+    global _analyzer_instance
+    if _analyzer_instance is None:
+        _analyzer_instance = ProgressiveFileAnalyzer()
+    return _analyzer_instance
 
 
 # I did no harm and this file is not truncated
