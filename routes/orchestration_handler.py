@@ -1,12 +1,18 @@
 """
 Orchestration Handler - Main AI Task Processing
 Created: January 31, 2026
-Last Updated: February 5, 2026 - FIXED SYNTAX ERROR (incomplete try block at line 401)
+Last Updated: February 5, 2026 - ENHANCED FILE ANALYSIS WITH CONSULTING-GRADE PROMPTS
 
 This file handles the main /api/orchestrate endpoint that processes user requests.
 Separated from core.py to make it easier to fix and maintain.
 
 UPDATES:
+- February 5, 2026: MAJOR ENHANCEMENT - Replaced weak generic analysis prompts with powerful 
+  consulting-grade prompts that leverage Shiftwork Solutions' 30+ years of expertise
+  * Large Excel files now get 7-point deep analysis (not surface observations)
+  * Increased max_tokens from 4000 to 8000 for detailed insights
+  * Analysis now includes: statistical depth, operational patterns, cost insights,
+    red flags, and actionable recommendations with specific numbers
 - February 5, 2026: FIXED syntax error - completed try/except block around Excel size detection
 - February 5, 2026: FIXED syntax error (duplicate code blocks, bracket mismatch) 
 - February 4, 2026: Added auto-learning integration at all conversation endpoints
@@ -311,17 +317,25 @@ def orchestrate():
             for file_path in file_paths:
                 file_info = analyzer.get_file_info(file_path)
                 
+                print(f"📊 FILE SIZE DETECTION:")
+                print(f"   - File: {os.path.basename(file_path)}")
+                print(f"   - Size: {file_info.get('file_size_mb', 0):.1f}MB")
+                print(f"   - is_large: {file_info.get('is_large')}")
+                print(f"   - is_too_large: {file_info.get('is_too_large')}")
+                print(f"   - file_type: {file_info.get('file_type')}")
+                
                 # Reject files that are too large
                 if file_info.get('is_too_large'):
                     file_size_mb = file_info.get('file_size_mb', 0)
                     return jsonify({
                         'success': False,
-                        'error': f'File too large ({file_size_mb}MB). Maximum file size is 25MB.',
+                        'error': f'File too large ({file_size_mb:.1f}MB). Maximum file size is 25MB.',
                         'suggestion': 'Please reduce file size by:\n- Filtering to specific date range\n- Removing unnecessary columns\n- Splitting into multiple smaller files\n- Exporting only relevant sheets'
                     }), 413
                 
                 # Handle large files with progressive analysis
                 if file_info.get('is_large') and file_info.get('file_type') in ['.xlsx', '.xls']:
+                    print(f"🔄 TRIGGERING PROGRESSIVE ANALYSIS for {os.path.basename(file_path)}")
                     return handle_large_excel_initial(
                         file_path=file_path,
                         user_request=user_request,
@@ -423,31 +437,82 @@ def orchestrate():
             # ================================================================
 
             if is_large_excel and row_count_estimate > 0:
-                file_analysis_prompt = f"""The user uploaded a LARGE Excel file (approximately {row_count_estimate:,} rows) and asked: {user_request}
+                file_analysis_prompt = f"""You are a senior consultant at Shiftwork Solutions LLC with 30+ years of experience analyzing workforce data for 24/7 operations.
 
-IMPORTANT: This is a substantial dataset. Provide a COMPREHENSIVE analysis including:
-1. Overall structure and data types
-2. Key patterns and trends you observe
-3. Statistical summaries where relevant
-4. Specific insights related to the user's question
-5. Notable anomalies or interesting findings
+The user uploaded a LARGE Excel file (approximately {row_count_estimate:,} rows) and asked: {user_request}
 
-Here are the file contents (showing a representative sample):
+CRITICAL INSTRUCTIONS - THIS IS A CONSULTING ENGAGEMENT:
+Your analysis must be ACTIONABLE and SPECIFIC - not generic observations. Treat this like a $16,500/week consulting project.
+
+REQUIRED DEPTH OF ANALYSIS:
+
+1. DATA STRUCTURE & QUALITY:
+   - Exact row/column counts and date ranges covered
+   - Data quality issues (missing values, anomalies, data entry errors)
+   - Granularity (hourly? daily? weekly?)
+
+2. STATISTICAL ANALYSIS (with actual numbers):
+   - Mean, median, std deviation for key metrics
+   - Min/max values and when they occurred
+   - Distribution patterns (normal? skewed? bimodal?)
+   - Outliers with specific values and dates
+
+3. OPERATIONAL PATTERNS (shiftwork expertise):
+   - Day-of-week patterns: Which days are peaks? Troughs?
+   - Time-based trends: Are hours increasing/decreasing over time?
+   - Shift pattern detection: Do the patterns suggest 8hr, 10hr, 12hr shifts?
+   - Coverage gaps: Where are the understaffing risks?
+   - Overtime indicators: Where is excessive variability?
+
+4. DEPARTMENT/CATEGORY ANALYSIS:
+   - Rank order by total volume (with actual numbers)
+   - Variance analysis: Which areas have the most volatility?
+   - Workload balance: Are some areas overloaded vs others?
+   - Correlation analysis: Do departments move together?
+
+5. COST & EFFICIENCY INSIGHTS:
+   - Total hours and estimated labor costs (assume $30/hr average)
+   - Departments with highest cost exposure
+   - Efficiency opportunities (high variance = scheduling problems)
+
+6. RED FLAGS & RISKS:
+   - Sustained high overtime indicators
+   - Erratic patterns suggesting poor scheduling
+   - Coverage gaps on critical days
+   - Departments showing burnout risk patterns
+
+7. ACTIONABLE RECOMMENDATIONS:
+   - Top 3 specific improvements with expected impact
+   - Which departments need schedule redesign first
+   - Estimated cost savings from optimization
+   - Next steps for implementation
+
+FILE CONTENTS (representative sample from {len(file_contents):,} characters of data):
 
 {file_contents}
 
-Provide a DETAILED, THOROUGH analysis. The user expects substantial insights from this large dataset."""
+DELIVER A CONSULTING-GRADE ANALYSIS WITH SPECIFIC NUMBERS, TRENDS, AND RECOMMENDATIONS.
+This should read like a professional report you'd deliver to a client paying $16,500/week for your expertise."""
             else:
-                file_analysis_prompt = f"""The user has uploaded files and asked: {user_request}
+                file_analysis_prompt = f"""You are analyzing data for Shiftwork Solutions LLC, a consulting firm specializing in 24/7 operations optimization.
+
+The user asked: {user_request}
 
 Here are the file contents:
 
 {file_contents}
 
-Please analyze these files and respond to the user's request. Be specific and reference actual content from the files."""
+Provide a DETAILED, SPECIFIC analysis with:
+- Actual numbers and statistics (not vague descriptions)
+- Operational patterns and trends
+- Data quality observations
+- Specific recommendations based on Shiftwork Solutions' 30+ years of expertise
+- Actionable next steps
+
+Be concrete and consulting-grade in your analysis."""
 
             try:
-                gpt_response = call_gpt4(file_analysis_prompt, max_tokens=4000)
+                gpt_response = call_gpt4(file_analysis_prompt, max_tokens=8000)
                 
                 if not gpt_response.get('error') and gpt_response.get('content'):
                     actual_output = gpt_response.get('content', '')
@@ -1471,17 +1536,43 @@ def handle_large_excel_initial(file_path, user_request, conversation_id, project
         # Build analysis prompt
         from orchestration.ai_clients import call_gpt4
         
-        analysis_prompt = f"""The user uploaded a large Excel file ({file_info['file_size_mb']}MB, {chunk_result['total_rows']:,} rows) and asked: {user_request}
+        analysis_prompt = f"""You are a senior consultant at Shiftwork Solutions LLC with 30+ years of experience analyzing workforce data for 24/7 operations.
 
-This is a LARGE file, so I'm showing you the FIRST 100 ROWS as a preview.
+The user uploaded a LARGE Excel file ({file_info['file_size_mb']}MB, {chunk_result['total_rows']:,} rows) and asked: {user_request}
+
+⚠️ IMPORTANT: This file is too large to analyze all at once. You're seeing the FIRST 100 ROWS as a preview.
+
+PROVIDE INITIAL INSIGHTS based on this sample:
+
+1. **Data Structure** (from sample):
+   - Columns present and their meanings
+   - Date range covered in this sample
+   - Data quality observations
+
+2. **Initial Patterns** (from first 100 rows):
+   - High-level trends visible
+   - Department/category breakdown
+   - Any immediate red flags
+
+3. **Statistical Preview** (from sample):
+   - Key metrics (totals, averages from sample)
+   - Distribution characteristics
+   - Notable outliers
+
+4. **What Full Analysis Would Reveal**:
+   - Patterns that need full dataset
+   - Seasonal trends requiring more data
+   - Statistical confidence requiring larger sample
+
+FILE SAMPLE (First 100 rows):
 
 {chunk_result['summary']}
 
 {chunk_result['text_preview']}
 
-Please analyze this preview and respond to the user's request based on what you can see in these first 100 rows."""
+DELIVER INSIGHTS FROM THIS PREVIEW, noting what additional analysis would require more data."""
 
-        gpt_response = call_gpt4(analysis_prompt, max_tokens=3000)
+        gpt_response = call_gpt4(analysis_prompt, max_tokens=4000)
         
         if not gpt_response.get('error') and gpt_response.get('content'):
             ai_analysis = gpt_response.get('content', '')
