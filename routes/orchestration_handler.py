@@ -267,18 +267,18 @@ def orchestrate():
                 
                 # Download file from cloud using STREAMING (prevents RAM crash!)
                 handler = get_cloud_handler()
-                result = handler.handle_cloud_link(cloud_url, user_request, project_id)
+                local_filepath, metadata = handler.process_cloud_link(cloud_url)
                 
-                if not result['success']:
+                if not metadata['success']:
                     return jsonify({
                         'success': False,
-                        'error': f"Could not download file from {result['service']}: {result['error']}",
+                        'error': f"Could not download file from {metadata.get('service', 'cloud storage')}: {metadata.get('error', 'Unknown error')}",
                         'conversation_id': conversation_id
                     }), 400
                 
                 # File downloaded successfully - add to file_paths for processing
-                file_paths = [result['file_path']]
-                print(f"✅ Downloaded {result['file_size'] / (1024*1024):.1f}MB from {result['service']}")
+                file_paths = [local_filepath]
+                print(f"✅ Downloaded {metadata['size_bytes'] / (1024*1024):.1f}MB from {metadata['service']}")
                 
                 # Continue to normal file processing below...
         # ====================================================================
