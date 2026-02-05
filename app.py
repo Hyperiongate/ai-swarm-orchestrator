@@ -2,7 +2,7 @@
 AI SWARM ORCHESTRATOR - Main Application   
 Created: January 18, 2026
 Last Updated: January 30, 2026 - ADDED BULLETPROOF PROJECT MANAGEMENT
-
+@app.route('/survey')
 CHANGES IN THIS VERSION:
 - January 30, 2026: ADDED BULLETPROOF PROJECT MANAGEMENT
   * Added projects_bp blueprint for complete project lifecycle management
@@ -584,6 +584,40 @@ def diagnose_databases():
 def survey():
     """Survey builder interface"""
     return render_template('survey.html')
+ 
+# ============================================================================
+# PATTERN RECOGNITION DASHBOARD API (Added February 5, 2026)
+# ============================================================================
+@app.route('/api/patterns', methods=['GET'])
+def get_user_patterns():
+    """
+    API endpoint to retrieve user patterns for dashboard
+    
+    Returns:
+        JSON with categorized patterns and statistics
+    """
+    try:
+        # Initialize intelligence engine
+        from enhanced_intelligence import EnhancedIntelligence
+        intelligence = EnhancedIntelligence()
+        
+        # Get all patterns
+        patterns = intelligence.get_all_patterns()
+        
+        return jsonify({
+            'success': True,
+            'patterns': patterns
+        })
+        
+    except Exception as e:
+        import traceback
+        print(f"Error fetching patterns: {traceback.format_exc()}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+# ============================================================================
+
 
 @app.route('/health')
 def health():
