@@ -1,12 +1,29 @@
 """
 CLOUD FILE HANDLER - Stream downloads from cloud storage
 Created: February 5, 2026
-Last Updated: February 5, 2026 - FIXED Google Drive URL regex
+Last Updated: February 5, 2026 - ADDED GOOGLE SERVICE ACCOUNT AUTHENTICATION
 
-CRITICAL FIX (February 5, 2026):
-- Enhanced regex to handle /spreadsheets/d/FILE_ID/ format
-- Now supports both /d/FILE_ID/ and /spreadsheets/d/FILE_ID/
-- Handles /export?format= URLs for Google Sheets
+CHANGE LOG:
+- February 5, 2026 (v3): MAJOR FIX - Google Drive API authentication
+  * HTTP 432 error: Google blocks unauthenticated server-side downloads
+  * Added Google Service Account authentication via GOOGLE_SERVICE_ACCOUNT_JSON env var
+  * Uses google-api-python-client for proper authenticated downloads
+  * Falls back to unauthenticated requests.get() for Dropbox/OneDrive
+  * Streaming download preserved to prevent RAM exhaustion on large files
+  * Service account credentials loaded from environment variable (JSON string)
+  * Requires: google-api-python-client, google-auth in requirements.txt
+  * Requires: GOOGLE_SERVICE_ACCOUNT_JSON env var in Render
+  * Requires: Google Sheet shared with service account email (Viewer access)
+
+- February 5, 2026 (v2): FIXED Google Drive URL regex
+  * Enhanced regex to handle /spreadsheets/d/FILE_ID/ format
+  * Now supports both /d/FILE_ID/ and /spreadsheets/d/FILE_ID/
+  * Handles /export?format= URLs for Google Sheets
+
+- February 5, 2026 (v1): Initial creation
+  * Streaming downloads from Google Drive, Dropbox, OneDrive
+  * 8KB chunk streaming to prevent RAM exhaustion
+  * 500MB max file size, 5-minute download timeout
 
 This module handles streaming downloads from cloud storage services
 to prevent RAM exhaustion on large files (56MB+).
@@ -17,19 +34,76 @@ Author: Jim @ Shiftwork Solutions LLC
 import requests
 import re
 import os
+import io
+import json
 import tempfile
 from typing import Dict, Tuple, Optional
 from urllib.parse import urlparse, parse_qs
+
+# Google API imports for authenticated downloads
+try:
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaIoBaseDownload
+    GOOGLE_API_AVAILABLE = True
+except ImportError:
+    GOOGLE_API_AVAILABLE = False
+    print("⚠️ Google API libraries not installed. Install: google-api-python-client google-auth")
+
 
 class CloudFileHandler:
     """
     Handles downloads from Google Drive, Dropbox, OneDrive
     Uses streaming to prevent RAM exhaustion
+    
+    For Google Drive: Uses Service Account authentication to avoid HTTP 432 blocks
+    For Dropbox/OneDrive: Uses direct URL conversion with requests
     """
     
     def __init__(self):
         self.chunk_size = 8192  # 8KB chunks for streaming
         self.max_file_size = 500 * 1024 * 1024  # 500MB absolute max
+        self._drive_service = None  # Cached Google Drive service
+        
+    def _get_drive_service(self):
+        """
+        Initialize Google Drive API service using service account credentials.
+        Credentials are loaded from GOOGLE_SERVICE_ACCOUNT_JSON environment variable.
+        
+        Returns: Google Drive API service object, or None if not configured
+        """
+        if self._drive_service is not None:
+            return self._drive_service
+            
+        if not GOOGLE_API_AVAILABLE:
+            print("❌ Google API libraries not available")
+            return None
+        
+        # Load service account JSON from environment variable
+        sa_json = os.environ.get('GOOGLE_SERVICE_ACCOUNT_JSON')
+        if not sa_json:
+            print("❌ GOOGLE_SERVICE_ACCOUNT_JSON environment variable not set")
+            return None
+        
+        try:
+            # Parse the JSON string into credentials
+            sa_info = json.loads(sa_json)
+            credentials = service_account.Credentials.from_service_account_info(
+                sa_info,
+                scopes=['https://www.googleapis.com/auth/drive.readonly']
+            )
+            
+            # Build the Drive API service
+            self._drive_service = build('drive', 'v3', credentials=credentials)
+            print("✅ Google Drive API service initialized with service account")
+            return self._drive_service
+            
+        except json.JSONDecodeError as e:
+            print(f"❌ Invalid JSON in GOOGLE_SERVICE_ACCOUNT_JSON: {e}")
+            return None
+        except Exception as e:
+            print(f"❌ Failed to initialize Google Drive API: {e}")
+            return None
         
     def detect_service(self, url: str) -> Optional[str]:
         """
@@ -51,7 +125,7 @@ class CloudFileHandler:
         """
         Extract file ID from Google Drive URL
         
-        FIXED (Feb 5, 2026): Now handles multiple URL formats:
+        Handles multiple URL formats:
         - https://drive.google.com/file/d/FILE_ID/view
         - https://drive.google.com/open?id=FILE_ID
         - https://docs.google.com/spreadsheets/d/FILE_ID/edit
@@ -69,37 +143,160 @@ class CloudFileHandler:
         
         return None
     
-    def convert_google_drive_url(self, url: str) -> Tuple[Optional[str], Optional[str]]:
+    def _is_google_sheet(self, url: str) -> bool:
+        """Check if the URL points to a Google Sheets document (not a regular file)"""
+        return 'spreadsheets' in url.lower() or 'docs.google.com/spreadsheets' in url.lower()
+    
+    def download_google_drive_authenticated(self, url: str) -> Tuple[Optional[str], Dict]:
         """
-        Convert Google Drive share URL to direct download URL
-        Returns: (download_url, filename)
+        Download file from Google Drive using Service Account authentication.
+        This avoids the HTTP 432 error that blocks unauthenticated server downloads.
         
-        ENHANCED (Feb 5, 2026): Handles Google Sheets export format
+        For Google Sheets: Uses export to xlsx format
+        For regular files: Uses direct media download
+        
+        Returns: (local_filepath, metadata)
         """
+        metadata = {
+            'service': 'google_drive',
+            'original_url': url,
+            'success': False,
+            'error': None,
+            'size_bytes': 0,
+            'filename': None
+        }
+        
+        # Get authenticated Drive service
+        drive_service = self._get_drive_service()
+        if not drive_service:
+            metadata['error'] = (
+                "Google Drive API not configured. "
+                "Set GOOGLE_SERVICE_ACCOUNT_JSON environment variable in Render "
+                "and share the file with the service account email."
+            )
+            return None, metadata
+        
+        # Extract file ID
         file_id = self.extract_google_drive_id(url)
-        
         if not file_id:
-            return None, None
+            metadata['error'] = "Could not extract file ID from Google Drive URL"
+            return None, metadata
         
-        # Check if it's a Google Sheets URL
-        if 'spreadsheets' in url:
-            # Determine export format
-            if 'export?format=' in url:
-                # User already specified format
-                match = re.search(r'format=(\w+)', url)
-                format_type = match.group(1) if match else 'xlsx'
-            else:
-                # Default to Excel format
-                format_type = 'xlsx'
+        print(f"🔑 Authenticated download for file ID: {file_id}")
+        
+        try:
+            # First, get file metadata to determine type and name
+            file_metadata = drive_service.files().get(
+                fileId=file_id,
+                fields='id, name, mimeType, size'
+            ).execute()
             
-            download_url = f'https://docs.google.com/spreadsheets/d/{file_id}/export?format={format_type}'
-            filename = f'spreadsheet_{file_id}.{format_type}'
-        else:
-            # Regular Google Drive file
-            download_url = f'https://drive.google.com/uc?export=download&id={file_id}'
-            filename = f'file_{file_id}'
-        
-        return download_url, filename
+            file_name = file_metadata.get('name', f'file_{file_id}')
+            mime_type = file_metadata.get('mimeType', '')
+            file_size = file_metadata.get('size')
+            
+            print(f"📄 File: {file_name}")
+            print(f"📋 MIME type: {mime_type}")
+            if file_size:
+                print(f"📊 Size: {int(file_size) / 1024 / 1024:.2f}MB")
+            
+            metadata['filename'] = file_name
+            
+            # Determine if this is a Google Workspace file (Sheets, Docs, etc.)
+            # These need to be EXPORTED, not downloaded directly
+            is_google_workspace = mime_type.startswith('application/vnd.google-apps.')
+            
+            if is_google_workspace or self._is_google_sheet(url):
+                # Google Sheets/Docs: Export to a standard format
+                print(f"📊 Google Workspace file detected - exporting to xlsx...")
+                
+                # Determine export format based on type
+                if 'spreadsheet' in mime_type or self._is_google_sheet(url):
+                    export_mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                    suffix = '.xlsx'
+                    if not file_name.endswith('.xlsx'):
+                        file_name = file_name + '.xlsx'
+                elif 'document' in mime_type:
+                    export_mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+                    suffix = '.docx'
+                    if not file_name.endswith('.docx'):
+                        file_name = file_name + '.docx'
+                elif 'presentation' in mime_type:
+                    export_mime = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+                    suffix = '.pptx'
+                    if not file_name.endswith('.pptx'):
+                        file_name = file_name + '.pptx'
+                else:
+                    export_mime = 'application/pdf'
+                    suffix = '.pdf'
+                    if not file_name.endswith('.pdf'):
+                        file_name = file_name + '.pdf'
+                
+                metadata['filename'] = file_name
+                
+                # Export the file
+                request_obj = drive_service.files().export_media(
+                    fileId=file_id,
+                    mimeType=export_mime
+                )
+            else:
+                # Regular file (uploaded Excel, PDF, etc.): Direct download
+                print(f"📥 Regular file - downloading directly...")
+                suffix = os.path.splitext(file_name)[1] or '.tmp'
+                
+                request_obj = drive_service.files().get_media(fileId=file_id)
+            
+            # Create temp file and download with streaming
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+            
+            # Use MediaIoBaseDownload for chunked/streamed download
+            downloader = MediaIoBaseDownload(temp_file, request_obj, chunksize=1024*1024)
+            
+            done = False
+            bytes_downloaded = 0
+            while not done:
+                status, done = downloader.next_chunk()
+                if status:
+                    progress = int(status.progress() * 100)
+                    bytes_downloaded = status.resumable_progress if hasattr(status, 'resumable_progress') else 0
+                    print(f"⬇️  Download progress: {progress}%")
+            
+            temp_file.close()
+            
+            # Get actual file size
+            actual_size = os.path.getsize(temp_file.name)
+            metadata['success'] = True
+            metadata['size_bytes'] = actual_size
+            
+            print(f"✅ Download complete: {actual_size / 1024 / 1024:.2f}MB")
+            print(f"📁 Saved to: {temp_file.name}")
+            
+            return temp_file.name, metadata
+            
+        except Exception as e:
+            error_str = str(e)
+            
+            # Provide helpful error messages for common issues
+            if '404' in error_str or 'not found' in error_str.lower():
+                metadata['error'] = (
+                    f"File not found (404). Make sure the Google Sheet is shared with "
+                    f"the service account email address (check GOOGLE_SERVICE_ACCOUNT_JSON for client_email)."
+                )
+            elif '403' in error_str or 'forbidden' in error_str.lower():
+                metadata['error'] = (
+                    f"Access denied (403). The file must be shared with the service account email. "
+                    f"Go to the Google Sheet → Share → add the service account email as Viewer."
+                )
+            elif '401' in error_str or 'unauthorized' in error_str.lower():
+                metadata['error'] = (
+                    f"Authentication failed (401). Check that GOOGLE_SERVICE_ACCOUNT_JSON "
+                    f"contains valid service account credentials."
+                )
+            else:
+                metadata['error'] = f"Google Drive API error: {error_str}"
+            
+            print(f"❌ Download failed: {metadata['error']}")
+            return None, metadata
     
     def convert_dropbox_url(self, url: str) -> Tuple[Optional[str], Optional[str]]:
         """
@@ -136,7 +333,8 @@ class CloudFileHandler:
     
     def download_file_streaming(self, url: str, service: str) -> Tuple[Optional[str], Dict]:
         """
-        Download file using streaming to prevent RAM exhaustion
+        Download file using streaming to prevent RAM exhaustion.
+        Used for Dropbox and OneDrive (non-authenticated).
         
         Returns: (local_filepath, metadata)
         """
@@ -151,17 +349,15 @@ class CloudFileHandler:
         
         try:
             # Convert to direct download URL
-            if service == 'google_drive':
-                download_url, filename = self.convert_google_drive_url(url)
-            elif service == 'dropbox':
+            if service == 'dropbox':
                 download_url, filename = self.convert_dropbox_url(url)
             elif service == 'onedrive':
                 download_url, filename = self.convert_onedrive_url(url)
             else:
-                raise ValueError(f"Unsupported service: {service}")
+                raise ValueError(f"Unsupported service for unauthenticated download: {service}")
             
             if not download_url:
-                raise ValueError(f"Could not extract file ID from {service} URL")
+                raise ValueError(f"Could not convert {service} URL to download link")
             
             metadata['filename'] = filename
             
@@ -235,9 +431,12 @@ class CloudFileHandler:
         """
         Main entry point: detect service and download file
         
+        For Google Drive: Uses authenticated API download (avoids HTTP 432)
+        For Dropbox/OneDrive: Uses URL conversion + streaming download
+        
         Returns: (local_filepath, metadata)
         """
-        print(f"🔗 Processing cloud link: {url[:50]}...")
+        print(f"🔗 Processing cloud link: {url[:80]}...")
         
         service = self.detect_service(url)
         
@@ -248,9 +447,15 @@ class CloudFileHandler:
                 'original_url': url
             }
         
-        print(f"🔗 Processing cloud link from: {service}")
+        print(f"🔗 Detected service: {service}")
         
-        return self.download_file_streaming(url, service)
+        # Route to appropriate download method
+        if service == 'google_drive':
+            # Use authenticated Google Drive API (fixes HTTP 432 error)
+            return self.download_google_drive_authenticated(url)
+        else:
+            # Use streaming download for Dropbox/OneDrive
+            return self.download_file_streaming(url, service)
 
 
 # Singleton instance
@@ -284,8 +489,7 @@ if __name__ == '__main__':
         if service == 'google_drive':
             file_id = handler.extract_google_drive_id(url)
             print(f"   File ID: {file_id}")
-            download_url, filename = handler.convert_google_drive_url(url)
-            print(f"   Download URL: {download_url}")
-            print(f"   Filename: {filename}")
+            is_sheet = handler._is_google_sheet(url)
+            print(f"   Is Google Sheet: {is_sheet}")
 
 # I did no harm and this file is not truncated
