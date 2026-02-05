@@ -1,12 +1,23 @@
 """
 Orchestration Handler - Main AI Task Processing
 Created: January 31, 2026
-Last Updated: February 5, 2026 - RUTHLESS DEEP ANALYSIS + ALL WORKSHEETS
+Last Updated: February 5, 2026 - RUTHLESS DEEP ANALYSIS + FIXED GPT-4 TOKEN LIMIT
 
 This file handles the main /api/orchestrate endpoint that processes user requests.
 Separated from core.py to make it easier to fix and maintain.
 
+CRITICAL KNOWN ISSUE - February 5, 2026:
+⚠️ FILE SELECTION vs FILE UPLOAD behavior difference:
+- FILE UPLOAD (drag & drop): Triggers progressive analysis, uses consulting prompts ✅
+- FILE SELECTION (from project): Bypasses progressive analysis, limited extraction ❌
+  * Only reads first worksheet
+  * Limited to 10K chars per file  
+  * Needs fix in database_file_management.py
+  
+WORKAROUND: For large Excel files (5MB+), use FILE UPLOAD instead of selecting from project!
+
 UPDATES:
+- February 5, 2026: FIXED GPT-4 token limit (was 8000, max is 4096)
 - February 5, 2026: RUTHLESS ANALYSIS ENHANCEMENT - No more shallow summaries!
   * Prompt now demands specific numbers, percentages, and dollar amounts
   * Forces operational insights (shift patterns, coverage gaps, overtime risks)
@@ -536,7 +547,7 @@ Provide a DETAILED, SPECIFIC analysis with:
 Be concrete and consulting-grade in your analysis."""
 
             try:
-                gpt_response = call_gpt4(file_analysis_prompt, max_tokens=8000)
+                gpt_response = call_gpt4(file_analysis_prompt, max_tokens=4000)
                 
                 if not gpt_response.get('error') and gpt_response.get('content'):
                     actual_output = gpt_response.get('content', '')
