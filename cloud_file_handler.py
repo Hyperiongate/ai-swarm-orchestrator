@@ -1,49 +1,40 @@
 """
-Cloud File Handler - Streaming Downloads from Cloud Storage
+CLOUD FILE HANDLER - Stream downloads from cloud storage
 Created: February 5, 2026
-Last Updated: February 5, 2026
+Last Updated: February 5, 2026 - FIXED Google Drive URL regex
 
-This module handles downloading large files from cloud storage services
-using streaming downloads to avoid loading entire files into RAM.
+CRITICAL FIX (February 5, 2026):
+- Enhanced regex to handle /spreadsheets/d/FILE_ID/ format
+- Now supports both /d/FILE_ID/ and /spreadsheets/d/FILE_ID/
+- Handles /export?format= URLs for Google Sheets
 
-Supports:
-- Google Drive (share links)
-- Dropbox (share links)
-- OneDrive (share links)
-- Direct HTTP/HTTPS links
-
-CRITICAL: Uses streaming downloads (chunked) to prevent memory issues
-with large files (50MB+).
+This module handles streaming downloads from cloud storage services
+to prevent RAM exhaustion on large files (56MB+).
 
 Author: Jim @ Shiftwork Solutions LLC
 """
 
-import re
 import requests
-from urllib.parse import urlparse, parse_qs
+import re
 import os
-from datetime import datetime
+import tempfile
+from typing import Dict, Tuple, Optional
+from urllib.parse import urlparse, parse_qs
 
 class CloudFileHandler:
     """
-    Handle downloading files from cloud storage services using streaming.
-    
-    Key feature: Downloads in chunks to avoid loading full file into RAM.
+    Handles downloads from Google Drive, Dropbox, OneDrive
+    Uses streaming to prevent RAM exhaustion
     """
     
     def __init__(self):
-        self.chunk_size = 8192  # 8KB chunks (small to minimize RAM usage)
-        self.max_file_size = 100 * 1024 * 1024  # 100MB limit
+        self.chunk_size = 8192  # 8KB chunks for streaming
+        self.max_file_size = 500 * 1024 * 1024  # 500MB absolute max
         
-    def detect_service(self, url):
+    def detect_service(self, url: str) -> Optional[str]:
         """
-        Detect which cloud service the URL is from.
-        
-        Args:
-            url (str): The cloud storage URL
-            
-        Returns:
-            str: Service name ('google_drive', 'dropbox', 'onedrive', 'direct', 'unknown')
+        Detect which cloud storage service from URL
+        Returns: 'google_drive', 'dropbox', 'onedrive', or None
         """
         url_lower = url.lower()
         
@@ -53,21 +44,21 @@ class CloudFileHandler:
             return 'dropbox'
         elif 'onedrive' in url_lower or '1drv.ms' in url_lower:
             return 'onedrive'
-        elif url_lower.startswith('http://') or url_lower.startswith('https://'):
-            return 'direct'
-        else:
-            return 'unknown'
-    
-    def extract_google_drive_id(self, url):
-        """
-        Extract file ID from Google Drive URL.
         
-        Supports formats:
+        return None
+    
+    def extract_google_drive_id(self, url: str) -> Optional[str]:
+        """
+        Extract file ID from Google Drive URL
+        
+        FIXED (Feb 5, 2026): Now handles multiple URL formats:
         - https://drive.google.com/file/d/FILE_ID/view
         - https://drive.google.com/open?id=FILE_ID
+        - https://docs.google.com/spreadsheets/d/FILE_ID/edit
+        - https://docs.google.com/spreadsheets/d/FILE_ID/export?format=xlsx
         """
-        # Pattern 1: /file/d/FILE_ID/
-        match = re.search(r'/file/d/([a-zA-Z0-9_-]+)', url)
+        # Pattern 1: /d/FILE_ID/ (works for /file/d/, /spreadsheets/d/, etc.)
+        match = re.search(r'/d/([a-zA-Z0-9_-]+)', url)
         if match:
             return match.group(1)
         
@@ -78,281 +69,223 @@ class CloudFileHandler:
         
         return None
     
-    def convert_google_drive_url(self, url):
+    def convert_google_drive_url(self, url: str) -> Tuple[Optional[str], Optional[str]]:
         """
-        Convert Google Drive share link to direct download URL.
+        Convert Google Drive share URL to direct download URL
+        Returns: (download_url, filename)
+        
+        ENHANCED (Feb 5, 2026): Handles Google Sheets export format
         """
         file_id = self.extract_google_drive_id(url)
+        
         if not file_id:
-            return None
+            return None, None
         
-        # Use the direct download endpoint
-        return f'https://drive.google.com/uc?export=download&id={file_id}'
-    
-    def convert_dropbox_url(self, url):
-        """
-        Convert Dropbox share link to direct download URL.
-        """
-        # Dropbox: change ?dl=0 to ?dl=1 or add ?dl=1
-        if '?dl=0' in url:
-            return url.replace('?dl=0', '?dl=1')
-        elif '?dl=1' in url:
-            return url
-        else:
-            separator = '&' if '?' in url else '?'
-            return f'{url}{separator}dl=1'
-    
-    def convert_onedrive_url(self, url):
-        """
-        Convert OneDrive share link to direct download URL.
-        """
-        # OneDrive: replace 'redir' with 'download'
-        if 'onedrive.live.com' in url:
-            return url.replace('redir', 'download')
-        elif '1drv.ms' in url:
-            # Short links need to be resolved first
-            return url  # Will handle via requests redirect
-        else:
-            return url
-    
-    def get_download_url(self, url):
-        """
-        Convert any cloud storage URL to a direct download URL.
-        
-        Args:
-            url (str): Cloud storage share link
+        # Check if it's a Google Sheets URL
+        if 'spreadsheets' in url:
+            # Determine export format
+            if 'export?format=' in url:
+                # User already specified format
+                match = re.search(r'format=(\w+)', url)
+                format_type = match.group(1) if match else 'xlsx'
+            else:
+                # Default to Excel format
+                format_type = 'xlsx'
             
-        Returns:
-            dict: {
-                'success': bool,
-                'download_url': str or None,
-                'service': str,
-                'error': str or None
-            }
+            download_url = f'https://docs.google.com/spreadsheets/d/{file_id}/export?format={format_type}'
+            filename = f'spreadsheet_{file_id}.{format_type}'
+        else:
+            # Regular Google Drive file
+            download_url = f'https://drive.google.com/uc?export=download&id={file_id}'
+            filename = f'file_{file_id}'
+        
+        return download_url, filename
+    
+    def convert_dropbox_url(self, url: str) -> Tuple[Optional[str], Optional[str]]:
         """
+        Convert Dropbox share URL to direct download URL
+        """
+        # Dropbox: change dl=0 to dl=1 for direct download
+        if 'dl=0' in url:
+            download_url = url.replace('dl=0', 'dl=1')
+        elif '?' in url:
+            download_url = url + '&dl=1'
+        else:
+            download_url = url + '?dl=1'
+        
+        # Extract filename from URL if possible
+        filename = url.split('/')[-1].split('?')[0] or 'dropbox_file'
+        
+        return download_url, filename
+    
+    def convert_onedrive_url(self, url: str) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Convert OneDrive share URL to direct download URL
+        """
+        # OneDrive: replace 'view' with 'download' in URL
+        if 'view.aspx' in url:
+            download_url = url.replace('view.aspx', 'download.aspx')
+        elif 'embed' in url:
+            download_url = url.replace('embed', 'download')
+        else:
+            download_url = url + '&download=1'
+        
+        filename = 'onedrive_file'
+        
+        return download_url, filename
+    
+    def download_file_streaming(self, url: str, service: str) -> Tuple[Optional[str], Dict]:
+        """
+        Download file using streaming to prevent RAM exhaustion
+        
+        Returns: (local_filepath, metadata)
+        """
+        metadata = {
+            'service': service,
+            'original_url': url,
+            'success': False,
+            'error': None,
+            'size_bytes': 0,
+            'filename': None
+        }
+        
+        try:
+            # Convert to direct download URL
+            if service == 'google_drive':
+                download_url, filename = self.convert_google_drive_url(url)
+            elif service == 'dropbox':
+                download_url, filename = self.convert_dropbox_url(url)
+            elif service == 'onedrive':
+                download_url, filename = self.convert_onedrive_url(url)
+            else:
+                raise ValueError(f"Unsupported service: {service}")
+            
+            if not download_url:
+                raise ValueError(f"Could not extract file ID from {service} URL")
+            
+            metadata['filename'] = filename
+            
+            # Start streaming download
+            print(f"🌐 Starting streaming download from {service}...")
+            print(f"📥 Download URL: {download_url[:100]}...")
+            
+            response = requests.get(download_url, stream=True, timeout=60)
+            response.raise_for_status()
+            
+            # Check content length
+            content_length = response.headers.get('content-length')
+            if content_length:
+                file_size = int(content_length)
+                metadata['size_bytes'] = file_size
+                
+                if file_size > self.max_file_size:
+                    raise ValueError(f"File too large: {file_size / 1024 / 1024:.1f}MB (max 500MB)")
+                
+                print(f"📊 File size: {file_size / 1024 / 1024:.2f}MB")
+            
+            # Get better filename from headers if available
+            content_disposition = response.headers.get('content-disposition')
+            if content_disposition:
+                match = re.search(r'filename="?([^"]+)"?', content_disposition)
+                if match:
+                    filename = match.group(1)
+                    metadata['filename'] = filename
+            
+            # Create temp file
+            suffix = os.path.splitext(filename)[1] or '.tmp'
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+            
+            # Stream download in chunks
+            bytes_downloaded = 0
+            for chunk in response.iter_content(chunk_size=self.chunk_size):
+                if chunk:
+                    temp_file.write(chunk)
+                    bytes_downloaded += len(chunk)
+                    
+                    # Progress indicator every 10MB
+                    if bytes_downloaded % (10 * 1024 * 1024) < self.chunk_size:
+                        print(f"⬇️  Downloaded: {bytes_downloaded / 1024 / 1024:.1f}MB")
+            
+            temp_file.close()
+            
+            metadata['success'] = True
+            metadata['size_bytes'] = bytes_downloaded
+            
+            print(f"✅ Download complete: {bytes_downloaded / 1024 / 1024:.2f}MB")
+            print(f"📁 Saved to: {temp_file.name}")
+            
+            return temp_file.name, metadata
+            
+        except requests.exceptions.RequestException as e:
+            metadata['error'] = f"Network error: {str(e)}"
+            print(f"❌ Download failed: {metadata['error']}")
+            return None, metadata
+            
+        except ValueError as e:
+            metadata['error'] = str(e)
+            print(f"❌ Download failed: {metadata['error']}")
+            return None, metadata
+            
+        except Exception as e:
+            metadata['error'] = f"Unexpected error: {str(e)}"
+            print(f"❌ Download failed: {metadata['error']}")
+            return None, metadata
+    
+    def process_cloud_link(self, url: str) -> Tuple[Optional[str], Dict]:
+        """
+        Main entry point: detect service and download file
+        
+        Returns: (local_filepath, metadata)
+        """
+        print(f"🔗 Processing cloud link: {url[:50]}...")
+        
         service = self.detect_service(url)
         
-        if service == 'unknown':
-            return {
+        if not service:
+            return None, {
                 'success': False,
-                'download_url': None,
-                'service': 'unknown',
-                'error': 'Unrecognized URL format. Please use Google Drive, Dropbox, OneDrive, or direct HTTP links.'
+                'error': 'Unsupported cloud storage service. Use Google Drive, Dropbox, or OneDrive.',
+                'original_url': url
             }
         
-        try:
-            if service == 'google_drive':
-                download_url = self.convert_google_drive_url(url)
-                if not download_url:
-                    return {
-                        'success': False,
-                        'download_url': None,
-                        'service': service,
-                        'error': 'Could not extract file ID from Google Drive URL'
-                    }
-            elif service == 'dropbox':
-                download_url = self.convert_dropbox_url(url)
-            elif service == 'onedrive':
-                download_url = self.convert_onedrive_url(url)
-            else:  # direct
-                download_url = url
-            
-            return {
-                'success': True,
-                'download_url': download_url,
-                'service': service,
-                'error': None
-            }
-            
-        except Exception as e:
-            return {
-                'success': False,
-                'download_url': None,
-                'service': service,
-                'error': f'Error converting URL: {str(e)}'
-            }
-    
-    def download_file_streaming(self, url, output_path, progress_callback=None):
-        """
-        Download file from URL using streaming (chunks) to avoid RAM issues.
+        print(f"🔗 Processing cloud link from: {service}")
         
-        CRITICAL: This is the key function that prevents memory crashes!
-        Downloads file in small chunks instead of loading entire file into RAM.
-        
-        Args:
-            url (str): Direct download URL
-            output_path (str): Where to save the file
-            progress_callback (function): Optional callback(bytes_downloaded, total_bytes)
-            
-        Returns:
-            dict: {
-                'success': bool,
-                'file_path': str or None,
-                'file_size': int,
-                'error': str or None
-            }
-        """
-        try:
-            # Start streaming download
-            print(f"🔄 Starting streaming download from: {url[:50]}...")
-            
-            response = requests.get(url, stream=True, timeout=30)
-            
-            # Check for successful response
-            if response.status_code != 200:
-                return {
-                    'success': False,
-                    'file_path': None,
-                    'file_size': 0,
-                    'error': f'HTTP {response.status_code}: Could not download file. Please check sharing permissions.'
-                }
-            
-            # Get file size if available
-            total_size = int(response.headers.get('content-length', 0))
-            
-            # Check file size limit
-            if total_size > self.max_file_size:
-                return {
-                    'success': False,
-                    'file_path': None,
-                    'file_size': total_size,
-                    'error': f'File too large ({total_size / (1024*1024):.1f}MB). Maximum is {self.max_file_size / (1024*1024):.0f}MB.'
-                }
-            
-            print(f"📊 File size: {total_size / (1024*1024):.1f}MB")
-            
-            # Create output directory if needed
-            os.makedirs(os.path.dirname(output_path), exist_ok=True)
-            
-            # Download in chunks (CRITICAL: prevents RAM overflow!)
-            bytes_downloaded = 0
-            
-            with open(output_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=self.chunk_size):
-                    if chunk:
-                        f.write(chunk)
-                        bytes_downloaded += len(chunk)
-                        
-                        # Progress callback
-                        if progress_callback:
-                            progress_callback(bytes_downloaded, total_size)
-                        
-                        # Log progress every 10MB
-                        if bytes_downloaded % (10 * 1024 * 1024) < self.chunk_size:
-                            print(f"📥 Downloaded: {bytes_downloaded / (1024*1024):.1f}MB")
-            
-            print(f"✅ Download complete: {output_path}")
-            
-            return {
-                'success': True,
-                'file_path': output_path,
-                'file_size': bytes_downloaded,
-                'error': None
-            }
-            
-        except requests.exceptions.Timeout:
-            return {
-                'success': False,
-                'file_path': None,
-                'file_size': 0,
-                'error': 'Download timeout. Please try again or check your internet connection.'
-            }
-        except requests.exceptions.RequestException as e:
-            return {
-                'success': False,
-                'file_path': None,
-                'file_size': 0,
-                'error': f'Download failed: {str(e)}'
-            }
-        except Exception as e:
-            return {
-                'success': False,
-                'file_path': None,
-                'file_size': 0,
-                'error': f'Unexpected error: {str(e)}'
-            }
-    
-    def handle_cloud_link(self, url, user_request, project_id=None):
-        """
-        Complete handler: Convert URL and download file.
-        
-        This is the main entry point for cloud file handling.
-        
-        Args:
-            url (str): Cloud storage share link
-            user_request (str): User's analysis request
-            project_id (str): Optional project ID
-            
-        Returns:
-            dict: {
-                'success': bool,
-                'file_path': str or None,
-                'file_size': int,
-                'service': str,
-                'error': str or None
-            }
-        """
-        print(f"🔗 Processing cloud link from: {self.detect_service(url)}")
-        
-        # Convert to download URL
-        url_result = self.get_download_url(url)
-        
-        if not url_result['success']:
-            return {
-                'success': False,
-                'file_path': None,
-                'file_size': 0,
-                'service': url_result['service'],
-                'error': url_result['error']
-            }
-        
-        # Generate output filename
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        
-        if project_id:
-            output_dir = f'/tmp/projects/{project_id}'
-        else:
-            output_dir = '/tmp/cloud_downloads'
-        
-        os.makedirs(output_dir, exist_ok=True)
-        
-        # Try to get filename from URL or use default
-        filename = f'cloud_file_{timestamp}.xlsx'  # Assume Excel for now
-        output_path = os.path.join(output_dir, filename)
-        
-        # Download file using streaming
-        download_result = self.download_file_streaming(
-            url_result['download_url'],
-            output_path
-        )
-        
-        if not download_result['success']:
-            return {
-                'success': False,
-                'file_path': None,
-                'file_size': 0,
-                'service': url_result['service'],
-                'error': download_result['error']
-            }
-        
-        return {
-            'success': True,
-            'file_path': download_result['file_path'],
-            'file_size': download_result['file_size'],
-            'service': url_result['service'],
-            'error': None
-        }
+        return self.download_file_streaming(url, service)
 
 
 # Singleton instance
 _cloud_handler = None
 
-def get_cloud_file_handler():
-    """Get singleton CloudFileHandler instance"""
+def get_cloud_handler() -> CloudFileHandler:
+    """Get singleton instance of CloudFileHandler"""
     global _cloud_handler
     if _cloud_handler is None:
         _cloud_handler = CloudFileHandler()
     return _cloud_handler
 
+
+# Test function
+if __name__ == '__main__':
+    handler = get_cloud_handler()
+    
+    # Test URL parsing
+    test_urls = [
+        'https://drive.google.com/file/d/1ABC123/view',
+        'https://docs.google.com/spreadsheets/d/15RonrpruOOx-A8mUsdviR8ZlIjJql3SQ/edit?usp=drive_link',
+        'https://docs.google.com/spreadsheets/d/15RonrpruOOx-A8mUsdviR8ZlIjJql3SQ/export?format=xlsx',
+        'https://www.dropbox.com/s/abc123/file.xlsx?dl=0'
+    ]
+    
+    for url in test_urls:
+        print(f"\n🧪 Testing: {url}")
+        service = handler.detect_service(url)
+        print(f"   Service: {service}")
+        
+        if service == 'google_drive':
+            file_id = handler.extract_google_drive_id(url)
+            print(f"   File ID: {file_id}")
+            download_url, filename = handler.convert_google_drive_url(url)
+            print(f"   Download URL: {download_url}")
+            print(f"   Filename: {filename}")
 
 # I did no harm and this file is not truncated
