@@ -501,18 +501,33 @@ Please analyze these files and respond to the user's request. Be specific and re
                                {'orchestrator': 'gpt4_file_handler', 'file_analysis': True, 'execution_time': total_time})
                  
                     # Auto-learn from this conversation
-                    try:
-                        learn_from_conversation(user_request, actual_output)
-                    except Exception as learn_error:
-                        print(f"⚠️ Auto-learning failed (non-critical): {learn_error}")
-
-                    # ================================================================
+            try:
+                learn_from_conversation(user_request, actual_output if actual_output else '')
+            except Exception as learn_error:
+                print(f"⚠️ Auto-learning failed (non-critical): {learn_error}")
+            
+            # ================================================================
             # PHASE 1: PROACTIVE CURIOSITY ENGINE - February 5, 2026
             # Ask curious follow-up questions after completing tasks
             # ================================================================
             curious_question = None
             try:
                 curiosity_engine = get_curiosity_engine()
+                curiosity_check = curiosity_engine.should_be_curious(
+                    conversation_id,
+                    {
+                        'user_request': user_request,
+                        'ai_response': actual_output if actual_output else '',
+                        'task_completed': True
+                    }
+                )
+                
+                if curiosity_check['should_ask']:
+                    curious_question = curiosity_check['question']
+                    print(f"🤔 Curious follow-up: {curious_question}")
+            except Exception as curiosity_error:
+                print(f"⚠️ Curiosity engine failed (non-critical): {curiosity_error}")
+            # ================================================================
                 curiosity_check = curiosity_engine.should_be_curious(
                     conversation_id,
                     {
