@@ -1,6 +1,7 @@
-CONVERSATION_SUMMARIZER_CODE = '''"""
-Conversation Summarizer - Fix #5
+"""
+Conversation Summarizer - Fix #6
 Created: February 4, 2026
+Updated: February 5, 2026 - Fixed IndentationError at line 26
 
 Compresses long conversations into key facts for context.
 """
@@ -61,7 +62,7 @@ class ConversationSummarizer:
         for msg in messages:
             role = "User" if msg['role'] == 'user' else "Assistant"
             content = msg['content'][:500]  # Truncate long messages
-            conv_text += f"{role}: {content}\\n\\n"
+            conv_text += f"{role}: {content}\n\n"
         
         # Generate summary using AI
         summary_prompt = f"""Summarize this conversation into key facts:
@@ -130,19 +131,19 @@ Format as brief bullet points."""
             if not summaries:
                 return ""
             
-            context = "\\n\\n=== CONVERSATION HISTORY SUMMARY ===\\n"
+            context = "\n\n=== CONVERSATION HISTORY SUMMARY ===\n"
             
             for idx, summary in enumerate(reversed(summaries), 1):
-                context += f"\\nPart {idx}:\\n{summary['summary_text']}\\n"
+                context += f"\nPart {idx}:\n{summary['summary_text']}\n"
                 
                 # Add entities
                 entities = json.loads(summary['mentioned_entities'])
                 if entities:
                     context += f"Key details mentioned: "
                     context += ", ".join([f"{k}: {v}" for k, v in entities.items()])
-                    context += "\\n"
+                    context += "\n"
             
-            context += "\\n=== END SUMMARY ===\\n\\n"
+            context += "\n=== END SUMMARY ===\n\n"
             
             return context
         except Exception as e:
@@ -156,7 +157,7 @@ Format as brief bullet points."""
         entities = {}
         
         # Extract numbers (employees, shift hours, etc.)
-        numbers = re.findall(r'\\b(\\d+)\\s+(employees?|workers?|people|hours?|shifts?)\\b', text.lower())
+        numbers = re.findall(r'\b(\d+)\s+(employees?|workers?|people|hours?|shifts?)\b', text.lower())
         for num, unit in numbers:
             if unit not in entities:
                 entities[unit] = num
