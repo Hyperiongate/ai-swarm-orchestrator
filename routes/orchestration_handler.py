@@ -344,10 +344,11 @@ def orchestrate():
                     extracted_text = extracted['combined_text']
                     
                     # Check if extracted content is too long (over 50,000 chars)
-                    if len(extracted_text) > 50000:
-                        print(f"⚠️ File content very large ({len(extracted_text)} chars) - truncating")
-                        extracted_text = extracted_text[:50000] + f"\n\n... (truncated {len(extracted_text) - 50000} characters for performance)"
-                    
+                    # UPDATED February 5, 2026: Increased from 50,000 to 200,000 chars for large files
+                if len(extracted_text) > 200000:
+                    print(f"⚠️ File content very large ({len(extracted_text)} chars) - truncating")
+                    extracted_text = extracted_text[:200000] + f"\n\n... (truncated {len(extracted_text) - 200000} characters for performance)"
+                                    
                     # APPEND to file_contents (don't overwrite file_ids context!)
                     if file_contents:
                         file_contents += "\n\n" + extracted_text
