@@ -528,8 +528,8 @@ Please analyze these files and respond to the user's request. Be specific and re
             except Exception as curiosity_error:
                 print(f"⚠️ Curiosity engine failed (non-critical): {curiosity_error}")
             # ================================================================
-                curiosity_check = curiosity_engine.should_be_curious(
-                    conversation_id,
+            
+            return jsonify({
                     {
                         'user_request': user_request,
                         'ai_response': actual_output if actual_output else '',
