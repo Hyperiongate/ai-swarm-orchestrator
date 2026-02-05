@@ -397,7 +397,36 @@ def orchestrate():
             
             from orchestration.ai_clients import call_gpt4
             
-            file_analysis_prompt = f"""The user has uploaded files and asked: {user_request}
+            # Determine if this is a large Excel file
+is_large_excel = False
+row_count_estimate = 0
+if file_paths:
+    for fp in file_paths:
+        if fp.endswith(('.xlsx', '.xls')):
+            # Estimate rows from file size (rough: 1MB ≈ 1000-2000 rows)
+            file_size_mb = os.path.getsize(fp) / (1024 * 1024)
+            row_count_estimate = int(file_size_mb * 1500)  # Conservative estimate
+            if file_size_mb > 5:
+                is_large_excel = True
+                break
+
+if is_large_excel and row_count_estimate > 0:
+    file_analysis_prompt = f"""The user uploaded a LARGE Excel file (approximately {row_count_estimate:,} rows) and asked: {user_request}
+
+IMPORTANT: This is a substantial dataset. Provide a COMPREHENSIVE analysis including:
+1. Overall structure and data types
+2. Key patterns and trends you observe
+3. Statistical summaries where relevant
+4. Specific insights related to the user's question
+5. Notable anomalies or interesting findings
+
+Here are the file contents (showing a representative sample):
+
+{file_contents}
+
+Provide a DETAILED, THOROUGH analysis. The user expects substantial insights from this large dataset."""
+else:
+    file_analysis_prompt = f"""The user has uploaded files and asked: {user_request}
 
 Here are the file contents:
 
