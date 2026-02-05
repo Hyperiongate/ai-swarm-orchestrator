@@ -561,6 +561,33 @@ def init_db():
     ''')
     
     # ============================================================================
+ # ============================================================================
+    # BACKGROUND JOBS TABLE (Added February 5, 2026)
+    # Tracks large file processing jobs running in background threads
+    # ============================================================================
+    
+    # Background jobs table - tracks async file processing
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS background_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id TEXT UNIQUE NOT NULL,
+            file_path TEXT NOT NULL,
+            file_name TEXT NOT NULL,
+            file_size_mb REAL NOT NULL,
+            user_request TEXT NOT NULL,
+            conversation_id TEXT NOT NULL,
+            task_id INTEGER NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('queued', 'processing', 'completed', 'failed')),
+            progress INTEGER DEFAULT 0 CHECK(progress >= 0 AND progress <= 100),
+            current_step TEXT,
+            estimated_minutes INTEGER,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP,
+            completed_at TIMESTAMP,
+            FOREIGN KEY (conversation_id) REFERENCES conversations(conversation_id),
+            FOREIGN KEY (task_id) REFERENCES tasks(id)
+        )
+    ''')
     # INDEXES FOR PERFORMANCE
     # ============================================================================
     
@@ -620,10 +647,15 @@ def init_db():
     db.execute('CREATE INDEX IF NOT EXISTS idx_proposals_status ON modification_proposals(status)')
     db.execute('CREATE INDEX IF NOT EXISTS idx_proposals_priority ON modification_proposals(priority)')
     db.execute('CREATE INDEX IF NOT EXISTS idx_alignment_date ON goal_alignment_logs(log_date DESC)')
-    
+
+    # Background jobs indexes (Added February 5, 2026)
+    db.execute('CREATE INDEX IF NOT EXISTS idx_background_jobs_status ON background_jobs(status)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_background_jobs_created ON background_jobs(created_at DESC)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_background_jobs_conversation ON background_jobs(conversation_id)')
+ 
     db.commit()
     db.close()
-    print("✅ Database initialized (with swarm evaluation tables)")
+   print("✅ Database initialized (with background jobs support)")
 
 
 # ============================================================================
