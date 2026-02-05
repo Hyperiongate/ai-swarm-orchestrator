@@ -1,12 +1,13 @@
 """
 Orchestration Handler - Main AI Task Processing
 Created: January 31, 2026
-Last Updated: February 4, 2026 - ADDED AUTO-LEARNING INTEGRATION
+Last Updated: February 5, 2026 - FIXED SYNTAX ERROR (line 532 bracket mismatch)
 
 This file handles the main /api/orchestrate endpoint that processes user requests.
 Separated from core.py to make it easier to fix and maintain.
 
 UPDATES:
+- February 5, 2026: FIXED syntax error - duplicate code blocks removed, brackets matched properly
 - February 4, 2026: Added auto-learning integration at all conversation endpoints
   * GPT-4 file handler now learns from file analysis conversations
   * Main orchestration endpoint learns from all AI conversations
@@ -147,6 +148,7 @@ def orchestrate():
     """
     Main orchestration endpoint with proactive intelligence and conversation memory.
     
+    UPDATED February 5, 2026: Fixed syntax error (duplicate code blocks, bracket mismatch)
     UPDATED February 4, 2026: Added auto-learning integration
     UPDATED January 31, 2026: Extracted to separate file for better maintainability
     FIXED January 31, 2026: File contents now properly passed to Claude AI
@@ -356,7 +358,6 @@ def orchestrate():
             except Exception as extract_error:
                 print(f"⚠️ Could not extract file contents: {extract_error}")
         
-        overall_start = time.time()
         # 🔍 DIAGNOSTIC STEP 4: Check if file_contents will route to GPT-4
         print(f"🔍 DIAGNOSTIC STEP 4: Checking file_contents for GPT-4 routing")
         print(f"🔍 DIAGNOSTIC STEP 4: file_contents is truthy = {bool(file_contents)}")
@@ -365,9 +366,6 @@ def orchestrate():
         # Route file analysis to GPT-4 (better for file handling)
         if file_contents:
             print(f"🔍 DIAGNOSTIC STEP 4: ROUTING TO GPT-4! file_contents has {len(file_contents)} chars")
-            print(f"📎 File content detected ({len(file_contents)} chars) - routing to GPT-4")
-        # Route file analysis to GPT-4 (better for file handling)
-        if file_contents:
             print(f"📎 File content detected ({len(file_contents)} chars) - routing to GPT-4")
             
             if not conversation_id:
@@ -382,19 +380,19 @@ def orchestrate():
             task_id = cursor.lastrowid
             db.commit()
 
-        # ====================================================================
-        # LEARNING LOOP ENHANCEMENT - Initialize Intelligence Engine
-        # February 4, 2026 - FOR ALL CONVERSATIONS
-        # ====================================================================
-        intelligence = None
-        try:
-            intelligence = EnhancedIntelligence()
-            print("🧠 EnhancedIntelligence initialized")
-        except Exception as intel_error:
-            print(f"⚠️ EnhancedIntelligence init failed (non-critical): {intel_error}")
-            import traceback
-            print(traceback.format_exc())
-            intelligence = None  # Explicitly set to None on failure
+            # ================================================================
+            # LEARNING LOOP ENHANCEMENT - Initialize Intelligence Engine
+            # February 4, 2026 - FOR ALL CONVERSATIONS
+            # ================================================================
+            intelligence = None
+            try:
+                intelligence = EnhancedIntelligence()
+                print("🧠 EnhancedIntelligence initialized")
+            except Exception as intel_error:
+                print(f"⚠️ EnhancedIntelligence init failed (non-critical): {intel_error}")
+                import traceback
+                print(traceback.format_exc())
+                intelligence = None  # Explicitly set to None on failure
             
             from orchestration.ai_clients import call_gpt4
             
@@ -421,7 +419,6 @@ Please analyze these files and respond to the user's request. Be specific and re
                     document_url = None
                     document_id = None
                     
-                                                                  
                     try:
                         from document_creation_helper import create_analysis_document
                         
@@ -501,49 +498,34 @@ Please analyze these files and respond to the user's request. Be specific and re
                                {'orchestrator': 'gpt4_file_handler', 'file_analysis': True, 'execution_time': total_time})
                  
                     # Auto-learn from this conversation
-            try:
-                learn_from_conversation(user_request, actual_output if actual_output else '')
-            except Exception as learn_error:
-                print(f"⚠️ Auto-learning failed (non-critical): {learn_error}")
-            
-            # ================================================================
-            # PHASE 1: PROACTIVE CURIOSITY ENGINE - February 5, 2026
-            # Ask curious follow-up questions after completing tasks
-            # ================================================================
-            curious_question = None
-            try:
-                curiosity_engine = get_curiosity_engine()
-                curiosity_check = curiosity_engine.should_be_curious(
-                    conversation_id,
-                    {
-                        'user_request': user_request,
-                        'ai_response': actual_output if actual_output else '',
-                        'task_completed': True
-                    }
-                )
-                
-                if curiosity_check['should_ask']:
-                    curious_question = curiosity_check['question']
-                    print(f"🤔 Curious follow-up: {curious_question}")
-            except Exception as curiosity_error:
-                print(f"⚠️ Curiosity engine failed (non-critical): {curiosity_error}")
-            # ================================================================
-            
-            return jsonify({
-                    {
-                        'user_request': user_request,
-                        'ai_response': actual_output if actual_output else '',
-                        'task_completed': True
-                    }
-                )
-                
-                if curiosity_check['should_ask']:
-                    curious_question = curiosity_check['question']
-                    print(f"🤔 Curious follow-up: {curious_question}")
-            except Exception as curiosity_error:
-                print(f"⚠️ Curiosity engine failed (non-critical): {curiosity_error}")
-            # ================================================================
-                  
+                    try:
+                        learn_from_conversation(user_request, actual_output if actual_output else '')
+                    except Exception as learn_error:
+                        print(f"⚠️ Auto-learning failed (non-critical): {learn_error}")
+                    
+                    # ================================================================
+                    # PHASE 1: PROACTIVE CURIOSITY ENGINE - February 5, 2026
+                    # Ask curious follow-up questions after completing tasks
+                    # ================================================================
+                    curious_question = None
+                    try:
+                        curiosity_engine = get_curiosity_engine()
+                        curiosity_check = curiosity_engine.should_be_curious(
+                            conversation_id,
+                            {
+                                'user_request': user_request,
+                                'ai_response': actual_output if actual_output else '',
+                                'task_completed': True
+                            }
+                        )
+                        
+                        if curiosity_check['should_ask']:
+                            curious_question = curiosity_check['question']
+                            print(f"🤔 Curious follow-up: {curious_question}")
+                    except Exception as curiosity_error:
+                        print(f"⚠️ Curiosity engine failed (non-critical): {curiosity_error}")
+                    # ================================================================
+                    
                     return jsonify({
                         'success': True,
                         'task_id': task_id,
@@ -555,7 +537,8 @@ Please analyze these files and respond to the user's request. Be specific and re
                         'document_created': document_created,
                         'document_url': document_url,
                         'document_id': document_id,
-                        'document_type': 'docx' if document_created else None
+                        'document_type': 'docx' if document_created else None,
+                        'curious_question': curious_question
                     })
                    
                 else:
@@ -603,8 +586,7 @@ Please respond to the user's follow-up question based on these files."""
                         db.close()
                         
                         add_message(conversation_id, 'assistant', actual_output, task_id,
-                               {'orchestrator': 'gpt4_file_handler', 'file_analysis': True, 'execution_time': total_time,
-                                'document_created': document_created, 'document_id': document_id})
+                               {'orchestrator': 'gpt4_file_handler', 'file_analysis': True, 'execution_time': total_time})
                         
                         return jsonify({
                             'success': True,
@@ -1003,7 +985,7 @@ Please respond to the user's follow-up question based on these files."""
             from orchestration.ai_clients import call_claude_opus, call_claude_sonnet
             knowledge_context = get_knowledge_context_for_prompt(knowledge_base, user_request)
 
-         # ================================================================
+            # ================================================================
             # LEARNING LOOP ENHANCEMENT - Get Past Learnings
             # February 4, 2026: Retrieve learned patterns from database
             # ================================================================
@@ -1014,7 +996,8 @@ Please respond to the user's follow-up question based on these files."""
                     print(f"🧠 Retrieved learning context ({len(learning_context)} chars)")
             except Exception as learn_ctx_error:
                 print(f"⚠️ Could not get learning context (non-critical): {learn_ctx_error}")
-             # ================================================================
+            
+            # ================================================================
             # FIX #2: CLIENT PROFILE CONTEXT
             # February 4, 2026: Inject accumulated client knowledge
             # ================================================================
@@ -1088,7 +1071,17 @@ Please respond to the user's follow-up question based on these files."""
             except Exception as summary_error:
                 print(f"⚠️ Could not get conversation summary: {summary_error}")
 
-         
+            # ================================================================
+            # LEARNING LOOP ENHANCEMENT - Initialize Intelligence Engine
+            # February 4, 2026
+            # ================================================================
+            intelligence = None
+            try:
+                intelligence = EnhancedIntelligence()
+                print("🧠 EnhancedIntelligence initialized")
+            except Exception as intel_error:
+                print(f"⚠️ EnhancedIntelligence init failed (non-critical): {intel_error}")
+                intelligence = None
               
             # Get smart defaults from user history
             smart_defaults = {}
@@ -1311,7 +1304,7 @@ Be comprehensive and professional."""
                 except Exception as profile_update_error:
                     print(f"⚠️ Client profile update failed (non-critical): {profile_update_error}")
 
-                 # ================================================================
+            # ================================================================
             # FIX #4: PROACTIVE SUGGESTIONS
             # February 4, 2026: Generate next-step suggestions
             # ================================================================
@@ -1343,6 +1336,29 @@ Be comprehensive and professional."""
                 learn_from_conversation(user_request, actual_output if actual_output else '')
             except Exception as learn_error:
                 print(f"⚠️ Auto-learning failed (non-critical): {learn_error}")
+            
+            # ================================================================
+            # PHASE 1: PROACTIVE CURIOSITY ENGINE - February 5, 2026
+            # Ask curious follow-up questions after completing tasks
+            # ================================================================
+            curious_question = None
+            try:
+                curiosity_engine = get_curiosity_engine()
+                curiosity_check = curiosity_engine.should_be_curious(
+                    conversation_id,
+                    {
+                        'user_request': user_request,
+                        'ai_response': actual_output if actual_output else '',
+                        'task_completed': True
+                    }
+                )
+                
+                if curiosity_check['should_ask']:
+                    curious_question = curiosity_check['question']
+                    print(f"🤔 Curious follow-up: {curious_question}")
+            except Exception as curiosity_error:
+                print(f"⚠️ Curiosity engine failed (non-critical): {curiosity_error}")
+            # ================================================================
             
             return jsonify({
                 'success': True, 'task_id': task_id, 'conversation_id': conversation_id,
