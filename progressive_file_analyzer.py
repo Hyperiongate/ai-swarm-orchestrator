@@ -27,7 +27,7 @@ from datetime import datetime
 # File size thresholds (in bytes)
 SMALL_FILE_THRESHOLD = 5 * 1024 * 1024  # 5MB - analyze fully
 LARGE_FILE_THRESHOLD = 100 * 1024 * 1024  # 100MB - max allowed (UPDATED from 25MB)
-INITIAL_ROW_LIMIT = 100  # Start with first 100 rows
+INITIAL_ROW_LIMIT = 1000  # Start with first 1000 rows
 
 
 class ProgressiveFileAnalyzer:
