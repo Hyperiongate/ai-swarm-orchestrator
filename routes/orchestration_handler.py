@@ -684,12 +684,93 @@ Be concrete and consulting-grade in your analysis."""
                     })
                    
                 else:
-                    print(f"⚠️ GPT-4 analysis failed: {gpt_response.get('content', 'Unknown error')}")
-                    db.close()
+                    error_msg = gpt_response.get('content', 'Unknown error')
+                    print(f"⚠️ GPT-4 analysis failed: {error_msg}")
+                    
+                    # FALLBACK: Use Claude Sonnet for file analysis instead
+                    print(f"🔄 Falling back to Claude Sonnet for file analysis")
+                    
+                    from orchestration.ai_clients import call_claude_sonnet
+                    
+                    # Use same consulting-grade prompt but with Claude
+                    sonnet_response = call_claude_sonnet(file_analysis_prompt, max_tokens=4000)
+                    
+                    if isinstance(sonnet_response, dict) and not sonnet_response.get('error'):
+                        actual_output = sonnet_response.get('content', '')
+                        formatted_output = convert_markdown_to_html(actual_output)
+                        
+                        total_time = time.time() - overall_start
+                        db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
+                                  ('completed', 'claude_sonnet_file_handler', total_time, task_id))
+                        db.commit()
+                        db.close()
+                        
+                        add_message(conversation_id, 'assistant', actual_output, task_id,
+                                   {'orchestrator': 'claude_sonnet_file_handler', 'file_analysis': True, 
+                                    'execution_time': total_time, 'fallback_from': 'gpt4'})
+                        
+                        return jsonify({
+                            'success': True,
+                            'task_id': task_id,
+                            'conversation_id': conversation_id,
+                            'result': formatted_output,
+                            'orchestrator': 'claude_sonnet_file_handler',
+                            'execution_time': total_time,
+                            'message': '📎 File analyzed by Claude Sonnet (GPT-4 unavailable)',
+                            'fallback': True
+                        })
+                    else:
+                        # Both GPT-4 and Claude failed
+                        db.execute('UPDATE tasks SET status = ? WHERE id = ?', ('failed', task_id))
+                        db.commit()
+                        db.close()
+                        
+                        return jsonify({
+                            'success': False,
+                            'error': f'File analysis failed: {error_msg}',
+                            'task_id': task_id,
+                            'conversation_id': conversation_id
+                        }), 500
                     
             except Exception as gpt_error:
                 print(f"GPT-4 file analysis error: {gpt_error}")
+                
+                # FALLBACK: Try Claude Sonnet
+                try:
+                    print(f"🔄 Exception fallback to Claude Sonnet")
+                    from orchestration.ai_clients import call_claude_sonnet
+                    
+                    sonnet_response = call_claude_sonnet(file_analysis_prompt, max_tokens=4000)
+                    
+                    if isinstance(sonnet_response, dict) and not sonnet_response.get('error'):
+                        actual_output = sonnet_response.get('content', '')
+                        formatted_output = convert_markdown_to_html(actual_output)
+                        
+                        total_time = time.time() - overall_start
+                        db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
+                                  ('completed', 'claude_sonnet_file_handler', total_time, task_id))
+                        db.commit()
+                        db.close()
+                        
+                        add_message(conversation_id, 'assistant', actual_output, task_id,
+                                   {'orchestrator': 'claude_sonnet_file_handler', 'file_analysis': True, 
+                                    'execution_time': total_time, 'fallback_from': 'gpt4_exception'})
+                        
+                        return jsonify({
+                            'success': True,
+                            'task_id': task_id,
+                            'conversation_id': conversation_id,
+                            'result': formatted_output,
+                            'orchestrator': 'claude_sonnet_file_handler',
+                            'execution_time': total_time,
+                            'message': '📎 File analyzed by Claude Sonnet',
+                            'fallback': True
+                        })
+                except:
+                    pass
+                    
                 db.close()
+                # Don't return here - let it fall through to check conversation history
 
         # Check for file contents in conversation history
         if not file_contents and conversation_id:
