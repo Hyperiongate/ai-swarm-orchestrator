@@ -1157,6 +1157,18 @@ except Exception as e:
     print(f"⚠️  Conversation Learning registration failed: {e}")
 
 # ============================================================================
+# PATTERN RECOGNITION ROUTES (Added February 5, 2026)
+# ============================================================================
+try:
+    from routes.pattern_recognition import pattern_bp
+    app.register_blueprint(pattern_bp)
+    print("✅ Pattern Recognition API registered")
+except ImportError as e:
+    print(f"ℹ️  Pattern Recognition routes not found: {e}")
+except Exception as e:
+    print(f"⚠️  Pattern Recognition registration failed: {e}")
+
+# ============================================================================
 # PHASE 1 INTELLIGENCE UPGRADES (Added February 5, 2026)
 # Voice learning, proactive curiosity, pattern recognition dashboard
 # ============================================================================
