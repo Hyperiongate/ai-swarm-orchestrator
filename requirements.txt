@@ -1,7 +1,11 @@
 # AI SWARM ORCHESTRATOR - Requirements
-# Last Updated: February 3, 2026 
+# Last Updated: February 5, 2026
 # 
 # CHANGES:
+# - February 5, 2026: ADDED google-api-python-client and google-auth
+#   * Required for authenticated Google Drive downloads (fixes HTTP 432 error)
+#   * Service account credentials loaded from GOOGLE_SERVICE_ACCOUNT_JSON env var
+#   * Enables cloud_file_handler.py to download large Excel files from Google Drive
 # - February 3, 2026: ADDED python-pptx>=0.6.21 for PowerPoint support
 #   * Enables extraction of text from .pptx and .ppt files
 #   * Allows PowerPoint presentations in knowledge base
@@ -26,7 +30,8 @@
 # - Voice control (OpenAI Realtime API)
 # - File management and analysis
 # - Progressive file analysis
-# - PowerPoint support (NEW - February 3, 2026)
+# - PowerPoint support
+# - Google Drive API authenticated downloads (NEW - February 5, 2026)
 # ==========================================
 # CORE FRAMEWORK
 # ==========================================
@@ -48,6 +53,13 @@ openai>=1.12.0
 google-generativeai==0.8.3  # Gemini API
 requests>=2.31.0
 # ==========================================
+# GOOGLE DRIVE API - Authenticated Downloads (Added February 5, 2026)
+# Fixes HTTP 432 error when downloading from Google Drive server-side
+# Requires GOOGLE_SERVICE_ACCOUNT_JSON environment variable in Render
+# ==========================================
+google-api-python-client>=2.100.0   # Google Drive API v3
+google-auth>=2.25.0                 # Service account authentication
+# ==========================================
 # DOCUMENT PROCESSING FOR KNOWLEDGE BASE & FILE MANAGEMENT
 # Updated February 3, 2026: Added python-pptx for PowerPoint support
 # ==========================================
@@ -56,7 +68,7 @@ openpyxl>=3.1.2             # Excel files (.xlsx) - Used by schedule generator A
 pandas>=2.1.4               # Data analysis and Excel chunking for progressive file analysis
 PyPDF2>=3.0.1               # PDF files - Used by knowledge base AND file content extraction
 markdown>=3.5.0             # HTML rendering in routes/core.py
-python-pptx>=0.6.21         # PowerPoint files (.pptx) - NEW for knowledge base (February 3, 2026)
+python-pptx>=0.6.21         # PowerPoint files (.pptx) - for knowledge base
 # ==========================================
 # SCHEDULE GENERATOR
 # ==========================================
@@ -91,5 +103,4 @@ plotly>=5.18.0
 # ==========================================
 # pytesseract>=0.3.10        # OCR for images
 # Note: Also requires Tesseract OCR binary to be installed on system
-python-pptx==0.6.23
 # I did no harm and this file is not truncated
