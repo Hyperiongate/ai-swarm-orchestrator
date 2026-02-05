@@ -63,6 +63,7 @@ from enhanced_intelligence import EnhancedIntelligence
 from specialized_knowledge import get_specialized_knowledge
 from proactive_suggestions import get_proactive_suggestions
 from conversation_summarizer import get_conversation_summarizer
+from proactive_curiosity_engine import get_curiosity_engine  # Phase 1: Proactive Curiosity
 
 # Create blueprint
 orchestration_bp = Blueprint('orchestration', __name__)
@@ -504,6 +505,29 @@ Please analyze these files and respond to the user's request. Be specific and re
                         learn_from_conversation(user_request, actual_output)
                     except Exception as learn_error:
                         print(f"⚠️ Auto-learning failed (non-critical): {learn_error}")
+
+                    # ================================================================
+            # PHASE 1: PROACTIVE CURIOSITY ENGINE - February 5, 2026
+            # Ask curious follow-up questions after completing tasks
+            # ================================================================
+            curious_question = None
+            try:
+                curiosity_engine = get_curiosity_engine()
+                curiosity_check = curiosity_engine.should_be_curious(
+                    conversation_id,
+                    {
+                        'user_request': user_request,
+                        'ai_response': actual_output if actual_output else '',
+                        'task_completed': True
+                    }
+                )
+                
+                if curiosity_check['should_ask']:
+                    curious_question = curiosity_check['question']
+                    print(f"🤔 Curious follow-up: {curious_question}")
+            except Exception as curiosity_error:
+                print(f"⚠️ Curiosity engine failed (non-critical): {curiosity_error}")
+            # ================================================================
                   
                     return jsonify({
                         'success': True,
@@ -1314,7 +1338,8 @@ Be comprehensive and professional."""
                 'knowledge_sources': knowledge_sources, 'formatting_applied': True,
                 'document_created': document_created, 'document_url': document_url,
                 'document_id': document_id, 'document_type': document_type, 'suggestions': suggestions,
-                'proactive_suggestions': suggestions_generated
+                'proactive_suggestions': suggestions_generated,
+                'curious_question': curious_question
             })
         except Exception as orchestration_error:
             import traceback
