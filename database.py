@@ -655,7 +655,7 @@ def init_db():
  
     db.commit()
     db.close()
-   print("✅ Database initialized (with background jobs support)")
+    print("✅ Database initialized (with background jobs support)")
 
 
 # ============================================================================
