@@ -3,7 +3,13 @@
 SWARM-APP.JS - AI Swarm Unified Interface JavaScript
 Shiftwork Solutions LLC
 =============================================================================
+- February 5, 2026: ADDED PATTERN RECOGNITION DASHBOARD
+  * Added loadPatternRecognition() function
+  * Added generatePatternInsightsHTML() function
+  * New Section 18: Pattern Recognition Dashboard
+  * Dashboard shows interaction stats, top tasks, time patterns, communication style
 
+Added Pattern Recognition Dashboard functions - Feb 5, 2026
 CHANGE LOG:
 - February 1, 2026: BULLETPROOF FILE BROWSER FIX
   * Added comprehensive debugging to file browser
@@ -72,7 +78,8 @@ SECTIONS:
 14. Survey Functions
 15. Opportunities Functions
 16. File Browser (BULLETPROOFED February 1, 2026)
-17. Initialization
+17. Pattern Recognition Dashboard (NEW - February 5, 2026)
+18. Initialization
 
 =============================================================================
 */
@@ -1633,6 +1640,121 @@ if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initializeApp);
 } else {
     initializeApp();
+}
+
+// =============================================================================
+// 18. PATTERN RECOGNITION DASHBOARD - Added February 5, 2026
+// =============================================================================
+
+/**
+ * Load pattern recognition data and display dashboard
+ */
+function loadPatternRecognition() {
+    fetch('/api/patterns/insights')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                var dashboardHtml = generatePatternInsightsHTML(data);
+                addMessage('assistant', dashboardHtml, null, currentMode);
+            } else {
+                addMessage('assistant', '⚠️ Pattern recognition data not available yet. Keep using the swarm to build your pattern profile!');
+            }
+        })
+        .catch(function(err) {
+            console.error('Error loading patterns:', err);
+            addMessage('assistant', '❌ Error loading pattern insights: ' + err.message);
+        });
+}
+
+/**
+ * Generate HTML for pattern insights dashboard
+ */
+function generatePatternInsightsHTML(data) {
+    var summary = data.summary || {};
+    var topTasks = data.top_task_types || [];
+    var timePatterns = data.time_patterns || [];
+    var commStyle = data.communication_style || {};
+    
+    var html = `
+<div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 25px; border-radius: 12px; color: white; margin: 15px 0;">
+    <h2 style="margin: 0 0 10px 0; font-size: 22px;">🧠 Your AI Swarm Pattern Recognition Dashboard</h2>
+    <p style="margin: 0; opacity: 0.9; font-size: 13px;">Based on ${summary.total_interactions || 0} interactions</p>
+</div>
+
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0;">
+    <div style="background: white; padding: 20px; border-radius: 10px; border-left: 4px solid #667eea;">
+        <div style="font-size: 28px; font-weight: bold; color: #667eea;">${summary.total_interactions || 0}</div>
+        <div style="font-size: 12px; color: #666; margin-top: 5px;">Total Interactions</div>
+    </div>
+    
+    <div style="background: white; padding: 20px; border-radius: 10px; border-left: 4px solid #4caf50;">
+        <div style="font-size: 28px; font-weight: bold; color: #4caf50;">${summary.success_rate || 0}%</div>
+        <div style="font-size: 12px; color: #666; margin-top: 5px;">Success Rate</div>
+    </div>
+    
+    <div style="background: white; padding: 20px; border-radius: 10px; border-left: 4px solid #ff9800;">
+        <div style="font-size: 28px; font-weight: bold; color: #ff9800;">${summary.avg_response_time || 0}s</div>
+        <div style="font-size: 12px; color: #666; margin-top: 5px;">Avg Response Time</div>
+    </div>
+    
+    <div style="background: white; padding: 20px; border-radius: 10px; border-left: 4px solid #e91e63;">
+        <div style="font-size: 28px; font-weight: bold; color: #e91e63;">${summary.consensus_used || 0}%</div>
+        <div style="font-size: 12px; color: #666; margin-top: 5px;">Consensus Mode</div>
+    </div>
+</div>
+
+${topTasks.length > 0 ? `
+<div style="background: white; padding: 20px; border-radius: 10px; margin-bottom: 20px;">
+    <h3 style="margin: 0 0 15px 0; color: #667eea; font-size: 16px;">📊 Your Top Task Types</h3>
+    <div style="display: flex; flex-direction: column; gap: 10px;">
+        ${topTasks.slice(0, 5).map(function(task) {
+            var percentage = task.percentage || 0;
+            return `
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <div style="min-width: 150px; font-size: 13px; font-weight: 500;">${task.task_type || 'Unknown'}</div>
+                    <div style="flex: 1; background: #f0f0f0; border-radius: 10px; height: 20px; overflow: hidden;">
+                        <div style="background: linear-gradient(90deg, #667eea, #764ba2); height: 100%; width: ${percentage}%; border-radius: 10px;"></div>
+                    </div>
+                    <div style="min-width: 40px; text-align: right; font-size: 12px; color: #666;">${task.count} (${percentage}%)</div>
+                </div>
+            `;
+        }).join('')}
+    </div>
+</div>
+` : ''}
+
+${timePatterns.length > 0 ? `
+<div style="background: white; padding: 20px; border-radius: 10px; margin-bottom: 20px;">
+    <h3 style="margin: 0 0 15px 0; color: #4caf50; font-size: 16px;">⏰ Work Patterns</h3>
+    <div style="border-left: 4px solid #4caf50; padding-left: 15px;">
+        ${timePatterns.slice(0, 3).map(function(t) {
+            return `
+                <div style="margin: 10px 0;">
+                    <span style="font-size: 14px;">✓ Most active on <strong>${t.day}s</strong> (${t.percentage}% of tasks)</span>
+                </div>
+            `;
+        }).join('')}
+    </div>
+</div>
+` : ''}
+
+<div style="background: white; padding: 20px; border-radius: 10px;">
+    <h3 style="margin: 0 0 15px 0; color: #ff9800; font-size: 16px;">💬 Communication Style</h3>
+    <div style="border-left: 4px solid #ff9800; padding-left: 15px;">
+        <div style="margin: 10px 0; font-size: 14px;">✓ Average message length: <strong>${commStyle.avg_message_length || 0} characters</strong></div>
+        <div style="margin: 10px 0; font-size: 14px;">✓ Communication style: <strong>${commStyle.style || 'Unknown'}</strong></div>
+    </div>
+</div>
+
+${summary.total_interactions === 0 ? `
+<div style="background: #fff3cd; padding: 20px; border-radius: 10px; margin-top: 20px; border-left: 4px solid #ffc107;">
+    <strong>Not enough data yet!</strong><br>
+    Keep using the AI Swarm and I'll learn your patterns over time.
+</div>
+` : ''}
+`;
+    
+    return html;
 }
 
 /* I did no harm and this file is not truncated */
