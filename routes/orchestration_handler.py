@@ -60,6 +60,9 @@ from conversation_learning import learn_from_conversation  # Auto-learning from 
 # ============================================================================
 from orchestration.task_analysis import get_learning_context
 from enhanced_intelligence import EnhancedIntelligence
+from specialized_knowledge import get_specialized_knowledge
+from proactive_suggestions import get_proactive_suggestions
+from conversation_summarizer import get_conversation_summarizer
 
 # Create blueprint
 orchestration_bp = Blueprint('orchestration', __name__)
@@ -1003,6 +1006,50 @@ Please respond to the user's follow-up question based on these files."""
             except Exception as avoid_error:
                 print(f"⚠️ Could not get avoidance context (non-critical): {avoid_error}")
 
+            # ================================================================
+            # FIX #6: SPECIALIZED KNOWLEDGE INJECTION
+            # February 4, 2026: Industry expertise and normative benchmarks
+            # ================================================================
+            specialized_context = ""
+            try:
+                specialist = get_specialized_knowledge()
+                
+                # Get industry from project if available
+                industry = None
+                if project_id:
+                    db_temp = get_db()
+                    proj = db_temp.execute('SELECT industry FROM projects WHERE project_id = ?', (project_id,)).fetchone()
+                    db_temp.close()
+                    if proj:
+                        industry = proj['industry']
+                
+                specialized_context = specialist.build_expertise_context(user_request, industry)
+                if specialized_context:
+                    print(f"🎓 Injected specialized knowledge for {industry or 'general'}")
+            except Exception as spec_error:
+                print(f"⚠️ Could not get specialized knowledge: {spec_error}")
+
+            # ================================================================
+            # FIX #5: MULTI-TURN CONTEXT AWARENESS
+            # February 4, 2026: Conversation summarization
+            # ================================================================
+            summary_context = ""
+            try:
+                summarizer = get_conversation_summarizer()
+                
+                # Check if we should summarize
+                if summarizer.should_summarize(conversation_id):
+                    from orchestration.ai_clients import call_claude_sonnet
+                    summarizer.summarize_conversation(conversation_id, call_claude_sonnet)
+                
+                # Get existing summaries
+                summary_context = summarizer.get_conversation_context(conversation_id)
+                if summary_context:
+                    print(f"📝 Retrieved conversation summary")
+            except Exception as summary_error:
+                print(f"⚠️ Could not get conversation summary: {summary_error}")
+
+         
               
             # Get smart defaults from user history
             smart_defaults = {}
@@ -1070,7 +1117,7 @@ This project folder contains: {file_stats.get('total_files', 0)} files
                 else:
                     file_section = ""
 
-                completion_prompt = f"""{knowledge_context}{project_context}{file_context}{conversation_history}{learning_context}{client_profile_context}{avoidance_context}{file_section}
+                completion_prompt = f"""{knowledge_context}{project_context}{file_context}{conversation_history}{learning_context}{client_profile_context}{avoidance_context}{specialized_context}{summary_context}{file_section}
 
 USER REQUEST: {user_request}
 
@@ -1224,6 +1271,33 @@ Be comprehensive and professional."""
                         print(f"👤 Updated profile for {project['client_name']}")
                 except Exception as profile_update_error:
                     print(f"⚠️ Client profile update failed (non-critical): {profile_update_error}")
+
+                 # ================================================================
+            # FIX #4: PROACTIVE SUGGESTIONS
+            # February 4, 2026: Generate next-step suggestions
+            # ================================================================
+            suggestions_generated = []
+            try:
+                suggester = get_proactive_suggestions()
+                
+                suggestion_context = {
+                    'task_id': task_id,
+                    'user_request': user_request,
+                    'ai_response': actual_output,
+                    'document_created': document_created,
+                    'orchestrator': orchestrator
+                }
+                
+                suggestions_generated = suggester.generate_suggestions(suggestion_context)
+                
+                # Store suggestions
+                for suggestion in suggestions_generated:
+                    suggester.store_suggestion(conversation_id, task_id, suggestion)
+                
+                if suggestions_generated:
+                    print(f"💡 Generated {len(suggestions_generated)} proactive suggestions")
+            except Exception as suggest_error:
+                print(f"⚠️ Could not generate suggestions: {suggest_error}")   
                         
             # Auto-learn from this conversation
             try:
@@ -1239,7 +1313,8 @@ Be comprehensive and professional."""
                 'knowledge_applied': knowledge_applied, 'knowledge_used': knowledge_applied,
                 'knowledge_sources': knowledge_sources, 'formatting_applied': True,
                 'document_created': document_created, 'document_url': document_url,
-                'document_id': document_id, 'document_type': document_type, 'suggestions': suggestions
+                'document_id': document_id, 'document_type': document_type, 'suggestions': suggestions,
+                'proactive_suggestions': suggestions_generated
             })
         except Exception as orchestration_error:
             import traceback
