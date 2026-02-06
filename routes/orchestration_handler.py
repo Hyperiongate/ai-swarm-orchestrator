@@ -399,7 +399,8 @@ def orchestrate():
         # Check if user is asking follow-up questions after smart analyzer loaded a file
         # ====================================================================
         if not file_paths and conversation_id:
-            analyzer_state = session.get(f'smart_analyzer_{conversation_id}')
+            from database import get_smart_analyzer_state
+            analyzer_state = get_smart_analyzer_state(conversation_id)
             
             if analyzer_state and analyzer_state.get('analyzer_state') == 'loaded':
                 print(f"🔄 Smart analyzer continuation detected")
@@ -2296,8 +2297,10 @@ def handle_smart_analyzer_continuation(user_request, conversation_id, project_id
         from smart_excel_analyzer import SmartExcelAnalyzer
         from orchestration.ai_clients import call_gpt4
         
-        # Check if there's a loaded analyzer in this conversation
-        analyzer_state = session.get(f'smart_analyzer_{conversation_id}')
+        from database import get_smart_analyzer_state
+        
+        # Check if there's a loaded analyzer in database
+        analyzer_state = get_smart_analyzer_state(conversation_id)
         
         if not analyzer_state:
             return None  # No analyzer found, route elsewhere
