@@ -1815,7 +1815,7 @@ def handle_large_excel_initial(file_path, user_request, conversation_id, project
         import shutil
         
         # Create permanent storage directory
-        permanent_dir = '/tmp/permanent_files'
+        permanent_dir = '/mnt/project/uploaded_files'
         os.makedirs(permanent_dir, exist_ok=True)
         
         # Copy to permanent location with unique name
