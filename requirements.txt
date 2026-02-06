@@ -87,6 +87,7 @@ python-dateutil>=2.8.2
 # ==========================================
 # Image generation and manipulation
 Pillow>=10.2.0
+tabulate
 # Data visualization
 matplotlib>=3.8.2
 # Optional: Enhanced plotting
