@@ -1760,7 +1760,12 @@ Be comprehensive and professional."""
 
 def handle_large_excel_initial(file_path, user_request, conversation_id, project_id, mode, file_info, overall_start):
     """
-    Handle initial upload of a large Excel file - analyze first 500 rows.
+    Handle initial upload of a large Excel file - analyze first 100 rows.
+    
+    UPDATED February 5, 2026 (v7): Reduced max_tokens from 6000 to 3000 to prevent timeout
+    - GPT-4 was timing out with 6000 tokens on large files
+    - 3000 tokens = ~2250 words, still plenty for detailed analysis
+    - Also reduced initial rows from 500 to 100 to decrease preview size
     
     UPDATED February 5, 2026 (v6): Removed redundant pd.ExcelFile() call that loaded
     entire file into memory. Now uses sheet_names from chunk_result (provided by 
@@ -1773,10 +1778,10 @@ def handle_large_excel_initial(file_path, user_request, conversation_id, project
         analyzer = get_progressive_analyzer()
         
         # ================================================================
-        # CRITICAL FIX: February 5, 2026
-        # Changed from 100 rows to 500 rows for deeper initial analysis
+        # FIX February 5, 2026 (v7): Back to 100 rows for very large files
+        # 500 rows was creating previews too large for GPT-4 to handle
         # ================================================================
-        chunk_result = analyzer.extract_excel_chunk(file_path, start_row=0, num_rows=500)
+        chunk_result = analyzer.extract_excel_chunk(file_path, start_row=0, num_rows=100)
         
         if not chunk_result['success']:
             return jsonify({
@@ -1819,65 +1824,40 @@ def handle_large_excel_initial(file_path, user_request, conversation_id, project
         sheets_summary = f"\n📋 **FILE CONTAINS {num_sheets} WORKSHEET(S):** {', '.join(sheet_names)}\n"
         # ================================================================
         
-        analysis_prompt = f"""You are Jim Goodwin, owner of Shiftwork Solutions LLC with 30+ years analyzing workforce operations for hundreds of clients.
+        # ================================================================
+        # FIX February 5, 2026 (v7): SHORTER, FOCUSED PROMPT
+        # Previous prompt was too long and complex, causing GPT-4 timeout
+        # ================================================================
+        analysis_prompt = f"""You are Jim Goodwin, Shiftwork Solutions LLC - 30+ years optimizing 24/7 operations.
 
-This is a CONSULTING ENGAGEMENT worth $16,500/week. The client expects DEEP, ACTIONABLE ANALYSIS - not surface observations.
-
-CLIENT FILE: {file_info['file_size_mb']}MB Excel file with {chunk_result['total_rows']:,} rows
-CLIENT REQUEST: {user_request}
+**CLIENT FILE:** {file_info['file_size_mb']}MB Excel, {chunk_result['total_rows']:,} total rows
+**REQUEST:** {user_request}
 {sheets_summary}
 
-⚠️ CRITICAL: You're analyzing FIRST 500 ROWS. DO NOT provide weak summaries like "there is data" or "hours vary by day."
+**YOUR TASK:** Analyze first 100 rows with SPECIFIC NUMBERS - this is a $16,500/week consulting engagement.
 
-REQUIRED ANALYSIS DEPTH:
+**DELIVER:**
+1. **Key Statistics** - Actual totals, ranges, averages (not "varies")
+2. **Top Patterns** - What 3 things stand out? Use percentages.
+3. **Operational Insights** - Coverage gaps? Shift patterns? Cost drivers?
+4. **Red Flags** - What needs immediate attention?
+5. **Next Steps** - What would you recommend?
 
-1. **SPECIFIC NUMBERS - NO VAGUE STATEMENTS:**
-   ❌ BAD: "Hours vary across departments"
-   ✅ GOOD: "Maintenance: 194,539.69 hrs (33% of total), POP/Samples/VAS: 259,373.57 hrs (44% of total)"
-   
-   - Calculate EXACT percentages, ratios, rates
-   - Identify SPECIFIC peak/trough values with dates
-   - Compute variance/std deviation where relevant
-
-2. **OPERATIONAL PATTERNS (Shiftwork Expertise):**
-   - Which days show 20%+ spikes? What's the business reason?
-   - Are weekend patterns different? (7-day vs 5-day operation?)
-   - Hour distribution suggests what shift pattern? (8hr/10hr/12hr?)
-   - Where are coverage gaps? (Low volume days = understaffing risk)
-   - Coefficient of variation by department (high = poor scheduling)
-
-3. **COST ANALYSIS:**
-   - Total annual labor cost estimate (assume $30/hr loaded rate)
-   - Top 3 cost centers with dollar amounts
-   - Overtime risk score: Where's the variability causing premium pay?
-   - Estimated weekly cost if hours distributed evenly vs actual pattern
-
-4. **RED FLAGS & PROBLEMS:**
-   - Departments with >30% day-to-day variance (scheduling failure)
-   - Single-day spikes >2x average (crisis mode / poor planning)
-   - Sustained weekend gaps (7-day staffing inadequate)
-   - Workload imbalances (some areas 3x others)
-
-5. **ACTIONABLE RECOMMENDATIONS:**
-   - SPECIFIC: "Move 15% of Wed Maintenance hours to Mon/Tue to smooth demand"
-   - QUANTIFIED: "Expected savings: $47K/year by reducing variance"
-   - PRIORITIZED: "Fix #1: Inventory Control wed spike - highest cost exposure"
-
-6. **CLARIFYING QUESTIONS (if needed):**
-   - What's not clear from this sample?
-   - What data would help you give better recommendations?
-   - Are there other worksheets that matter?
-
-FIRST 500 ROWS DATA:
+**DATA (First 100 rows):**
 {chunk_result['summary']}
 
 {chunk_result['text_preview']}
 
-DO NOT SUMMARIZE. ANALYZE. Provide consulting-grade insights a client would pay $16,500/week to receive.
+BE SPECIFIC. Use actual numbers from the data."""
+        # ================================================================
 
-If you need more data to give a proper analysis, SAY EXACTLY WHAT YOU NEED and why."""
-
-        gpt_response = call_gpt4(analysis_prompt, max_tokens=6000)
+        # ================================================================
+        # CRITICAL FIX v7: Reduced max_tokens from 6000 to 3000
+        # GPT-4 max is 4096, but 6000 was causing timeouts
+        # 3000 tokens ≈ 2250 words, still plenty for analysis
+        # ================================================================
+        print(f"📊 Calling GPT-4 with max_tokens=3000...")
+        gpt_response = call_gpt4(analysis_prompt, max_tokens=3000)
         
         if not gpt_response.get('error') and gpt_response.get('content'):
             ai_analysis = gpt_response.get('content', '')
@@ -1895,7 +1875,7 @@ If you need more data to give a proper analysis, SAY EXACTLY WHAT YOU NEED and w
             db.close()
             
             add_message(conversation_id, 'assistant', full_response, task_id,
-                       {'orchestrator': 'gpt4_progressive_excel', 'rows_analyzed': 500, 
+                       {'orchestrator': 'gpt4_progressive_excel', 'rows_analyzed': 100, 
                         'total_rows': chunk_result['total_rows'], 'execution_time': total_time})
             
             return jsonify({
@@ -1906,20 +1886,22 @@ If you need more data to give a proper analysis, SAY EXACTLY WHAT YOU NEED and w
                 'orchestrator': 'gpt4_progressive_excel',
                 'execution_time': total_time,
                 'progressive_analysis': True,
-                'rows_analyzed': 500,
+                'rows_analyzed': 100,
                 'total_rows': chunk_result['total_rows'],
                 'rows_remaining': chunk_result['rows_remaining']
             })
         else:
+            error_msg = gpt_response.get('content', 'Unknown error')
+            print(f"❌ GPT-4 analysis failed: {error_msg}")
             db.close()
             return jsonify({
                 'success': False,
-                'error': 'Could not analyze Excel file'
+                'error': f'Could not analyze Excel file: {error_msg}'
             }), 500
             
     except Exception as e:
         import traceback
-        print(f"Large Excel handling error: {traceback.format_exc()}")
+        print(f"❌ Large Excel handling error: {traceback.format_exc()}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
