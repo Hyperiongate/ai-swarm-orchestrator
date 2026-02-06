@@ -1864,6 +1864,11 @@ BE SPECIFIC. Use actual numbers from the data."""
             full_response = ai_analysis + continuation_prompt
             
             formatted_output = convert_markdown_to_html(full_response)
+
+            # CRITICAL: Force garbage collection to free memory
+            chunk_result = None
+            gc.collect()
+            print(f"🧹 Freed memory after analysis")
             
             total_time = time.time() - overall_start
             db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
