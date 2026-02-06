@@ -1664,7 +1664,109 @@ def record_avoidance_violation(pattern_id):
     db.commit()
     db.close()
 
+# ============================================================================
+# SMART ANALYZER STATE FUNCTIONS (Added February 6, 2026 v10)
+# Database-backed storage for pandas analyzer state (replaces Flask session)
+# ============================================================================
 
-# I did no harm and this file is not truncated
+def save_smart_analyzer_state(conversation_id, file_path, file_name, profile):
+    """
+    Save smart analyzer state to database.
+    
+    Args:
+        conversation_id: Conversation ID
+        file_path: Permanent file path
+        file_name: Original filename
+        profile: Profile dict from analyzer
+        
+    Returns:
+        True if successful
+    """
+    db = get_db()
+    
+    try:
+        db.execute('''
+            INSERT OR REPLACE INTO smart_analyzer_state 
+            (conversation_id, file_path, file_name, analyzer_state, profile_json, last_used)
+            VALUES (?, ?, ?, 'loaded', ?, CURRENT_TIMESTAMP)
+        ''', (conversation_id, file_path, file_name, json.dumps(profile)))
+        
+        db.commit()
+        print(f"💾 Saved smart analyzer state to DB for conversation {conversation_id}")
+        return True
+    except Exception as e:
+        print(f"❌ Error saving smart analyzer state: {e}")
+        return False
+    finally:
+        db.close()
 
+
+def get_smart_analyzer_state(conversation_id):
+    """
+    Get smart analyzer state from database.
+    
+    Args:
+        conversation_id: Conversation ID
+        
+    Returns:
+        dict with analyzer state or None
+    """
+    db = get_db()
+    
+    try:
+        row = db.execute('''
+            SELECT file_path, file_name, analyzer_state, profile_json, last_used
+            FROM smart_analyzer_state
+            WHERE conversation_id = ?
+        ''', (conversation_id,)).fetchone()
+        
+        if row:
+            # Update last_used timestamp
+            db.execute('''
+                UPDATE smart_analyzer_state 
+                SET last_used = CURRENT_TIMESTAMP
+                WHERE conversation_id = ?
+            ''', (conversation_id,))
+            db.commit()
+            
+            return {
+                'file_path': row['file_path'],
+                'file_name': row['file_name'],
+                'analyzer_state': row['analyzer_state'],
+                'profile': json.loads(row['profile_json'])
+            }
+        
+        return None
+    except Exception as e:
+        print(f"❌ Error getting smart analyzer state: {e}")
+        return None
+    finally:
+        db.close()
+
+
+def delete_smart_analyzer_state(conversation_id):
+    """
+    Delete smart analyzer state from database.
+    
+    Args:
+        conversation_id: Conversation ID
+        
+    Returns:
+        True if successful
+    """
+    db = get_db()
+    
+    try:
+        db.execute('''
+            DELETE FROM smart_analyzer_state
+            WHERE conversation_id = ?
+        ''', (conversation_id,))
+        
+        db.commit()
+        return True
+    except Exception as e:
+        print(f"❌ Error deleting smart analyzer state: {e}")
+        return False
+    finally:
+        db.close()
 # I did no harm and this file is not truncated
