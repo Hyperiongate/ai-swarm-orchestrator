@@ -1757,30 +1757,21 @@ Be comprehensive and professional."""
         print(f"CRITICAL ERROR: {traceback.format_exc()}")
         return jsonify({'success': False, 'error': f'Server error: {str(e)}'}), 500
 
-
 def handle_large_excel_initial(file_path, user_request, conversation_id, project_id, mode, file_info, overall_start):
     """
     Handle initial upload of a large Excel file - analyze first 100 rows.
     
+    UPDATED February 6, 2026 (v8): MEMORY FIX - Store file in database, not session/memory
+    - Saves file to permanent location in database
+    - Stores file_id in session instead of file contents
+    - Re-extracts chunks on demand instead of keeping in RAM
+    - Prevents 512MB+ memory crashes on paid Render plans
+    
     UPDATED February 5, 2026 (v7): Reduced max_tokens from 6000 to 3000 to prevent timeout
-    - GPT-4 was timing out with 6000 tokens on large files
-    - 3000 tokens = ~2250 words, still plenty for detailed analysis
-    - Also reduced initial rows from 500 to 100 to decrease preview size
-    
-    UPDATED February 5, 2026 (v6): Removed redundant pd.ExcelFile() call that loaded
-    entire file into memory. Now uses sheet_names from chunk_result (provided by 
-    progressive_file_analyzer v5).
-    
-    UPDATED: February 5, 2026 - Increased from 100 to 500 rows
-    Added: January 31, 2026
     """
     try:
         analyzer = get_progressive_analyzer()
         
-        # ================================================================
-        # FIX February 5, 2026 (v7): Back to 100 rows for very large files
-        # 500 rows was creating previews too large for GPT-4 to handle
-        # ================================================================
         chunk_result = analyzer.extract_excel_chunk(file_path, start_row=0, num_rows=100)
         
         if not chunk_result['success']:
@@ -1794,15 +1785,43 @@ def handle_large_excel_initial(file_path, user_request, conversation_id, project
             conversation_id = create_conversation(mode=mode, project_id=project_id)
             print(f"Created new conversation: {conversation_id}")
         
-        # Store file analysis state in session
+        # ================================================================
+        # FIX v8: Save file to PERMANENT location and store in database
+        # This prevents memory issues and allows follow-up questions
+        # ================================================================
+        from database_file_management import get_project_manager
+        pm = get_project_manager()
+        
+        # Save file permanently
+        original_filename = os.path.basename(file_path)
+        saved_file = pm.save_file(
+            file_path=file_path,
+            original_filename=original_filename,
+            project_id=project_id if project_id else 'temp',
+            file_type='xlsx',
+            metadata={
+                'total_rows': chunk_result['total_rows'],
+                'columns': chunk_result['columns'],
+                'file_size_mb': file_info['file_size_mb']
+            }
+        )
+        
+        permanent_path = saved_file['file_path']
+        file_id = saved_file['file_id']
+        
+        print(f"💾 Saved file permanently: {file_id}")
+        
+        # Store minimal info in session (just IDs, not data)
         session[f'file_analysis_{conversation_id}'] = {
-            'file_path': file_path,
+            'file_id': file_id,
+            'file_path': permanent_path,
             'current_position': chunk_result['end_row'],
             'total_rows': chunk_result['total_rows'],
             'columns': chunk_result['columns'],
-            'file_name': os.path.basename(file_path),
+            'file_name': original_filename,
             'file_size_mb': file_info['file_size_mb']
         }
+        # ================================================================
         
         # Create task
         db = get_db()
@@ -1814,20 +1833,10 @@ def handle_large_excel_initial(file_path, user_request, conversation_id, project
         # Build analysis prompt
         from orchestration.ai_clients import call_gpt4
         
-        # ================================================================
-        # FIX February 5, 2026 (v6): Use sheet info from chunk_result
-        # instead of calling pd.ExcelFile() which reads the entire file AGAIN
-        # The progressive_file_analyzer v5 now includes sheet_names in results
-        # ================================================================
         sheet_names = chunk_result.get('sheet_names', ['Sheet1'])
         num_sheets = chunk_result.get('num_sheets', 1)
         sheets_summary = f"\n📋 **FILE CONTAINS {num_sheets} WORKSHEET(S):** {', '.join(sheet_names)}\n"
-        # ================================================================
         
-        # ================================================================
-        # FIX February 5, 2026 (v7): SHORTER, FOCUSED PROMPT
-        # Previous prompt was too long and complex, causing GPT-4 timeout
-        # ================================================================
         analysis_prompt = f"""You are Jim Goodwin, Shiftwork Solutions LLC - 30+ years optimizing 24/7 operations.
 
 **CLIENT FILE:** {file_info['file_size_mb']}MB Excel, {chunk_result['total_rows']:,} total rows
@@ -1849,13 +1858,7 @@ def handle_large_excel_initial(file_path, user_request, conversation_id, project
 {chunk_result['text_preview']}
 
 BE SPECIFIC. Use actual numbers from the data."""
-        # ================================================================
 
-        # ================================================================
-        # CRITICAL FIX v7: Reduced max_tokens from 6000 to 3000
-        # GPT-4 max is 4096, but 6000 was causing timeouts
-        # 3000 tokens ≈ 2250 words, still plenty for analysis
-        # ================================================================
         print(f"📊 Calling GPT-4 with max_tokens=3000...")
         gpt_response = call_gpt4(analysis_prompt, max_tokens=3000)
         
@@ -1876,7 +1879,8 @@ BE SPECIFIC. Use actual numbers from the data."""
             
             add_message(conversation_id, 'assistant', full_response, task_id,
                        {'orchestrator': 'gpt4_progressive_excel', 'rows_analyzed': 100, 
-                        'total_rows': chunk_result['total_rows'], 'execution_time': total_time})
+                        'total_rows': chunk_result['total_rows'], 'execution_time': total_time,
+                        'file_id': file_id})  # Store file_id for follow-ups
             
             return jsonify({
                 'success': True,
@@ -1903,6 +1907,7 @@ BE SPECIFIC. Use actual numbers from the data."""
         import traceback
         print(f"❌ Large Excel handling error: {traceback.format_exc()}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
 
 
 def handle_progressive_continuation(conversation_id, user_request, continuation_request, file_analysis_state, overall_start):
