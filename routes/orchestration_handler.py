@@ -1887,12 +1887,7 @@ BE SPECIFIC. Use actual numbers from the data."""
             full_response = ai_analysis + continuation_prompt
             
             formatted_output = convert_markdown_to_html(full_response)
-
-            # CRITICAL: Force garbage collection to free memory
-            chunk_result = None
-            gc.collect()
-            print(f"🧹 Freed memory after analysis")
-            
+                      
             total_time = time.time() - overall_start
             db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
                       ('completed', 'gpt4_progressive_excel', total_time, task_id))
@@ -1903,6 +1898,11 @@ BE SPECIFIC. Use actual numbers from the data."""
                        {'orchestrator': 'gpt4_progressive_excel', 'rows_analyzed': 100, 
                         'total_rows': chunk_result['total_rows'], 'execution_time': total_time,
                         'permanent_file': permanent_path})
+
+            # CRITICAL: Force garbage collection to free memory
+            chunk_result = None
+            gc.collect()
+            print(f"🧹 Freed memory after analysis")
             
             return jsonify({
                 'success': True,
