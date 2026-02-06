@@ -2253,14 +2253,6 @@ What would you like to analyze?"""
         print(f"❌ Smart analysis error: {traceback.format_exc()}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
-"""
-ADDITION to orchestration_handler.py
-
-This handler manages follow-up questions after a file has been loaded by smart analyzer.
-Add this function AFTER handle_excel_smart_analysis.
-
-Last Updated: February 6, 2026 v10 - Follow-up handler for smart analyzer
-"""
 
 def handle_smart_analyzer_continuation(user_request, conversation_id, project_id, mode):
     """
