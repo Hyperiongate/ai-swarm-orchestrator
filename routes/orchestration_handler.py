@@ -921,10 +921,33 @@ Be concrete and consulting-grade in your analysis."""
                 db.close()
                 # Don't return here - let it fall through to check conversation history
 
-        # Check for file contents in conversation history
+        # Check for file contents in conversation history OR progressive file session
         if not file_contents and conversation_id:
-            from database import get_conversation_file_contents
-            file_contents = get_conversation_file_contents(conversation_id)
+            # First check if there's a progressive file analysis in session
+            file_analysis_state = session.get(f'file_analysis_{conversation_id}')
+            
+            if file_analysis_state and file_analysis_state.get('file_path'):
+                file_path = file_analysis_state['file_path']
+                
+                # File exists in session - extract a chunk for context
+                if os.path.exists(file_path):
+                    print(f"📎 Using file from progressive analysis session")
+                    
+                    try:
+                        analyzer = get_progressive_analyzer()
+                        # Get first 100 rows for context
+                        chunk_result = analyzer.extract_excel_chunk(file_path, start_row=0, num_rows=100)
+                        
+                        if chunk_result['success']:
+                            file_contents = f"{chunk_result['summary']}\n\n{chunk_result['text_preview']}"
+                            print(f"✅ Retrieved file context from session ({len(file_contents)} chars)")
+                    except Exception as extract_error:
+                        print(f"⚠️ Could not extract from session file: {extract_error}")
+            
+            # If still no file, check conversation history
+            if not file_contents:
+                from database import get_conversation_file_contents
+                file_contents = get_conversation_file_contents(conversation_id)
             if file_contents:
                 print(f"📎 Retrieved file contents from conversation history")
                 
