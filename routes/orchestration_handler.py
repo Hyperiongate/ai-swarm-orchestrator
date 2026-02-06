@@ -2053,12 +2053,14 @@ def handle_excel_smart_analysis(file_path, user_request, conversation_id, projec
         # ================================================================
         # STEP 3: Store analyzer in session for follow-up questions
         # ================================================================
-        session[f'smart_analyzer_{conversation_id}'] = {
-            'file_path': permanent_path,
-            'analyzer_state': 'loaded',
-            'profile': analyzer.profile,
-            'file_name': original_filename
-        }
+        from database import save_smart_analyzer_state
+        
+        save_smart_analyzer_state(
+            conversation_id=conversation_id,
+            file_path=permanent_path,
+            file_name=original_filename,
+            profile=analyzer.profile
+        )
         
         # ================================================================
         # STEP 4: Create task
