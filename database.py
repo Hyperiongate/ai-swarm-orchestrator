@@ -652,7 +652,29 @@ def init_db():
     db.execute('CREATE INDEX IF NOT EXISTS idx_background_jobs_status ON background_jobs(status)')
     db.execute('CREATE INDEX IF NOT EXISTS idx_background_jobs_created ON background_jobs(created_at DESC)')
     db.execute('CREATE INDEX IF NOT EXISTS idx_background_jobs_conversation ON background_jobs(conversation_id)')
- 
+    # ============================================================================
+    # SMART ANALYZER STATE TABLE (Added February 6, 2026 v10)
+    # Stores loaded DataFrame state for follow-up questions (replaces session storage)
+    # ============================================================================
+    
+    # Smart analyzer state table - stores loaded file info for continuation
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS smart_analyzer_state (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id TEXT UNIQUE NOT NULL,
+            file_path TEXT NOT NULL,
+            file_name TEXT NOT NULL,
+            analyzer_state TEXT NOT NULL CHECK(analyzer_state IN ('loaded', 'processing', 'error')),
+            profile_json TEXT NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            last_used TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (conversation_id) REFERENCES conversations(conversation_id)
+        )
+    ''')
+    
+    # Smart analyzer state index
+    db.execute('CREATE INDEX IF NOT EXISTS idx_smart_analyzer_conversation ON smart_analyzer_state(conversation_id)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_smart_analyzer_last_used ON smart_analyzer_state(last_used DESC)')
     db.commit()
     db.close()
     print("✅ Database initialized (with background jobs support)")
