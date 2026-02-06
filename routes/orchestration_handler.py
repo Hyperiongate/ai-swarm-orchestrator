@@ -1786,34 +1786,27 @@ def handle_large_excel_initial(file_path, user_request, conversation_id, project
             print(f"Created new conversation: {conversation_id}")
         
         # ================================================================
-        # FIX v8: Save file to PERMANENT location and store in database
-        # This prevents memory issues and allows follow-up questions
+        # FIX v8: Copy file to PERMANENT location to prevent memory issues
+        # Keep file available for follow-up questions without holding in RAM
         # ================================================================
-        from database_file_management import get_project_manager
-        pm = get_project_manager()
+        import shutil
         
-        # Save file permanently
+        # Create permanent storage directory
+        permanent_dir = '/tmp/permanent_files'
+        os.makedirs(permanent_dir, exist_ok=True)
+        
+        # Copy to permanent location with unique name
         original_filename = os.path.basename(file_path)
-        saved_file = pm.save_file(
-            file_path=file_path,
-            original_filename=original_filename,
-            project_id=project_id if project_id else 'temp',
-            file_type='xlsx',
-            metadata={
-                'total_rows': chunk_result['total_rows'],
-                'columns': chunk_result['columns'],
-                'file_size_mb': file_info['file_size_mb']
-            }
-        )
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        permanent_filename = f"{timestamp}_{original_filename}"
+        permanent_path = os.path.join(permanent_dir, permanent_filename)
         
-        permanent_path = saved_file['file_path']
-        file_id = saved_file['file_id']
+        shutil.copy2(file_path, permanent_path)
+        print(f"💾 Saved file permanently: {permanent_path}")
         
-        print(f"💾 Saved file permanently: {file_id}")
         
         # Store minimal info in session (just IDs, not data)
         session[f'file_analysis_{conversation_id}'] = {
-            'file_id': file_id,
             'file_path': permanent_path,
             'current_position': chunk_result['end_row'],
             'total_rows': chunk_result['total_rows'],
@@ -1880,7 +1873,7 @@ BE SPECIFIC. Use actual numbers from the data."""
             add_message(conversation_id, 'assistant', full_response, task_id,
                        {'orchestrator': 'gpt4_progressive_excel', 'rows_analyzed': 100, 
                         'total_rows': chunk_result['total_rows'], 'execution_time': total_time,
-                        'file_id': file_id})  # Store file_id for follow-ups
+                        'permanent_file': permanent_path})
             
             return jsonify({
                 'success': True,
