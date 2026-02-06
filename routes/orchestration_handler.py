@@ -1780,80 +1780,123 @@ Be comprehensive and professional."""
         print(f"CRITICAL ERROR: {traceback.format_exc()}")
         return jsonify({'success': False, 'error': f'Server error: {str(e)}'}), 500
 
+"""
+REPLACEMENT for handle_large_excel_initial function in orchestration_handler.py
+
+This version adds intelligent routing:
+- Small-medium files (<100MB) with data analysis questions → Smart pandas analyzer
+- Large files or conversational questions → Progressive analysis (existing)
+- Keeps all existing functionality intact
+
+Last Updated: February 6, 2026 v9 - Added smart pandas analyzer integration
+"""
+
 def handle_large_excel_initial(file_path, user_request, conversation_id, project_id, mode, file_info, overall_start):
     """
-    Handle initial upload of a large Excel file - analyze first 100 rows.
+    Handle initial upload of Excel file with intelligent routing.
+    
+    UPDATED February 6, 2026 (v9): SMART ANALYSIS ROUTING
+    - Added pandas-based smart analyzer for data analysis questions
+    - Intelligently routes based on file size and user intent
+    - Keeps progressive analysis for large files or conversational mode
     
     UPDATED February 6, 2026 (v8): MEMORY FIX - Store file in database, not session/memory
-    - Saves file to permanent location in database
-    - Stores file_id in session instead of file contents
-    - Re-extracts chunks on demand instead of keeping in RAM
-    - Prevents 512MB+ memory crashes on paid Render plans
-    
-    UPDATED February 5, 2026 (v7): Reduced max_tokens from 6000 to 3000 to prevent timeout
+    UPDATED February 5, 2026 (v7): Reduced max_tokens from 6000 to 3000
     """
     try:
-        analyzer = get_progressive_analyzer()
+        # ================================================================
+        # STEP 1: Determine analysis strategy
+        # ================================================================
+        file_size_mb = file_info['file_size_mb']
         
-        chunk_result = analyzer.extract_excel_chunk(file_path, start_row=0, num_rows=100)
+        # Keywords that indicate user wants data analysis (not conversation)
+        analysis_keywords = [
+            'analyze', 'analysis', 'calculate', 'show me', 'total', 'sum',
+            'average', 'breakdown', 'by department', 'by shift', 'by week',
+            'by month', 'trends', 'patterns', 'compare', 'overtime',
+            'headcount', 'hours', 'table'
+        ]
         
-        if not chunk_result['success']:
-            return jsonify({
-                'success': False,
-                'error': f"Could not analyze Excel file: {chunk_result.get('error')}"
-            }), 500
+        user_wants_analysis = any(keyword in user_request.lower() for keyword in analysis_keywords)
         
-        # Create conversation if needed
-        if not conversation_id:
-            conversation_id = create_conversation(mode=mode, project_id=project_id)
-            print(f"Created new conversation: {conversation_id}")
+        # Use smart analyzer if:
+        # 1. File is <100MB (can load entirely into memory with 8GB RAM)
+        # 2. User request indicates they want data analysis
+        use_smart_analyzer = (file_size_mb < 100 and user_wants_analysis)
+        
+        print(f"📊 File: {file_size_mb}MB | Analysis mode: {'SMART_PANDAS' if use_smart_analyzer else 'PROGRESSIVE'}")
         
         # ================================================================
-        # FIX v8: Copy file to PERMANENT location to prevent memory issues
-        # Keep file available for follow-up questions without holding in RAM
+        # ROUTE A: SMART PANDAS ANALYZER (New intelligent approach)
         # ================================================================
-        import shutil
+        if use_smart_analyzer:
+            return handle_excel_smart_analysis(
+                file_path, user_request, conversation_id, project_id, 
+                mode, file_info, overall_start
+            )
         
-        # Create permanent storage directory
-        permanent_dir = '/mnt/project/uploaded_files'
-        os.makedirs(permanent_dir, exist_ok=True)
-        
-        # Copy to permanent location with unique name
-        original_filename = os.path.basename(file_path)
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        permanent_filename = f"{timestamp}_{original_filename}"
-        permanent_path = os.path.join(permanent_dir, permanent_filename)
-        
-        shutil.copy2(file_path, permanent_path)
-        print(f"💾 Saved file permanently: {permanent_path}")
-        
-        
-        # Store minimal info in session (just IDs, not data)
-        session[f'file_analysis_{conversation_id}'] = {
-            'file_path': permanent_path,
-            'current_position': chunk_result['end_row'],
-            'total_rows': chunk_result['total_rows'],
-            'columns': chunk_result['columns'],
-            'file_name': original_filename,
-            'file_size_mb': file_info['file_size_mb']
-        }
         # ================================================================
-        
-        # Create task
-        db = get_db()
-        cursor = db.execute('INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
-                           (user_request, 'processing', conversation_id))
-        task_id = cursor.lastrowid
-        db.commit()
-        
-        # Build analysis prompt
-        from orchestration.ai_clients import call_gpt4
-        
-        sheet_names = chunk_result.get('sheet_names', ['Sheet1'])
-        num_sheets = chunk_result.get('num_sheets', 1)
-        sheets_summary = f"\n📋 **FILE CONTAINS {num_sheets} WORKSHEET(S):** {', '.join(sheet_names)}\n"
-        
-        analysis_prompt = f"""You are Jim Goodwin, Shiftwork Solutions LLC - 30+ years optimizing 24/7 operations.
+        # ROUTE B: PROGRESSIVE ANALYZER (Existing approach - kept intact)
+        # ================================================================
+        else:
+            analyzer = get_progressive_analyzer()
+            
+            chunk_result = analyzer.extract_excel_chunk(file_path, start_row=0, num_rows=100)
+            
+            if not chunk_result['success']:
+                return jsonify({
+                    'success': False,
+                    'error': f"Could not analyze Excel file: {chunk_result.get('error')}"
+                }), 500
+            
+            # Create conversation if needed
+            if not conversation_id:
+                conversation_id = create_conversation(mode=mode, project_id=project_id)
+                print(f"Created new conversation: {conversation_id}")
+            
+            # ================================================================
+            # FIX v8: Copy file to PERMANENT location to prevent memory issues
+            # ================================================================
+            import shutil
+            
+            # Create permanent storage directory
+            permanent_dir = '/mnt/project/uploaded_files'
+            os.makedirs(permanent_dir, exist_ok=True)
+            
+            # Copy to permanent location with unique name
+            original_filename = os.path.basename(file_path)
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            permanent_filename = f"{timestamp}_{original_filename}"
+            permanent_path = os.path.join(permanent_dir, permanent_filename)
+            
+            shutil.copy2(file_path, permanent_path)
+            print(f"💾 Saved file permanently: {permanent_path}")
+            
+            # Store minimal info in session
+            session[f'file_analysis_{conversation_id}'] = {
+                'file_path': permanent_path,
+                'current_position': chunk_result['end_row'],
+                'total_rows': chunk_result['total_rows'],
+                'columns': chunk_result['columns'],
+                'file_name': original_filename,
+                'file_size_mb': file_info['file_size_mb']
+            }
+            
+            # Create task
+            db = get_db()
+            cursor = db.execute('INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
+                               (user_request, 'processing', conversation_id))
+            task_id = cursor.lastrowid
+            db.commit()
+            
+            # Build analysis prompt
+            from orchestration.ai_clients import call_gpt4
+            
+            sheet_names = chunk_result.get('sheet_names', ['Sheet1'])
+            num_sheets = chunk_result.get('num_sheets', 1)
+            sheets_summary = f"\n📋 **FILE CONTAINS {num_sheets} WORKSHEET(S):** {', '.join(sheet_names)}\n"
+            
+            analysis_prompt = f"""You are Jim Goodwin, Shiftwork Solutions LLC - 30+ years optimizing 24/7 operations.
 
 **CLIENT FILE:** {file_info['file_size_mb']}MB Excel, {chunk_result['total_rows']:,} total rows
 **REQUEST:** {user_request}
@@ -1875,55 +1918,332 @@ def handle_large_excel_initial(file_path, user_request, conversation_id, project
 
 BE SPECIFIC. Use actual numbers from the data."""
 
-        print(f"📊 Calling GPT-4 with max_tokens=3000...")
-        gpt_response = call_gpt4(analysis_prompt, max_tokens=3000)
-        
-        if not gpt_response.get('error') and gpt_response.get('content'):
-            ai_analysis = gpt_response.get('content', '')
+            print(f"📊 Calling GPT-4 with max_tokens=3000...")
+            gpt_response = call_gpt4(analysis_prompt, max_tokens=3000)
             
-            # Add continuation prompt
-            continuation_prompt = analyzer.generate_continuation_prompt(chunk_result)
-            full_response = ai_analysis + continuation_prompt
-            
-            formatted_output = convert_markdown_to_html(full_response)
-                      
-            total_time = time.time() - overall_start
-            db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
-                      ('completed', 'gpt4_progressive_excel', total_time, task_id))
-            db.commit()
-            db.close()
-            
-            add_message(conversation_id, 'assistant', full_response, task_id,
-                       {'orchestrator': 'gpt4_progressive_excel', 'rows_analyzed': 100, 
-                        'total_rows': chunk_result['total_rows'], 'execution_time': total_time,
-                        'permanent_file': permanent_path})
+            if not gpt_response.get('error') and gpt_response.get('content'):
+                ai_analysis = gpt_response.get('content', '')
+                
+                # Add continuation prompt
+                continuation_prompt = analyzer.generate_continuation_prompt(chunk_result)
+                full_response = ai_analysis + continuation_prompt
+                
+                formatted_output = convert_markdown_to_html(full_response)
+                          
+                total_time = time.time() - overall_start
+                db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
+                          ('completed', 'gpt4_progressive_excel', total_time, task_id))
+                db.commit()
+                db.close()
+                
+                add_message(conversation_id, 'assistant', full_response, task_id,
+                           {'orchestrator': 'gpt4_progressive_excel', 'rows_analyzed': 100, 
+                            'total_rows': chunk_result['total_rows'], 'execution_time': total_time,
+                            'permanent_file': permanent_path})
 
-                        
-            return jsonify({
-                'success': True,
-                'task_id': task_id,
-                'conversation_id': conversation_id,
-                'result': formatted_output,
-                'orchestrator': 'gpt4_progressive_excel',
-                'execution_time': total_time,
-                'progressive_analysis': True,
-                'rows_analyzed': 100,
-                'total_rows': chunk_result['total_rows'],
-                'rows_remaining': chunk_result['rows_remaining']
-            })
-        else:
-            error_msg = gpt_response.get('content', 'Unknown error')
-            print(f"❌ GPT-4 analysis failed: {error_msg}")
-            db.close()
-            return jsonify({
-                'success': False,
-                'error': f'Could not analyze Excel file: {error_msg}'
-            }), 500
-            
+                            
+                return jsonify({
+                    'success': True,
+                    'task_id': task_id,
+                    'conversation_id': conversation_id,
+                    'result': formatted_output,
+                    'orchestrator': 'gpt4_progressive_excel',
+                    'execution_time': total_time,
+                    'progressive_analysis': True,
+                    'rows_analyzed': 100,
+                    'total_rows': chunk_result['total_rows'],
+                    'rows_remaining': chunk_result['rows_remaining']
+                })
+            else:
+                error_msg = gpt_response.get('content', 'Unknown error')
+                print(f"❌ GPT-4 analysis failed: {error_msg}")
+                db.close()
+                return jsonify({
+                    'success': False,
+                    'error': f'Could not analyze Excel file: {error_msg}'
+                }), 500
+                
     except Exception as e:
         import traceback
         print(f"❌ Large Excel handling error: {traceback.format_exc()}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+def handle_excel_smart_analysis(file_path, user_request, conversation_id, project_id, mode, file_info, overall_start):
+    """
+    NEW: Handle Excel analysis using pandas for REAL calculations.
+    
+    This loads the entire file into memory, profiles it, and uses GPT-4 to generate
+    pandas code that answers the user's question with actual calculations.
+    
+    Created: February 6, 2026
+    """
+    try:
+        # Import the smart analyzer
+        import sys
+        import os
+        sys.path.insert(0, os.path.dirname(__file__))
+        from smart_excel_analyzer import SmartExcelAnalyzer
+        
+        print(f"🧠 Using Smart Pandas Analyzer for {file_info['file_size_mb']}MB file")
+        
+        # Create conversation if needed
+        if not conversation_id:
+            conversation_id = create_conversation(mode=mode, project_id=project_id)
+            print(f"Created new conversation: {conversation_id}")
+        
+        # ================================================================
+        # STEP 1: Load and profile the file
+        # ================================================================
+        analyzer = SmartExcelAnalyzer(file_path)
+        profile_result = analyzer.load_and_profile()
+        
+        if not profile_result['success']:
+            return jsonify({
+                'success': False,
+                'error': f"Could not load Excel file: {profile_result.get('error')}"
+            }), 500
+        
+        # ================================================================
+        # STEP 2: Save file permanently
+        # ================================================================
+        import shutil
+        permanent_dir = '/mnt/project/uploaded_files'
+        os.makedirs(permanent_dir, exist_ok=True)
+        
+        original_filename = os.path.basename(file_path)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        permanent_filename = f"{timestamp}_{original_filename}"
+        permanent_path = os.path.join(permanent_dir, permanent_filename)
+        
+        shutil.copy2(file_path, permanent_path)
+        print(f"💾 Saved file permanently: {permanent_path}")
+        
+        # ================================================================
+        # STEP 3: Store analyzer in session for follow-up questions
+        # ================================================================
+        session[f'smart_analyzer_{conversation_id}'] = {
+            'file_path': permanent_path,
+            'analyzer_state': 'loaded',
+            'profile': analyzer.profile,
+            'file_name': original_filename
+        }
+        
+        # ================================================================
+        # STEP 4: Create task
+        # ================================================================
+        db = get_db()
+        cursor = db.execute('INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
+                           (user_request, 'processing', conversation_id))
+        task_id = cursor.lastrowid
+        db.commit()
+        
+        # ================================================================
+        # STEP 5: Get file profile and ask GPT-4 to understand the file
+        # ================================================================
+        from orchestration.ai_clients import call_gpt4
+        
+        profile_context = analyzer.format_for_gpt_context()
+        
+        initial_prompt = f"""You are Jim Goodwin, Shiftwork Solutions LLC - 30+ years optimizing 24/7 operations.
+
+A client has uploaded an Excel file. Here's what I found:
+
+{profile_context}
+
+**USER REQUEST:** {user_request}
+
+**YOUR TASK:**
+
+1. **Understand what the user wants** - What specific analysis or view are they asking for?
+
+2. **Generate pandas code** to answer their question. The DataFrame is called `df`.
+   - Use actual pandas methods (groupby, agg, pivot_table, etc.)
+   - Return ONLY the pandas expression that will produce the result
+   - No explanations, just the code
+
+3. **Format:** Return your response in TWO parts:
+   
+   PART 1 - PANDAS_CODE (on its own line, clearly marked):
+   ```
+   PANDAS_CODE: df.groupby('Department')['Hours'].sum()
+   ```
+   
+   PART 2 - EXPLANATION (what this analysis will show):
+   Brief explanation of what the results will tell the user.
+
+**EXAMPLES:**
+
+User asks: "Show me total hours by department"
+Your response:
+```
+PANDAS_CODE: df.groupby('Dept & Bldg')['Total Hours'].sum().sort_values(ascending=False)
+
+This will show the total hours for each department, sorted from highest to lowest.
+```
+
+User asks: "What day of the week has the most overtime?"
+Your response:
+```
+PANDAS_CODE: df.groupby(df['Date'].dt.day_name())['Overtime'].sum().sort_values(ascending=False)
+
+This will show which day of the week (Monday-Sunday) has the most overtime hours.
+```
+
+NOW ANSWER THE USER'S QUESTION."""
+
+        print(f"🤖 Asking GPT-4 to generate pandas code...")
+        gpt_response = call_gpt4(initial_prompt, max_tokens=2000)
+        
+        if not gpt_response.get('error') and gpt_response.get('content'):
+            ai_response = gpt_response.get('content', '')
+            
+            # ================================================================
+            # STEP 6: Extract pandas code from GPT-4 response
+            # ================================================================
+            import re
+            pandas_code_match = re.search(r'PANDAS_CODE:\s*(.+?)(?:\n|$)', ai_response, re.MULTILINE | re.DOTALL)
+            
+            if pandas_code_match:
+                pandas_code = pandas_code_match.group(1).strip()
+                # Remove any markdown code blocks
+                pandas_code = re.sub(r'```python?\s*|\s*```', '', pandas_code).strip()
+                
+                print(f"📊 Extracted pandas code: {pandas_code}")
+                
+                # ================================================================
+                # STEP 7: Execute the pandas code
+                # ================================================================
+                execution_result = analyzer.execute_analysis(user_request, pandas_code)
+                
+                if execution_result['success']:
+                    # Get the markdown formatted result
+                    result_markdown = execution_result['result']['markdown']
+                    
+                    # Build final response
+                    full_response = f"""# Analysis Results
+
+{ai_response.split('PANDAS_CODE:')[0].strip() if 'PANDAS_CODE:' in ai_response else ''}
+
+## 📊 Results
+
+{result_markdown}
+
+---
+
+**What would you like to know next?** I have the complete dataset loaded and can answer follow-up questions instantly."""
+                    
+                    formatted_output = convert_markdown_to_html(full_response)
+                    
+                    total_time = time.time() - overall_start
+                    db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
+                              ('completed', 'smart_pandas_analyzer', total_time, task_id))
+                    db.commit()
+                    db.close()
+                    
+                    add_message(conversation_id, 'assistant', full_response, task_id,
+                               {'orchestrator': 'smart_pandas_analyzer', 
+                                'total_rows': profile_result['profile']['file_info']['total_rows'],
+                                'execution_time': total_time,
+                                'permanent_file': permanent_path,
+                                'pandas_code': pandas_code})
+                    
+                    return jsonify({
+                        'success': True,
+                        'task_id': task_id,
+                        'conversation_id': conversation_id,
+                        'result': formatted_output,
+                        'orchestrator': 'smart_pandas_analyzer',
+                        'execution_time': total_time,
+                        'total_rows': profile_result['profile']['file_info']['total_rows'],
+                        'analysis_type': 'pandas_calculation'
+                    })
+                else:
+                    # Pandas execution failed - fall back to showing profile
+                    error_msg = execution_result.get('error', 'Unknown error')
+                    print(f"⚠️ Pandas execution failed: {error_msg}")
+                    
+                    fallback_response = f"""I loaded your file successfully ({profile_result['profile']['file_info']['total_rows']:,} rows), but encountered an issue running the analysis.
+
+**Error:** {error_msg}
+
+**What I can see in your file:**
+{analyzer.get_profile_summary()}
+
+Please rephrase your question or ask me to show you something specific from the data."""
+                    
+                    formatted_output = convert_markdown_to_html(fallback_response)
+                    
+                    total_time = time.time() - overall_start
+                    db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
+                              ('completed', 'smart_pandas_analyzer', total_time, task_id))
+                    db.commit()
+                    db.close()
+                    
+                    add_message(conversation_id, 'assistant', fallback_response, task_id,
+                               {'orchestrator': 'smart_pandas_analyzer', 
+                                'total_rows': profile_result['profile']['file_info']['total_rows'],
+                                'execution_time': total_time,
+                                'error': error_msg})
+                    
+                    return jsonify({
+                        'success': True,
+                        'task_id': task_id,
+                        'conversation_id': conversation_id,
+                        'result': formatted_output,
+                        'orchestrator': 'smart_pandas_analyzer',
+                        'execution_time': total_time
+                    })
+            else:
+                # Could not extract pandas code - show profile
+                print("⚠️ Could not extract pandas code from GPT-4 response")
+                
+                profile_response = f"""I loaded your Excel file successfully!
+
+{analyzer.get_profile_summary()}
+
+**Suggested analyses:**
+{chr(10).join(f"- {s}" for s in analyzer.profile.get('suggested_analyses', []))}
+
+What would you like to analyze?"""
+                
+                formatted_output = convert_markdown_to_html(profile_response)
+                
+                total_time = time.time() - overall_start
+                db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
+                          ('completed', 'smart_pandas_analyzer', total_time, task_id))
+                db.commit()
+                db.close()
+                
+                add_message(conversation_id, 'assistant', profile_response, task_id,
+                           {'orchestrator': 'smart_pandas_analyzer', 
+                            'total_rows': profile_result['profile']['file_info']['total_rows'],
+                            'execution_time': total_time})
+                
+                return jsonify({
+                    'success': True,
+                    'task_id': task_id,
+                    'conversation_id': conversation_id,
+                    'result': formatted_output,
+                    'orchestrator': 'smart_pandas_analyzer',
+                    'execution_time': total_time
+                })
+        else:
+            error_msg = gpt_response.get('content', 'Unknown error')
+            print(f"❌ GPT-4 failed: {error_msg}")
+            db.close()
+            return jsonify({
+                'success': False,
+                'error': f'Could not analyze file: {error_msg}'
+            }), 500
+            
+    except Exception as e:
+        import traceback
+        print(f"❌ Smart analysis error: {traceback.format_exc()}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# I did no harm and this file is not truncated
 
 def handle_progressive_continuation(conversation_id, user_request, continuation_request, file_analysis_state, overall_start):
     """
