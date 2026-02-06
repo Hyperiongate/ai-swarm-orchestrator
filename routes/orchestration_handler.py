@@ -2253,259 +2253,249 @@ What would you like to analyze?"""
         print(f"❌ Smart analysis error: {traceback.format_exc()}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+"""
+ADDITION to orchestration_handler.py
 
-# I did no harm and this file is not truncated
+This handler manages follow-up questions after a file has been loaded by smart analyzer.
+Add this function AFTER handle_excel_smart_analysis.
 
+Last Updated: February 6, 2026 v10 - Follow-up handler for smart analyzer
+"""
 
-def handle_excel_smart_analysis(file_path, user_request, conversation_id, project_id, mode, file_info, overall_start):
+def handle_smart_analyzer_continuation(user_request, conversation_id, project_id, mode):
     """
-    NEW: Handle Excel analysis using pandas for REAL calculations.
+    Handle follow-up questions after a file has been loaded by smart analyzer.
     
-    This loads the entire file into memory, profiles it, and uses GPT-4 to generate
-    pandas code that answers the user's question with actual calculations.
+    This function:
+    1. Checks if there's an analyzer loaded in this conversation
+    2. Reloads the DataFrame from the saved file
+    3. Asks GPT-4 to generate pandas code
+    4. Executes the code
+    5. Returns results
     
     Created: February 6, 2026
     """
     try:
-        # Import the smart analyzer
         import sys
         import os
         sys.path.insert(0, os.path.dirname(__file__))
         from smart_excel_analyzer import SmartExcelAnalyzer
+        from orchestration.ai_clients import call_gpt4
         
-        print(f"🧠 Using Smart Pandas Analyzer for {file_info['file_size_mb']}MB file")
+        # Check if there's a loaded analyzer in this conversation
+        analyzer_state = session.get(f'smart_analyzer_{conversation_id}')
         
-        # Create conversation if needed
-        if not conversation_id:
-            conversation_id = create_conversation(mode=mode, project_id=project_id)
-            print(f"Created new conversation: {conversation_id}")
+        if not analyzer_state:
+            return None  # No analyzer found, route elsewhere
         
-        # ================================================================
-        # STEP 1: Load and profile the file
-        # ================================================================
+        print(f"🔄 Smart analyzer continuation - reloading file: {analyzer_state['file_name']}")
+        
+        # Reload the analyzer from saved file
+        file_path = analyzer_state['file_path']
         analyzer = SmartExcelAnalyzer(file_path)
-        profile_result = analyzer.load_and_profile()
+        load_result = analyzer.load_and_profile()
         
-        if not profile_result['success']:
+        if not load_result['success']:
             return jsonify({
                 'success': False,
-                'error': f"Could not load Excel file: {profile_result.get('error')}"
+                'error': f"Could not reload file: {load_result.get('error')}"
             }), 500
         
-        # ================================================================
-        # STEP 2: Save file permanently
-        # ================================================================
-        import shutil
-        permanent_dir = '/mnt/project/uploaded_files'
-        os.makedirs(permanent_dir, exist_ok=True)
+        print(f"✅ File reloaded: {len(analyzer.df):,} rows")
         
-        original_filename = os.path.basename(file_path)
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        permanent_filename = f"{timestamp}_{original_filename}"
-        permanent_path = os.path.join(permanent_dir, permanent_filename)
-        
-        shutil.copy2(file_path, permanent_path)
-        print(f"💾 Saved file permanently: {permanent_path}")
-        
-        # ================================================================
-        # STEP 3: Store analyzer in session for follow-up questions
-        # ================================================================
-        session[f'smart_analyzer_{conversation_id}'] = {
-            'file_path': permanent_path,
-            'analyzer_state': 'loaded',
-            'profile': analyzer.profile,
-            'file_name': original_filename
-        }
-        
-        # ================================================================
-        # STEP 4: Create task
-        # ================================================================
+        # Create task
         db = get_db()
         cursor = db.execute('INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
                            (user_request, 'processing', conversation_id))
         task_id = cursor.lastrowid
         db.commit()
         
-        # ================================================================
-        # STEP 5: Get file profile and ask GPT-4 to understand the file
-        # ================================================================
-        from orchestration.ai_clients import call_gpt4
+        overall_start = time.time()
         
-        profile_context = analyzer.format_for_gpt_context()
+        # Build prompt for GPT-4 to generate pandas code
+        profile_summary = analyzer.get_profile_summary()
         
-        initial_prompt = f"""You are Jim Goodwin, Shiftwork Solutions LLC - 30+ years optimizing 24/7 operations.
+        analysis_prompt = f"""You are analyzing a loaded Excel file with pandas.
 
-A client has uploaded an Excel file. Here's what I found:
+THE DATA IS ALREADY LOADED in a pandas DataFrame called 'df' with {len(analyzer.df):,} rows.
 
-{profile_context}
+{profile_summary}
 
-**USER REQUEST:** {user_request}
+**USER'S QUESTION:** {user_request}
 
 **YOUR TASK:**
 
-1. **Understand what the user wants** - What specific analysis or view are they asking for?
+Generate pandas code to answer the user's question. Return ONLY the pandas code, nothing else.
 
-2. **Generate pandas code** to answer their question. The DataFrame is called `df`.
-   - Use actual pandas methods (groupby, agg, pivot_table, etc.)
-   - Return ONLY the pandas expression that will produce the result
-   - No explanations, just the code
-
-3. **Format:** Return your response in TWO parts:
-   
-   PART 1 - PANDAS_CODE (on its own line, clearly marked):
-   ```
-   PANDAS_CODE: df.groupby('Department')['Hours'].sum()
-   ```
-   
-   PART 2 - EXPLANATION (what this analysis will show):
-   Brief explanation of what the results will tell the user.
+**RULES:**
+1. The DataFrame is called 'df'
+2. Return ONLY executable pandas code
+3. NO explanations, NO markdown, NO preamble
+4. Just the pandas expression
 
 **EXAMPLES:**
 
-User asks: "Show me total hours by department"
-Your response:
-```
-PANDAS_CODE: df.groupby('Dept & Bldg')['Total Hours'].sum().sort_values(ascending=False)
+User asks: "Show me total overtime by department"
+Your response: df.groupby('Dept & Bldg')['Overtime'].sum().sort_values(ascending=False)
 
-This will show the total hours for each department, sorted from highest to lowest.
-```
+User asks: "Weekly hours by department"
+Your response: df.groupby(['Dept & Bldg', 'Week']).agg({{'Reg': 'sum', 'Overtime': 'sum', 'Total Hours': 'sum'}})
 
-User asks: "What day of the week has the most overtime?"
-Your response:
-```
-PANDAS_CODE: df.groupby(df['Date'].dt.day_name())['Overtime'].sum().sort_values(ascending=False)
+User asks: "Which day has most overtime?"
+Your response: df.groupby(df['Date'].dt.day_name())['Overtime'].sum().sort_values(ascending=False)
 
-This will show which day of the week (Monday-Sunday) has the most overtime hours.
-```
+**NOW GENERATE CODE FOR:** {user_request}
 
-NOW ANSWER THE USER'S QUESTION."""
+Return ONLY the pandas code:"""
 
         print(f"🤖 Asking GPT-4 to generate pandas code...")
-        gpt_response = call_gpt4(initial_prompt, max_tokens=2000)
+        gpt_response = call_gpt4(analysis_prompt, max_tokens=1000)
         
         if not gpt_response.get('error') and gpt_response.get('content'):
             ai_response = gpt_response.get('content', '')
             
-            # ================================================================
-            # STEP 6: Extract pandas code from GPT-4 response
-            # ================================================================
+            # Extract pandas code (clean up any markdown or explanations)
             import re
-            pandas_code_match = re.search(r'PANDAS_CODE:\s*(.+?)(?:\n|$)', ai_response, re.MULTILINE | re.DOTALL)
             
-            if pandas_code_match:
-                pandas_code = pandas_code_match.group(1).strip()
-                # Remove any markdown code blocks
-                pandas_code = re.sub(r'```python?\s*|\s*```', '', pandas_code).strip()
+            # Remove markdown code blocks if present
+            pandas_code = re.sub(r'```python?\s*|\s*```', '', ai_response).strip()
+            
+            # If GPT-4 added "PANDAS_CODE:" prefix, remove it
+            pandas_code = re.sub(r'^PANDAS_CODE:\s*', '', pandas_code, flags=re.IGNORECASE).strip()
+            
+            # Remove any leading/trailing whitespace
+            pandas_code = pandas_code.strip()
+            
+            print(f"📊 Extracted pandas code: {pandas_code[:100]}...")
+            
+            # Execute the pandas code with retry logic
+            execution_result = analyzer.execute_analysis(user_request, pandas_code)
+            
+            if execution_result['success']:
+                # Get the markdown formatted result
+                result_markdown = execution_result['result']['markdown']
                 
-                print(f"📊 Extracted pandas code: {pandas_code}")
-                
-                # ================================================================
-                # STEP 7: Execute the pandas code
-                # ================================================================
-                execution_result = analyzer.execute_analysis(user_request, pandas_code)
-                
-                if execution_result['success']:
-                    # Get the markdown formatted result
-                    result_markdown = execution_result['result']['markdown']
-                    
-                    # Build final response
-                    full_response = f"""# Analysis Results
-
-{ai_response.split('PANDAS_CODE:')[0].strip() if 'PANDAS_CODE:' in ai_response else ''}
-
-## 📊 Results
+                # Build response
+                full_response = f"""## 📊 Results
 
 {result_markdown}
 
 ---
 
-**What would you like to know next?** I have the complete dataset loaded and can answer follow-up questions instantly."""
-                    
-                    formatted_output = convert_markdown_to_html(full_response)
-                    
-                    total_time = time.time() - overall_start
-                    db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
-                              ('completed', 'smart_pandas_analyzer', total_time, task_id))
-                    db.commit()
-                    db.close()
-                    
-                    add_message(conversation_id, 'assistant', full_response, task_id,
-                               {'orchestrator': 'smart_pandas_analyzer', 
-                                'total_rows': profile_result['profile']['file_info']['total_rows'],
-                                'execution_time': total_time,
-                                'permanent_file': permanent_path,
-                                'pandas_code': pandas_code})
-                    
-                    return jsonify({
-                        'success': True,
-                        'task_id': task_id,
-                        'conversation_id': conversation_id,
-                        'result': formatted_output,
-                        'orchestrator': 'smart_pandas_analyzer',
-                        'execution_time': total_time,
-                        'total_rows': profile_result['profile']['file_info']['total_rows'],
-                        'analysis_type': 'pandas_calculation'
-                    })
-                else:
-                    # Pandas execution failed - fall back to showing profile
-                    error_msg = execution_result.get('error', 'Unknown error')
-                    print(f"⚠️ Pandas execution failed: {error_msg}")
-                    
-                    fallback_response = f"""I loaded your file successfully ({profile_result['profile']['file_info']['total_rows']:,} rows), but encountered an issue running the analysis.
-
-**Error:** {error_msg}
-
-**What I can see in your file:**
-{analyzer.get_profile_summary()}
-
-Please rephrase your question or ask me to show you something specific from the data."""
-                    
-                    formatted_output = convert_markdown_to_html(fallback_response)
-                    
-                    total_time = time.time() - overall_start
-                    db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
-                              ('completed', 'smart_pandas_analyzer', total_time, task_id))
-                    db.commit()
-                    db.close()
-                    
-                    add_message(conversation_id, 'assistant', fallback_response, task_id,
-                               {'orchestrator': 'smart_pandas_analyzer', 
-                                'total_rows': profile_result['profile']['file_info']['total_rows'],
-                                'execution_time': total_time,
-                                'error': error_msg})
-                    
-                    return jsonify({
-                        'success': True,
-                        'task_id': task_id,
-                        'conversation_id': conversation_id,
-                        'result': formatted_output,
-                        'orchestrator': 'smart_pandas_analyzer',
-                        'execution_time': total_time
-                    })
-            else:
-                # Could not extract pandas code - show profile
-                print("⚠️ Could not extract pandas code from GPT-4 response")
+**What else would you like to know?**"""
                 
-                profile_response = f"""I loaded your Excel file successfully!
-
-{analyzer.get_profile_summary()}
-
-**Suggested analyses:**
-{chr(10).join(f"- {s}" for s in analyzer.profile.get('suggested_analyses', []))}
-
-What would you like to analyze?"""
-                
-                formatted_output = convert_markdown_to_html(profile_response)
+                formatted_output = convert_markdown_to_html(full_response)
                 
                 total_time = time.time() - overall_start
                 db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
-                          ('completed', 'smart_pandas_analyzer', total_time, task_id))
+                          ('completed', 'smart_pandas_analyzer_continuation', total_time, task_id))
                 db.commit()
                 db.close()
                 
-                add_message(conversation_id, 'assistant', profile_response, task_id,
-                           {'orchestrator': 'smart_pandas_analyzer', 
-                            'total_rows': profile_result['profile']['file_info']['total_rows'],
+                add_message(conversation_id, 'assistant', full_response, task_id,
+                           {'orchestrator': 'smart_pandas_analyzer_continuation',
+                            'execution_time': total_time,
+                            'pandas_code': pandas_code,
+                            'rows_processed': len(analyzer.df)})
+                
+                return jsonify({
+                    'success': True,
+                    'task_id': task_id,
+                    'conversation_id': conversation_id,
+                    'result': formatted_output,
+                    'orchestrator': 'smart_pandas_analyzer_continuation',
+                    'execution_time': total_time
+                })
+            
+            else:
+                # Execution failed - try one more time with error context
+                error_msg = execution_result.get('error', 'Unknown error')
+                print(f"⚠️ First attempt failed: {error_msg}")
+                
+                # Ask GPT-4 to fix the code
+                retry_prompt = f"""Your pandas code failed with this error:
+
+ERROR: {error_msg}
+
+AVAILABLE COLUMNS: {list(analyzer.df.columns)}
+SAMPLE DATA:
+{analyzer.df.head(2).to_dict('records')}
+
+USER'S ORIGINAL QUESTION: {user_request}
+YOUR CODE THAT FAILED: {pandas_code}
+
+Generate corrected pandas code. Return ONLY the code, no explanations:"""
+
+                print(f"🔄 Asking GPT-4 to fix the code...")
+                retry_response = call_gpt4(retry_prompt, max_tokens=1000)
+                
+                if retry_response.get('content'):
+                    corrected_code = re.sub(r'```python?\s*|\s*```', '', retry_response['content']).strip()
+                    corrected_code = re.sub(r'^PANDAS_CODE:\s*', '', corrected_code, flags=re.IGNORECASE).strip()
+                    
+                    print(f"🔧 Trying corrected code: {corrected_code[:100]}...")
+                    
+                    retry_result = analyzer.execute_analysis(user_request, corrected_code, attempt=2)
+                    
+                    if retry_result['success']:
+                        result_markdown = retry_result['result']['markdown']
+                        
+                        full_response = f"""## 📊 Results
+
+{result_markdown}
+
+---
+
+**What else would you like to know?**"""
+                        
+                        formatted_output = convert_markdown_to_html(full_response)
+                        
+                        total_time = time.time() - overall_start
+                        db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
+                                  ('completed', 'smart_pandas_analyzer_continuation', total_time, task_id))
+                        db.commit()
+                        db.close()
+                        
+                        add_message(conversation_id, 'assistant', full_response, task_id,
+                                   {'orchestrator': 'smart_pandas_analyzer_continuation',
+                                    'execution_time': total_time,
+                                    'pandas_code': corrected_code,
+                                    'retry_attempt': 2})
+                        
+                        return jsonify({
+                            'success': True,
+                            'task_id': task_id,
+                            'conversation_id': conversation_id,
+                            'result': formatted_output,
+                            'orchestrator': 'smart_pandas_analyzer_continuation',
+                            'execution_time': total_time
+                        })
+                
+                # Both attempts failed
+                error_response = f"""I tried to analyze your data but encountered an issue:
+
+**Error:** {error_msg}
+
+**Code attempted:** 
+```python
+{pandas_code}
+```
+
+Could you rephrase your question or ask something else about the data?
+
+**Available columns:** {', '.join(analyzer.df.columns)}"""
+                
+                formatted_output = convert_markdown_to_html(error_response)
+                
+                total_time = time.time() - overall_start
+                db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
+                          ('completed', 'smart_pandas_analyzer_error', total_time, task_id))
+                db.commit()
+                db.close()
+                
+                add_message(conversation_id, 'assistant', error_response, task_id,
+                           {'orchestrator': 'smart_pandas_analyzer_error',
+                            'error': error_msg,
                             'execution_time': total_time})
                 
                 return jsonify({
@@ -2513,7 +2503,7 @@ What would you like to analyze?"""
                     'task_id': task_id,
                     'conversation_id': conversation_id,
                     'result': formatted_output,
-                    'orchestrator': 'smart_pandas_analyzer',
+                    'orchestrator': 'smart_pandas_analyzer_error',
                     'execution_time': total_time
                 })
         else:
@@ -2522,16 +2512,18 @@ What would you like to analyze?"""
             db.close()
             return jsonify({
                 'success': False,
-                'error': f'Could not analyze file: {error_msg}'
+                'error': f'Could not generate analysis: {error_msg}'
             }), 500
             
     except Exception as e:
         import traceback
-        print(f"❌ Smart analysis error: {traceback.format_exc()}")
+        print(f"❌ Smart analyzer continuation error: {traceback.format_exc()}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
 # I did no harm and this file is not truncated
+
+
 
 def handle_progressive_continuation(conversation_id, user_request, continuation_request, file_analysis_state, overall_start):
     """
