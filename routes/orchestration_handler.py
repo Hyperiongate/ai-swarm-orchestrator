@@ -1954,7 +1954,8 @@ def handle_progressive_continuation(conversation_id, user_request, continuation_
         else:
             return jsonify({'success': False, 'error': 'Invalid continuation action'}), 400
         
-        print(f"📊 Extracting rows {start_row} to {start_row + (num_rows or 'end')} from {file_name}")
+        end_display = start_row + num_rows if num_rows else 'end'
+        print(f"📊 Extracting rows {start_row} to {end_display} from {file_name}")
         
         # Extract the requested chunk
         chunk_result = analyzer.extract_excel_chunk(file_path, start_row=start_row, num_rows=num_rows)
