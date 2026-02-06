@@ -68,7 +68,6 @@ import json
 import os
 from datetime import datetime
 from werkzeug.utils import secure_filename
-import gc  # Garbage collection for memory management
 
 # Import all the utilities we need
 from database import (
@@ -1899,11 +1898,7 @@ BE SPECIFIC. Use actual numbers from the data."""
                         'total_rows': chunk_result['total_rows'], 'execution_time': total_time,
                         'permanent_file': permanent_path})
 
-            # CRITICAL: Force garbage collection to free memory
-            chunk_result = None
-            gc.collect()
-            print(f"🧹 Freed memory after analysis")
-            
+                        
             return jsonify({
                 'success': True,
                 'task_id': task_id,
