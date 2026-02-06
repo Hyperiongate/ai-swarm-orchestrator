@@ -4,6 +4,12 @@ Created: January 31, 2026
 Last Updated: February 5, 2026
 
 CHANGE LOG:
+- February 5, 2026 (v7): CRITICAL FIX - Text preview size limits
+  * Limited text preview to max 50 rows (not 100) to prevent GPT-4 timeout
+  * Added max character limit (20,000 chars) on text preview
+  * Truncate preview if it exceeds limits
+  * Prevents massive text from crashing GPT-4 analysis
+
 - February 5, 2026 (v6): CRITICAL FIX - Pandas chunk read with error handling
   * Added try/except around pandas read_excel() to catch memory errors
   * Reduced initial chunk from 500 to 100 rows for very large files
@@ -19,20 +25,6 @@ CHANGE LOG:
   * Added sheet_names to chunk result so orchestration_handler doesn't need to re-read
   * Removed redundant full-file reads that caused timeouts on large files
 
-- February 5, 2026 (v4): Increased LARGE_FILE_THRESHOLD from 25MB to 100MB
-  * Allows files like Definitive Schedules v2.xlsx (56.22 MB) to be uploaded
-  * Maintains progressive analysis for very large files
-
-- January 31, 2026 (v1): Initial creation
-  * Progressive analysis for large Excel files
-  * Chunk-based reading with continuation support
-
-Handles large files (especially Excel) with progressive analysis:
-- Analyzes first 100-500 rows automatically for files 5MB-100MB
-- Lets user request more rows: "next 500", "next 1000", "analyze all"
-- Prevents timeouts and out-of-memory crashes
-- Gives user control over cost and time
-
 Author: Jim @ Shiftwork Solutions LLC
 """
 
@@ -44,7 +36,7 @@ from datetime import datetime
 
 # File size thresholds (in bytes)
 SMALL_FILE_THRESHOLD = 5 * 1024 * 1024  # 5MB - analyze fully
-LARGE_FILE_THRESHOLD = 100 * 1024 * 1024  # 100MB - max allowed (UPDATED from 25MB)
+LARGE_FILE_THRESHOLD = 100 * 1024 * 1024  # 100MB - max allowed
 INITIAL_ROW_LIMIT = 1000  # Start with first 1000 rows
 
 
@@ -52,9 +44,9 @@ class ProgressiveFileAnalyzer:
     """
     Smart file analyzer that handles large files progressively.
     
+    Updated February 5, 2026 (v7): Text preview size limits
     Updated February 5, 2026 (v6): Pandas read protection for huge files
     Updated February 5, 2026 (v5): Memory-efficient row counting with openpyxl
-    Updated February 5, 2026 (v4): Increased max file size to 100MB
     """
     
     def __init__(self):
@@ -180,6 +172,10 @@ class ProgressiveFileAnalyzer:
         """
         Extract a specific chunk of rows from an Excel file.
         
+        UPDATED February 5, 2026 (v7): 
+        - Limited preview to 50 rows max (not 100) to prevent huge text
+        - Added 20K character limit on text preview
+        
         UPDATED February 5, 2026 (v6): 
         - Added error handling for pandas memory issues
         - Automatically reduces chunk size if pandas fails
@@ -206,8 +202,8 @@ class ProgressiveFileAnalyzer:
             - total_rows: int
             - rows_remaining: int
             - columns: list
-            - sheet_names: list (NEW in v5)
-            - num_sheets: int (NEW in v5)
+            - sheet_names: list
+            - num_sheets: int
             - summary: str
         """
         try:
@@ -322,8 +318,11 @@ class ProgressiveFileAnalyzer:
 - Worksheets: {num_sheets} ({', '.join(sheet_names)})
 """
             
-            # Create text preview
-            text_preview = self._format_dataframe_preview(df, max_rows=100)
+            # ================================================================
+            # FIX v7: Create text preview with STRICT limits
+            # Max 50 rows AND max 20,000 characters to prevent GPT-4 timeout
+            # ================================================================
+            text_preview = self._format_dataframe_preview(df, max_rows=50, max_chars=20000)
             
             return {
                 'success': True,
@@ -350,18 +349,38 @@ class ProgressiveFileAnalyzer:
             }
     
     
-    def _format_dataframe_preview(self, df: pd.DataFrame, max_rows: int = 100) -> str:
+    def _format_dataframe_preview(self, df: pd.DataFrame, max_rows: int = 50, max_chars: int = 20000) -> str:
         """
         Format a DataFrame as a readable string preview.
+        
+        UPDATED February 5, 2026 (v7): Added max_chars limit to prevent huge previews
+        
+        Args:
+            df: DataFrame to format
+            max_rows: Maximum rows to include (default 50)
+            max_chars: Maximum characters in preview (default 20,000)
         """
         # Limit rows for preview
         preview_df = df.head(max_rows)
         
         # Convert to string with good formatting
-        text = "=== DATA PREVIEW ===\n\n"
+        text = "=== DATA PREVIEW (First 50 rows) ===\n\n"
         
         try:
-            text += preview_df.to_string(index=False, max_rows=max_rows)
+            preview_text = preview_df.to_string(index=False, max_rows=max_rows)
+            
+            # ================================================================
+            # CRITICAL v7: Truncate if preview is too long
+            # A 26MB file with 100 columns can create 50K+ character previews
+            # This causes GPT-4 to timeout
+            # ================================================================
+            if len(preview_text) > max_chars:
+                print(f"⚠️ Preview too long ({len(preview_text):,} chars) - truncating to {max_chars:,}")
+                preview_text = preview_text[:max_chars]
+                preview_text += f"\n\n... [TRUNCATED - preview was {len(preview_text):,} characters, showing first {max_chars:,}]"
+            
+            text += preview_text
+            
         except Exception as format_err:
             # Fallback if formatting fails
             text += f"[Could not format preview: {str(format_err)}]\n"
