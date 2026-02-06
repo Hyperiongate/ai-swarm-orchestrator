@@ -392,6 +392,26 @@ def orchestrate():
             print(f"📎 {len(file_paths)} file(s) attached to request")
         
         overall_start = time.time()
+
+     
+        # ====================================================================
+        # SMART ANALYZER CONTINUATION CHECK - February 6, 2026 v10
+        # Check if user is asking follow-up questions after smart analyzer loaded a file
+        # ====================================================================
+        if not file_paths and conversation_id:
+            analyzer_state = session.get(f'smart_analyzer_{conversation_id}')
+            
+            if analyzer_state and analyzer_state.get('analyzer_state') == 'loaded':
+                print(f"🔄 Smart analyzer continuation detected")
+                
+                continuation_result = handle_smart_analyzer_continuation(
+                    user_request, conversation_id, project_id, mode
+                )
+                
+                if continuation_result:
+                    return continuation_result
+        # ====================================================================
+     
         
         # ====================================================================
         # PROGRESSIVE FILE ANALYSIS - New Feature (January 31, 2026)
