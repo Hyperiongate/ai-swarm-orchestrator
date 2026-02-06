@@ -68,6 +68,7 @@ import json
 import os
 from datetime import datetime
 from werkzeug.utils import secure_filename
+import gc  # Garbage collection for memory management
 
 # Import all the utilities we need
 from database import (
@@ -1977,6 +1978,11 @@ Please analyze this data and respond to the user's request."""
                 session.pop(f'file_analysis_{conversation_id}', None)
             
             formatted_output = convert_markdown_to_html(full_response)
+
+            # CRITICAL: Force garbage collection to free memory
+            chunk_result = None
+            gc.collect()
+            print(f"🧹 Freed memory after analysis")
             
             total_time = time.time() - overall_start
             db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
