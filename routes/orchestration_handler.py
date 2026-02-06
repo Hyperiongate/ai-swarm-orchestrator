@@ -1925,11 +1925,10 @@ BE SPECIFIC. Use actual numbers from the data."""
         print(f"❌ Large Excel handling error: {traceback.format_exc()}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
-
-
 def handle_progressive_continuation(conversation_id, user_request, continuation_request, file_analysis_state, overall_start):
     """
     Handle user requesting more rows from a large Excel file.
+    UPDATED February 6, 2026: Fixed to provide actual analysis instead of hypothetical
     Added: January 31, 2026
     """
     try:
@@ -1938,6 +1937,7 @@ def handle_progressive_continuation(conversation_id, user_request, continuation_
         file_path = file_analysis_state['file_path']
         current_position = file_analysis_state['current_position']
         total_rows = file_analysis_state['total_rows']
+        file_name = file_analysis_state.get('file_name', 'file')
         
         # Determine how many rows to analyze
         action = continuation_request['action']
@@ -1953,6 +1953,8 @@ def handle_progressive_continuation(conversation_id, user_request, continuation_
             num_rows = continuation_request['end_row'] - start_row
         else:
             return jsonify({'success': False, 'error': 'Invalid continuation action'}), 400
+        
+        print(f"📊 Extracting rows {start_row} to {start_row + (num_rows or 'end')} from {file_name}")
         
         # Extract the requested chunk
         chunk_result = analyzer.extract_excel_chunk(file_path, start_row=start_row, num_rows=num_rows)
@@ -1973,20 +1975,32 @@ def handle_progressive_continuation(conversation_id, user_request, continuation_
         task_id = cursor.lastrowid
         db.commit()
         
-        # Build analysis prompt
+        # Build analysis prompt - CRITICAL: Demand actual calculations
         from orchestration.ai_clients import call_gpt4
         
-        analysis_prompt = f"""The user requested more data from their Excel file. They said: "{user_request}"
+        rows_analyzed = chunk_result['rows_analyzed']
+        
+        analysis_prompt = f"""You are Jim Goodwin, Shiftwork Solutions LLC - analyzing workforce data.
 
-Here is the next chunk of data:
+**USER REQUEST:** {user_request}
+
+**CRITICAL INSTRUCTION:** The user wants ACTUAL CALCULATIONS from the data below, NOT a description of how to do it.
+- Calculate actual totals, averages, sums
+- Provide real numbers in tables
+- DO NOT say "I would calculate" or "hypothetically" or "for example"
+- DO NOT provide code examples or theoretical approaches
+- Just analyze the data and give the user the actual numbers
+
+**DATA ANALYZED:** Rows {start_row + 1} to {chunk_result['end_row']} ({rows_analyzed:,} rows)
 
 {chunk_result['summary']}
 
 {chunk_result['text_preview']}
 
-Please analyze this data and respond to the user's request."""
+**DELIVER ACTUAL ANALYSIS WITH REAL NUMBERS FROM THIS DATA.**"""
 
-        gpt_response = call_gpt4(analysis_prompt, max_tokens=3000)
+        print(f"📊 Calling GPT-4 to analyze {rows_analyzed:,} rows...")
+        gpt_response = call_gpt4(analysis_prompt, max_tokens=4000)
         
         if not gpt_response.get('error') and gpt_response.get('content'):
             ai_analysis = gpt_response.get('content', '')
@@ -2001,8 +2015,7 @@ Please analyze this data and respond to the user's request."""
                 session.pop(f'file_analysis_{conversation_id}', None)
             
             formatted_output = convert_markdown_to_html(full_response)
-
-                       
+            
             total_time = time.time() - overall_start
             db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
                       ('completed', 'gpt4_progressive_excel', total_time, task_id))
@@ -2010,7 +2023,7 @@ Please analyze this data and respond to the user's request."""
             db.close()
             
             add_message(conversation_id, 'assistant', full_response, task_id,
-                       {'orchestrator': 'gpt4_progressive_excel', 'rows_analyzed': chunk_result['rows_analyzed'],
+                       {'orchestrator': 'gpt4_progressive_excel', 'rows_analyzed': rows_analyzed,
                         'total_rows': total_rows, 'execution_time': total_time})
             
             return jsonify({
@@ -2021,7 +2034,7 @@ Please analyze this data and respond to the user's request."""
                 'orchestrator': 'gpt4_progressive_excel',
                 'execution_time': total_time,
                 'progressive_analysis': True,
-                'rows_analyzed': chunk_result['rows_analyzed'],
+                'rows_analyzed': rows_analyzed,
                 'total_rows': total_rows,
                 'rows_remaining': chunk_result['rows_remaining']
             })
@@ -2036,6 +2049,8 @@ Please analyze this data and respond to the user's request."""
         import traceback
         print(f"Progressive continuation error: {traceback.format_exc()}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
 
 
 # I did no harm and this file is not truncated
