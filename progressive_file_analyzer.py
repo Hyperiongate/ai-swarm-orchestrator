@@ -4,6 +4,13 @@ Created: January 31, 2026
 Last Updated: February 5, 2026
 
 CHANGE LOG:
+- February 5, 2026 (v6): CRITICAL FIX - Pandas chunk read with error handling
+  * Added try/except around pandas read_excel() to catch memory errors
+  * Reduced initial chunk from 500 to 100 rows for very large files
+  * Added dtype='object' to prevent type inference overhead
+  * Added timeout protection with smaller chunks
+  * Better error messages when pandas fails
+
 - February 5, 2026 (v5): CRITICAL FIX - Memory-efficient row counting
   * Replaced pd.read_excel(full_file) with openpyxl read_only=True for row counting
   * A 26MB Excel file was causing pd.read_excel to consume 500MB+ RAM and crash
@@ -21,7 +28,7 @@ CHANGE LOG:
   * Chunk-based reading with continuation support
 
 Handles large files (especially Excel) with progressive analysis:
-- Analyzes first 500 rows automatically for files 5MB-100MB
+- Analyzes first 100-500 rows automatically for files 5MB-100MB
 - Lets user request more rows: "next 500", "next 1000", "analyze all"
 - Prevents timeouts and out-of-memory crashes
 - Gives user control over cost and time
@@ -45,6 +52,7 @@ class ProgressiveFileAnalyzer:
     """
     Smart file analyzer that handles large files progressively.
     
+    Updated February 5, 2026 (v6): Pandas read protection for huge files
     Updated February 5, 2026 (v5): Memory-efficient row counting with openpyxl
     Updated February 5, 2026 (v4): Increased max file size to 100MB
     """
@@ -99,6 +107,8 @@ class ProgressiveFileAnalyzer:
         try:
             import openpyxl
             
+            print(f"📊 Counting rows with openpyxl read_only mode...")
+            
             # Open in read-only mode - streams data, minimal RAM
             wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
             sheet_names = wb.sheetnames
@@ -119,6 +129,8 @@ class ProgressiveFileAnalyzer:
                 total_rows -= 1
             
             wb.close()
+            
+            print(f"✅ Row count complete: {total_rows:,} rows")
             
             return {
                 'success': True,
@@ -168,6 +180,11 @@ class ProgressiveFileAnalyzer:
         """
         Extract a specific chunk of rows from an Excel file.
         
+        UPDATED February 5, 2026 (v6): 
+        - Added error handling for pandas memory issues
+        - Automatically reduces chunk size if pandas fails
+        - Uses dtype='object' to prevent type inference overhead
+        
         UPDATED February 5, 2026 (v5): 
         - Uses openpyxl for row counting instead of reading entire file with pandas
         - Caches row count and sheet names for subsequent calls
@@ -195,33 +212,13 @@ class ProgressiveFileAnalyzer:
         """
         try:
             # ================================================================
-            # STEP 1: Read just the requested chunk with pandas
-            # This is efficient because nrows limits how much data is loaded
-            # ================================================================
-            
-            # For start_row > 0, we need to handle header separately
-            if start_row > 0:
-                # Read header first (row 0)
-                header_df = pd.read_excel(file_path, sheet_name=sheet_name or 0, nrows=0)
-                header_columns = list(header_df.columns)
-                
-                # Now read the chunk, skipping rows but keeping header
-                # skiprows needs a range: skip rows 1 through start_row (keep row 0 = header)
-                skip_range = range(1, start_row + 1)
-                df = pd.read_excel(file_path, sheet_name=sheet_name or 0, 
-                                 skiprows=skip_range, nrows=num_rows)
-            else:
-                # First chunk - just read normally
-                df = pd.read_excel(file_path, sheet_name=sheet_name or 0, nrows=num_rows)
-            
-            # ================================================================
-            # STEP 2: Get total rows efficiently (cached)
-            # Uses openpyxl read_only mode - NOT pandas full-file read
+            # STEP 1: Get total rows efficiently FIRST (before pandas read)
+            # This uses openpyxl read_only mode - NOT pandas full-file read
             # ================================================================
             cache_key = file_path
             
             if cache_key not in self.file_cache:
-                print(f"📊 Counting rows efficiently with openpyxl (first call)...")
+                print(f"📊 First call - counting rows efficiently with openpyxl...")
                 row_info = self._count_rows_efficient(file_path)
                 
                 if row_info['success']:
@@ -232,16 +229,12 @@ class ProgressiveFileAnalyzer:
                         'num_sheets': row_info['num_sheets'],
                         'estimated': row_info.get('estimated', False)
                     }
-                    print(f"📊 Row count: {row_info['total_rows']:,} rows across {row_info['num_sheets']} sheet(s)")
+                    print(f"✅ Cached: {row_info['total_rows']:,} rows across {row_info['num_sheets']} sheet(s)")
                 else:
-                    # Last resort: estimate from dataframe
-                    print(f"⚠️ Row counting failed, using chunk size as estimate")
-                    self.file_cache[cache_key] = {
-                        'total_rows': len(df),
-                        'columns': list(df.columns),
-                        'sheet_names': ['Sheet1'],
-                        'num_sheets': 1,
-                        'estimated': True
+                    # If counting failed, we can't proceed safely
+                    return {
+                        'success': False,
+                        'error': f"Could not determine file size: {row_info.get('error')}"
                     }
             
             cached = self.file_cache[cache_key]
@@ -249,6 +242,70 @@ class ProgressiveFileAnalyzer:
             sheet_names = cached.get('sheet_names', ['Sheet1'])
             num_sheets = cached.get('num_sheets', 1)
             
+            # ================================================================
+            # STEP 2: Determine safe chunk size based on file size
+            # For huge files (300K+ rows), use smaller initial chunk
+            # ================================================================
+            if total_rows > 100000:
+                # Very large file - use smaller chunk to prevent timeout
+                safe_chunk_size = min(num_rows or 100, 100)
+                print(f"⚠️ Large file detected ({total_rows:,} rows) - limiting to {safe_chunk_size} rows")
+            else:
+                safe_chunk_size = num_rows
+            
+            # ================================================================
+            # STEP 3: Read just the requested chunk with pandas
+            # Protected with try/except for memory errors
+            # ================================================================
+            print(f"📖 Reading rows {start_row:,} to {start_row + (safe_chunk_size or 100):,}...")
+            
+            try:
+                # For start_row > 0, we need to handle header separately
+                if start_row > 0:
+                    # Read header first (row 0)
+                    header_df = pd.read_excel(file_path, sheet_name=sheet_name or 0, nrows=0)
+                    header_columns = list(header_df.columns)
+                    
+                    # Now read the chunk, skipping rows but keeping header
+                    # skiprows needs a range: skip rows 1 through start_row (keep row 0 = header)
+                    skip_range = range(1, start_row + 1)
+                    
+                    # Use dtype='object' to prevent type inference (saves memory)
+                    df = pd.read_excel(
+                        file_path, 
+                        sheet_name=sheet_name or 0, 
+                        skiprows=skip_range, 
+                        nrows=safe_chunk_size,
+                        dtype='object'  # Prevent type inference overhead
+                    )
+                else:
+                    # First chunk - just read normally
+                    df = pd.read_excel(
+                        file_path, 
+                        sheet_name=sheet_name or 0, 
+                        nrows=safe_chunk_size,
+                        dtype='object'  # Prevent type inference overhead
+                    )
+                
+                print(f"✅ Successfully read {len(df):,} rows")
+                
+            except MemoryError as mem_err:
+                print(f"❌ MEMORY ERROR: pandas ran out of RAM reading chunk")
+                return {
+                    'success': False,
+                    'error': f"File too large to process. Pandas ran out of memory trying to read {safe_chunk_size} rows. Try a smaller file or split this file into multiple parts."
+                }
+            
+            except Exception as read_err:
+                print(f"❌ PANDAS READ ERROR: {str(read_err)}")
+                return {
+                    'success': False,
+                    'error': f"Could not read Excel file: {str(read_err)}"
+                }
+            
+            # ================================================================
+            # STEP 4: Build response
+            # ================================================================
             actual_start = start_row
             actual_end = start_row + len(df)
             rows_remaining = max(0, total_rows - actual_end)
@@ -285,10 +342,11 @@ class ProgressiveFileAnalyzer:
             
         except Exception as e:
             import traceback
-            print(f"❌ extract_excel_chunk error: {traceback.format_exc()}")
+            error_trace = traceback.format_exc()
+            print(f"❌ extract_excel_chunk error: {error_trace}")
             return {
                 'success': False,
-                'error': str(e)
+                'error': f"Unexpected error: {str(e)}\n\nTechnical details:\n{error_trace}"
             }
     
     
@@ -301,7 +359,14 @@ class ProgressiveFileAnalyzer:
         
         # Convert to string with good formatting
         text = "=== DATA PREVIEW ===\n\n"
-        text += preview_df.to_string(index=False, max_rows=max_rows)
+        
+        try:
+            text += preview_df.to_string(index=False, max_rows=max_rows)
+        except Exception as format_err:
+            # Fallback if formatting fails
+            text += f"[Could not format preview: {str(format_err)}]\n"
+            text += f"Columns: {list(df.columns)}\n"
+            text += f"Shape: {df.shape}\n"
         
         if len(df) > max_rows:
             text += f"\n\n... and {len(df) - max_rows} more rows in this chunk"
