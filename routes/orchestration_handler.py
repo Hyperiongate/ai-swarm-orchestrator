@@ -108,7 +108,21 @@ from proactive_curiosity_engine import get_curiosity_engine  # Phase 1: Proactiv
 
 # Create blueprint
 orchestration_bp = Blueprint('orchestration', __name__)
-
+@orchestration_bp.route('/api/download/<path:filename>')
+def download_analysis_file(filename):
+    """Serve Excel analysis files for download"""
+    import os
+    file_path = os.path.join('/tmp/outputs', filename)
+    print(f"📥 Download requested: {filename}")
+    print(f"📁 Looking for file at: {file_path}")
+    print(f"📁 File exists: {os.path.exists(file_path)}")
+    
+    if os.path.exists(file_path):
+        print(f"✅ Serving file: {file_path}")
+        return send_file(file_path, as_attachment=True, download_name=filename)
+    else:
+        print(f"❌ File not found: {file_path}")
+        return jsonify({'error': 'File not found'}), 404
 @orchestration_bp.route('/api/download/<path:filename>')
 def download_analysis_file(filename):
     """Serve Excel analysis files for download"""
