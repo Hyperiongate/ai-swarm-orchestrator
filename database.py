@@ -1685,21 +1685,38 @@ def save_smart_analyzer_state(conversation_id, file_path, file_name, profile):
     db = get_db()
     
     try:
+        # Convert any Timestamp objects to strings for JSON serialization
+        import pandas as pd
+        
+        def convert_timestamps(obj):
+            """Recursively convert Timestamp objects to strings"""
+            if isinstance(obj, pd.Timestamp):
+                return obj.isoformat()
+            elif isinstance(obj, dict):
+                return {k: convert_timestamps(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_timestamps(item) for item in obj]
+            return obj
+        
+        # Clean the profile before saving
+        clean_profile = convert_timestamps(profile)
+        
         db.execute('''
             INSERT OR REPLACE INTO smart_analyzer_state 
             (conversation_id, file_path, file_name, analyzer_state, profile_json, last_used)
             VALUES (?, ?, ?, 'loaded', ?, CURRENT_TIMESTAMP)
-        ''', (conversation_id, file_path, file_name, json.dumps(profile)))
+        ''', (conversation_id, file_path, file_name, json.dumps(clean_profile)))
         
         db.commit()
         print(f"💾 Saved smart analyzer state to DB for conversation {conversation_id}")
         return True
     except Exception as e:
         print(f"❌ Error saving smart analyzer state: {e}")
+        import traceback
+        traceback.print_exc()
         return False
     finally:
         db.close()
-
 
 def get_smart_analyzer_state(conversation_id):
     """
