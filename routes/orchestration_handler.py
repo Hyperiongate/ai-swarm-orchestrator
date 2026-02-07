@@ -2453,12 +2453,31 @@ def handle_smart_analyzer_continuation(user_request, conversation_id, project_id
 
 **USER'S QUESTION:** {user_request}
 
-**CRITICAL REMINDER:**
-Your response must be ONE pandas expression that returns a DataFrame or Series.
-For questions with multiple parts, use pd.DataFrame() or .agg() to combine results.
-Never return multiple variables separated by commas!
+**YOUR RESPONSE FORMAT - FOLLOW EXACTLY:**
 
-Generate the pandas code now:"""
+Line 1: CODE: [your pandas expression]
+Line 2: (blank)
+Line 3 onwards: Brief explanation if needed
+
+**EXAMPLES:**
+
+Question: "Show total hours by department"
+Your response:
+CODE: df.groupby('Department')['Total Hours'].sum().sort_values(ascending=False)
+
+This shows departments ranked by total hours worked.
+
+---
+
+Question: "Average hours per day of week and by shift"  
+Your response:
+CODE: pd.DataFrame({{'by_day': df.groupby(df['Date'].dt.day_name())['Hours'].mean(), 'by_shift': df.groupby('Shift')['Hours'].mean()}})
+
+This shows two analyses side-by-side.
+
+---
+
+NOW ANSWER THE USER'S QUESTION. Start your response with "CODE: " followed by the pandas expression."""
 
         print(f"🤖 Asking GPT-4 to generate pandas code...")
         gpt_response = call_gpt4(analysis_prompt, max_tokens=2000)
@@ -2471,11 +2490,21 @@ Generate the pandas code now:"""
             
             print(f"🔍 RAW GPT-4 RESPONSE (first 500 chars): {ai_response[:500]}")
             
-            # Remove markdown code blocks if present
-            pandas_code = re.sub(r'```python?\s*|\s*```', '', ai_response).strip()
-            
-            # If GPT-4 added "PANDAS_CODE:" prefix, remove it
-            pandas_code = re.sub(r'^PANDAS_CODE:\s*', '', pandas_code, flags=re.IGNORECASE).strip()
+            # Extract code from "CODE: " prefix
+if 'CODE:' in ai_response:
+    # Find the line starting with CODE:
+    code_match = re.search(r'CODE:\s*(.+?)(?:\n|$)', ai_response, re.MULTILINE)
+    if code_match:
+        pandas_code = code_match.group(1).strip()
+    else:
+        # Fallback: everything after CODE:
+        pandas_code = ai_response.split('CODE:')[1].split('\n')[0].strip()
+else:
+    # No CODE: prefix - clean up markdown
+    pandas_code = re.sub(r'```python?\s*|\s*```', '', ai_response).strip()
+
+# Remove any remaining markdown or prefixes
+pandas_code = re.sub(r'^PANDAS_CODE:\s*', '', pandas_code, flags=re.IGNORECASE).strip()
             
             # Remove any leading/trailing whitespace
             pandas_code = pandas_code.strip()
