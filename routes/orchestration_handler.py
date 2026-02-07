@@ -2445,7 +2445,7 @@ def handle_smart_analyzer_continuation(user_request, conversation_id, project_id
         
         overall_start = time.time()
         
-       # Build prompt for GPT-4 to generate pandas code
+        # Build prompt for GPT-4 to generate pandas code
         # FIXED February 7, 2026: Use stronger instructions from smart_excel_analyzer
         profile_context = analyzer.format_for_gpt_context()
         
@@ -2480,7 +2480,7 @@ This shows two analyses side-by-side.
 NOW ANSWER THE USER'S QUESTION. Start your response with "CODE: " followed by the pandas expression."""
 
         print(f"🤖 Asking GPT-4 to generate pandas code...")
-       gpt_response = call_gpt4(analysis_prompt, max_tokens=2000)
+        gpt_response = call_gpt4(analysis_prompt, max_tokens=2000)
         
         if not gpt_response.get('error') and gpt_response.get('content'):
             ai_response = gpt_response.get('content', '')
