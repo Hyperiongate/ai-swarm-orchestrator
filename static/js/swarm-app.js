@@ -1076,12 +1076,29 @@ function sendMessage() {
             if (data.knowledge_used) badges += '<span class="badge knowledge">📚 Knowledge</span>';
             if (currentConversationId) badges += '<span class="badge memory">🧠 Memory</span>';
             
+            */
+
+            // Handle both document_url (Word docs) AND download_file (Excel analysis)
             var downloadSection = '';
+            
+            // Word/PDF documents from document generator
             if (data.document_url) {
                 var docType = (data.document_type || 'docx').toUpperCase();
                 downloadSection = '<div style="margin-top: 15px; padding: 12px; background: #e8f5e9; border-left: 4px solid #4caf50; border-radius: 4px;">' +
                     '<a href="' + data.document_url + '" download style="padding: 8px 16px; background: #4caf50; color: white; text-decoration: none; border-radius: 6px;">⬇️ Download ' + docType + '</a></div>';
             }
+            
+            // Excel files from smart analyzer (NEW - February 7, 2026)
+            if (data.download_available && data.download_file) {
+                var filename = data.download_filename || 'analysis.xlsx';
+                downloadSection += '<div style="margin-top: 15px; padding: 12px; background: #e3f2fd; border-left: 4px solid #2196f3; border-radius: 4px;">' +
+                    '<div style="margin-bottom: 8px; font-size: 13px; color: #1565c0; font-weight: 600;">📊 Complete Analysis Results</div>' +
+                    '<a href="' + data.download_file + '" download="' + filename + '" style="padding: 8px 16px; background: #2196f3; color: white; text-decoration: none; border-radius: 6px; font-size: 14px;">⬇️ Download Excel (' + filename + ')</a>' +
+                    '<div style="margin-top: 8px; font-size: 11px; color: #666;">Contains all rows from your analysis</div>' +
+                    '</div>';
+            }
+
+/*
             
             addMessage('assistant', data.result + '<div style="margin-top: 10px;">' + badges + '</div>' + downloadSection, data.task_id, currentMode, data);
             
