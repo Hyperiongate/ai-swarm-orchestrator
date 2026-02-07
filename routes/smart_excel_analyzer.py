@@ -1,7 +1,14 @@
 """
 Smart Excel Analyzer - Flexible analysis for ANY Excel file format
 Created: February 6, 2026
-Last Updated: February 6, 2026
+Last Updated: February 7, 2026 - FIXED MULTI-PART QUERY HANDLING
+
+CHANGES IN THIS VERSION:
+- February 7, 2026: FIXED MULTI-PART QUERY BUG
+  * Updated GPT-4 instructions to handle questions with multiple calculations
+  * Now tells GPT-4 to combine results into single DataFrame using pd.DataFrame()
+  * Added explicit examples of multi-part query handling
+  * Prevents syntax errors from returning multiple variables
 
 This module profiles Excel files and enables conversational analysis.
 Works with ANY column names, ANY data format.
@@ -12,6 +19,7 @@ Key Features:
 - Generates pandas code based on natural language questions
 - Executes code safely and returns real results
 - Conversational follow-up analysis
+- Handles multi-part questions by combining into single DataFrame
 
 Purpose: Replace rigid templates with flexible, intelligent analysis
 """
@@ -426,6 +434,8 @@ class SmartExcelAnalyzer:
         """
         Format the complete context that GPT-4 needs to answer questions.
         This includes the profile AND instructions for generating pandas code.
+        
+        UPDATED February 7, 2026: Fixed multi-part query handling
         """
         context = self.get_profile_summary()
         
@@ -437,20 +447,71 @@ When the user asks a question about this data:
 
 1. **Understand the question** - What specific calculation or view do they want?
 2. **Generate pandas code** - Write code that operates on the DataFrame called `df`
-3. **Return ONLY the pandas expression** - No explanations, just the code
-4. **Use appropriate pandas methods:**
-   - Grouping: `df.groupby(['column']).agg({'col': 'sum'})`
-   - Filtering: `df[df['column'] > value]`
-   - Sorting: `df.sort_values('column')`
-   - Pivot: `df.pivot_table(values='col', index='row', columns='col')`
-   - Aggregation: `.sum()`, `.mean()`, `.count()`, `.nunique()`
+3. **Return a SINGLE pandas expression** - Must evaluate to a DataFrame or Series
+4. **For multi-part questions:** Combine results into ONE DataFrame using pd.DataFrame() or .agg()
 
-5. **Examples:**
-   - "Total hours by department" → `df.groupby('Dept & Bldg')['Total Hours'].sum()`
-   - "Average by day of week" → `df.groupby(df['Date'].dt.day_name())['Hours'].mean()`
-   - "Top 5 departments" → `df.groupby('Dept')['Hours'].sum().nlargest(5)`
+**CRITICAL RULES:**
+- Your code must be a SINGLE expression that returns a DataFrame or Series
+- Do NOT return multiple variables separated by commas (e.g., "var1, var2, var3")
+- Do NOT use print statements
+- Do NOT include any explanations or comments
+- The last line must be the expression that returns the result
 
-**CRITICAL:** Your response should ONLY contain the pandas code, nothing else.
+## Pandas Methods Available:
+- Grouping: `df.groupby(['column']).agg({'col': 'sum'})`
+- Filtering: `df[df['column'] > value]`
+- Sorting: `df.sort_values('column')`
+- Pivot: `df.pivot_table(values='col', index='row', columns='col')`
+- Aggregation: `.sum()`, `.mean()`, `.count()`, `.nunique()`
+- DateTime: `df['Date'].dt.day_name()`, `df['Date'].dt.month_name()`
+
+## Examples:
+
+**Single calculation:**
+```python
+df.groupby('Department')['Total Hours'].sum()
+```
+```python
+df.groupby(df['Date'].dt.day_name())['Total Hours'].mean()
+```
+```python
+df.groupby('Department')['Total Hours'].sum().nlargest(5)
+```
+
+**Multi-part questions - COMBINE into ONE DataFrame:**
+
+Question: "Show average employees and hours by month"
+```python
+pd.DataFrame({
+    'avg_employees': df.groupby('Month')['EDI#'].nunique(),
+    'avg_hours': df.groupby('Month')['Total Hours'].mean()
+})
+```
+
+Question: "Department analysis: count, total, and average"
+```python
+df.groupby('Department').agg({
+    'EDI#': 'count',
+    'Total Hours': ['sum', 'mean']
+})
+```
+
+Question: "Show me total by department and shift"
+```python
+df.groupby(['Department', 'Shift'])['Total Hours'].sum().unstack(fill_value=0)
+```
+
+**For questions with filters AND multiple calculations:**
+```python
+pd.DataFrame({
+    'metric1': df[df['Department']=='Processing'].groupby('Month')['Hours'].sum(),
+    'metric2': df[df['Department']=='Processing'].groupby('Month')['EDI#'].nunique()
+})
+```
+
+**CRITICAL:** Your response must be ONE pandas expression that returns a DataFrame or Series. 
+For questions with multiple parts, use `pd.DataFrame()`, `df.agg()`, or `.unstack()` to combine results.
+Never return multiple variables like "result1, result2, result3" - this causes syntax errors!
 """
         
         return context
