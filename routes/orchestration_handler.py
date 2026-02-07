@@ -2480,7 +2480,7 @@ This shows two analyses side-by-side.
 NOW ANSWER THE USER'S QUESTION. Start your response with "CODE: " followed by the pandas expression."""
 
         print(f"🤖 Asking GPT-4 to generate pandas code...")
-        gpt_response = call_gpt4(analysis_prompt, max_tokens=2000)
+       gpt_response = call_gpt4(analysis_prompt, max_tokens=2000)
         
         if not gpt_response.get('error') and gpt_response.get('content'):
             ai_response = gpt_response.get('content', '')
@@ -2491,7 +2491,24 @@ NOW ANSWER THE USER'S QUESTION. Start your response with "CODE: " followed by th
             print(f"🔍 RAW GPT-4 RESPONSE (first 500 chars): {ai_response[:500]}")
             
             # Extract code from "CODE: " prefix
-if 'CODE:' in ai_response:
+            try:
+                if 'CODE:' in ai_response:
+                    # Find the line starting with CODE:
+                    code_match = re.search(r'CODE:\s*(.+?)(?:\n|$)', ai_response, re.MULTILINE)
+                    if code_match:
+                        pandas_code = code_match.group(1).strip()
+                    else:
+                        # Fallback: everything after CODE:
+                        pandas_code = ai_response.split('CODE:')[1].split('\n')[0].strip()
+                else:
+                    # No CODE: prefix - clean up markdown
+                    pandas_code = re.sub(r'```python?\s*|\s*```', '', ai_response).strip()
+                
+                # Remove any remaining markdown or prefixes
+                pandas_code = re.sub(r'^PANDAS_CODE:\s*', '', pandas_code, flags=re.IGNORECASE).strip()
+            except Exception as extract_error:
+                print(f"⚠️ Code extraction failed: {extract_error}")
+                pandas_code = ai_response.strip()  # Use raw response as fallback
     # Find the line starting with CODE:
     code_match = re.search(r'CODE:\s*(.+?)(?:\n|$)', ai_response, re.MULTILINE)
     if code_match:
