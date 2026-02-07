@@ -123,13 +123,6 @@ def download_analysis_file(filename):
     else:
         print(f"❌ File not found: {file_path}")
         return jsonify({'error': 'File not found'}), 404
-@orchestration_bp.route('/api/download/<path:filename>')
-def download_analysis_file(filename):
-    """Serve Excel analysis files for download"""
-    file_path = f"/tmp/outputs/{filename}"
-    if os.path.exists(file_path):
-        return send_file(file_path, as_attachment=True, download_name=filename)
-    return jsonify({'error': 'File not found'}), 404
 
 def convert_markdown_to_html(text):
     """Convert markdown text to styled HTML"""
