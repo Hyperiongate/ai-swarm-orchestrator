@@ -2458,11 +2458,11 @@ Return ONLY the pandas code:"""
                     # Result has >10 rows - save to Excel and provide download
                     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                     filename = f"analysis_{timestamp}.xlsx"
-                    output_path = f"/mnt/user-data/outputs/{filename}"
+                    output_path = f"/tmp/outputs/{filename}"
                     
                     try:
                         # Ensure output directory exists
-                        os.makedirs("/mnt/user-data/outputs", exist_ok=True)
+                        os.makedirs("/tmp/outputs", exist_ok=True)
                         
                         # Save to Excel with openpyxl
                         result_df.to_excel(output_path, index=True, engine='openpyxl')
@@ -2610,7 +2610,7 @@ Generate corrected pandas code. Return ONLY the code, no explanations:"""
                             output_path = f"/mnt/user-data/outputs/{filename}"
                             
                             try:
-                                os.makedirs("/mnt/user-data/outputs", exist_ok=True)
+                                os.makedirs("/tmp/outputs", exist_ok=True)
                                 result_df.to_excel(output_path, index=True, engine='openpyxl')
                                 print(f"💾 Saved {len(result_df)} rows to {output_path}")
                                 
