@@ -1,7 +1,7 @@
 """
 Orchestration Handler - Main AI Task Processing
 Created: January 31, 2026
-Last Updated: February 5, 2026 - FIXED MEMORY CRASH ON LARGE EXCEL FILES
+Last Updated: February def download_analysis_file5, 2026 - FIXED MEMORY CRASH ON LARGE EXCEL FILES
 
 This file handles the main /api/orchestrate endpoint that processes user requests.
 Separated from core.py to make it easier to fix and maintain.
@@ -112,17 +112,38 @@ orchestration_bp = Blueprint('orchestration', __name__)
 def download_analysis_file(filename):
     """Serve Excel analysis files for download"""
     import os
-    file_path = os.path.join('/tmp/outputs', filename)
-    print(f"📥 Download requested: {filename}")
-    print(f"📁 Looking for file at: {file_path}")
-    print(f"📁 File exists: {os.path.exists(file_path)}")
+    import traceback
     
-    if os.path.exists(file_path):
-        print(f"✅ Serving file: {file_path}")
-        return send_file(file_path, as_attachment=True, download_name=filename)
-    else:
-        print(f"❌ File not found: {file_path}")
-        return jsonify({'error': 'File not found'}), 404
+    try:
+        file_path = os.path.join('/tmp/outputs', filename)
+        print(f"=" * 80)
+        print(f"📥 DOWNLOAD ROUTE CALLED")
+        print(f"📁 Requested filename: {filename}")
+        print(f"📁 Full path: {file_path}")
+        print(f"📁 File exists: {os.path.exists(file_path)}")
+        
+        if os.path.exists(file_path):
+            # List what's actually in the directory
+            files_in_dir = os.listdir('/tmp/outputs')
+            print(f"📂 Files in /tmp/outputs/: {files_in_dir}")
+            print(f"✅ Serving file: {file_path}")
+            print(f"=" * 80)
+            return send_file(file_path, as_attachment=True, download_name=filename)
+        else:
+            # List what's actually in the directory
+            try:
+                files_in_dir = os.listdir('/tmp/outputs')
+                print(f"📂 Files in /tmp/outputs/: {files_in_dir}")
+            except:
+                print(f"❌ /tmp/outputs/ directory doesn't exist!")
+            
+            print(f"❌ File not found: {file_path}")
+            print(f"=" * 80)
+            return jsonify({'error': 'File not found'}), 404
+    except Exception as e:
+        print(f"🔥 EXCEPTION in download route: {e}")
+        print(traceback.format_exc())
+        return jsonify({'error': str(e)}), 500
 
 def convert_markdown_to_html(text):
     """Convert markdown text to styled HTML"""
