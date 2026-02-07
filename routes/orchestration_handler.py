@@ -2469,6 +2469,8 @@ Generate the pandas code now:"""
             # Extract pandas code (clean up any markdown or explanations)
             import re
             
+            print(f"🔍 RAW GPT-4 RESPONSE (first 500 chars): {ai_response[:500]}")
+            
             # Remove markdown code blocks if present
             pandas_code = re.sub(r'```python?\s*|\s*```', '', ai_response).strip()
             
@@ -2477,6 +2479,8 @@ Generate the pandas code now:"""
             
             # Remove any leading/trailing whitespace
             pandas_code = pandas_code.strip()
+            
+            print(f"🔍 CLEANED CODE (first 500 chars): {pandas_code[:500]}")
             
             print(f"📊 Extracted pandas code: {pandas_code[:100]}...")
             
