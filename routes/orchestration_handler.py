@@ -68,6 +68,7 @@ import json
 import os
 from datetime import datetime
 from werkzeug.utils import secure_filename
+from flask import send_file
 
 # Import all the utilities we need
 from database import (
@@ -108,6 +109,13 @@ from proactive_curiosity_engine import get_curiosity_engine  # Phase 1: Proactiv
 # Create blueprint
 orchestration_bp = Blueprint('orchestration', __name__)
 
+@orchestration_bp.route('/api/download/<path:filename>')
+def download_analysis_file(filename):
+    """Serve Excel analysis files for download"""
+    file_path = f"/tmp/outputs/{filename}"
+    if os.path.exists(file_path):
+        return send_file(file_path, as_attachment=True, download_name=filename)
+    return jsonify({'error': 'File not found'}), 404
 
 def convert_markdown_to_html(text):
     """Convert markdown text to styled HTML"""
@@ -2470,7 +2478,7 @@ Return ONLY the pandas code:"""
                         
                         # Mark for download
                         download_created = True
-                        download_filepath = output_path
+                        download_filepath = f"/api/download/{filename}"
                         
                         # Create preview (first 30 rows)
                         preview_df = result_df.head(30)
