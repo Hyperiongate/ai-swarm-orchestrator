@@ -1418,18 +1418,6 @@ def get_learning_stats():
         return jsonify({'error': str(e)}), 500
 
 
-@core_bp.route('/api/download/<filename>', methods=['GET'])
-def download_file(filename):
-    """Download generated files (legacy endpoint)"""
-    try:
-        possible_paths = [f'/mnt/user-data/outputs/{filename}', f'/tmp/{filename}', f'./{filename}']
-        for file_path in possible_paths:
-            if os.path.exists(file_path):
-                return send_file(file_path, as_attachment=True, download_name=filename)
-        return jsonify({'error': 'File not found'}), 404
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
 # ============================================================================
 # PROJECT FILE MANAGEMENT ENDPOINTS
 # ============================================================================
