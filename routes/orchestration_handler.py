@@ -2461,7 +2461,7 @@ Never return multiple variables separated by commas!
 Generate the pandas code now:"""
 
         print(f"🤖 Asking GPT-4 to generate pandas code...")
-        gpt_response = call_gpt4(analysis_prompt, max_tokens=1000)
+        gpt_response = call_gpt4(analysis_prompt, max_tokens=2000)
         
         if not gpt_response.get('error') and gpt_response.get('content'):
             ai_response = gpt_response.get('content', '')
