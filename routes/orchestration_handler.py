@@ -2445,41 +2445,20 @@ def handle_smart_analyzer_continuation(user_request, conversation_id, project_id
         
         overall_start = time.time()
         
-        # Build prompt for GPT-4 to generate pandas code
-        profile_summary = analyzer.get_profile_summary()
+       # Build prompt for GPT-4 to generate pandas code
+        # FIXED February 7, 2026: Use stronger instructions from smart_excel_analyzer
+        profile_context = analyzer.format_for_gpt_context()
         
-        analysis_prompt = f"""You are analyzing a loaded Excel file with pandas.
-
-THE DATA IS ALREADY LOADED in a pandas DataFrame called 'df' with {len(analyzer.df):,} rows.
-
-{profile_summary}
+        analysis_prompt = f"""{profile_context}
 
 **USER'S QUESTION:** {user_request}
 
-**YOUR TASK:**
+**CRITICAL REMINDER:**
+Your response must be ONE pandas expression that returns a DataFrame or Series.
+For questions with multiple parts, use pd.DataFrame() or .agg() to combine results.
+Never return multiple variables separated by commas!
 
-Generate pandas code to answer the user's question. Return ONLY the pandas code, nothing else.
-
-**RULES:**
-1. The DataFrame is called 'df'
-2. Return ONLY executable pandas code
-3. NO explanations, NO markdown, NO preamble
-4. Just the pandas expression
-
-**EXAMPLES:**
-
-User asks: "Show me total overtime by department"
-Your response: df.groupby('Dept & Bldg')['Overtime'].sum().sort_values(ascending=False)
-
-User asks: "Weekly hours by department"
-Your response: df.groupby(['Dept & Bldg', 'Week']).agg({{'Reg': 'sum', 'Overtime': 'sum', 'Total Hours': 'sum'}})
-
-User asks: "Which day has most overtime?"
-Your response: df.groupby(df['Date'].dt.day_name())['Overtime'].sum().sort_values(ascending=False)
-
-**NOW GENERATE CODE FOR:** {user_request}
-
-Return ONLY the pandas code:"""
+Generate the pandas code now:"""
 
         print(f"🤖 Asking GPT-4 to generate pandas code...")
         gpt_response = call_gpt4(analysis_prompt, max_tokens=1000)
