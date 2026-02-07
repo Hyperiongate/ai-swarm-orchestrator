@@ -314,6 +314,7 @@ class SmartExcelAnalyzer:
             if isinstance(result, pd.DataFrame):
                 result_data = {
                     'type': 'dataframe',
+                    'dataframe': result,
                     'shape': result.shape,
                     'data': result.to_dict('records')[:100],  # Limit to 100 rows for display
                     'columns': list(result.columns),
@@ -322,6 +323,7 @@ class SmartExcelAnalyzer:
             elif isinstance(result, pd.Series):
                 result_data = {
                     'type': 'series',
+                    'dataframe': result.to_frame(),
                     'length': len(result),
                     'data': result.to_dict(),
                     'markdown': result.to_markdown() if len(result) < 50 else result.head(50).to_markdown()
