@@ -2664,7 +2664,7 @@ Showing first 30 rows below. Download the complete Excel file with the link that
                             'result': formatted_output,
                             'orchestrator': 'smart_pandas_analyzer_continuation',
                             'execution_time': total_time,
-                            'download_available': download_created
+                            'download_available': download_created,
                             'download_file': download_filepath if download_created else None,
                             'download_filename': os.path.basename(download_filepath) if download_created and download_filepath else None
                         }
