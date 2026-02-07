@@ -1072,12 +1072,10 @@ function sendMessage() {
                 updateConversationTitle(currentConversationId, generateConversationTitle(message));
             }
             
-            var badges = '';
+           var badges = '';
             if (data.knowledge_used) badges += '<span class="badge knowledge">📚 Knowledge</span>';
             if (currentConversationId) badges += '<span class="badge memory">🧠 Memory</span>';
             
-            */
-
             // Handle both document_url (Word docs) AND download_file (Excel analysis)
             var downloadSection = '';
             
@@ -1097,15 +1095,13 @@ function sendMessage() {
                     '<div style="margin-top: 8px; font-size: 11px; color: #666;">Contains all rows from your analysis</div>' +
                     '</div>';
             }
-
-/*
             
             addMessage('assistant', data.result + '<div style="margin-top: 10px;">' + badges + '</div>' + downloadSection, data.task_id, currentMode, data);
             
             updateMemoryIndicator(true, 2);
             loadConversations();
             loadStats();
-            loadDocuments();
+            loadDocuments(); 
         } else {
             addMessage('assistant', '❌ Error: ' + data.error);
         }
