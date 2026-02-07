@@ -62,7 +62,7 @@ UPDATES:
 Author: Jim @ Shiftwork Solutions LLC
 """
 
-from flask import Blueprint, request, jsonify, session
+from flask import Blueprint, request, jsonify, session, send_file
 import time
 import json
 import os
@@ -2161,6 +2161,30 @@ NOW ANSWER THE USER'S QUESTION."""
                 if execution_result['success']:
                     # Get the markdown formatted result
                     result_markdown = execution_result['result']['markdown']
+                    # Check if result is a DataFrame and has >10 rows - create download
+                result_df = execution_result['result'].get('dataframe')
+                download_created = False
+                download_filepath = None
+                
+                if result_df is not None and len(result_df) > 10:
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    filename = f"analysis_{timestamp}.xlsx"
+                    output_path = f"/tmp/outputs/{filename}"
+                    
+                    try:
+                        os.makedirs("/tmp/outputs", exist_ok=True)
+                        result_df.to_excel(output_path, index=True, engine='openpyxl')
+                        print(f"💾 Saved {len(result_df)} rows to {output_path}")
+                        
+                        download_created = True
+                        download_filepath = f"/api/download/{filename}"
+                        
+                        # Show preview instead of full table
+                        preview_df = result_df.head(30)
+                        result_markdown = preview_df.to_markdown(index=True)
+                        result_markdown = f"*Showing first 30 rows of {len(result_df)} total. Download complete file below.*\n\n" + result_markdown
+                    except Exception as save_error:
+                        print(f"⚠️ Could not save Excel: {save_error}")
                     
                     # Build final response
                     full_response = f"""# Analysis Results
@@ -2198,7 +2222,10 @@ NOW ANSWER THE USER'S QUESTION."""
                         'orchestrator': 'smart_pandas_analyzer',
                         'execution_time': total_time,
                         'total_rows': profile_result['profile']['file_info']['total_rows'],
-                        'analysis_type': 'pandas_calculation'
+                        'analysis_type': 'pandas_calculation',
+                        'download_available': download_created,
+                        'download_file': download_filepath if download_created else None,
+                        'download_filename': os.path.basename(download_filepath) if download_created and download_filepath else None
                     })
                 else:
                     # Pandas execution failed - fall back to showing profile
