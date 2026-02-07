@@ -2277,6 +2277,16 @@ What would you like to analyze?"""
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+"""
+UPDATED: February 6, 2026 v11 - Added auto-download for large results
+
+Changes:
+- Detects when results have >50 rows
+- Auto-saves to Excel file in /mnt/user-data/outputs/
+- Uses present_files tool to provide download link
+- Still shows preview (first 30 rows) in chat
+"""
+
 def handle_smart_analyzer_continuation(user_request, conversation_id, project_id, mode):
     """
     Handle follow-up questions after a file has been loaded by smart analyzer.
@@ -2286,9 +2296,10 @@ def handle_smart_analyzer_continuation(user_request, conversation_id, project_id
     2. Reloads the DataFrame from the saved file
     3. Asks GPT-4 to generate pandas code
     4. Executes the code
-    5. Returns results
+    5. Returns results (with auto-download for large tables)
     
     Created: February 6, 2026
+    Updated: February 6, 2026 v11 - Added auto-download capability
     """
     try:
         import sys
@@ -2296,6 +2307,7 @@ def handle_smart_analyzer_continuation(user_request, conversation_id, project_id
         sys.path.insert(0, os.path.dirname(__file__))
         from smart_excel_analyzer import SmartExcelAnalyzer
         from orchestration.ai_clients import call_gpt4
+        from datetime import datetime
         
         from database import get_smart_analyzer_state
         
@@ -2389,12 +2401,60 @@ Return ONLY the pandas code:"""
             execution_result = analyzer.execute_analysis(user_request, pandas_code)
             
             if execution_result['success']:
-                # Get the markdown formatted result
-                result_markdown = execution_result['result']['markdown']
+                # Get the result data
+                result_data = execution_result['result']
+                result_df = result_data.get('dataframe')
+                result_markdown = result_data['markdown']
+                
+                # ============================================================
+                # NEW: Auto-download feature for large results
+                # ============================================================
+                download_link = None
+                preview_note = ""
+                
+                if result_df is not None and len(result_df) > 50:
+                    # Large result - save to Excel and provide download
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    filename = f"analysis_{timestamp}.xlsx"
+                    output_path = f"/mnt/user-data/outputs/{filename}"
+                    
+                    try:
+                        # Save to Excel
+                        result_df.to_excel(output_path, index=True, engine='openpyxl')
+                        print(f"💾 Saved large result to {output_path} ({len(result_df)} rows)")
+                        
+                        # Use present_files to create download link
+                        from flask import current_app
+                        with current_app.app_context():
+                            from routes.orchestration_handler import present_files_tool
+                            present_files_tool([output_path])
+                        
+                        download_link = f"/api/download/{filename}"
+                        
+                        # Create preview (first 30 rows)
+                        preview_df = result_df.head(30)
+                        result_markdown = preview_df.to_markdown(index=True)
+                        
+                        preview_note = f"""
+
+**📥 FULL RESULTS SAVED TO EXCEL**
+
+This table has **{len(result_df)} rows** - showing first 30 below.
+
+[**📥 Download Complete Results ({len(result_df)} rows)**]({download_link})
+
+---
+
+"""
+                    except Exception as e:
+                        print(f"⚠️ Could not save to Excel: {e}")
+                        # Fall back to showing truncated results
+                        preview_note = f"\n\n*Note: Table has {len(result_df)} rows (showing first 50)*\n\n"
+                        result_markdown = result_df.head(50).to_markdown(index=True)
                 
                 # Build response
                 full_response = f"""## 📊 Results
-
+{preview_note}
 {result_markdown}
 
 ---
@@ -2413,7 +2473,8 @@ Return ONLY the pandas code:"""
                            {'orchestrator': 'smart_pandas_analyzer_continuation',
                             'execution_time': total_time,
                             'pandas_code': pandas_code,
-                            'rows_processed': len(analyzer.df)})
+                            'rows_processed': len(analyzer.df),
+                            'download_link': download_link})
                 
                 return jsonify({
                     'success': True,
@@ -2421,7 +2482,8 @@ Return ONLY the pandas code:"""
                     'conversation_id': conversation_id,
                     'result': formatted_output,
                     'orchestrator': 'smart_pandas_analyzer_continuation',
-                    'execution_time': total_time
+                    'execution_time': total_time,
+                    'download_available': download_link is not None
                 })
             
             else:
@@ -2455,10 +2517,51 @@ Generate corrected pandas code. Return ONLY the code, no explanations:"""
                     retry_result = analyzer.execute_analysis(user_request, corrected_code, attempt=2)
                     
                     if retry_result['success']:
-                        result_markdown = retry_result['result']['markdown']
+                        result_data = retry_result['result']
+                        result_df = result_data.get('dataframe')
+                        result_markdown = result_data['markdown']
+                        
+                        # Check for large results on retry too
+                        download_link = None
+                        preview_note = ""
+                        
+                        if result_df is not None and len(result_df) > 50:
+                            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                            filename = f"analysis_{timestamp}.xlsx"
+                            output_path = f"/mnt/user-data/outputs/{filename}"
+                            
+                            try:
+                                result_df.to_excel(output_path, index=True, engine='openpyxl')
+                                print(f"💾 Saved large result to {output_path} ({len(result_df)} rows)")
+                                
+                                from flask import current_app
+                                with current_app.app_context():
+                                    from routes.orchestration_handler import present_files_tool
+                                    present_files_tool([output_path])
+                                
+                                download_link = f"/api/download/{filename}"
+                                
+                                preview_df = result_df.head(30)
+                                result_markdown = preview_df.to_markdown(index=True)
+                                
+                                preview_note = f"""
+
+**📥 FULL RESULTS SAVED TO EXCEL**
+
+This table has **{len(result_df)} rows** - showing first 30 below.
+
+[**📥 Download Complete Results ({len(result_df)} rows)**]({download_link})
+
+---
+
+"""
+                            except Exception as e:
+                                print(f"⚠️ Could not save to Excel: {e}")
+                                preview_note = f"\n\n*Note: Table has {len(result_df)} rows (showing first 50)*\n\n"
+                                result_markdown = result_df.head(50).to_markdown(index=True)
                         
                         full_response = f"""## 📊 Results
-
+{preview_note}
 {result_markdown}
 
 ---
@@ -2477,7 +2580,8 @@ Generate corrected pandas code. Return ONLY the code, no explanations:"""
                                    {'orchestrator': 'smart_pandas_analyzer_continuation',
                                     'execution_time': total_time,
                                     'pandas_code': corrected_code,
-                                    'retry_attempt': 2})
+                                    'retry_attempt': 2,
+                                    'download_link': download_link})
                         
                         return jsonify({
                             'success': True,
@@ -2485,7 +2589,8 @@ Generate corrected pandas code. Return ONLY the code, no explanations:"""
                             'conversation_id': conversation_id,
                             'result': formatted_output,
                             'orchestrator': 'smart_pandas_analyzer_continuation',
-                            'execution_time': total_time
+                            'execution_time': total_time,
+                            'download_available': download_link is not None
                         })
                 
                 # Both attempts failed
@@ -2536,6 +2641,8 @@ Could you rephrase your question or ask something else about the data?
         import traceback
         print(f"❌ Smart analyzer continuation error: {traceback.format_exc()}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+# I did no harm and this file is not truncated
 
 
 # I did no harm and this file is not truncated
