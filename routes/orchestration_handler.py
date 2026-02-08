@@ -2349,56 +2349,132 @@ Changes:
 - Uses present_files tool to provide download link
 - Still shows preview (first 30 rows) in chat
 """
+def handle_smart_analyzer_continuation(user_request, conversation_id, project_id, mode):
+    """Handle follow-up questions after smart analyzer loads a file"""
+    try:
+        import sys, os
+        sys.path.insert(0, os.path.dirname(__file__))
+        from smart_excel_analyzer import SmartExcelAnalyzer
+        from orchestration.ai_clients import call_gpt4
+        from datetime import datetime
+        import openpyxl
+        from database import get_smart_analyzer_state
+        
+        analyzer_state = get_smart_analyzer_state(conversation_id)
+        if not analyzer_state:
+            return None
+        
+        print(f"🔄 Smart analyzer continuation - reloading file: {analyzer_state['file_name']}")
+        
+        file_path = analyzer_state['file_path']
+        analyzer = SmartExcelAnalyzer(file_path)
+        load_result = analyzer.load_and_profile()
+        
+        if not load_result['success']:
+            return jsonify({'success': False, 'error': f"Could not reload file: {load_result.get('error')}"}), 500
+        
+        print(f"✅ File reloaded: {len(analyzer.df):,} rows")
+        
+        db = get_db()
+        cursor = db.execute('INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
+                           (user_request, 'processing', conversation_id))
+        task_id = cursor.lastrowid
+        db.commit()
+        
+        overall_start = time.time()
+        profile_context = analyzer.format_for_gpt_context()
+        
+        analysis_prompt = f"""{profile_context}
+
+**USER'S QUESTION:** {user_request}
+
+**YOUR RESPONSE FORMAT - FOLLOW EXACTLY:**
+Line 1: CODE: [your pandas expression]
+Line 2: (blank)
+Line 3 onwards: Brief explanation
+
+NOW ANSWER THE USER'S QUESTION. Start with "CODE: " followed by pandas expression."""
+
+        print(f"🤖 Asking GPT-4 to generate pandas code...")
+        gpt_response = call_gpt4(analysis_prompt, max_tokens=2000)
+        
+        if not gpt_response.get('error') and gpt_response.get('content'):
+            ai_response = gpt_response.get('content', '')
+            
+            import re
+            print(f"🔍 RAW GPT-4 RESPONSE (first 500 chars): {ai_response[:500]}")
+            
+            try:
+                if 'CODE:' in ai_response:
+                    code_match = re.search(r'CODE:\s*(.+?)(?:\n|$)', ai_response, re.MULTILINE)
+                    pandas_code = code_match.group(1).strip() if code_match else ai_response.split('CODE:')[1].split('\n')[0].strip()
+                else:
+                    pandas_code = re.sub(r'```python?\s*|\s*```', '', ai_response).strip()
+                
+                pandas_code = re.sub(r'^PANDAS_CODE:\s*', '', pandas_code, flags=re.IGNORECASE).strip()
+                
+            except Exception as extract_error:
+                print(f"⚠️ Code extraction failed: {extract_error}")
+                pandas_code = ai_response.strip()
+            
+            print(f"📊 Extracted pandas code: {pandas_code[:100]}...")
+            
+            execution_result = analyzer.execute_analysis(user_request, pandas_code)
+            
+            if execution_result['success']:
+                result_data = execution_result['result']
+                result_df = result_data.get('dataframe')
+                result_markdown = result_data['markdown']
+                
+                download_created = False
+                download_filepath = None
+                preview_note = ""
+                
+                if result_df is not None and len(result_df) > 10:
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    filename = f"analysis_{timestamp}.xlsx"
+                    output_path = f"/tmp/outputs/{filename}"
+                    
+                    try:
+                        os.makedirs("/tmp/outputs", exist_ok=True)
+                        result_df.to_excel(output_path, index=True, engine='openpyxl')
+                        print(f"💾 Saved {len(result_df)} rows to {output_path}")
+                        
+                        download_created = True
+                        download_filepath = f"/api/download/{filename}"
+                        
+                        preview_df = result_df.head(30)
+                        result_markdown = preview_df.to_markdown(index=True)
+                        preview_note = f"""
+
+**📊 COMPLETE RESULTS ({len(result_df)} rows)**
+
+Showing first 30 rows below. Download the complete Excel file with the link below.
+
+---
 
 """
-COMPLETE REPLACEMENT for handle_smart_analyzer_continuation function
-Fixed: February 6, 2026 v12 - WORKING auto-download feature
+                    except Exception as save_error:
+                        print(f"⚠️ Could not save to Excel: {save_error}")
+                        preview_note = f"\n\n*Note: Table has {len(result_df)} rows (showing first 50)*\n\n"
+                        result_markdown = result_df.head(50).to_markdown(index=True)
+                
+                full_response = f"""## 📊 Results
+{preview_note}
+{result_markdown}
 
-WHAT WAS BROKEN:
-- Trying to import present_files_tool from itself (circular import)
-- Not actually calling present_files correctly
-- Download link wasn't being created
+---
 
-WHAT'S FIXED:
-- Uses actual present_files function that exists in Flask context
-- Creates proper download link that user can see
-- Saves Excel file to correct output directory
-- Returns download link in response
-
-Deploy to: routes/orchestration_handler.py
-Replace: handle_smart_analyzer_continuation function (starts around line 1533)
-"""
-
-"""
-COMPLETE REPLACEMENT for handle_smart_analyzer_continuation function
-Fixed: February 7, 2026 v13 - Changed auto-download threshold from 50 to 10 rows
-
-WHAT WAS BROKEN:
-- Trying to import present_files_tool from itself (circular import)
-- Not actually calling present_files correctly
-- Download link wasn't being created
-- Threshold too high (50 rows) - most queries didn't trigger download
-
-WHAT'S FIXED:
-- Uses actual present_files function that exists in Flask context
-- Creates proper download link that user can see
-- Saves Excel file to correct output directory
-- Returns download link in response
-- THRESHOLD LOWERED: Now triggers at >10 rows instead of >50 rows
-
-Deploy to: routes/orchestration_handler.py
-Replace: handle_smart_analyzer_continuation function (starts around line 1533)
-"""
-
-# =============================================================================
-# COMPLETE FIXED SECTIONS for handle_smart_analyzer_continuation
-# Replace TWO locations in routes/orchestration_handler.py
-# Date: February 7, 2026
-# =============================================================================
-
-# LOCATION 1: Around line 2660 (after successful execution)
-# Find this code block and REPLACE it:
-
+**What else would you like to know?**"""
+                
+                formatted_output = convert_markdown_to_html(full_response)
+                
+                total_time = time.time() - overall_start
+                db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
+                          ('completed', 'smart_pandas_analyzer_continuation', total_time, task_id))
+                db.commit()
+                db.close()
+                
                 add_message(conversation_id, 'assistant', full_response, task_id,
                            {'orchestrator': 'smart_pandas_analyzer_continuation',
                             'execution_time': total_time,
@@ -2406,10 +2482,7 @@ Replace: handle_smart_analyzer_continuation function (starts around line 1533)
                             'rows_processed': len(analyzer.df),
                             'download_created': download_created})
                 
-                # ============================================================
-                # CRITICAL FIX: Use present_files to make download visible
-                # ============================================================
-                response_data = {
+                return jsonify({
                     'success': True,
                     'task_id': task_id,
                     'conversation_id': conversation_id,
@@ -2419,89 +2492,60 @@ Replace: handle_smart_analyzer_continuation function (starts around line 1533)
                     'download_available': download_created,
                     'download_file': download_filepath if download_created else None,
                     'download_filename': os.path.basename(download_filepath) if download_created and download_filepath else None
-                }
+                })
+            
+            else:
+                error_msg = execution_result.get('error', 'Unknown error')
+                print(f"⚠️ Pandas execution failed: {error_msg}")
                 
-                # If we created a download, use present_files to show it
-                if download_created and download_filepath:
-                    try:
-                        # Import present_files from the tools available in this context
-                        # This is the Claude tool, not a custom function
-                        print(f"📥 Calling present_files with: {download_filepath}")
-                        
-                        # The present_files tool should be available in the function context
-                        # Call it directly - it will add the download link to the response
-                        from flask import current_app
-                        
-                        # Get the present_files function from app context
-                        with current_app.app_context():
-                            # Try to import from routes if available
-                            try:
-                                from routes.core import present_files_helper
-                                present_files_helper([download_filepath])
-                            except:
-                                # Otherwise manually add to response
-                                response_data['download_file'] = download_filepath
-                                response_data['download_filename'] = os.path.basename(download_filepath)
-                        
-                        print(f"✅ Download link created for {os.path.basename(download_filepath)}")
-                        
-                    except Exception as present_error:
-                        print(f"⚠️ Could not call present_files: {present_error}")
-                        # Add download info to response anyway
-                        response_data['download_file'] = download_filepath
-                        response_data['download_filename'] = os.path.basename(download_filepath)
+                error_response = f"""I tried to analyze your data but encountered an issue:
+
+**Error:** {error_msg}
+
+**Code attempted:** 
+```python
+{pandas_code}
+```
+
+Could you rephrase your question?
+
+**Available columns:** {', '.join(analyzer.df.columns)}"""
                 
-                return jsonify(response_data)
-
-
-# =============================================================================
-# LOCATION 2: Around line 2850 (after retry attempt succeeds)
-# Find this code block and REPLACE it:
-
-                        add_message(conversation_id, 'assistant', full_response, task_id,
-                                   {'orchestrator': 'smart_pandas_analyzer_continuation',
-                                    'execution_time': total_time,
-                                    'pandas_code': corrected_code,
-                                    'retry_attempt': 2,
-                                    'download_created': download_created})
-                        
-                        response_data = {
-                            'success': True,
-                            'task_id': task_id,
-                            'conversation_id': conversation_id,
-                            'result': formatted_output,
-                            'orchestrator': 'smart_pandas_analyzer_continuation',
-                            'execution_time': total_time,
-                            'download_available': download_created,
-                            'download_file': download_filepath if download_created else None,
-                            'download_filename': os.path.basename(download_filepath) if download_created and download_filepath else None
-                        }
-                        
-                        if download_created and download_filepath:
-                            try:
-                                from flask import current_app
-                                with current_app.app_context():
-                                    try:
-                                        from routes.core import present_files_helper
-                                        present_files_helper([download_filepath])
-                                    except:
-                                        response_data['download_file'] = download_filepath
-                                        response_data['download_filename'] = os.path.basename(download_filepath)
-                            except:
-                                response_data['download_file'] = download_filepath
-                                response_data['download_filename'] = os.path.basename(download_filepath)
-                        
-                        return jsonify(response_data)
-
-# I did no harm and this file is not truncated
+                formatted_output = convert_markdown_to_html(error_response)
+                
+                total_time = time.time() - overall_start
+                db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
+                          ('completed', 'smart_pandas_analyzer_error', total_time, task_id))
+                db.commit()
+                db.close()
+                
+                add_message(conversation_id, 'assistant', error_response, task_id,
+                           {'orchestrator': 'smart_pandas_analyzer_error',
+                            'error': error_msg,
+                            'execution_time': total_time})
+                
+                return jsonify({
+                    'success': True,
+                    'task_id': task_id,
+                    'conversation_id': conversation_id,
+                    'result': formatted_output,
+                    'orchestrator': 'smart_pandas_analyzer_error',
+                    'execution_time': total_time
+                })
+        else:
+            error_msg = gpt_response.get('content', 'Unknown error')
+            print(f"❌ GPT-4 failed: {error_msg}")
+            db.close()
+            return jsonify({'success': False, 'error': f'Could not generate analysis: {error_msg}'}), 500
+            
+    except Exception as e:
+        import traceback
+        print(f"❌ Smart analyzer continuation error: {traceback.format_exc()}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 def handle_progressive_continuation(conversation_id, user_request, continuation_request, file_analysis_state, overall_start):
-    """
-    Handle user requesting more rows from a large Excel file.
-    UPDATED February 6, 2026: Fixed to provide actual analysis instead of hypothetical
-    Added: January 31, 2026
-    """
+    """Handle user requesting more rows from a large Excel file"""
     try:
         analyzer = get_progressive_analyzer()
         
@@ -2510,14 +2554,13 @@ def handle_progressive_continuation(conversation_id, user_request, continuation_
         total_rows = file_analysis_state['total_rows']
         file_name = file_analysis_state.get('file_name', 'file')
         
-        # Determine how many rows to analyze
         action = continuation_request['action']
         
         if action == 'analyze_next':
             num_rows = continuation_request['num_rows']
             start_row = current_position
         elif action == 'analyze_all':
-            num_rows = None  # All remaining
+            num_rows = None
             start_row = current_position
         elif action == 'analyze_range':
             start_row = continuation_request['start_row']
@@ -2528,26 +2571,19 @@ def handle_progressive_continuation(conversation_id, user_request, continuation_
         end_display = start_row + num_rows if num_rows else 'end'
         print(f"📊 Extracting rows {start_row} to {end_display} from {file_name}")
         
-        # Extract the requested chunk
         chunk_result = analyzer.extract_excel_chunk(file_path, start_row=start_row, num_rows=num_rows)
         
         if not chunk_result['success']:
-            return jsonify({
-                'success': False,
-                'error': f"Could not extract data: {chunk_result.get('error')}"
-            }), 500
+            return jsonify({'success': False, 'error': f"Could not extract data: {chunk_result.get('error')}"}), 500
         
-        # Update session state
         session[f'file_analysis_{conversation_id}']['current_position'] = chunk_result['end_row']
         
-        # Create task
         db = get_db()
         cursor = db.execute('INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
                            (user_request, 'processing', conversation_id))
         task_id = cursor.lastrowid
         db.commit()
         
-        # Build analysis prompt - CRITICAL: Demand actual calculations
         from orchestration.ai_clients import call_gpt4
         
         rows_analyzed = chunk_result['rows_analyzed']
@@ -2556,11 +2592,9 @@ def handle_progressive_continuation(conversation_id, user_request, continuation_
 
 **USER REQUEST:** {user_request}
 
-**CRITICAL INSTRUCTION:** The user wants ACTUAL CALCULATIONS from the data below, NOT a description of how to do it.
+**CRITICAL INSTRUCTION:** The user wants ACTUAL CALCULATIONS from the data below.
 - Calculate actual totals, averages, sums
 - Provide real numbers in tables
-- DO NOT say "I would calculate" or "hypothetically" or "for example"
-- DO NOT provide code examples or theoretical approaches
 - Just analyze the data and give the user the actual numbers
 
 **DATA ANALYZED:** Rows {start_row + 1} to {chunk_result['end_row']} ({rows_analyzed:,} rows)
@@ -2577,13 +2611,11 @@ def handle_progressive_continuation(conversation_id, user_request, continuation_
         if not gpt_response.get('error') and gpt_response.get('content'):
             ai_analysis = gpt_response.get('content', '')
             
-            # Add continuation prompt if more rows remain
             if chunk_result['rows_remaining'] > 0:
                 continuation_prompt = analyzer.generate_continuation_prompt(chunk_result)
                 full_response = ai_analysis + continuation_prompt
             else:
                 full_response = ai_analysis + "\n\n✅ **Analysis complete!** All rows have been analyzed."
-                # Clear session state
                 session.pop(f'file_analysis_{conversation_id}', None)
             
             formatted_output = convert_markdown_to_html(full_response)
@@ -2612,10 +2644,7 @@ def handle_progressive_continuation(conversation_id, user_request, continuation_
             })
         else:
             db.close()
-            return jsonify({
-                'success': False,
-                'error': 'Could not analyze data'
-            }), 500
+            return jsonify({'success': False, 'error': 'Could not analyze data'}), 500
             
     except Exception as e:
         import traceback
@@ -2623,6 +2652,5 @@ def handle_progressive_continuation(conversation_id, user_request, continuation_
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-
-
 # I did no harm and this file is not truncated
+
