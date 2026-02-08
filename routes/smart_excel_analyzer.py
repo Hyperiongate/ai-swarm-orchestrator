@@ -368,13 +368,16 @@ class SmartExcelAnalyzer:
             }
             
         except Exception as e:
-            error_msg = str(e)
+           import traceback
+            error_msg = str(e) if str(e) else "Unknown execution error"
+            error_traceback = traceback.format_exc()
             print(f"❌ Error executing analysis (attempt {attempt}): {error_msg}")
+            print(f"📍 Full traceback:\n{error_traceback}")
             
             # Return error info for potential retry
             return {
                 'success': False,
-                'error': error_msg,
+                'error': f"{error_msg}\n\nTraceback: {error_traceback}",
                 'code_attempted': pandas_code,
                 'attempt': attempt,
                 'can_retry': attempt < max_attempts,
