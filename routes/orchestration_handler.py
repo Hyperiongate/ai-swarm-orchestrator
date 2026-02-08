@@ -1922,23 +1922,14 @@ def handle_large_excel_initial(file_path, user_request, conversation_id, project
                 conversation_id = create_conversation(mode=mode, project_id=project_id)
                 print(f"Created new conversation: {conversation_id}")
             
+          # ================================================================
+            # FIX February 8, 2026: Don't save permanent copies
+            # Files stay in /tmp during conversation, auto-cleanup on restart
             # ================================================================
-            # FIX v8: Copy file to PERMANENT location to prevent memory issues
-            # ================================================================
-            import shutil
-            
-            # Create permanent storage directory
-            permanent_dir = '/mnt/project/uploaded_files'
-            os.makedirs(permanent_dir, exist_ok=True)
-            
-            # Copy to permanent location with unique name
             original_filename = os.path.basename(file_path)
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            permanent_filename = f"{timestamp}_{original_filename}"
-            permanent_path = os.path.join(permanent_dir, permanent_filename)
+            permanent_path = file_path  # Use temp file directly
             
-            shutil.copy2(file_path, permanent_path)
-            print(f"💾 Saved file permanently: {permanent_path}")
+            print(f"💾 Using temporary file: {file_path}")
             
             # Store minimal info in session
             session[f'file_analysis_{conversation_id}'] = {
@@ -2073,19 +2064,14 @@ def handle_excel_smart_analysis(file_path, user_request, conversation_id, projec
             }), 500
         
         # ================================================================
-        # STEP 2: Save file permanently
         # ================================================================
-        import shutil
-        permanent_dir = '/mnt/project/uploaded_files'
-        os.makedirs(permanent_dir, exist_ok=True)
-        
+        # STEP 2: Use temp file directly (no permanent save)
+        # FIX February 8, 2026: Files stay in /tmp, auto-cleanup on restart
+        # ================================================================
         original_filename = os.path.basename(file_path)
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        permanent_filename = f"{timestamp}_{original_filename}"
-        permanent_path = os.path.join(permanent_dir, permanent_filename)
+        permanent_path = file_path  # Use temp file directly
         
-        shutil.copy2(file_path, permanent_path)
-        print(f"💾 Saved file permanently: {permanent_path}")
+        print(f"💾 Using temporary file: {permanent_path}")
         
         # ================================================================
         # STEP 3: Store analyzer in session for follow-up questions
@@ -2186,7 +2172,7 @@ NOW ANSWER THE USER'S QUESTION."""
                 # ================================================================
                 execution_result = analyzer.execute_analysis(user_request, pandas_code)
                 
-                if execution_result['success']:
+                if execution_result.get('success') and execution_result.get('result'):
                     # Get the markdown formatted result
                     result_markdown = execution_result['result']['markdown']
                     # Check if result is a DataFrame and has >5 rows - create download
