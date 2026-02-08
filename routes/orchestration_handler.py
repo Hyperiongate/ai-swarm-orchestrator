@@ -1885,12 +1885,16 @@ def handle_large_excel_initial(file_path, user_request, conversation_id, project
             'headcount', 'hours', 'table'
         ]
         
-        user_wants_analysis = any(keyword in user_request.lower() for keyword in analysis_keywords)
-        
-        # Use smart analyzer if:
-        # 1. File is <100MB (can load entirely into memory with 8GB RAM)
-        # 2. User request indicates they want data analysis
-        use_smart_analyzer = (file_size_mb < 100 and user_wants_analysis)
+        # Check if user wants conversational/narrative analysis (rare)
+        conversational_keywords = [
+        'tell me about', 'describe', 'explain', 'what does this show',
+        'give me an overview', 'summarize', 'walk me through'
+        ]
+
+        user_wants_conversation = any(keyword in user_request.lower() for keyword in conversational_keywords)
+
+        # Use smart analyzer by DEFAULT for files under 100MB
+        use_smart_analyzer = (file_size_mb < 100 and not user_wants_conversation)
         
         print(f"📊 File: {file_size_mb}MB | Analysis mode: {'SMART_PANDAS' if use_smart_analyzer else 'PROGRESSIVE'}")
         
