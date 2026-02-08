@@ -368,7 +368,7 @@ class SmartExcelAnalyzer:
             }
             
         except Exception as e:
-           import traceback
+            import traceback
             error_msg = str(e) if str(e) else "Unknown execution error"
             error_traceback = traceback.format_exc()
             print(f"❌ Error executing analysis (attempt {attempt}): {error_msg}")
