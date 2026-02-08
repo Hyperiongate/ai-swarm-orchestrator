@@ -2189,7 +2189,7 @@ NOW ANSWER THE USER'S QUESTION."""
                 if execution_result['success']:
                     # Get the markdown formatted result
                     result_markdown = execution_result['result']['markdown']
-                    # Check if result is a DataFrame and has >10 rows - create download
+                    # Check if result is a DataFrame and has >5 rows - create download
                 result_df = execution_result['result'].get('dataframe')
                 download_created = False
                 download_filepath = None
@@ -2344,7 +2344,7 @@ What would you like to analyze?"""
 UPDATED: February 6, 2026 v11 - Added auto-download for large results
 
 Changes:
-- Detects when results have >10 rows
+- Detects when results have >5 rows
 - Auto-saves to Excel file in /mnt/user-data/outputs/
 - Uses present_files tool to provide download link
 - Still shows preview (first 30 rows) in chat
