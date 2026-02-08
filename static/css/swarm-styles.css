@@ -5,6 +5,14 @@ Shiftwork Solutions LLC
 =============================================================================
 
 CHANGE LOG:
+- February 8, 2026: FIXED CONVERSATION SCROLLING ISSUE
+  * Changed .conversation from fixed height (500px) to responsive max-height
+  * Added calc(100vh - 350px) for dynamic viewport-based sizing
+  * Added min-height: 400px to prevent too-small conversations
+  * Prevents page from growing with more messages
+  * Input box always visible without scrolling page
+  * CRITICAL FIX: Solves "page gets bigger and bigger" issue
+
 - January 23, 2026: Added Voice Control Styles
   * Added .voice-control-section with visual hierarchy
   * Added .voice-activate-btn with state animations (inactive, listening, recording, speaking)
@@ -37,9 +45,9 @@ SECTIONS:
 1. Reset & Base Styles
 2. Layout Components (Container, Header, Grid)
 3. Sidebar Styles
-4. Voice Control Section (NEW)
+4. Voice Control Section
 5. Conversations Section (Memory Feature)
-6. Main Content & Conversation
+6. Main Content & Conversation ***FIXED***
 7. Memory Indicator (Memory Feature)
 8. Messages & Formatting
 9. Feedback System
@@ -49,6 +57,7 @@ SECTIONS:
 13. AI Response Formatting
 14. Utility Classes
 15. Responsive Styles
+16. Documents Section
 
 =============================================================================
 */
@@ -235,7 +244,7 @@ body {
 }
 
 /* =============================================================================
-   4. VOICE CONTROL SECTION (NEW)
+   4. VOICE CONTROL SECTION
    ============================================================================= */
 
 .voice-control-section {
@@ -751,7 +760,7 @@ body {
 }
 
 /* =============================================================================
-   6. MAIN CONTENT & CONVERSATION
+   6. MAIN CONTENT & CONVERSATION ***FIXED FOR SCROLLING***
    ============================================================================= */
 
 .main-content {
@@ -761,14 +770,56 @@ body {
     box-shadow: 0 10px 30px rgba(0,0,0,0.2);
 }
 
+/* 
+ * CRITICAL FIX - February 8, 2026
+ * 
+ * OLD: height: 500px (caused page to grow infinitely)
+ * NEW: max-height with viewport calculation (locks conversation area)
+ * 
+ * This ensures:
+ * - Conversation area has maximum height based on viewport
+ * - Only messages scroll, not entire page
+ * - Input box always visible at bottom
+ * - Page doesn't grow as conversation gets longer
+ */
 .conversation {
-    height: 500px;
+    /* Use viewport height minus space for header + input + padding */
+    max-height: calc(100vh - 350px);
+    
+    /* Ensure minimum usable height */
+    min-height: 400px;
+    
+    /* Allow natural height up to max-height */
+    height: auto;
+    
+    /* Enable scrolling when content exceeds max-height */
     overflow-y: auto;
+    overflow-x: hidden;
+    
+    /* Styling */
     border: 2px solid #e0e0e0;
     border-radius: 10px;
     padding: 20px;
     margin-bottom: 20px;
     background: #f8f9fa;
+    
+    /* Smooth scrolling */
+    scroll-behavior: smooth;
+}
+
+/* Adjust calculation for smaller screens */
+@media (max-height: 800px) {
+    .conversation {
+        max-height: calc(100vh - 300px);
+        min-height: 300px;
+    }
+}
+
+@media (max-height: 600px) {
+    .conversation {
+        max-height: calc(100vh - 250px);
+        min-height: 200px;
+    }
 }
 
 /* =============================================================================
@@ -1396,9 +1447,19 @@ body {
     .voice-waveform {
         height: 20px;
     }
+    
+    /* Adjust conversation height for tablets */
+    .conversation {
+        max-height: calc(100vh - 400px);
+        min-height: 300px;
+    }
 }
 
 @media (max-width: 768px) {
+    body {
+        padding: 10px;
+    }
+    
     .header {
         flex-direction: column;
         gap: 15px;
@@ -1460,10 +1521,17 @@ body {
         padding: 12px 18px;
         font-size: 16px;
     }
+    
+    /* Mobile conversation adjustments */
+    .conversation {
+        max-height: calc(100vh - 320px);
+        min-height: 250px;
+        padding: 15px;
+    }
 }
+
 /* =============================================================================
-   DOCUMENTS SECTION STYLES (Added January 23, 2026)
-   Add these styles to swarm-styles.css
+   16. DOCUMENTS SECTION STYLES
    ============================================================================= */
 
 /* Documents Section Header */
@@ -1696,4 +1764,5 @@ body {
         font-size: 11px;
     }
 }
+
 /* I did no harm and this file is not truncated */
