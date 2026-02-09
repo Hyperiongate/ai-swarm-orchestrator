@@ -302,70 +302,7 @@ def categorize_document(user_request, doc_type):
 
 @orchestration_bp.route('/api/orchestrate', methods=['POST'])
 def orchestrate():
-    # ============================================================================
-    # CHECK IF USER IS RESPONDING TO ANALYSIS OFFER (Added February 9, 2026)
-    # ============================================================================
-    if user_message:
-        msg_lower = user_message.lower()
-    
-    # User said YES to analysis
-    if any(phrase in msg_lower for phrase in ['yes, analyze', 'analyze this data', 'run the analysis', 'analyze it']):
-        session_id = get_conversation_context(conversation_id, 'pending_analysis_session')
-        
-        if session_id:
-            try:
-                from analysis_orchestrator import AnalysisOrchestrator
-                from database import load_analysis_session, save_analysis_session
-                
-                # Load the session we created earlier
-                session_data = load_analysis_session(session_id)
-                if session_data:
-                    session = AnalysisOrchestrator.from_dict(session_data)
-                    
-                    # Run the analysis workflow automatically
-                    session.discover_data_structure(session.data_files)
-                    session.process_clarifications({
-                        'analysis_priority': ['All of the above'],
-                        'analyze_scope': 'Analyze all'
-                    })
-                    session.build_analysis_plan()
-                    result = session.execute_analysis()
-                    
-                    # Save the results
-                    save_analysis_session(session.to_dict())
-                    
-                    # Show results to user
-                    if result.get('results_preview'):
-                        preview = result['results_preview']
-                        response = f"""✅ **Analysis Complete!**
-
-📊 **Results:**
-- Total Hours: {preview.get('total_hours', 0):,}
-- Employees: {preview.get('employees', 0):,}
-- Overtime: {preview.get('overtime_pct', 0)}%
-
-Session ID: `{session_id}`
-
-What would you like next?
-- "Show me the details" - Full breakdown
-- "Generate charts" - Visualizations
-- "Create presentation" - PowerPoint"""
-                        
-                        return jsonify({"response": response})
-            except Exception as e:
-                return jsonify({"response": f"Analysis failed: {str(e)}"})
-    
-    # User wants quick summary only
-    elif 'just give me the summary' in msg_lower or 'quick overview' in msg_lower:
-        clear_conversation_context(conversation_id, 'pending_analysis_session')
-        return jsonify({"response": "Got it - showing file overview only, no detailed analysis."})
-    
-    # User said NO
-    elif 'not now' in msg_lower or 'skip' in msg_lower:
-        clear_conversation_context(conversation_id, 'pending_analysis_session')
-        return jsonify({"response": "No problem! File is saved for later."})
-    """
-    Main orchestration endpoint with proactive intelligence and conversation memory.
+       
     
     UPDATED February 5, 2026 (v6): Fixed memory crash on large Excel cloud downloads
     UPDATED February 5, 2026: Increased progressive analysis from 100 to 500 rows
@@ -587,6 +524,69 @@ What would you like next?
         
         if not user_request:
             return jsonify({'success': False, 'error': 'Request text required'}), 400
+
+     # ============================================================================
+        # CHECK IF USER IS RESPONDING TO ANALYSIS OFFER (Added February 9, 2026)
+        # ============================================================================
+        if user_request and conversation_id:
+            msg_lower = user_request.lower()
+            
+            # User said YES to analysis
+            if any(phrase in msg_lower for phrase in ['yes, analyze', 'analyze this data', 'run the analysis', 'analyze it']):
+                session_id = get_conversation_context(conversation_id, 'pending_analysis_session')
+                
+                if session_id:
+                    try:
+                        from analysis_orchestrator import AnalysisOrchestrator
+                        from database import load_analysis_session, save_analysis_session
+                        
+                        # Load the session we created earlier
+                        session_data = load_analysis_session(session_id)
+                        if session_data:
+                            session_obj = AnalysisOrchestrator.from_dict(session_data)
+                            
+                            # Run the analysis workflow automatically
+                            session_obj.discover_data_structure(session_obj.data_files)
+                            session_obj.process_clarifications({
+                                'analysis_priority': ['All of the above'],
+                                'analyze_scope': 'Analyze all'
+                            })
+                            session_obj.build_analysis_plan()
+                            result = session_obj.execute_analysis()
+                            
+                            # Save the results
+                            save_analysis_session(session_obj.to_dict())
+                            
+                            # Show results to user
+                            if result.get('results_preview'):
+                                preview = result['results_preview']
+                                response = f"""✅ **Analysis Complete!**
+
+📊 **Results:**
+- Total Hours: {preview.get('total_hours', 0):,}
+- Employees: {preview.get('employees', 0):,}
+- Overtime: {preview.get('overtime_pct', 0)}%
+
+Session ID: `{session_id}`
+
+What would you like next?
+- "Show me the details" - Full breakdown
+- "Generate charts" - Visualizations
+- "Create presentation" - PowerPoint"""
+                                
+                                return jsonify({"response": response})
+                    except Exception as e:
+                        return jsonify({"response": f"Analysis failed: {str(e)}"})
+            
+            # User wants quick summary only
+            elif 'just give me the summary' in msg_lower or 'quick overview' in msg_lower:
+                clear_conversation_context(conversation_id, 'pending_analysis_session')
+                return jsonify({"response": "Got it - showing file overview only, no detailed analysis."})
+            
+            # User said NO
+            elif 'not now' in msg_lower or 'skip' in msg_lower:
+                clear_conversation_context(conversation_id, 'pending_analysis_session')
+                return jsonify({"response": "No problem! File is saved for later."})
         
         if file_paths:
             print(f"📎 {len(file_paths)} file(s) attached to request")
