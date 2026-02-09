@@ -189,11 +189,14 @@ try:
     add_resource_searches_table()
     add_improvement_reports_table()
     print("✅ Sprint 2 migrations complete!")
+    add_conversation_context_table()
+    print("✅ Conversation context table added!")
     
     # Sprint 3 migrations
     from add_user_profiles_table import add_user_profiles_table
     from add_workflow_tables import add_workflow_tables
     from add_integration_logs_table import add_integration_logs_table
+    from add_conversation_context_table import add_conversation_context_table
     
     add_user_profiles_table()
     add_workflow_tables()
