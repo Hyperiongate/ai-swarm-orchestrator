@@ -105,6 +105,13 @@ from specialized_knowledge import get_specialized_knowledge
 from proactive_suggestions import get_proactive_suggestions
 from conversation_summarizer import get_conversation_summarizer
 from proactive_curiosity_engine import get_curiosity_engine  # Phase 1: Proactive Curiosity
+# Labor file auto-detection (Added February 9, 2026)
+try:
+    from labor_file_detector import detect_labor_file, generate_analysis_offer, create_analysis_session
+    LABOR_DETECTION_AVAILABLE = True
+except ImportError:
+    LABOR_DETECTION_AVAILABLE = False
+    print("⚠️ Labor file detector not available")
 
 # Create blueprint
 orchestration_bp = Blueprint('orchestration', __name__)
@@ -152,6 +159,68 @@ def convert_markdown_to_html(text):
     import markdown
     html = markdown.markdown(text, extensions=['extra', 'nl2br'])
     return f'<div style="line-height: 1.8; color: #333;">{html}</div>'
+
+# ============================================================================
+# CONVERSATION CONTEXT HELPERS (Added February 9, 2026)
+# These store temporary info while analyzing files
+# ============================================================================
+
+def store_conversation_context(conversation_id, key, value):
+    """Save temporary data for this conversation"""
+    from database import get_db
+    db = get_db()
+    
+    try:
+        existing = db.execute(
+            'SELECT id FROM conversation_context WHERE conversation_id = ? AND key = ?',
+            (conversation_id, key)
+        ).fetchone()
+        
+        if existing:
+            db.execute(
+                'UPDATE conversation_context SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                (value, existing['id'])
+            )
+        else:
+            db.execute(
+                'INSERT INTO conversation_context (conversation_id, key, value) VALUES (?, ?, ?)',
+                (conversation_id, key, value)
+            )
+        
+        db.commit()
+    finally:
+        db.close()
+
+
+def get_conversation_context(conversation_id, key):
+    """Get temporary data for this conversation"""
+    from database import get_db
+    db = get_db()
+    
+    try:
+        row = db.execute(
+            'SELECT value FROM conversation_context WHERE conversation_id = ? AND key = ?',
+            (conversation_id, key)
+        ).fetchone()
+        
+        return row['value'] if row else None
+    finally:
+        db.close()
+
+
+def clear_conversation_context(conversation_id, key):
+    """Delete temporary data for this conversation"""
+    from database import get_db
+    db = get_db()
+    
+    try:
+        db.execute(
+            'DELETE FROM conversation_context WHERE conversation_id = ? AND key = ?',
+            (conversation_id, key)
+        )
+        db.commit()
+    finally:
+        db.close()
 
 def is_cloud_link(text):
     """Check if text contains a cloud storage link"""
@@ -233,6 +302,68 @@ def categorize_document(user_request, doc_type):
 
 @orchestration_bp.route('/api/orchestrate', methods=['POST'])
 def orchestrate():
+ # ============================================================================
+# CHECK IF USER IS RESPONDING TO ANALYSIS OFFER (Added February 9, 2026)
+# ============================================================================
+if user_message:
+    msg_lower = user_message.lower()
+    
+    # User said YES to analysis
+    if any(phrase in msg_lower for phrase in ['yes, analyze', 'analyze this data', 'run the analysis', 'analyze it']):
+        session_id = get_conversation_context(conversation_id, 'pending_analysis_session')
+        
+        if session_id:
+            try:
+                from analysis_orchestrator import AnalysisOrchestrator
+                from database import load_analysis_session, save_analysis_session
+                
+                # Load the session we created earlier
+                session_data = load_analysis_session(session_id)
+                if session_data:
+                    session = AnalysisOrchestrator.from_dict(session_data)
+                    
+                    # Run the analysis workflow automatically
+                    session.discover_data_structure(session.data_files)
+                    session.process_clarifications({
+                        'analysis_priority': ['All of the above'],
+                        'analyze_scope': 'Analyze all'
+                    })
+                    session.build_analysis_plan()
+                    result = session.execute_analysis()
+                    
+                    # Save the results
+                    save_analysis_session(session.to_dict())
+                    
+                    # Show results to user
+                    if result.get('results_preview'):
+                        preview = result['results_preview']
+                        response = f"""✅ **Analysis Complete!**
+
+📊 **Results:**
+- Total Hours: {preview.get('total_hours', 0):,}
+- Employees: {preview.get('employees', 0):,}
+- Overtime: {preview.get('overtime_pct', 0)}%
+
+Session ID: `{session_id}`
+
+What would you like next?
+- "Show me the details" - Full breakdown
+- "Generate charts" - Visualizations
+- "Create presentation" - PowerPoint"""
+                        
+                        return jsonify({"response": response})
+            except Exception as e:
+                return jsonify({"response": f"Analysis failed: {str(e)}"})
+    
+    # User wants quick summary only
+    elif 'just give me the summary' in msg_lower or 'quick overview' in msg_lower:
+        clear_conversation_context(conversation_id, 'pending_analysis_session')
+        return jsonify({"response": "Got it - showing file overview only, no detailed analysis."})
+    
+    # User said NO
+    elif 'not now' in msg_lower or 'skip' in msg_lower:
+        clear_conversation_context(conversation_id, 'pending_analysis_session')
+        return jsonify({"response": "No problem! File is saved for later."})
     """
     Main orchestration endpoint with proactive intelligence and conversation memory.
     
@@ -279,6 +410,37 @@ def orchestrate():
                         filename = f"{name}_{timestamp}{ext}"
                         file_path = os.path.join(upload_dir, filename)
                         file.save(file_path)
+                        # ============================================================================
+# CHECK IF THIS IS LABOR DATA (Added February 9, 2026)
+# ============================================================================
+if LABOR_DETECTION_AVAILABLE and filepath.endswith(('.xlsx', '.xls')):
+    try:
+        is_labor, metadata = detect_labor_file(filepath)
+        
+        if is_labor:
+            # Create analysis session
+            session_result = create_analysis_session(filepath)
+            
+            if session_result.get('success'):
+                # Remember this session for when user replies
+                store_conversation_context(
+                    conversation_id,
+                    'pending_analysis_session',
+                    session_result['session_id']
+                )
+                
+                # Create the offer message
+                offer_message = generate_analysis_offer(metadata, os.path.basename(filepath))
+                
+                # Send it to the user
+                return jsonify({
+                    "response": offer_message,
+                    "mode": "analysis_offer",
+                    "session_id": session_result['session_id']
+                })
+    except Exception as e:
+        print(f"⚠️ Labor detection failed: {e}")
+        # If detection fails, just continue normally
                         file_paths.append(file_path)
                         print(f"📎 Saved uploaded file: {filename}")
         
