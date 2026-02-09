@@ -675,9 +675,72 @@ def init_db():
     # Smart analyzer state index
     db.execute('CREATE INDEX IF NOT EXISTS idx_smart_analyzer_conversation ON smart_analyzer_state(conversation_id)')
     db.execute('CREATE INDEX IF NOT EXISTS idx_smart_analyzer_last_used ON smart_analyzer_state(last_used DESC)')
+
+# ============================================================================
+    # ANALYSIS ENGINE TABLES (Added February 8, 2026 - Phase 0A)
+    # Multi-step analytical workflow management with human interaction
+    # ============================================================================
+    
+    # Analysis sessions table - tracks complete workflow
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS analysis_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT UNIQUE NOT NULL,
+            project_id INTEGER,
+            state TEXT NOT NULL,
+            data_files TEXT,
+            discovered_structure TEXT,
+            clarifications TEXT,
+            analysis_plan TEXT,
+            results TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (project_id) REFERENCES projects(id)
+        )
+    ''')
+    
+    # Analysis deliverables table - stores generated files
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS analysis_deliverables (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            deliverable_type TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            file_name TEXT NOT NULL,
+            metadata TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (session_id) REFERENCES analysis_sessions(session_id)
+        )
+    ''')
+    
+    # Analysis progress table - tracks execution steps
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS analysis_progress (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            step_name TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('pending', 'running', 'complete', 'error')),
+            progress_pct INTEGER DEFAULT 0 CHECK(progress_pct >= 0 AND progress_pct <= 100),
+            message TEXT,
+            started_at TIMESTAMP,
+            completed_at TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (session_id) REFERENCES analysis_sessions(session_id)
+        )
+    ''')
+    
+    # Analysis engine indexes (Added February 8, 2026)
+    db.execute('CREATE INDEX IF NOT EXISTS idx_analysis_sessions_project ON analysis_sessions(project_id)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_analysis_sessions_state ON analysis_sessions(state)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_analysis_sessions_created ON analysis_sessions(created_at DESC)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_analysis_deliverables_session ON analysis_deliverables(session_id)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_analysis_deliverables_type ON analysis_deliverables(deliverable_type)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_analysis_progress_session ON analysis_progress(session_id)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_analysis_progress_status ON analysis_progress(status)')
+ 
     db.commit()
     db.close()
-    print("✅ Database initialized (with background jobs support)")
+    print("✅ Database initialized (with background jobs and analysis engine support)")
 
 
 # ============================================================================
@@ -1786,4 +1849,296 @@ def delete_smart_analyzer_state(conversation_id):
         return False
     finally:
         db.close()
+
+# ============================================================================
+# ANALYSIS ENGINE FUNCTIONS (Added February 8, 2026 - Phase 0A)
+# Database operations for multi-step analytical workflows
+# ============================================================================
+
+def save_analysis_session(session_dict):
+    """
+    Save analysis session to database
+    
+    Args:
+        session_dict: Dictionary from AnalysisOrchestrator.to_dict()
+        
+    Returns:
+        Session ID
+    """
+    db = get_db()
+    
+    # Check if session exists
+    existing = db.execute(
+        'SELECT id FROM analysis_sessions WHERE session_id = ?',
+        (session_dict['session_id'],)
+    ).fetchone()
+    
+    if existing:
+        # Update existing
+        db.execute('''
+            UPDATE analysis_sessions
+            SET state = ?,
+                data_files = ?,
+                discovered_structure = ?,
+                clarifications = ?,
+                analysis_plan = ?,
+                results = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE session_id = ?
+        ''', (
+            session_dict['state'],
+            json.dumps(session_dict['data_files']),
+            json.dumps(session_dict['discovered_structure']),
+            json.dumps(session_dict['clarifications']),
+            json.dumps(session_dict['analysis_plan']),
+            json.dumps(session_dict['results']),
+            session_dict['session_id']
+        ))
+    else:
+        # Insert new
+        db.execute('''
+            INSERT INTO analysis_sessions 
+            (session_id, project_id, state, data_files, discovered_structure, 
+             clarifications, analysis_plan, results)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            session_dict['session_id'],
+            session_dict.get('project_id'),
+            session_dict['state'],
+            json.dumps(session_dict['data_files']),
+            json.dumps(session_dict['discovered_structure']),
+            json.dumps(session_dict['clarifications']),
+            json.dumps(session_dict['analysis_plan']),
+            json.dumps(session_dict['results'])
+        ))
+    
+    db.commit()
+    db.close()
+    
+    return session_dict['session_id']
+
+
+def load_analysis_session(session_id):
+    """
+    Load analysis session from database
+    
+    Args:
+        session_id: Session ID to load
+        
+    Returns:
+        Dictionary with session data or None
+    """
+    db = get_db()
+    row = db.execute(
+        'SELECT * FROM analysis_sessions WHERE session_id = ?',
+        (session_id,)
+    ).fetchone()
+    db.close()
+    
+    if not row:
+        return None
+    
+    return {
+        'session_id': row['session_id'],
+        'project_id': row['project_id'],
+        'state': row['state'],
+        'data_files': json.loads(row['data_files']) if row['data_files'] else [],
+        'discovered_structure': json.loads(row['discovered_structure']) if row['discovered_structure'] else {},
+        'clarifications': json.loads(row['clarifications']) if row['clarifications'] else {},
+        'analysis_plan': json.loads(row['analysis_plan']) if row['analysis_plan'] else {},
+        'results': json.loads(row['results']) if row['results'] else {},
+        'created_at': row['created_at'],
+        'updated_at': row['updated_at']
+    }
+
+
+def save_analysis_deliverable(session_id, deliverable_type, file_path, file_name, metadata=None):
+    """
+    Save analysis deliverable record
+    
+    Args:
+        session_id: Session ID
+        deliverable_type: Type of deliverable ('chart', 'pptx', 'summary', 'code', 'excel')
+        file_path: Path to file
+        file_name: Original filename
+        metadata: Optional metadata dictionary
+        
+    Returns:
+        Deliverable ID
+    """
+    db = get_db()
+    cursor = db.execute('''
+        INSERT INTO analysis_deliverables 
+        (session_id, deliverable_type, file_path, file_name, metadata)
+        VALUES (?, ?, ?, ?, ?)
+    ''', (
+        session_id,
+        deliverable_type,
+        file_path,
+        file_name,
+        json.dumps(metadata) if metadata else None
+    ))
+    
+    deliverable_id = cursor.lastrowid
+    db.commit()
+    db.close()
+    
+    return deliverable_id
+
+
+def get_analysis_deliverables(session_id):
+    """
+    Get all deliverables for a session
+    
+    Args:
+        session_id: Session ID
+        
+    Returns:
+        List of deliverable dictionaries
+    """
+    db = get_db()
+    rows = db.execute(
+        'SELECT * FROM analysis_deliverables WHERE session_id = ? ORDER BY created_at',
+        (session_id,)
+    ).fetchall()
+    db.close()
+    
+    deliverables = []
+    for row in rows:
+        deliverables.append({
+            'id': row['id'],
+            'session_id': row['session_id'],
+            'deliverable_type': row['deliverable_type'],
+            'file_path': row['file_path'],
+            'file_name': row['file_name'],
+            'metadata': json.loads(row['metadata']) if row['metadata'] else {},
+            'created_at': row['created_at']
+        })
+    
+    return deliverables
+
+
+def update_analysis_progress(session_id, step_name, status, progress_pct=0, message=None):
+    """
+    Update analysis progress
+    
+    Args:
+        session_id: Session ID
+        step_name: Name of the step
+        status: Status ('pending', 'running', 'complete', 'error')
+        progress_pct: Progress percentage (0-100)
+        message: Optional message
+        
+    Returns:
+        Progress ID
+    """
+    db = get_db()
+    
+    # Check if this step already exists
+    existing = db.execute(
+        'SELECT id FROM analysis_progress WHERE session_id = ? AND step_name = ?',
+        (session_id, step_name)
+    ).fetchone()
+    
+    if existing:
+        # Update existing
+        db.execute('''
+            UPDATE analysis_progress
+            SET status = ?, progress_pct = ?, message = ?,
+                completed_at = CASE WHEN ? = 'complete' THEN CURRENT_TIMESTAMP ELSE completed_at END
+            WHERE id = ?
+        ''', (status, progress_pct, message, status, existing['id']))
+        progress_id = existing['id']
+    else:
+        # Insert new
+        cursor = db.execute('''
+            INSERT INTO analysis_progress 
+            (session_id, step_name, status, progress_pct, message, started_at)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ''', (session_id, step_name, status, progress_pct, message))
+        progress_id = cursor.lastrowid
+    
+    db.commit()
+    db.close()
+    
+    return progress_id
+
+
+def get_analysis_progress(session_id):
+    """
+    Get all progress records for a session
+    
+    Args:
+        session_id: Session ID
+        
+    Returns:
+        List of progress dictionaries
+    """
+    db = get_db()
+    rows = db.execute(
+        'SELECT * FROM analysis_progress WHERE session_id = ? ORDER BY created_at',
+        (session_id,)
+    ).fetchall()
+    db.close()
+    
+    progress = []
+    for row in rows:
+        progress.append({
+            'id': row['id'],
+            'session_id': row['session_id'],
+            'step_name': row['step_name'],
+            'status': row['status'],
+            'progress_pct': row['progress_pct'],
+            'message': row['message'],
+            'started_at': row['started_at'],
+            'completed_at': row['completed_at'],
+            'created_at': row['created_at']
+        })
+    
+    return progress
+
+
+def get_analysis_sessions(limit=20, project_id=None, state=None):
+    """
+    Get list of analysis sessions
+    
+    Args:
+        limit: Maximum number to return
+        project_id: Optional filter by project
+        state: Optional filter by state
+        
+    Returns:
+        List of session dictionaries
+    """
+    db = get_db()
+    
+    query = 'SELECT * FROM analysis_sessions WHERE 1=1'
+    params = []
+    
+    if project_id is not None:
+        query += ' AND project_id = ?'
+        params.append(project_id)
+    
+    if state:
+        query += ' AND state = ?'
+        params.append(state)
+    
+    query += ' ORDER BY updated_at DESC LIMIT ?'
+    params.append(limit)
+    
+    rows = db.execute(query, params).fetchall()
+    db.close()
+    
+    sessions = []
+    for row in rows:
+        sessions.append({
+            'id': row['id'],
+            'session_id': row['session_id'],
+            'project_id': row['project_id'],
+            'state': row['state'],
+            'created_at': row['created_at'],
+            'updated_at': row['updated_at']
+        })
+    
+    return sessions
 # I did no harm and this file is not truncated
