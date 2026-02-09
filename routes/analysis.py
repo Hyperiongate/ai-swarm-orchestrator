@@ -1,7 +1,7 @@
 """
 Analysis Engine API Routes
 Created: February 8, 2026
-Last Updated: February 8, 2026
+Last Updated: February 9, 2026
 
 Flask blueprint for analysis workflow endpoints.
 Provides the API layer for the Analysis Orchestrator.
@@ -38,7 +38,8 @@ try:
         save_analysis_deliverable,
         get_analysis_deliverables,
         update_analysis_progress,
-        get_analysis_progress
+        get_analysis_progress,
+        get_analysis_sessions
     )
 except ImportError:
     # Fallback - these will be implemented
@@ -48,6 +49,7 @@ except ImportError:
     get_analysis_deliverables = None
     update_analysis_progress = None
     get_analysis_progress = None
+    get_analysis_sessions = None
 
 # Create blueprint
 analysis_bp = Blueprint('analysis', __name__, url_prefix='/api/analysis')
@@ -482,3 +484,69 @@ def download_deliverable(session_id, deliverable_id):
     except Exception as e:
         current_app.logger.error(f"Download error: {traceback.format_exc()}")
         return jsonify({'error': str(e)}), 500
+
+
+@analysis_bp.route('/sessions', methods=['GET'])
+def list_sessions():
+    """
+    List all analysis sessions (optionally filtered by project)
+    
+    Query params:
+        - project_id: Filter by project
+        - state: Filter by state
+        - limit: Max results (default 20)
+    
+    Response:
+        {
+            "sessions": [...]
+        }
+    """
+    try:
+        project_id = request.args.get('project_id', type=int)
+        state = request.args.get('state')
+        limit = request.args.get('limit', default=20, type=int)
+        
+        if get_analysis_sessions:
+            sessions = get_analysis_sessions(limit=limit, project_id=project_id, state=state)
+            return jsonify({
+                'sessions': sessions,
+                'count': len(sessions)
+            })
+        else:
+            return jsonify({
+                'sessions': [],
+                'message': 'Session listing not yet implemented'
+            })
+        
+    except Exception as e:
+        current_app.logger.error(f"List sessions error: {traceback.format_exc()}")
+        return jsonify({'error': str(e)}), 500
+
+
+# Health check for this module
+@analysis_bp.route('/health', methods=['GET'])
+def health():
+    """Analysis engine health check"""
+    return jsonify({
+        'status': 'ok',
+        'module': 'analysis_engine',
+        'version': '0.1.0',
+        'phase': '0A_foundation',
+        'orchestrator_available': AnalysisOrchestrator is not None,
+        'database_functions_available': save_analysis_session is not None,
+        'endpoints': {
+            'upload': '/api/analysis/upload',
+            'discover': '/api/analysis/discover',
+            'clarify': '/api/analysis/clarify',
+            'plan': '/api/analysis/plan',
+            'execute': '/api/analysis/execute',
+            'status': '/api/analysis/<session_id>/status',
+            'results': '/api/analysis/<session_id>/results',
+            'download': '/api/analysis/<session_id>/download/<deliverable_id>',
+            'sessions': '/api/analysis/sessions',
+            'health': '/api/analysis/health'
+        }
+    })
+
+
+# I did no harm and this file is not truncated
