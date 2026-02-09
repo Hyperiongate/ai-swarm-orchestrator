@@ -1,17 +1,20 @@
 """
 Analysis Orchestrator - Core Workflow Coordinator
 Created: February 8, 2026
-Last Updated: February 8, 2026
+Last Updated: February 9, 2026
 
 This module manages multi-step analytical workflows with human interaction.
 It handles the complete lifecycle from data upload through deliverable generation.
 
+PHASE 0B UPDATE: Now executes real analysis using analysis_executor.py
+
 Author: Shiftwork Solutions LLC
-Phase: 0A - Foundation
+Phase: 0B - Execution Engine Integration
 """
 
 import json
 import os
+import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
@@ -396,15 +399,83 @@ class AnalysisOrchestrator:
         self.state = AnalysisState.ANALYSIS_RUNNING
         self.updated_at = datetime.utcnow()
         
-        # This will be implemented to actually run Python analysis scripts
-        # For now, return structure that indicates execution started
-        
-        return {
-            'state': self.state,
-            'message': 'Analysis execution started',
-            'progress': 0,
-            'total_steps': len(self.analysis_plan.get('analyses', [])) * 6
-        }
+        try:
+            # Import the analysis executor
+            from analysis_executor import analyze_labor_file
+            
+            # Get the first data file (typically the labor file)
+            if not self.data_files:
+                raise ValueError("No data files available for analysis")
+            
+            labor_file = self.data_files[0]
+            
+            # Get department filter from clarifications
+            department = None
+            if 'analyze_scope' in self.clarifications:
+                scope = self.clarifications['analyze_scope']
+                if scope != 'Analyze all':
+                    # Extract department name if user specified one
+                    department = None  # For now, analyze all
+            
+            # Run the analysis
+            current_app.logger.info(f"Starting analysis of {labor_file}")
+            analysis_results = analyze_labor_file(labor_file, department=department)
+            
+            if not analysis_results.get('validation', {}).get('success', False):
+                self.state = AnalysisState.ERROR
+                self.results = {
+                    'error': analysis_results.get('error', 'Analysis failed'),
+                    'details': analysis_results
+                }
+                return {
+                    'state': self.state,
+                    'message': 'Analysis failed',
+                    'error': analysis_results.get('error')
+                }
+            
+            # Store results
+            self.results = {
+                'analysis_complete': True,
+                'overview': analysis_results.get('overview'),
+                'overtime_analysis': analysis_results.get('overtime_analysis'),
+                'headcount_analysis': analysis_results.get('headcount_analysis'),
+                'building_comparison': analysis_results.get('building_comparison'),
+                'temporal_patterns': analysis_results.get('temporal_patterns'),
+                'validation': analysis_results.get('validation'),
+                'completed_at': datetime.utcnow().isoformat()
+            }
+            
+            # Move to deliverable generation phase
+            self.state = AnalysisState.DELIVERABLE_GENERATION
+            self.updated_at = datetime.utcnow()
+            
+            current_app.logger.info(f"Analysis complete: {analysis_results['overview']['total_hours']} hours analyzed")
+            
+            return {
+                'state': self.state,
+                'message': 'Analysis complete - ready for deliverable generation',
+                'progress': 100,
+                'total_steps': len(self.analysis_plan.get('analyses', [])) * 6,
+                'results_preview': {
+                    'total_hours': analysis_results['overview']['total_hours'],
+                    'employees': analysis_results['overview']['unique_employees'],
+                    'overtime_pct': analysis_results['overview']['overtime_pct']
+                }
+            }
+            
+        except Exception as e:
+            self.state = AnalysisState.ERROR
+            self.results = {
+                'error': str(e),
+                'traceback': traceback.format_exc()
+            }
+            current_app.logger.error(f"Analysis execution failed: {e}")
+            
+            return {
+                'state': self.state,
+                'message': f'Analysis failed: {str(e)}',
+                'error': str(e)
+            }
     
     def get_progress(self) -> Dict[str, Any]:
         """
