@@ -7,9 +7,9 @@ This file handles the main /api/orchestrate endpoint that processes user request
 Separated from core.py to make it easier to fix and maintain.
 
 CRITICAL KNOWN ISSUE - February 5, 2026:
-⚠️ FILE SELECTION vs FILE UPLOAD behavior difference:
-- FILE UPLOAD (drag & drop): Triggers progressive analysis, uses consulting prompts ✅
-- FILE SELECTION (from project): Bypasses progressive analysis, limited extraction ❌
+ FILE SELECTION vs FILE UPLOAD behavior difference:
+- FILE UPLOAD (drag & drop): Triggers progressive analysis, uses consulting prompts 
+- FILE SELECTION (from project): Bypasses progressive analysis, limited extraction 
   * Only reads first worksheet
   * Limited to 10K chars per file  
   * Needs fix in database_file_management.py
@@ -111,7 +111,7 @@ try:
     LABOR_DETECTION_AVAILABLE = True
 except ImportError:
     LABOR_DETECTION_AVAILABLE = False
-    print("⚠️ Labor file detector not available")
+    print(" Labor file detector not available")
 
 # Create blueprint
 orchestration_bp = Blueprint('orchestration', __name__)
@@ -133,7 +133,7 @@ def download_analysis_file(filename):
             # List what's actually in the directory
             files_in_dir = os.listdir('/tmp/outputs')
             print(f"📂 Files in /tmp/outputs/: {files_in_dir}")
-            print(f"✅ Serving file: {file_path}")
+            print(f" Serving file: {file_path}")
             print(f"=" * 80)
             return send_file(file_path, as_attachment=True, download_name=filename)
         else:
@@ -142,9 +142,9 @@ def download_analysis_file(filename):
                 files_in_dir = os.listdir('/tmp/outputs')
                 print(f"📂 Files in /tmp/outputs/: {files_in_dir}")
             except:
-                print(f"❌ /tmp/outputs/ directory doesn't exist!")
+                print(f" /tmp/outputs/ directory doesn't exist!")
             
-            print(f"❌ File not found: {file_path}")
+            print(f" File not found: {file_path}")
             print(f"=" * 80)
             return jsonify({'error': 'File not found'}), 404
     except Exception as e:
@@ -377,11 +377,11 @@ def orchestrate():
                                             "session_id": session_result['session_id']
                                         })
                             except Exception as e:
-                                print(f"⚠️ Labor detection failed: {e}")
+                                print(f" Labor detection failed: {e}")
                                 # If detection fails, just continue normally
                         
                         file_paths.append(file_path)
-                        print(f"📎 Saved uploaded file: {filename}")     
+                        print(f" Saved uploaded file: {filename}")     
         
         # ====================================================================
         # CRITICAL FIX February 1, 2026: Initialize file_contents early
@@ -423,7 +423,7 @@ def orchestrate():
                 
                 # File downloaded successfully - add to file_paths for processing
                 file_paths = [local_filepath]
-                print(f"✅ Downloaded {metadata['size_bytes'] / (1024*1024):.1f}MB from {metadata['service']}")
+                print(f" Downloaded {metadata['size_bytes'] / (1024*1024):.1f}MB from {metadata['service']}")
                 
                 # ================================================================
                 # FIX February 5, 2026 (v6): Clean user_request for cloud links
@@ -458,11 +458,11 @@ def orchestrate():
         else:
             file_ids_param = request.form.get('file_ids')
         
-        # 🔍 DIAGNOSTIC STEP 1: Log initial file_ids detection
-        print(f"🔍 DIAGNOSTIC STEP 1: file_ids_param = {file_ids_param}")
-        print(f"🔍 DIAGNOSTIC STEP 1: file_ids_param type = {type(file_ids_param)}")
-        print(f"🔍 DIAGNOSTIC STEP 1: project_id = {project_id}")
-        print(f"🔍 DIAGNOSTIC STEP 1: request.is_json = {request.is_json}")
+        #  DIAGNOSTIC STEP 1: Log initial file_ids detection
+        print(f" DIAGNOSTIC STEP 1: file_ids_param = {file_ids_param}")
+        print(f" DIAGNOSTIC STEP 1: file_ids_param type = {type(file_ids_param)}")
+        print(f" DIAGNOSTIC STEP 1: project_id = {project_id}")
+        print(f" DIAGNOSTIC STEP 1: request.is_json = {request.is_json}")
         
         if file_ids_param and project_id:
             try:
@@ -473,12 +473,12 @@ def orchestrate():
                 else:
                     file_ids = file_ids_param
                 
-                # 🔍 DIAGNOSTIC STEP 2: Log parsed file_ids
-                print(f"🔍 DIAGNOSTIC STEP 2: Parsed file_ids = {file_ids}")
-                print(f"🔍 DIAGNOSTIC STEP 2: Number of files = {len(file_ids) if file_ids else 0}")
+                #  DIAGNOSTIC STEP 2: Log parsed file_ids
+                print(f" DIAGNOSTIC STEP 2: Parsed file_ids = {file_ids}")
+                print(f" DIAGNOSTIC STEP 2: Number of files = {len(file_ids) if file_ids else 0}")
                 
                 if file_ids and len(file_ids) > 0:
-                    print(f"📎 User selected {len(file_ids)} file(s) from project {project_id}")
+                    print(f" User selected {len(file_ids)} file(s) from project {project_id}")
                     
                     # Fetch file context from database
                     from database_file_management import get_files_for_ai_context
@@ -491,30 +491,30 @@ def orchestrate():
                         max_chars_per_file=10000  # Allow up to 10k chars per file
                     )
                     
-                    # 🔍 DIAGNOSTIC STEP 3: Log retrieved context
-                    print(f"🔍 DIAGNOSTIC STEP 3: selected_file_context returned")
-                    print(f"🔍 DIAGNOSTIC STEP 3: Context length = {len(selected_file_context) if selected_file_context else 0}")
+                    #  DIAGNOSTIC STEP 3: Log retrieved context
+                    print(f" DIAGNOSTIC STEP 3: selected_file_context returned")
+                    print(f" DIAGNOSTIC STEP 3: Context length = {len(selected_file_context) if selected_file_context else 0}")
                     if selected_file_context:
-                        print(f"🔍 DIAGNOSTIC STEP 3: Context preview (first 200 chars):")
+                        print(f" DIAGNOSTIC STEP 3: Context preview (first 200 chars):")
                         print(f"{selected_file_context[:200]}")
                     else:
-                        print(f"🔍 DIAGNOSTIC STEP 3: Context is EMPTY/NONE")
+                        print(f" DIAGNOSTIC STEP 3: Context is EMPTY/NONE")
                     
                     if selected_file_context:
-                        print(f"✅ Retrieved context for {len(file_ids)} selected file(s)")
+                        print(f" Retrieved context for {len(file_ids)} selected file(s)")
                         
                         # Add to file_contents for AI processing
                         file_contents += "\n\n" + selected_file_context
                         
-                        # 🔍 DIAGNOSTIC STEP 3 (continued): Log file_contents after adding
-                        print(f"🔍 DIAGNOSTIC STEP 3: file_contents now has {len(file_contents)} chars")
-                        print(f"🔍 DIAGNOSTIC STEP 3: file_contents preview (first 200 chars):")
+                        #  DIAGNOSTIC STEP 3 (continued): Log file_contents after adding
+                        print(f" DIAGNOSTIC STEP 3: file_contents now has {len(file_contents)} chars")
+                        print(f" DIAGNOSTIC STEP 3: file_contents preview (first 200 chars):")
                         print(f"{file_contents[:200]}")
                     else:
-                        print(f"⚠️ No file context retrieved for file_ids: {file_ids}")
+                        print(f" No file context retrieved for file_ids: {file_ids}")
                         
             except Exception as file_ids_error:
-                print(f"⚠️ Error processing file_ids: {file_ids_error}")
+                print(f" Error processing file_ids: {file_ids_error}")
                 import traceback
                 traceback.print_exc()
         
@@ -589,7 +589,7 @@ What would you like next?
                 return jsonify({"response": "No problem! File is saved for later."})
         
         if file_paths:
-            print(f"📎 {len(file_paths)} file(s) attached to request")
+            print(f" {len(file_paths)} file(s) attached to request")
         
         overall_start = time.time()
 
@@ -603,7 +603,7 @@ What would you like next?
             analyzer_state = get_smart_analyzer_state(conversation_id)
             
             if analyzer_state and analyzer_state.get('analyzer_state') == 'loaded':
-                print(f"🔄 Smart analyzer continuation detected")
+                print(f" Smart analyzer continuation detected")
                 
                 continuation_result = handle_smart_analyzer_continuation(
                     user_request, conversation_id, project_id, mode
@@ -641,7 +641,7 @@ What would you like next?
             for file_path in file_paths:
                 file_info = analyzer.get_file_info(file_path)
                 
-                print(f"📊 FILE SIZE DETECTION:")
+                print(f" FILE SIZE DETECTION:")
                 print(f"   - File: {os.path.basename(file_path)}")
                 print(f"   - Size: {file_info.get('file_size_mb', 0):.1f}MB")
                 print(f"   - is_large: {file_info.get('is_large')}")
@@ -659,7 +659,7 @@ What would you like next?
                 
                 # Handle VERY large files with background processing (>50MB)
                 if file_info.get('file_size_mb', 0) > 50 and file_info.get('file_type') in ['.xlsx', '.xls']:
-                    print(f"🔄 TRIGGERING BACKGROUND PROCESSING for {os.path.basename(file_path)}")
+                    print(f" TRIGGERING BACKGROUND PROCESSING for {os.path.basename(file_path)}")
                     
                     # Create conversation and task
                     if not conversation_id:
@@ -685,7 +685,7 @@ What would you like next?
                     
                     if result['success']:
                         # Post initial message
-                        initial_msg = f"""🔄 **Processing large file in background**
+                        initial_msg = f"""Processing large file in background**
 
 **File:** {os.path.basename(file_path)} ({file_info['file_size_mb']}MB)
 **Estimated time:** ~{result['estimated_minutes']} minutes
@@ -709,7 +709,7 @@ You can continue using the app while I work on this!"""
                         })
                     else:
                         # Background submission failed - fall back to progressive
-                        print(f"⚠️ Background processing failed: {result.get('error')}, falling back to progressive")
+                        print(f" Background processing failed: {result.get('error')}, falling back to progressive")
                         return handle_large_excel_initial(
                             file_path=file_path,
                             user_request=user_request,
@@ -722,7 +722,7 @@ You can continue using the app while I work on this!"""
                 
                 # Handle moderately large files with progressive analysis (5-50MB)
                 elif file_info.get('is_large') and file_info.get('file_type') in ['.xlsx', '.xls']:
-                    print(f"🔄 TRIGGERING PROGRESSIVE ANALYSIS for {os.path.basename(file_path)}")
+                    print(f" TRIGGERING PROGRESSIVE ANALYSIS for {os.path.basename(file_path)}")
                     return handle_large_excel_initial(
                         file_path=file_path,
                         user_request=user_request,
@@ -748,7 +748,7 @@ You can continue using the app while I work on this!"""
                     # Check if extracted content is too long (over 50,000 chars)
                     # UPDATED February 5, 2026: Increased from 50,000 to 200,000 chars for large files
                     if len(extracted_text) > 200000:
-                        print(f"⚠️ File content very large ({len(extracted_text)} chars) - truncating")
+                        print(f" File content very large ({len(extracted_text)} chars) - truncating")
                         extracted_text = extracted_text[:200000] + f"\n\n... (truncated {len(extracted_text) - 200000} characters for performance)"
                                     
                     # APPEND to file_contents (don't overwrite file_ids context!)
@@ -757,19 +757,19 @@ You can continue using the app while I work on this!"""
                     else:
                         file_contents = extracted_text
                 else:
-                    print(f"⚠️ File extraction returned no content")
+                    print(f" File extraction returned no content")
             except Exception as extract_error:
-                print(f"⚠️ Could not extract file contents: {extract_error}")
+                print(f" Could not extract file contents: {extract_error}")
         
-        # 🔍 DIAGNOSTIC STEP 4: Check if file_contents will route to GPT-4
-        print(f"🔍 DIAGNOSTIC STEP 4: Checking file_contents for GPT-4 routing")
-        print(f"🔍 DIAGNOSTIC STEP 4: file_contents is truthy = {bool(file_contents)}")
-        print(f"🔍 DIAGNOSTIC STEP 4: file_contents length = {len(file_contents) if file_contents else 0}")
+        #  DIAGNOSTIC STEP 4: Check if file_contents will route to GPT-4
+        print(f" DIAGNOSTIC STEP 4: Checking file_contents for GPT-4 routing")
+        print(f" DIAGNOSTIC STEP 4: file_contents is truthy = {bool(file_contents)}")
+        print(f" DIAGNOSTIC STEP 4: file_contents length = {len(file_contents) if file_contents else 0}")
         
         # Route file analysis to GPT-4 (better for file handling)
         if file_contents:
-            print(f"🔍 DIAGNOSTIC STEP 4: ROUTING TO GPT-4! file_contents has {len(file_contents)} chars")
-            print(f"📎 File content detected ({len(file_contents)} chars) - routing to GPT-4")
+            print(f" DIAGNOSTIC STEP 4: ROUTING TO GPT-4! file_contents has {len(file_contents)} chars")
+            print(f" File content detected ({len(file_contents)} chars) - routing to GPT-4")
             
             if not conversation_id:
                 conversation_id = create_conversation(mode=mode, project_id=project_id)
@@ -792,7 +792,7 @@ You can continue using the app while I work on this!"""
                 intelligence = EnhancedIntelligence()
                 print("🧠 EnhancedIntelligence initialized")
             except Exception as intel_error:
-                print(f"⚠️ EnhancedIntelligence init failed (non-critical): {intel_error}")
+                print(f" EnhancedIntelligence init failed (non-critical): {intel_error}")
                 import traceback
                 print(traceback.format_exc())
                 intelligence = None  # Explicitly set to None on failure
@@ -816,7 +816,7 @@ You can continue using the app while I work on this!"""
                                 is_large_excel = True
                                 break
             except Exception as excel_detect_error:
-                print(f"⚠️ Excel size detection failed (non-critical): {excel_detect_error}")
+                print(f" Excel size detection failed (non-critical): {excel_detect_error}")
                 is_large_excel = False
                 row_count_estimate = 0
             # ================================================================
@@ -986,12 +986,12 @@ Be concrete and consulting-grade in your analysis."""
                             
                             document_created = True
                             document_url = f'/api/generated-documents/{document_id}/download'
-                            print(f"✅ Created professional analysis document: {filename}")
+                            print(f" Created professional analysis document: {filename}")
                         else:
-                            print(f"⚠️ Document creation failed: {doc_result.get('error', 'Unknown error')}")
+                            print(f" Document creation failed: {doc_result.get('error', 'Unknown error')}")
                     
                     except Exception as doc_error:
-                        print(f"⚠️ Could not create analysis document: {doc_error}")
+                        print(f" Could not create analysis document: {doc_error}")
                         import traceback
                         traceback.print_exc()  
                     
@@ -1012,7 +1012,7 @@ Be concrete and consulting-grade in your analysis."""
                     try:
                         learn_from_conversation(user_request, actual_output if actual_output else '')
                     except Exception as learn_error:
-                        print(f"⚠️ Auto-learning failed (non-critical): {learn_error}")
+                        print(f" Auto-learning failed (non-critical): {learn_error}")
                     
                     # ================================================================
                     # PHASE 1: PROACTIVE CURIOSITY ENGINE - February 5, 2026
@@ -1034,7 +1034,7 @@ Be concrete and consulting-grade in your analysis."""
                             curious_question = curiosity_check['question']
                             print(f"🤔 Curious follow-up: {curious_question}")
                     except Exception as curiosity_error:
-                        print(f"⚠️ Curiosity engine failed (non-critical): {curiosity_error}")
+                        print(f" Curiosity engine failed (non-critical): {curiosity_error}")
                     # ================================================================
                     
                     return jsonify({
@@ -1044,7 +1044,7 @@ Be concrete and consulting-grade in your analysis."""
                         'result': formatted_output,
                         'orchestrator': 'gpt4_file_handler',
                         'execution_time': total_time,
-                        'message': '📎 File analyzed by GPT-4',
+                        'message': ' File analyzed by GPT-4',
                         'document_created': document_created,
                         'document_url': document_url,
                         'document_id': document_id,
@@ -1054,10 +1054,10 @@ Be concrete and consulting-grade in your analysis."""
                    
                 else:
                     error_msg = gpt_response.get('content', 'Unknown error')
-                    print(f"⚠️ GPT-4 analysis failed: {error_msg}")
+                    print(f" GPT-4 analysis failed: {error_msg}")
                     
                     # FALLBACK: Use Claude Sonnet for file analysis instead
-                    print(f"🔄 Falling back to Claude Sonnet for file analysis")
+                    print(f" Falling back to Claude Sonnet for file analysis")
                     
                     from orchestration.ai_clients import call_claude_sonnet
                     
@@ -1085,7 +1085,7 @@ Be concrete and consulting-grade in your analysis."""
                             'result': formatted_output,
                             'orchestrator': 'claude_sonnet_file_handler',
                             'execution_time': total_time,
-                            'message': '📎 File analyzed by Claude Sonnet (GPT-4 unavailable)',
+                            'message': ' File analyzed by Claude Sonnet (GPT-4 unavailable)',
                             'fallback': True
                         })
                     else:
@@ -1106,7 +1106,7 @@ Be concrete and consulting-grade in your analysis."""
                 
                 # FALLBACK: Try Claude Sonnet
                 try:
-                    print(f"🔄 Exception fallback to Claude Sonnet")
+                    print(f" Exception fallback to Claude Sonnet")
                     from orchestration.ai_clients import call_claude_sonnet
                     
                     sonnet_response = call_claude_sonnet(file_analysis_prompt, max_tokens=4000)
@@ -1132,7 +1132,7 @@ Be concrete and consulting-grade in your analysis."""
                             'result': formatted_output,
                             'orchestrator': 'claude_sonnet_file_handler',
                             'execution_time': total_time,
-                            'message': '📎 File analyzed by Claude Sonnet',
+                            'message': ' File analyzed by Claude Sonnet',
                             'fallback': True
                         })
                 except:
@@ -1151,7 +1151,7 @@ Be concrete and consulting-grade in your analysis."""
                 
                 # File exists in session - extract a chunk for context
                 if os.path.exists(file_path):
-                    print(f"📎 Using file from progressive analysis session")
+                    print(f" Using file from progressive analysis session")
                     
                     try:
                         analyzer = get_progressive_analyzer()
@@ -1160,16 +1160,16 @@ Be concrete and consulting-grade in your analysis."""
                         
                         if chunk_result['success']:
                             file_contents = f"{chunk_result['summary']}\n\n{chunk_result['text_preview']}"
-                            print(f"✅ Retrieved file context from session ({len(file_contents)} chars)")
+                            print(f" Retrieved file context from session ({len(file_contents)} chars)")
                     except Exception as extract_error:
-                        print(f"⚠️ Could not extract from session file: {extract_error}")
+                        print(f" Could not extract from session file: {extract_error}")
             
             # If still no file, check conversation history
             if not file_contents:
                 from database import get_conversation_file_contents
                 file_contents = get_conversation_file_contents(conversation_id)
             if file_contents:
-                print(f"📎 Retrieved file contents from conversation history")
+                print(f" Retrieved file contents from conversation history")
                 
                 db = get_db()
                 cursor = db.execute('INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
@@ -1210,7 +1210,7 @@ Please respond to the user's follow-up question based on these files."""
                             'result': formatted_output,
                             'orchestrator': 'gpt4_file_handler',
                             'execution_time': total_time,
-                            'message': '📎 Follow-up answered using uploaded files'
+                            'message': ' Follow-up answered using uploaded files'
                         })
                     else:
                         db.close()
@@ -1240,7 +1240,7 @@ Please respond to the user's follow-up question based on these files."""
                     clarification_answers = None
         
         if clarification_answers:
-            print(f"✅ Clarification answers received: {clarification_answers}")
+            print(f" Clarification answers received: {clarification_answers}")
             context_additions = []
             for field, value in clarification_answers.items():
                 context_additions.append(f"{field}: {value}")
@@ -1292,9 +1292,9 @@ Please respond to the user's follow-up question based on these files."""
             try:
                 file_context = get_files_for_ai_context(project_id, max_files=5, max_chars_per_file=2000)
                 if file_context:
-                    print(f"✅ Added file context from project {project_id}")
+                    print(f" Added file context from project {project_id}")
             except Exception as file_ctx_error:
-                print(f"⚠️ Could not load file context: {file_ctx_error}")
+                print(f" Could not load file context: {file_ctx_error}")
         
         db = get_db()
         cursor = db.execute('INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
@@ -1480,7 +1480,7 @@ Please respond to the user's follow-up question based on these files."""
             introspection_check = is_introspection_request(user_request)
             
             if introspection_check['is_introspection']:
-                print(f"🔍 Introspection request detected")
+                print(f" Introspection request detected")
                 
                 intro_engine = get_introspection_engine()
                 action = introspection_check['action']
@@ -1548,7 +1548,7 @@ Please respond to the user's follow-up question based on these files."""
         except ImportError:
             print("ℹ️  Introspection not available")
         except Exception as intro_error:
-            print(f"⚠️  Introspection detection failed: {intro_error}")
+            print(f"  Introspection detection failed: {intro_error}")
         
         # Regular AI orchestration
         try:
@@ -1610,7 +1610,7 @@ Please respond to the user's follow-up question based on these files."""
                 if learning_context:
                     print(f"🧠 Retrieved learning context ({len(learning_context)} chars)")
             except Exception as learn_ctx_error:
-                print(f"⚠️ Could not get learning context (non-critical): {learn_ctx_error}")
+                print(f" Could not get learning context (non-critical): {learn_ctx_error}")
             
             # ================================================================
             # FIX #2: CLIENT PROFILE CONTEXT
@@ -1629,7 +1629,7 @@ Please respond to the user's follow-up question based on these files."""
                         if client_profile_context:
                             print(f"👤 Retrieved client profile for {project['client_name']}")
                 except Exception as profile_error:
-                    print(f"⚠️ Could not get client profile (non-critical): {profile_error}")
+                    print(f" Could not get client profile (non-critical): {profile_error}")
             
             # ================================================================
             # FIX #3: AVOIDANCE PATTERNS CONTEXT
@@ -1639,9 +1639,9 @@ Please respond to the user's follow-up question based on these files."""
             try:
                 avoidance_context = get_avoidance_context(days=30, limit=5)
                 if avoidance_context:
-                    print(f"🚫 Retrieved {avoidance_context.count('⚠️') + avoidance_context.count('🚫')} avoidance patterns")
+                    print(f"🚫 Retrieved {avoidance_context.count('') + avoidance_context.count('🚫')} avoidance patterns")
             except Exception as avoid_error:
-                print(f"⚠️ Could not get avoidance context (non-critical): {avoid_error}")
+                print(f" Could not get avoidance context (non-critical): {avoid_error}")
 
             # ================================================================
             # FIX #6: SPECIALIZED KNOWLEDGE INJECTION
@@ -1664,7 +1664,7 @@ Please respond to the user's follow-up question based on these files."""
                 if specialized_context:
                     print(f"🎓 Injected specialized knowledge for {industry or 'general'}")
             except Exception as spec_error:
-                print(f"⚠️ Could not get specialized knowledge: {spec_error}")
+                print(f" Could not get specialized knowledge: {spec_error}")
 
             # ================================================================
             # FIX #5: MULTI-TURN CONTEXT AWARENESS
@@ -1684,7 +1684,7 @@ Please respond to the user's follow-up question based on these files."""
                 if summary_context:
                     print(f"📝 Retrieved conversation summary")
             except Exception as summary_error:
-                print(f"⚠️ Could not get conversation summary: {summary_error}")
+                print(f" Could not get conversation summary: {summary_error}")
 
             # ================================================================
             # LEARNING LOOP ENHANCEMENT - Initialize Intelligence Engine
@@ -1695,7 +1695,7 @@ Please respond to the user's follow-up question based on these files."""
                 intelligence = EnhancedIntelligence()
                 print("🧠 EnhancedIntelligence initialized")
             except Exception as intel_error:
-                print(f"⚠️ EnhancedIntelligence init failed (non-critical): {intel_error}")
+                print(f" EnhancedIntelligence init failed (non-critical): {intel_error}")
                 intelligence = None
               
             # Get smart defaults from user history
@@ -1704,9 +1704,9 @@ Please respond to the user's follow-up question based on these files."""
                 try:
                     smart_defaults = intelligence.get_smart_defaults('general')
                     if smart_defaults and any(v for v in smart_defaults.values() if v):
-                        print(f"🎯 Retrieved smart defaults: {list(smart_defaults.keys())}")
+                        print(f" Retrieved smart defaults: {list(smart_defaults.keys())}")
                 except Exception as defaults_error:
-                    print(f"⚠️ Could not get smart defaults (non-critical): {defaults_error}")
+                    print(f" Could not get smart defaults (non-critical): {defaults_error}")
 
             # Build project context
             project_context = ""
@@ -1734,7 +1734,7 @@ This project folder contains: {file_stats.get('total_files', 0)} files
 
 """
                 except Exception as proj_ctx_error:
-                    print(f"⚠️ Could not load project context: {proj_ctx_error}")
+                    print(f" Could not load project context: {proj_ctx_error}")
             
             # Build conversation history
             conversation_history = ""
@@ -1754,7 +1754,7 @@ This project folder contains: {file_stats.get('total_files', 0)} files
                     file_section = f"""
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📎 ATTACHED FILES - READ THESE CAREFULLY
+ ATTACHED FILES - READ THESE CAREFULLY
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 {file_contents}
@@ -1775,7 +1775,7 @@ Be comprehensive and professional."""
                     completion_prompt += f"\n\nSTRATEGIC GUIDANCE:\n{opus_guidance}"
 
                 if file_contents:
-                    print(f"🔍 Completion prompt contains {len(file_contents)} chars of file content")
+                    print(f" Completion prompt contains {len(file_contents)} chars of file content")
                               
                 if orchestrator == 'opus':
                     response = call_claude_opus(completion_prompt, conversation_history=conversation_context, files_attached=bool(file_contents))
@@ -1885,9 +1885,9 @@ Be comprehensive and professional."""
             if intelligence and actual_output and not actual_output.startswith('Error'):
                 try:
                     intelligence.learn_from_interaction(user_request, actual_output, user_feedback=None)
-                    print("✅ EnhancedIntelligence learned from this interaction")
+                    print(" EnhancedIntelligence learned from this interaction")
                 except Exception as learn_error:
-                    print(f"⚠️ EnhancedIntelligence learning failed (non-critical): {learn_error}")   
+                    print(f" EnhancedIntelligence learning failed (non-critical): {learn_error}")   
 
             # ================================================================
             # FIX #2: UPDATE CLIENT PROFILE
@@ -1917,7 +1917,7 @@ Be comprehensive and professional."""
                         update_client_profile(project['client_name'], interaction_data)
                         print(f"👤 Updated profile for {project['client_name']}")
                 except Exception as profile_update_error:
-                    print(f"⚠️ Client profile update failed (non-critical): {profile_update_error}")
+                    print(f" Client profile update failed (non-critical): {profile_update_error}")
 
             # ================================================================
             # FIX #4: PROACTIVE SUGGESTIONS
@@ -1944,13 +1944,13 @@ Be comprehensive and professional."""
                 if suggestions_generated:
                     print(f"💡 Generated {len(suggestions_generated)} proactive suggestions")
             except Exception as suggest_error:
-                print(f"⚠️ Could not generate suggestions: {suggest_error}")   
+                print(f" Could not generate suggestions: {suggest_error}")   
                         
             # Auto-learn from this conversation
             try:
                 learn_from_conversation(user_request, actual_output if actual_output else '')
             except Exception as learn_error:
-                print(f"⚠️ Auto-learning failed (non-critical): {learn_error}")
+                print(f" Auto-learning failed (non-critical): {learn_error}")
             
             # ================================================================
             # PHASE 1: PROACTIVE CURIOSITY ENGINE - February 5, 2026
@@ -1972,7 +1972,7 @@ Be comprehensive and professional."""
                     curious_question = curiosity_check['question']
                     print(f"🤔 Curious follow-up: {curious_question}")
             except Exception as curiosity_error:
-                print(f"⚠️ Curiosity engine failed (non-critical): {curiosity_error}")
+                print(f" Curiosity engine failed (non-critical): {curiosity_error}")
             # ================================================================
             
             return jsonify({
@@ -2060,7 +2060,7 @@ def handle_large_excel_initial(file_path, user_request, conversation_id, project
         # Use smart analyzer by DEFAULT for files under 100MB
         use_smart_analyzer = (file_size_mb < 100 and not user_wants_conversation)
         
-        print(f"📊 File: {file_size_mb}MB | Analysis mode: {'SMART_PANDAS' if use_smart_analyzer else 'PROGRESSIVE'}")
+        print(f" File: {file_size_mb}MB | Analysis mode: {'SMART_PANDAS' if use_smart_analyzer else 'PROGRESSIVE'}")
         
         # ================================================================
         # ROUTE A: SMART PANDAS ANALYZER (New intelligent approach)
@@ -2145,7 +2145,7 @@ def handle_large_excel_initial(file_path, user_request, conversation_id, project
 
 BE SPECIFIC. Use actual numbers from the data."""
 
-            print(f"📊 Calling GPT-4 with max_tokens=3000...")
+            print(f" Calling GPT-4 with max_tokens=3000...")
             gpt_response = call_gpt4(analysis_prompt, max_tokens=3000)
             
             if not gpt_response.get('error') and gpt_response.get('content'):
@@ -2183,7 +2183,7 @@ BE SPECIFIC. Use actual numbers from the data."""
                 })
             else:
                 error_msg = gpt_response.get('content', 'Unknown error')
-                print(f"❌ GPT-4 analysis failed: {error_msg}")
+                print(f" GPT-4 analysis failed: {error_msg}")
                 db.close()
                 return jsonify({
                     'success': False,
@@ -2192,7 +2192,7 @@ BE SPECIFIC. Use actual numbers from the data."""
                 
     except Exception as e:
         import traceback
-        print(f"❌ Large Excel handling error: {traceback.format_exc()}")
+        print(f" Large Excel handling error: {traceback.format_exc()}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -2333,7 +2333,7 @@ NOW ANSWER THE USER'S QUESTION."""
                 # Remove any markdown code blocks
                 pandas_code = re.sub(r'```python?\s*|\s*```', '', pandas_code).strip()
                 
-                print(f"📊 Extracted pandas code: {pandas_code}")
+                print(f" Extracted pandas code: {pandas_code}")
                 
                 # ================================================================
                 # STEP 7: Execute the pandas code
@@ -2366,14 +2366,14 @@ NOW ANSWER THE USER'S QUESTION."""
                         result_markdown = preview_df.to_markdown(index=True)
                         result_markdown = f"*Showing first 30 rows of {len(result_df)} total. Download complete file below.*\n\n" + result_markdown
                     except Exception as save_error:
-                        print(f"⚠️ Could not save Excel: {save_error}")
+                        print(f" Could not save Excel: {save_error}")
                     
                     # Build final response
                     full_response = f"""# Analysis Results
 
 {ai_response.split('PANDAS_CODE:')[0].strip() if 'PANDAS_CODE:' in ai_response else ''}
 
-## 📊 Results
+##  Results
 
 {result_markdown}
 
@@ -2412,7 +2412,7 @@ NOW ANSWER THE USER'S QUESTION."""
                 else:
                     # Pandas execution failed - fall back to showing profile
                     error_msg = execution_result.get('error', 'Unknown error')
-                    print(f"⚠️ Pandas execution failed: {error_msg}")
+                    print(f" Pandas execution failed: {error_msg}")
                     
                     fallback_response = f"""I loaded your file successfully ({profile_result['profile']['file_info']['total_rows']:,} rows), but encountered an issue running the analysis.
 
@@ -2447,7 +2447,7 @@ Please rephrase your question or ask me to show you something specific from the 
                     })
             else:
                 # Could not extract pandas code - show profile
-                print("⚠️ Could not extract pandas code from GPT-4 response")
+                print(" Could not extract pandas code from GPT-4 response")
                 
                 profile_response = f"""I loaded your Excel file successfully!
 
@@ -2481,7 +2481,7 @@ What would you like to analyze?"""
                 })
         else:
             error_msg = gpt_response.get('content', 'Unknown error')
-            print(f"❌ GPT-4 failed: {error_msg}")
+            print(f" GPT-4 failed: {error_msg}")
             db.close()
             return jsonify({
                 'success': False,
@@ -2490,7 +2490,7 @@ What would you like to analyze?"""
             
     except Exception as e:
         import traceback
-        print(f"❌ Smart analysis error: {traceback.format_exc()}")
+        print(f" Smart analysis error: {traceback.format_exc()}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -2518,7 +2518,7 @@ def handle_smart_analyzer_continuation(user_request, conversation_id, project_id
         if not analyzer_state:
             return None
         
-        print(f"🔄 Smart analyzer continuation - reloading file: {analyzer_state['file_name']}")
+        print(f" Smart analyzer continuation - reloading file: {analyzer_state['file_name']}")
         
         file_path = analyzer_state['file_path']
         analyzer = SmartExcelAnalyzer(file_path)
@@ -2527,7 +2527,7 @@ def handle_smart_analyzer_continuation(user_request, conversation_id, project_id
         if not load_result['success']:
             return jsonify({'success': False, 'error': f"Could not reload file: {load_result.get('error')}"}), 500
         
-        print(f"✅ File reloaded: {len(analyzer.df):,} rows")
+        print(f" File reloaded: {len(analyzer.df):,} rows")
         
         db = get_db()
         cursor = db.execute('INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
@@ -2556,7 +2556,7 @@ NOW ANSWER THE USER'S QUESTION. Start with "CODE: " followed by pandas expressio
             ai_response = gpt_response.get('content', '')
             
             import re
-            print(f"🔍 RAW GPT-4 RESPONSE (first 500 chars): {ai_response[:500]}")
+            print(f" RAW GPT-4 RESPONSE (first 500 chars): {ai_response[:500]}")
             
             try:
                 if 'CODE:' in ai_response:
@@ -2568,10 +2568,10 @@ NOW ANSWER THE USER'S QUESTION. Start with "CODE: " followed by pandas expressio
                 pandas_code = re.sub(r'^PANDAS_CODE:\s*', '', pandas_code, flags=re.IGNORECASE).strip()
                 
             except Exception as extract_error:
-                print(f"⚠️ Code extraction failed: {extract_error}")
+                print(f" Code extraction failed: {extract_error}")
                 pandas_code = ai_response.strip()
             
-            print(f"📊 Extracted pandas code: {pandas_code[:100]}...")
+            print(f" Extracted pandas code: {pandas_code[:100]}...")
             
             execution_result = analyzer.execute_analysis(user_request, pandas_code)
             
@@ -2601,7 +2601,7 @@ NOW ANSWER THE USER'S QUESTION. Start with "CODE: " followed by pandas expressio
                         result_markdown = preview_df.to_markdown(index=True)
                         preview_note = f"""
 
-**📊 COMPLETE RESULTS ({len(result_df)} rows)**
+** COMPLETE RESULTS ({len(result_df)} rows)**
 
 Showing first 30 rows below. Download the complete Excel file with the link below.
 
@@ -2609,11 +2609,11 @@ Showing first 30 rows below. Download the complete Excel file with the link belo
 
 """
                     except Exception as save_error:
-                        print(f"⚠️ Could not save to Excel: {save_error}")
+                        print(f" Could not save to Excel: {save_error}")
                         preview_note = f"\n\n*Note: Table has {len(result_df)} rows (showing first 50)*\n\n"
                         result_markdown = result_df.head(50).to_markdown(index=True)
                 
-                full_response = f"""## 📊 Results
+                full_response = f"""##  Results
 {preview_note}
 {result_markdown}
 
@@ -2650,7 +2650,7 @@ Showing first 30 rows below. Download the complete Excel file with the link belo
             
             else:
                 error_msg = execution_result.get('error', 'Unknown error')
-                print(f"⚠️ Pandas execution failed: {error_msg}")
+                print(f" Pandas execution failed: {error_msg}")
                 
                 error_response = f"""I tried to analyze your data but encountered an issue:
 
@@ -2688,13 +2688,13 @@ Could you rephrase your question?
                 })
         else:
             error_msg = gpt_response.get('content', 'Unknown error')
-            print(f"❌ GPT-4 failed: {error_msg}")
+            print(f" GPT-4 failed: {error_msg}")
             db.close()
             return jsonify({'success': False, 'error': f'Could not generate analysis: {error_msg}'}), 500
             
     except Exception as e:
         import traceback
-        print(f"❌ Smart analyzer continuation error: {traceback.format_exc()}")
+        print(f" Smart analyzer continuation error: {traceback.format_exc()}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -2723,7 +2723,7 @@ def handle_progressive_continuation(conversation_id, user_request, continuation_
             return jsonify({'success': False, 'error': 'Invalid continuation action'}), 400
         
         end_display = start_row + num_rows if num_rows else 'end'
-        print(f"📊 Extracting rows {start_row} to {end_display} from {file_name}")
+        print(f" Extracting rows {start_row} to {end_display} from {file_name}")
         
         chunk_result = analyzer.extract_excel_chunk(file_path, start_row=start_row, num_rows=num_rows)
         
@@ -2759,7 +2759,7 @@ def handle_progressive_continuation(conversation_id, user_request, continuation_
 
 **DELIVER ACTUAL ANALYSIS WITH REAL NUMBERS FROM THIS DATA.**"""
 
-        print(f"📊 Calling GPT-4 to analyze {rows_analyzed:,} rows...")
+        print(f" Calling GPT-4 to analyze {rows_analyzed:,} rows...")
         gpt_response = call_gpt4(analysis_prompt, max_tokens=4000)
         
         if not gpt_response.get('error') and gpt_response.get('content'):
@@ -2769,7 +2769,7 @@ def handle_progressive_continuation(conversation_id, user_request, continuation_
                 continuation_prompt = analyzer.generate_continuation_prompt(chunk_result)
                 full_response = ai_analysis + continuation_prompt
             else:
-                full_response = ai_analysis + "\n\n✅ **Analysis complete!** All rows have been analyzed."
+                full_response = ai_analysis + "\n\n **Analysis complete!** All rows have been analyzed."
                 session.pop(f'file_analysis_{conversation_id}', None)
             
             formatted_output = convert_markdown_to_html(full_response)
