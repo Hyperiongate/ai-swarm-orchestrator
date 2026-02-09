@@ -560,7 +560,7 @@ def orchestrate():
                             # Show results to user
                             if result.get('results_preview'):
                                 preview = result['results_preview']
-                                response = f"""✅ **Analysis Complete!**
+                                response = f"""Analysis Complete!
 
 Results:
 - Total Hours: {preview.get('total_hours', 0):,}
