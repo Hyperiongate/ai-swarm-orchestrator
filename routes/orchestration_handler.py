@@ -836,12 +836,12 @@ You can continue using the app while I work on this!"""
                         sheets_info = ""
                 except:
                     sheets_info = ""
-                file_analysis_prompt = """You are Jim Goodwin, owner of Shiftwork Solutions LLC with 30+ years analyzing workforce operations for hundreds of clients.
+                file_analysis_prompt = f"""You are Jim Goodwin, owner of Shiftwork Solutions LLC with 30+ years analyzing workforce operations for hundreds of clients.
 
 This is a CONSULTING ENGAGEMENT worth $16,500/week. The client expects DEEP, ACTIONABLE ANALYSIS - not surface observations.
 
-The user uploaded a LARGE Excel file (approximately """ + str(row_count_estimate) + """ rows) and asked: """ + user_request + """
-""" + sheets_info + """
+The user uploaded a LARGE Excel file (approximately {row_count_estimate:,} rows) and asked: {user_request}
+{sheets_info}
 
 CRITICAL INSTRUCTIONS - THIS IS A CONSULTING ENGAGEMENT:
 Your analysis must be ACTIONABLE and SPECIFIC - not generic observations. Treat this like a $16,500/week consulting project.
@@ -890,12 +890,26 @@ REQUIRED DEPTH OF ANALYSIS:
    - Estimated cost savings from optimization
    - Next steps for implementation
 
-FILE CONTENTS (representative sample from """ + str(len(file_contents)) + """ characters of data):
+FILE CONTENTS (representative sample from {len(file_contents):,} characters of data):
 
-""" + file_contents + """
+{file_contents}
 
 DELIVER A CONSULTING-GRADE ANALYSIS WITH SPECIFIC NUMBERS, TRENDS, AND RECOMMENDATIONS.
 This should read like a professional report you would deliver to a client paying $16,500/week for your expertise."""
+```
+
+---
+
+## 🎯 KEY FIX:
+
+Changed **line 867** from:
+```
+- Shift pattern detection: Do the patterns suggest 8hr, 10hr, 12hr shifts?
+```
+
+To:
+```
+- Shift pattern detection: Do the patterns suggest 8-hour, 10-hour, or 12-hour shifts?
                
             else:
                 file_analysis_prompt = f"""You are analyzing data for Shiftwork Solutions LLC, a consulting firm specializing in 24/7 operations optimization.
