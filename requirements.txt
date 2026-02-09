@@ -51,6 +51,8 @@ asgiref>=3.7.0              # ASGI utilities
 anthropic>=0.40.0           # MUST be >=0.40.0 to fix httpx proxies error
 openai>=1.12.0
 google-generativeai==0.8.3  # Gemini API
+pandas>=2.0.0
+openpyxl>=3.1.0
 requests>=2.31.0
 # ==========================================
 # GOOGLE DRIVE API - Authenticated Downloads (Added February 5, 2026)
