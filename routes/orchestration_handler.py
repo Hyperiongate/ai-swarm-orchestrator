@@ -391,7 +391,7 @@ What would you like next?
             conversation_id = request.form.get('conversation_id')
             mode = request.form.get('mode', 'quick')
             
-            # Handle file uploads
+        # Handle file uploads
             file_paths = []
             if 'files' in request.files:
                 files = request.files.getlist('files')
@@ -410,16 +410,17 @@ What would you like next?
                         filename = f"{name}_{timestamp}{ext}"
                         file_path = os.path.join(upload_dir, filename)
                         file.save(file_path)
+                        
                         # ============================================================================
                         # CHECK IF THIS IS LABOR DATA (Added February 9, 2026)
                         # ============================================================================
-                        if LABOR_DETECTION_AVAILABLE and filepath.endswith(('.xlsx', '.xls')):
+                        if LABOR_DETECTION_AVAILABLE and file_path.endswith(('.xlsx', '.xls')):
                             try:
-                                is_labor, metadata = detect_labor_file(filepath)
+                                is_labor, metadata = detect_labor_file(file_path)
                                 
                                 if is_labor:
                                     # Create analysis session
-                                    session_result = create_analysis_session(filepath)
+                                    session_result = create_analysis_session(file_path)
                                     
                                     if session_result.get('success'):
                                         # Remember this session for when user replies
@@ -430,7 +431,7 @@ What would you like next?
                                         )
                                         
                                         # Create the offer message
-                                        offer_message = generate_analysis_offer(metadata, os.path.basename(filepath))
+                                        offer_message = generate_analysis_offer(metadata, os.path.basename(file_path))
                                         
                                         # Send it to the user
                                         return jsonify({
@@ -441,8 +442,9 @@ What would you like next?
                             except Exception as e:
                                 print(f"⚠️ Labor detection failed: {e}")
                                 # If detection fails, just continue normally
-                                                file_paths.append(file_path)
-                                                print(f"📎 Saved uploaded file: {filename}")
+                        
+                        file_paths.append(file_path)
+                        print(f"📎 Saved uploaded file: {filename}")     
         
         # ====================================================================
         # CRITICAL FIX February 1, 2026: Initialize file_contents early
