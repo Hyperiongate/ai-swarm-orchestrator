@@ -37,7 +37,7 @@ UPDATES:
   * Increased tokens: 4000→6000 (progressive), 8000 (full file)
   * Analysis tone: "You are Jim Goodwin" - consulting engagement mindset
 - February 5, 2026: MAJOR ENHANCEMENT - Replaced weak generic analysis prompts with powerful 
-  consulting-grade prompts that leverage Shiftwork Solutions' 30+ years of expertise
+  consulting-grade prompts that leverage Shiftwork Solutions 30+ years of expertise
   * Large Excel files now get 7-point deep analysis (not surface observations)
   * Increased max_tokens from 4000 to 8000 for detailed insights
   * Analysis now includes: statistical depth, operational patterns, cost insights,
@@ -924,7 +924,7 @@ Provide a DETAILED, SPECIFIC analysis with:
 - Actual numbers and statistics (not vague descriptions)
 - Operational patterns and trends
 - Data quality observations
-- Specific recommendations based on Shiftwork Solutions' 30+ years of expertise
+- Specific recommendations based on Shiftwork Solutions 30+ years of expertise
 - Actionable next steps
 
 Be concrete and consulting-grade in your analysis."""
