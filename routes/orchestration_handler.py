@@ -302,7 +302,7 @@ def categorize_document(user_request, doc_type):
 
 @orchestration_bp.route('/api/orchestrate', methods=['POST'])
 def orchestrate():
- # ============================================================================
+# ============================================================================
 # CHECK IF USER IS RESPONDING TO ANALYSIS OFFER (Added February 9, 2026)
 # ============================================================================
 if user_message:
