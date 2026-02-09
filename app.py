@@ -944,8 +944,10 @@ def health():
 
 # Register blueprints (CRITICAL - THIS MAKES THE API WORK)
 from routes.core import core_bp
+from routes.analysis import analysis_bp
 from routes.survey import survey_bp
 app.register_blueprint(core_bp)
+app.register_blueprint(analysis_bp)
 app.register_blueprint(survey_bp)
 
 # ============================================================================
