@@ -411,38 +411,38 @@ What would you like next?
                         file_path = os.path.join(upload_dir, filename)
                         file.save(file_path)
                         # ============================================================================
-# CHECK IF THIS IS LABOR DATA (Added February 9, 2026)
-# ============================================================================
-if LABOR_DETECTION_AVAILABLE and filepath.endswith(('.xlsx', '.xls')):
-    try:
-        is_labor, metadata = detect_labor_file(filepath)
-        
-        if is_labor:
-            # Create analysis session
-            session_result = create_analysis_session(filepath)
-            
-            if session_result.get('success'):
-                # Remember this session for when user replies
-                store_conversation_context(
-                    conversation_id,
-                    'pending_analysis_session',
-                    session_result['session_id']
-                )
-                
-                # Create the offer message
-                offer_message = generate_analysis_offer(metadata, os.path.basename(filepath))
-                
-                # Send it to the user
-                return jsonify({
-                    "response": offer_message,
-                    "mode": "analysis_offer",
-                    "session_id": session_result['session_id']
-                })
-    except Exception as e:
-        print(f"⚠️ Labor detection failed: {e}")
-        # If detection fails, just continue normally
-                        file_paths.append(file_path)
-                        print(f"📎 Saved uploaded file: {filename}")
+                        # CHECK IF THIS IS LABOR DATA (Added February 9, 2026)
+                        # ============================================================================
+                        if LABOR_DETECTION_AVAILABLE and filepath.endswith(('.xlsx', '.xls')):
+                            try:
+                                is_labor, metadata = detect_labor_file(filepath)
+                                
+                                if is_labor:
+                                    # Create analysis session
+                                    session_result = create_analysis_session(filepath)
+                                    
+                                    if session_result.get('success'):
+                                        # Remember this session for when user replies
+                                        store_conversation_context(
+                                            conversation_id,
+                                            'pending_analysis_session',
+                                            session_result['session_id']
+                                        )
+                                        
+                                        # Create the offer message
+                                        offer_message = generate_analysis_offer(metadata, os.path.basename(filepath))
+                                        
+                                        # Send it to the user
+                                        return jsonify({
+                                            "response": offer_message,
+                                            "mode": "analysis_offer",
+                                            "session_id": session_result['session_id']
+                                        })
+                            except Exception as e:
+                                print(f"⚠️ Labor detection failed: {e}")
+                                # If detection fails, just continue normally
+                                                file_paths.append(file_path)
+                                                print(f"📎 Saved uploaded file: {filename}")
         
         # ====================================================================
         # CRITICAL FIX February 1, 2026: Initialize file_contents early
