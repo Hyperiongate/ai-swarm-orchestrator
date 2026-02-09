@@ -470,4 +470,15 @@ def download_deliverable(session_id, deliverable_id):
         }
         
         ext = file_path.rsplit('.', 1)[1].lower() if '.' in file_path else ''
-        mime_
+        mime_type = mime_types.get(ext, 'application/octet-stream')
+        
+        return send_file(
+            file_path,
+            mimetype=mime_type,
+            as_attachment=True,
+            download_name=deliverable['file_name']
+        )
+        
+    except Exception as e:
+        current_app.logger.error(f"Download error: {traceback.format_exc()}")
+        return jsonify({'error': str(e)}), 500
