@@ -1199,7 +1199,7 @@ Here are the file contents from the previous upload:
 
 {file_contents}
 
-Please respond to the user's follow-up question based on these files."""
+Please respond to the user follow-up question based on these files."""
 
                 try:
                     gpt_response = call_gpt4(file_analysis_prompt, max_tokens=4000)
@@ -2215,7 +2215,7 @@ def handle_excel_smart_analysis(file_path, user_request, conversation_id, projec
     NEW: Handle Excel analysis using pandas for REAL calculations.
     
     This loads the entire file into memory, profiles it, and uses GPT-4 to generate
-    pandas code that answers the user's question with actual calculations.
+    pandas code that answers the user question with actual calculations.
     
     Created: February 6, 2026
     """
@@ -2328,7 +2328,7 @@ PANDAS_CODE: df.groupby(df['Date'].dt.day_name())['Overtime'].sum().sort_values(
 This will show which day of the week (Monday-Sunday) has the most overtime hours.
 ```
 
-NOW ANSWER THE USER'S QUESTION."""
+NOW ANSWER THE user QUESTION."""
 
         print(f"🤖 Asking GPT-4 to generate pandas code...")
         gpt_response = call_gpt4(initial_prompt, max_tokens=2000)
@@ -2554,14 +2554,14 @@ def handle_smart_analyzer_continuation(user_request, conversation_id, project_id
         
         analysis_prompt = f"""{profile_context}
 
-**USER'S QUESTION:** {user_request}
+**user QUESTION:** {user_request}
 
 **YOUR RESPONSE FORMAT - FOLLOW EXACTLY:**
 Line 1: CODE: [your pandas expression]
 Line 2: (blank)
 Line 3 onwards: Brief explanation
 
-NOW ANSWER THE USER'S QUESTION. Start with "CODE: " followed by pandas expression."""
+NOW ANSWER THE user QUESTION. Start with "CODE: " followed by pandas expression."""
 
         print(f"🤖 Asking GPT-4 to generate pandas code...")
         gpt_response = call_gpt4(analysis_prompt, max_tokens=2000)
