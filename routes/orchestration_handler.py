@@ -24,7 +24,7 @@ UPDATES:
   * This was causing 500 errors after successful Google Drive download
   * Also fixed: cloud-downloaded files now use correct user_request (not the URL wrapper)
 - February 5, 2026: INCREASED PROGRESSIVE ANALYSIS from 100 to 500 rows for initial analysis
-  * Large files now get 5x more data in first pass (100 → 500 rows)
+  * Large files now get 5x more data in first pass (100 - 500 rows)
   * Provides much deeper operational insights from the start
   * Still allows user to request more rows if needed
   * Fixes the "compacting" issue where analysis was too shallow
@@ -34,7 +34,7 @@ UPDATES:
   * Forces operational insights (shift patterns, coverage gaps, overtime risks)
   * Requires actionable recommendations with quantified impact
   * Checks ALL worksheets in Excel files (not just first sheet)
-  * Increased tokens: 4000→6000 (progressive), 8000 (full file)
+  * Increased tokens: 4000-6000 (progressive), 8000 (full file)
   * Analysis tone: "You are Jim Goodwin" - consulting engagement mindset
 - February 5, 2026: MAJOR ENHANCEMENT - Replaced weak generic analysis prompts with powerful 
   consulting-grade prompts that leverage Shiftwork Solutions 30+ years of expertise
@@ -2019,8 +2019,8 @@ Be comprehensive and professional."""
 REPLACEMENT for handle_large_excel_initial function in orchestration_handler.py
 
 This version adds intelligent routing:
-- Small-medium files (<100MB) with data analysis questions → Smart pandas analyzer
-- Large files or conversational questions → Progressive analysis (existing)
+- Small-medium files (under 100MB) with data analysis questions - Smart pandas analyzer
+- Large files or conversational questions - Progressive analysis (existing)
 - Keeps all existing functionality intact
 
 Last Updated: February 6, 2026 v9 - Added smart pandas analyzer integration
@@ -2030,8 +2030,8 @@ Last Updated: February 6, 2026 v9 - Added smart pandas analyzer integration
 REPLACEMENT for handle_large_excel_initial function in orchestration_handler.py
 
 This version adds intelligent routing:
-- Small-medium files (<100MB) with data analysis questions → Smart pandas analyzer
-- Large files or conversational questions → Progressive analysis (existing)
+- Small-medium files (under 100MB) with data analysis questions - Smart pandas analyzer
+- Large files or conversational questions - Progressive analysis (existing)
 - Keeps all existing functionality intact
 
 Last Updated: February 6, 2026 v9 - Added smart pandas analyzer integration
