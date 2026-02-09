@@ -562,7 +562,7 @@ def orchestrate():
                                 preview = result['results_preview']
                                 response = f"""✅ **Analysis Complete!**
 
-📊 **Results:**
+Results:
 - Total Hours: {preview.get('total_hours', 0):,}
 - Employees: {preview.get('employees', 0):,}
 - Overtime: {preview.get('overtime_pct', 0)}%
