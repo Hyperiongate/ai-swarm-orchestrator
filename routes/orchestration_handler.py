@@ -306,7 +306,7 @@ def orchestrate():
     # CHECK IF USER IS RESPONDING TO ANALYSIS OFFER (Added February 9, 2026)
     # ============================================================================
     if user_message:
-    msg_lower = user_message.lower()
+        msg_lower = user_message.lower()
     
     # User said YES to analysis
     if any(phrase in msg_lower for phrase in ['yes, analyze', 'analyze this data', 'run the analysis', 'analyze it']):
