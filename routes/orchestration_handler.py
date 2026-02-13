@@ -1,10 +1,13 @@
 """
 Orchestration Handler - Main AI Task Processing (REFACTORED)
 Created: January 31, 2026
-Last Updated: February 10, 2026 - REFACTORED into modular architecture
+Last Updated: February 13, 2026 - RESTORED REGULAR CONVERSATION HANDLER
 
-This file now serves as the main router that delegates to specialized handlers.
-All syntax errors fixed (emojis, Unicode, apostrophes, "8hr" patterns).
+CRITICAL FIX (February 13, 2026):
+- Restored full regular conversation handler (was stubbed out on Feb 10)
+- This allows "Yes, analyze it" and other text-only conversations to work
+- All AI routing (Sonnet/Opus), consensus, specialists fully functional again
+- Labor workflow now complete: detection → offer → user clicks yes → full analysis
 
 REFACTORING CHANGES:
 - Extracted file upload logic to handlers/file_upload_handler.py
@@ -15,7 +18,7 @@ REFACTORING CHANGES:
 - Extracted conversation logic to handlers/conversation_handler.py
 - Extracted utilities to utils/ directory
 
-Result: Main file reduced from 2,823 lines to ~400 lines for easier maintenance.
+Result: Main file reduced from 2,823 lines to ~800 lines for easier maintenance.
 
 Author: Jim @ Shiftwork Solutions LLC
 """
@@ -23,12 +26,17 @@ Author: Jim @ Shiftwork Solutions LLC
 from flask import Blueprint, request, jsonify, session
 import time
 import os
+import json
 from datetime import datetime
 
 # Import database functions
 from database import (
     get_db, create_conversation, add_message,
-    get_conversation_context
+    get_conversation_context, get_conversation,
+    save_generated_document, get_schedule_context,
+    save_schedule_context, get_client_profile_context,
+    add_avoidance_pattern, get_avoidance_context,
+    update_client_profile
 )
 
 # Import handlers
@@ -58,6 +66,28 @@ from file_content_reader import extract_multiple_files
 from cloud_file_handler import get_cloud_handler
 from routes.handlers.cloud_handler import is_cloud_link
 
+# Import orchestration components
+from orchestration import (
+    analyze_task_with_sonnet,
+    handle_with_opus,
+    execute_specialist_task,
+    validate_with_consensus
+)
+
+# Import specialized handlers
+from code_assistant_agent import get_code_assistant
+from orchestration.proactive_agent import ProactiveAgent
+from schedule_request_handler_combined import get_combined_schedule_handler
+
+# Import learning systems
+from conversation_learning import learn_from_conversation
+from orchestration.task_analysis import get_learning_context
+from enhanced_intelligence import EnhancedIntelligence
+from specialized_knowledge import get_specialized_knowledge
+from proactive_suggestions import get_proactive_suggestions
+from conversation_summarizer import get_conversation_summarizer
+from proactive_curiosity_engine import get_curiosity_engine
+
 # Create blueprint
 orchestration_bp = Blueprint('orchestration', __name__)
 
@@ -73,6 +103,7 @@ def orchestrate():
     """
     Main orchestration endpoint - routes requests to appropriate handlers.
     
+    UPDATED February 13, 2026: Restored regular conversation handler
     UPDATED February 10, 2026: Refactored into modular handlers
     UPDATED February 5, 2026: Memory fixes, cloud downloads, progressive analysis
     UPDATED February 4, 2026: Added auto-learning integration
@@ -289,17 +320,595 @@ Be comprehensive and professional."""
                 print(f"GPT-4 file analysis error: {gpt_error}")
                 db.close()
         
-        # HANDLER 10: Regular conversation (no files)
-        # NOTE: This contains the full orchestration logic from the original file
-        # For now, returning helpful error until you want to extract that logic
+        # ========================================================================
+        # HANDLER 10: REGULAR CONVERSATION (NO FILES) - RESTORED Feb 13, 2026
+        # This is the FULL orchestration handler that was stubbed out on Feb 10
+        # ========================================================================
         
-        return jsonify({
-            'success': False,
-            'error': 'Regular conversation handler not yet fully implemented',
-            'message': 'File-based workflows are working. Regular conversations need the full orchestration logic extracted.',
-            'suggestion': 'If you need regular conversations immediately, we can extract that logic next.'
-        }), 501
+        # Check for file contents in conversation history
+        if not file_contents and conversation_id:
+            from database import get_conversation_file_contents
+            file_contents = get_conversation_file_contents(conversation_id)
+            if file_contents:
+                print(f"Retrieved file contents from conversation history")
         
+        # Parse clarification answers
+        clarification_answers = None
+        if request.is_json:
+            clarification_answers_raw = request.json.get('clarification_answers')
+            if clarification_answers_raw:
+                if isinstance(clarification_answers_raw, str):
+                    try:
+                        clarification_answers = json.loads(clarification_answers_raw)
+                    except:
+                        clarification_answers = None
+                else:
+                    clarification_answers = clarification_answers_raw
+        else:
+            clarification_answers_str = request.form.get('clarification_answers')
+            if clarification_answers_str:
+                try:
+                    clarification_answers = json.loads(clarification_answers_str)
+                except:
+                    clarification_answers = None
+        
+        if clarification_answers:
+            print(f"Clarification answers received: {clarification_answers}")
+            context_additions = []
+            for field, value in clarification_answers.items():
+                context_additions.append(f"{field}: {value}")
+            if context_additions:
+                user_request = f"{user_request}\n\nAdditional context:\n" + "\n".join(context_additions)
+        
+        # Create conversation if needed
+        if not conversation_id:
+            conversation_id = create_conversation(mode=mode, project_id=project_id)
+            print(f"Created new conversation: {conversation_id}")
+        
+        add_message(conversation_id, 'user', user_request)
+        
+        # Initialize proactive agent
+        proactive = None
+        try:
+            proactive = ProactiveAgent()
+        except Exception as proactive_init_error:
+            print(f"Proactive agent init failed: {proactive_init_error}")
+        
+        # Proactive pre-check
+        if proactive and not clarification_answers:
+            try:
+                pre_check = proactive.pre_process_request(user_request)
+                if pre_check['action'] == 'ask_questions':
+                    db = get_db()
+                    cursor = db.execute('INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
+                                       (user_request, 'needs_clarification', conversation_id))
+                    task_id = cursor.lastrowid
+                    db.commit()
+                    db.close()
+                    return jsonify({'success': True, 'needs_clarification': True, 'clarification_data': pre_check['data'],
+                                   'task_id': task_id, 'conversation_id': conversation_id})
+                if pre_check['action'] == 'detect_project':
+                    return jsonify({'success': True, 'project_detected': True, 'project_data': pre_check['data'],
+                                   'conversation_id': conversation_id})
+            except Exception as proactive_error:
+                print(f"Proactive check failed: {proactive_error}")
+        
+        # Get knowledge base
+        import sys
+        app_module = sys.modules.get('app')
+        knowledge_base = getattr(app_module, 'knowledge_base', None) if app_module else None
+        conversation_context = get_conversation_context(conversation_id, max_messages=10)
+        
+        # Get project file context
+        file_context = ""
+        if project_id:
+            try:
+                from database_file_management import get_files_for_ai_context
+                file_context = get_files_for_ai_context(project_id, max_files=5, max_chars_per_file=2000)
+                if file_context:
+                    print(f"Added file context from project {project_id}")
+            except Exception as file_ctx_error:
+                print(f"Could not load file context: {file_ctx_error}")
+        
+        db = get_db()
+        cursor = db.execute('INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
+                           (user_request, 'processing', conversation_id))
+        task_id = cursor.lastrowid
+        db.commit()
+        
+        # Code assistant check
+        try:
+            code_assistant_agent = get_code_assistant(knowledge_base=knowledge_base)
+            feedback_check = code_assistant_agent.detect_code_feedback(user_request)
+            
+            if feedback_check['is_code_feedback']:
+                print(f"Code feedback detected for: {feedback_check['target_file']}")
+                
+                from orchestration.ai_clients import call_claude_sonnet
+                
+                code_result = code_assistant_agent.process_code_feedback(user_request, call_claude_sonnet)
+                
+                if code_result['success']:
+                    deployment_pkg = code_result['deployment_package']
+                    doc_id = None
+                    document_url = None
+                    
+                    if code_result.get('output_path'):
+                        try:
+                            file_size = os.path.getsize(code_result['output_path'])
+                            doc_id = save_generated_document(
+                                filename=os.path.basename(code_result['output_path']),
+                                original_name=f"Fixed: {code_result['target_file']}",
+                                document_type='py',
+                                file_path=code_result['output_path'],
+                                file_size=file_size,
+                                task_id=task_id,
+                                conversation_id=conversation_id,
+                                project_id=project_id,
+                                title=f"Code Fix: {code_result['target_file']}",
+                                description=deployment_pkg['change_summary'],
+                                category='code'
+                            )
+                            document_url = f'/api/generated-documents/{doc_id}/download'
+                        except Exception as doc_error:
+                            print(f"Could not save code file: {doc_error}")
+                    
+                    response_html = convert_markdown_to_html(code_result['message'])
+                    
+                    db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
+                              ('completed', 'code_assistant', time.time() - overall_start, task_id))
+                    db.commit()
+                    
+                    add_message(conversation_id, 'assistant', code_result['message'], task_id,
+                               {'document_created': True, 'document_type': 'py', 'document_id': doc_id,
+                                'orchestrator': 'code_assistant', 'target_file': code_result['target_file']})
+                    
+                    suggestions = []
+                    if proactive:
+                        try:
+                            suggestions = proactive.post_process_result(task_id, user_request, code_result['message'])
+                        except:
+                            pass
+                    
+                    db.close()
+                    
+                    return jsonify({
+                        'success': True,
+                        'task_id': task_id,
+                        'conversation_id': conversation_id,
+                        'result': response_html,
+                        'document_url': document_url,
+                        'document_id': doc_id,
+                        'document_created': True,
+                        'document_type': 'py',
+                        'execution_time': time.time() - overall_start,
+                        'orchestrator': 'code_assistant',
+                        'target_file': code_result['target_file'],
+                        'deployment_instructions': deployment_pkg['deployment_instructions'],
+                        'suggestions': suggestions
+                    })
+        
+        except Exception as code_assistant_error:
+            print(f"Code Assistant failed: {code_assistant_error}")
+        
+        # Schedule handler check
+        schedule_handler = get_combined_schedule_handler()
+        schedule_context = get_schedule_context(conversation_id)
+        schedule_result = schedule_handler.process_request(user_request, schedule_context)
+        
+        if schedule_result['action'] != 'not_schedule_request':
+            if 'context' in schedule_result:
+                save_schedule_context(conversation_id, schedule_result['context'])
+            
+            if schedule_result['action'] == 'generate_schedule':
+                source_filepath = schedule_result['filepath']
+                filename = os.path.basename(source_filepath)
+                file_path = source_filepath
+                file_size = os.path.getsize(file_path)
+                shift_length = schedule_result['shift_length']
+                pattern_key = schedule_result['pattern_key']
+                doc_title = f"{shift_length}-Hour {pattern_key.upper().replace('_', ' ')} Schedule Pattern"
+                
+                doc_id = save_generated_document(
+                    filename=filename,
+                    original_name=doc_title,
+                    document_type='xlsx',
+                    file_path=file_path,
+                    file_size=file_size,
+                    task_id=task_id,
+                    conversation_id=conversation_id,
+                    project_id=project_id,
+                    title=doc_title,
+                    description=f"Visual {shift_length}-hour {pattern_key} schedule pattern",
+                    category='schedule'
+                )
+                
+                response_html = convert_markdown_to_html(schedule_result['message'])
+                
+                db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
+                          ('completed', 'pattern_schedule_generator', time.time() - overall_start, task_id))
+                db.commit()
+                
+                add_message(conversation_id, 'assistant', schedule_result['message'], task_id,
+                           {'document_created': True, 'document_type': 'xlsx', 'document_id': doc_id,
+                            'orchestrator': 'pattern_schedule_generator', 'shift_length': shift_length,
+                            'pattern': pattern_key})
+                
+                session.pop('schedule_context', None)
+                
+                suggestions = []
+                if proactive:
+                    try:
+                        suggestions = proactive.post_process_result(task_id, user_request, schedule_result['message'])
+                    except:
+                        pass
+                
+                db.close()
+                
+                return jsonify({
+                    'success': True,
+                    'task_id': task_id,
+                    'conversation_id': conversation_id,
+                    'result': response_html,
+                    'document_url': f'/api/generated-documents/{doc_id}/download',
+                    'document_id': doc_id,
+                    'document_created': True,
+                    'document_type': 'xlsx',
+                    'execution_time': time.time() - overall_start,
+                    'orchestrator': 'pattern_schedule_generator',
+                    'knowledge_applied': False,
+                    'formatting_applied': True,
+                    'specialists_used': [],
+                    'consensus': None,
+                    'suggestions': suggestions,
+                    'shift_length': shift_length,
+                    'pattern': pattern_key
+                })
+            
+            else:
+                response_html = convert_markdown_to_html(schedule_result['message'])
+                db.execute('UPDATE tasks SET status = ? WHERE id = ?', ('in_progress', task_id))
+                db.commit()
+                
+                add_message(conversation_id, 'assistant', schedule_result['message'], task_id,
+                           {'waiting_for_input': True, 'orchestrator': 'pattern_schedule_generator',
+                            'waiting_for': schedule_result.get('waiting_for')})
+                
+                db.close()
+                
+                return jsonify({
+                    'success': True,
+                    'task_id': task_id,
+                    'conversation_id': conversation_id,
+                    'result': response_html,
+                    'needs_input': True,
+                    'waiting_for': schedule_result.get('waiting_for'),
+                    'orchestrator': 'pattern_schedule_generator',
+                    'execution_time': time.time() - overall_start
+                })
+        
+        # Regular AI orchestration
+        try:
+            print(f"Analyzing task: {user_request[:100]}...")
+            analysis = analyze_task_with_sonnet(user_request, knowledge_base=knowledge_base, file_paths=file_paths, file_contents=file_contents)
+            task_type = analysis.get('task_type', 'general')
+            confidence = analysis.get('confidence', 0.5)
+            escalate = analysis.get('escalate_to_opus', False)
+            specialists_needed = analysis.get('specialists_needed', [])
+            knowledge_applied = analysis.get('knowledge_applied', False)
+            knowledge_sources = analysis.get('knowledge_sources', [])
+            
+            if specialists_needed:
+                specialists_needed = [s for s in specialists_needed if s and s.lower() != 'none']
+            
+            orchestrator = 'sonnet'
+            opus_guidance = None
+            
+            if escalate:
+                print("Escalating to Opus...")
+                orchestrator = 'opus'
+                try:
+                    opus_result = handle_with_opus(user_request, analysis, knowledge_base=knowledge_base, file_paths=file_paths, file_contents=file_contents)
+                    opus_guidance = opus_result.get('strategic_analysis', '')
+                    if opus_result.get('specialist_assignments'):
+                        for assignment in opus_result.get('specialist_assignments', []):
+                            specialist = assignment.get('ai') or assignment.get('specialist')
+                            if specialist and specialist.lower() != 'none':
+                                specialists_needed.append(specialist)
+                except Exception as opus_error:
+                    print(f"Opus guidance failed: {opus_error}")
+            
+            specialist_results = []
+            specialist_output = None
+            if specialists_needed:
+                for specialist_info in specialists_needed:
+                    if isinstance(specialist_info, dict):
+                        specialist = specialist_info.get('specialist') or specialist_info.get('ai')
+                        specialist_task = specialist_info.get('task', user_request)
+                    else:
+                        specialist = specialist_info
+                        specialist_task = user_request
+                    if specialist and specialist.lower() != 'none':
+                        result = execute_specialist_task(specialist, specialist_task, file_paths=file_paths, file_contents=file_contents)
+                        specialist_results.append(result)
+                        if result.get('success') and result.get('output'):
+                            specialist_output = result.get('output')
+            
+            from orchestration.ai_clients import call_claude_opus, call_claude_sonnet
+            
+            def get_knowledge_context_for_prompt(kb, request, max_context=3000):
+                """Get knowledge context to include in completion prompts"""
+                if not kb:
+                    return ""
+                try:
+                    context = kb.get_context_for_task(request, max_context=max_context)
+                    if context:
+                        return f"\n\n=== SHIFTWORK SOLUTIONS KNOWLEDGE BASE ===\nUse this information from our 30+ years of expertise:\n\n{context}\n\n=== END KNOWLEDGE BASE ===\n\n"
+                    return ""
+                except Exception as e:
+                    print(f"Knowledge context retrieval failed: {e}")
+                    return ""
+            
+            knowledge_context = get_knowledge_context_for_prompt(knowledge_base, user_request)
+            
+            # Learning context
+            learning_context = ""
+            try:
+                learning_context = get_learning_context()
+                if learning_context:
+                    print(f"Retrieved learning context ({len(learning_context)} chars)")
+            except Exception as learn_ctx_error:
+                print(f"Could not get learning context (non-critical): {learn_ctx_error}")
+            
+            # Client profile context
+            client_profile_context = ""
+            if project_id:
+                try:
+                    db_temp = get_db()
+                    project = db_temp.execute('SELECT client_name FROM projects WHERE project_id = ?', (project_id,)).fetchone()
+                    db_temp.close()
+                    
+                    if project and project['client_name']:
+                        client_profile_context = get_client_profile_context(project['client_name'])
+                        if client_profile_context:
+                            print(f"Retrieved client profile for {project['client_name']}")
+                except Exception as profile_error:
+                    print(f"Could not get client profile (non-critical): {profile_error}")
+            
+            # Avoidance patterns context
+            avoidance_context = ""
+            try:
+                avoidance_context = get_avoidance_context(days=30, limit=5)
+                if avoidance_context:
+                    print(f"Retrieved avoidance patterns")
+            except Exception as avoid_error:
+                print(f"Could not get avoidance context (non-critical): {avoid_error}")
+            
+            # Specialized knowledge
+            specialized_context = ""
+            try:
+                specialist = get_specialized_knowledge()
+                
+                industry = None
+                if project_id:
+                    db_temp = get_db()
+                    proj = db_temp.execute('SELECT industry FROM projects WHERE project_id = ?', (project_id,)).fetchone()
+                    db_temp.close()
+                    if proj:
+                        industry = proj['industry']
+                
+                specialized_context = specialist.build_expertise_context(user_request, industry)
+                if specialized_context:
+                    print(f"Injected specialized knowledge for {industry or 'general'}")
+            except Exception as spec_error:
+                print(f"Could not get specialized knowledge: {spec_error}")
+            
+            # Conversation summary
+            summary_context = ""
+            try:
+                summarizer = get_conversation_summarizer()
+                
+                if summarizer.should_summarize(conversation_id):
+                    from orchestration.ai_clients import call_claude_sonnet
+                    summarizer.summarize_conversation(conversation_id, call_claude_sonnet)
+                
+                summary_context = summarizer.get_conversation_context(conversation_id)
+                if summary_context:
+                    print(f"Retrieved conversation summary")
+            except Exception as summary_error:
+                print(f"Could not get conversation summary: {summary_error}")
+            
+            # Initialize intelligence
+            intelligence = None
+            try:
+                intelligence = EnhancedIntelligence()
+                print("EnhancedIntelligence initialized")
+            except Exception as intel_error:
+                print(f"EnhancedIntelligence init failed (non-critical): {intel_error}")
+                intelligence = None
+            
+            # Build project context
+            project_context = ""
+            if project_id:
+                try:
+                    from database_file_management import get_file_stats_by_project
+                    db_temp = get_db()
+                    project = db_temp.execute('SELECT * FROM projects WHERE project_id = ?', (project_id,)).fetchone()
+                    db_temp.close()
+                    
+                    if project:
+                        file_stats = get_file_stats_by_project(project_id)
+                        
+                        project_context = f"""
+
+=== CURRENT PROJECT CONTEXT ===
+You are working inside the "{project['client_name']}" PROJECT FOLDER.
+- Industry: {project['industry']}
+- Facility Type: {project['facility_type']}
+- Project Phase: {project['project_phase']}
+
+This project folder contains: {file_stats.get('total_files', 0)} files
+- Uploaded: {file_stats.get('uploaded_files', 0)}
+- Generated: {file_stats.get('generated_files', 0)}
+===
+
+"""
+                except Exception as proj_ctx_error:
+                    print(f"Could not load project context: {proj_ctx_error}")
+            
+            # Build conversation history
+            conversation_history = ""
+            if conversation_context and len(conversation_context) > 1:
+                conversation_history = "\n\n=== CONVERSATION HISTORY ===\n"
+                for msg in conversation_context[:-1]:
+                    role_label = "User" if msg['role'] == 'user' else "Assistant"
+                    content_preview = msg['content'][:500] + '...' if len(msg['content']) > 500 else msg['content']
+                    conversation_history += f"{role_label}: {content_preview}\n"
+                conversation_history += "=== END CONVERSATION HISTORY ===\n\n"
+            
+            if specialist_output:
+                actual_output = specialist_output
+            else:
+                if file_contents:
+                    file_section = f"""
+
+========================================================================
+ATTACHED FILES - READ THESE CAREFULLY
+========================================================================
+
+{file_contents}
+
+========================================================================
+"""
+                else:
+                    file_section = ""
+                
+                completion_prompt = f"""{knowledge_context}{project_context}{file_context}{conversation_history}{learning_context}{client_profile_context}{avoidance_context}{specialized_context}{summary_context}{file_section}
+
+USER REQUEST: {user_request}
+
+Please complete this request fully. Provide the actual deliverable.
+Be comprehensive and professional."""
+                
+                if opus_guidance:
+                    completion_prompt += f"\n\nSTRATEGIC GUIDANCE:\n{opus_guidance}"
+                
+                if file_contents:
+                    print(f"Completion prompt contains {len(file_contents)} chars of file content")
+                
+                if orchestrator == 'opus':
+                    response = call_claude_opus(completion_prompt, conversation_history=conversation_context, files_attached=bool(file_contents))
+                else:
+                    response = call_claude_sonnet(completion_prompt, conversation_history=conversation_context, files_attached=bool(file_contents))
+                
+                if isinstance(response, dict):
+                    if response.get('error'):
+                        actual_output = f"Error: {response.get('content', 'Unknown error')}"
+                    else:
+                        actual_output = response.get('content', '')
+                else:
+                    actual_output = str(response)
+            
+            print(f"Task completed. Output length: {len(actual_output) if actual_output else 0} chars")
+            
+            formatted_output = convert_markdown_to_html(actual_output)
+            
+            consensus_result = None
+            if enable_consensus and actual_output and not actual_output.startswith('Error'):
+                try:
+                    consensus_result = validate_with_consensus(actual_output)
+                except Exception as consensus_error:
+                    print(f"Consensus validation failed: {consensus_error}")
+            
+            total_time = time.time() - overall_start
+            db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
+                      ('completed', orchestrator, total_time, task_id))
+            db.commit()
+            db.close()
+            
+            add_message(conversation_id, 'assistant', actual_output, task_id,
+                       {'orchestrator': orchestrator, 'knowledge_applied': knowledge_applied,
+                        'execution_time': total_time})
+            
+            suggestions = []
+            if proactive:
+                try:
+                    suggestions = proactive.post_process_result(task_id, user_request, actual_output if actual_output else '')
+                except Exception as suggest_error:
+                    print(f"Suggestion generation failed: {suggest_error}")
+            
+            # Learning
+            if intelligence and actual_output and not actual_output.startswith('Error'):
+                try:
+                    intelligence.learn_from_interaction(user_request, actual_output, user_feedback=None)
+                    print("EnhancedIntelligence learned from this interaction")
+                except Exception as learn_error:
+                    print(f"EnhancedIntelligence learning failed (non-critical): {learn_error}")
+            
+            # Update client profile
+            if project_id:
+                try:
+                    db_temp = get_db()
+                    project = db_temp.execute('SELECT client_name, industry FROM projects WHERE project_id = ?', (project_id,)).fetchone()
+                    db_temp.close()
+                    
+                    if project and project['client_name']:
+                        interaction_data = {
+                            'approach': orchestrator,
+                            'approach_worked': True,
+                            'industry': project['industry'],
+                            'preferences': {}
+                        }
+                        
+                        update_client_profile(project['client_name'], interaction_data)
+                        print(f"Updated profile for {project['client_name']}")
+                except Exception as profile_update_error:
+                    print(f"Client profile update failed (non-critical): {profile_update_error}")
+            
+            # Auto-learn from conversation
+            try:
+                learn_from_conversation(user_request, actual_output if actual_output else '')
+            except Exception as learn_error:
+                print(f"Auto-learning failed (non-critical): {learn_error}")
+            
+            # Proactive curiosity
+            curious_question = None
+            try:
+                curiosity_engine = get_curiosity_engine()
+                curiosity_check = curiosity_engine.should_be_curious(
+                    conversation_id,
+                    {
+                        'user_request': user_request,
+                        'ai_response': actual_output if actual_output else '',
+                        'task_completed': True
+                    }
+                )
+                
+                if curiosity_check['should_ask']:
+                    curious_question = curiosity_check['question']
+                    print(f"Curious follow-up: {curious_question}")
+            except Exception as curiosity_error:
+                print(f"Curiosity engine failed (non-critical): {curiosity_error}")
+            
+            return jsonify({
+                'success': True, 'task_id': task_id, 'conversation_id': conversation_id,
+                'result': formatted_output, 'orchestrator': orchestrator,
+                'specialists_used': [s.get('specialist') for s in specialist_results] if specialist_results else [],
+                'consensus': consensus_result, 'execution_time': total_time,
+                'knowledge_applied': knowledge_applied, 'knowledge_used': knowledge_applied,
+                'knowledge_sources': knowledge_sources, 'formatting_applied': True,
+                'suggestions': suggestions,
+                'curious_question': curious_question
+            })
+        except Exception as orchestration_error:
+            import traceback
+            print(f"Orchestration error: {traceback.format_exc()}")
+            db.execute('UPDATE tasks SET status = ? WHERE id = ?', ('failed', task_id))
+            db.commit()
+            db.close()
+            add_message(conversation_id, 'assistant', f"Error: {str(orchestration_error)}", task_id, {'error': True})
+            return jsonify({'success': False, 'error': f'Orchestration failed: {str(orchestration_error)}',
+                           'task_id': task_id, 'conversation_id': conversation_id}), 500
     except Exception as e:
         import traceback
         print(f"CRITICAL ERROR: {traceback.format_exc()}")
