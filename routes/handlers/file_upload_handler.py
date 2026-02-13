@@ -1,19 +1,22 @@
 """
 File Upload Handler - Process Uploaded Files
 Created: February 10, 2026
-Last Updated: February 10, 2026
+Last Updated: February 13, 2026 - FIXED LABOR DETECTION RESPONSE FORMAT
+
+CRITICAL FIX (February 13, 2026):
+- Added "success": True to labor detection response (line 73)
+- Added "conversation_id": conversation_id to response (line 77)
+- This fixes the "Error: undefined" bug in frontend
 
 Handles file uploads from FormData, checks for labor data,
 and routes to appropriate analysis workflow.
 
 Author: Jim @ Shiftwork Solutions LLC
 """
-
 import os
 from datetime import datetime
 from werkzeug.utils import secure_filename
 from flask import jsonify
-
 from routes.utils import store_conversation_context
 
 try:
@@ -80,10 +83,13 @@ def handle_file_upload(files, project_id, conversation_id):
                             )
                             
                             # Return early with offer
+                            # FIXED: Added "success": True and "conversation_id" (Feb 13, 2026)
                             return file_paths, jsonify({
+                                "success": True,
                                 "response": offer_message,
                                 "mode": "analysis_offer",
-                                "session_id": session_result['session_id']
+                                "session_id": session_result['session_id'],
+                                "conversation_id": conversation_id
                             })
                 except Exception as e:
                     print(f"Labor detection failed: {e}")
