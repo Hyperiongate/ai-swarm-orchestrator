@@ -569,6 +569,23 @@ function submitClarificationAnswers() {
                 handleClarificationResponse(data);
                 return;
             }
+         if (data.mode === 'analysis_offer' && data.session_id) {
+                if (data.conversation_id) {
+                    currentConversationId = data.conversation_id;
+                    localStorage.setItem('currentConversationId', currentConversationId);
+                    updateUrlWithConversation(currentConversationId);
+                }
+                sessionStorage.setItem('pending_labor_analysis', data.session_id);
+                var offerHtml = data.response + '<div style="margin-top: 20px; display: flex; gap: 10px; flex-wrap: wrap;">';
+                offerHtml += '<button onclick="acceptLaborAnalysis(\'' + data.session_id + '\')" style="flex: 1; min-width: 150px; padding: 12px; background: linear-gradient(135deg, #4caf50 0%, #81c784 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600;">✅ Yes, analyze it</button>';
+                offerHtml += '<button onclick="quickLaborSummary(\'' + data.session_id + '\')" style="flex: 1; min-width: 150px; padding: 12px; background: linear-gradient(135deg, #2196f3 0%, #64b5f6 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600;">📊 Quick summary</button>';
+                offerHtml += '<button onclick="declineLaborAnalysis()" style="padding: 12px 20px; background: #f0f0f0; color: #666; border: none; border-radius: 8px; cursor: pointer; font-weight: 600;">Not now</button>';
+                offerHtml += '</div>';
+                addMessage('assistant', offerHtml, null, currentMode);
+                updateMemoryIndicator(true, 2);
+                loadConversations();
+                return;
+            }
             if (data.conversation_id) {
                 currentConversationId = data.conversation_id;
                 localStorage.setItem('currentConversationId', currentConversationId);
@@ -1769,5 +1786,25 @@ ${summary.total_interactions === 0 ? `
     
     return html;
 }
+function acceptLaborAnalysis(sessionId) {
+    addMessage('user', '✅ Yes, analyze it');
+    var loading = document.getElementById('loadingIndicator');
+    loading.classList.add('active');
+    fetch('/api/orchestrate', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({request: 'yes analyze it', conversation_id: currentConversationId, labor_analysis_response: 'full', session_id: sessionId})})
+    .then(function(r) { return r.json(); }).then(function(data) { loading.classList.remove('active'); if (data.success) { sessionStorage.removeItem('pending_labor_analysis'); addMessage('assistant', data.result, data.task_id, currentMode); loadStats(); loadDocuments(); } else { addMessage('assistant', '❌ Error: ' + (data.error || 'Analysis failed')); }}).catch(function(err) { loading.classList.remove('active'); addMessage('assistant', '❌ Error: ' + err.message); });
+}
 
+function quickLaborSummary(sessionId) {
+    addMessage('user', '📊 Just give me a quick summary');
+    var loading = document.getElementById('loadingIndicator');
+    loading.classList.add('active');
+    fetch('/api/orchestrate', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({request: 'quick summary', conversation_id: currentConversationId, labor_analysis_response: 'summary', session_id: sessionId})})
+    .then(function(r) { return r.json(); }).then(function(data) { loading.classList.remove('active'); if (data.success) { sessionStorage.removeItem('pending_labor_analysis'); addMessage('assistant', data.result, data.task_id, currentMode); } else { addMessage('assistant', '❌ Error: ' + (data.error || 'Summary failed')); }}).catch(function(err) { loading.classList.remove('active'); addMessage('assistant', '❌ Error: ' + err.message); });
+}
+
+function declineLaborAnalysis() {
+    addMessage('user', 'Not now');
+    sessionStorage.removeItem('pending_labor_analysis');
+    addMessage('assistant', '✅ File saved. You can ask me to analyze it later.');
+}
 /* I did no harm and this file is not truncated */
