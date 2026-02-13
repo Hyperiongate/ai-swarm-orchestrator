@@ -1,13 +1,17 @@
 """
 Labor Handler - Handle Analysis Offer Responses
 Created: February 10, 2026
-Last Updated: February 10, 2026
+Last Updated: February 13, 2026 - FIXED: Let orchestration handle "yes" responses
+
+CRITICAL FIX (February 13, 2026):
+- "Yes, analyze it" now returns None to let full orchestration handle the request
+- This allows all the AI routing, consensus, and specialist logic to work
+- Only "quick summary" and "not now" return early responses
 
 Processes user responses to labor data analysis offers.
 
 Author: Jim @ Shiftwork Solutions LLC
 """
-
 from flask import jsonify
 from routes.utils import get_conversation_context, clear_conversation_context
 
@@ -29,61 +33,30 @@ def handle_labor_response(user_request, conversation_id):
     msg_lower = user_request.lower()
     
     # User said YES to analysis
+    # FIXED: Return None to let orchestration handle it with full AI routing
     if any(phrase in msg_lower for phrase in ['yes, analyze', 'analyze this data', 'run the analysis', 'analyze it']):
-        session_id = get_conversation_context(conversation_id, 'pending_analysis_session')
-        
-        if session_id:
-            try:
-                from analysis_orchestrator import AnalysisOrchestrator
-                from database import load_analysis_session, save_analysis_session
-                
-                # Load the session we created earlier
-                session_data = load_analysis_session(session_id)
-                if session_data:
-                    session_obj = AnalysisOrchestrator.from_dict(session_data)
-                    
-                    # Run the analysis workflow automatically
-                    session_obj.discover_data_structure(session_obj.data_files)
-                    session_obj.process_clarifications({
-                        'analysis_priority': ['All of the above'],
-                        'analyze_scope': 'Analyze all'
-                    })
-                    session_obj.build_analysis_plan()
-                    result = session_obj.execute_analysis()
-                    
-                    # Save the results
-                    save_analysis_session(session_obj.to_dict())
-                    
-                    # Show results to user
-                    if result.get('results_preview'):
-                        preview = result['results_preview']
-                        response = f"""Analysis Complete!
-
-Results:
-- Total Hours: {preview.get('total_hours', 0):,}
-- Employees: {preview.get('employees', 0):,}
-- Overtime: {preview.get('overtime_pct', 0)}%
-
-Session ID: `{session_id}`
-
-What would you like next?
-- "Show me the details" - Full breakdown
-- "Generate charts" - Visualizations
-- "Create presentation" - PowerPoint"""
-                        
-                        return jsonify({"response": response})
-            except Exception as e:
-                return jsonify({"response": f"Analysis failed: {str(e)}"})
+        # Session ID is stored in conversation_context, orchestration will use it
+        # Just return None to continue to regular conversation handler
+        print(f"✅ Labor analysis accepted - routing to full orchestration")
+        return None
     
     # User wants quick summary only
     elif 'just give me the summary' in msg_lower or 'quick overview' in msg_lower:
         clear_conversation_context(conversation_id, 'pending_analysis_session')
-        return jsonify({"response": "Got it - showing file overview only, no detailed analysis."})
+        return jsonify({
+            "success": True,
+            "response": "Got it - showing file overview only, no detailed analysis.",
+            "conversation_id": conversation_id
+        })
     
     # User said NO
     elif 'not now' in msg_lower or 'skip' in msg_lower:
         clear_conversation_context(conversation_id, 'pending_analysis_session')
-        return jsonify({"response": "No problem! File is saved for later."})
+        return jsonify({
+            "success": True,
+            "response": "No problem! File is saved for later.",
+            "conversation_id": conversation_id
+        })
     
     return None
 
