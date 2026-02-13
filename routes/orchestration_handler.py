@@ -1,24 +1,22 @@
 """
 Orchestration Handler - Main AI Task Processing (REFACTORED)
 Created: January 31, 2026
-Last Updated: February 13, 2026 - RESTORED REGULAR CONVERSATION HANDLER
+Last Updated: February 13, 2026 - ADDED LABOR SESSION RETRIEVAL (Handler 4.5)
 
-CRITICAL FIX (February 13, 2026):
+CRITICAL FIX (February 13, 2026 - Session 2):
+- Added Handler 4.5: Labor Session Retrieval
+- When user clicks "Yes, analyze it", system now:
+  1. Retrieves session_id from request
+  2. Loads analysis session from database
+  3. Extracts labor file path from session
+  4. Loads file contents for AI analysis
+  5. Continues to regular conversation handler WITH file data
+- This completes the labor analysis workflow end-to-end
+
+PREVIOUS FIXES:
 - Restored full regular conversation handler (was stubbed out on Feb 10)
-- This allows "Yes, analyze it" and other text-only conversations to work
-- All AI routing (Sonnet/Opus), consensus, specialists fully functional again
-- Labor workflow now complete: detection → offer → user clicks yes → full analysis
-
-REFACTORING CHANGES:
-- Extracted file upload logic to handlers/file_upload_handler.py
-- Extracted cloud download to handlers/cloud_handler.py
-- Extracted file browser to handlers/file_browser_handler.py
-- Extracted labor detection to handlers/labor_handler.py
-- Extracted Excel analysis to handlers/excel_handler.py
-- Extracted conversation logic to handlers/conversation_handler.py
-- Extracted utilities to utils/ directory
-
-Result: Main file reduced from 2,823 lines to ~800 lines for easier maintenance.
+- Labor workflow: detection → offer → user clicks yes → full analysis
+- Refactored into modular handlers for maintainability
 
 Author: Jim @ Shiftwork Solutions LLC
 """
@@ -36,7 +34,7 @@ from database import (
     save_generated_document, get_schedule_context,
     save_schedule_context, get_client_profile_context,
     add_avoidance_pattern, get_avoidance_context,
-    update_client_profile
+    update_client_profile, load_analysis_session
 )
 
 # Import handlers
@@ -55,7 +53,8 @@ from routes.handlers import (
 from routes.utils import (
     convert_markdown_to_html,
     store_conversation_context,
-    get_conversation_context as get_context_value
+    get_conversation_context as get_context_value,
+    clear_conversation_context
 )
 
 # Import analyzers
@@ -103,7 +102,8 @@ def orchestrate():
     """
     Main orchestration endpoint - routes requests to appropriate handlers.
     
-    UPDATED February 13, 2026: Restored regular conversation handler
+    UPDATED February 13, 2026 (Session 2): Added Handler 4.5 for labor session retrieval
+    UPDATED February 13, 2026 (Session 1): Restored regular conversation handler
     UPDATED February 10, 2026: Refactored into modular handlers
     UPDATED February 5, 2026: Memory fixes, cloud downloads, progressive analysis
     UPDATED February 4, 2026: Added auto-learning integration
@@ -168,6 +168,104 @@ def orchestrate():
             labor_response = handle_labor_response(user_request, conversation_id)
             if labor_response:
                 return labor_response
+        
+        # ========================================================================
+        # HANDLER 4.5: LABOR SESSION RETRIEVAL - NEW February 13, 2026
+        # ========================================================================
+        # If labor_handler returned None, check if there's a pending labor session
+        # This handles the case where user clicked "Yes, analyze it"
+        if not labor_response and conversation_id:
+            # Try to get session_id from request or conversation context
+            pending_session_id = None
+            
+            # Check if session_id was passed in request
+            if request.is_json:
+                pending_session_id = request.json.get('session_id')
+            else:
+                pending_session_id = request.form.get('session_id')
+            
+            # If not in request, check conversation context
+            if not pending_session_id:
+                pending_session_id = get_conversation_context(conversation_id, 'pending_analysis_session')
+            
+            print(f"🔍 HANDLER 4.5: Checking for pending labor session: {pending_session_id}")
+            
+            # If we have a session_id, load it and perform analysis
+            if pending_session_id:
+                print(f"✅ Found pending labor session: {pending_session_id}")
+                
+                try:
+                    session_data = load_analysis_session(pending_session_id)
+                    
+                    if session_data and session_data.get('data_files'):
+                        print(f"📊 Loading labor data for analysis...")
+                        
+                        # Get the file paths from session
+                        data_files = session_data['data_files']
+                        
+                        if data_files and len(data_files) > 0:
+                            file_path = data_files[0]  # Get first file
+                            
+                            print(f"📂 Labor file: {file_path}")
+                            
+                            # Check if file exists
+                            if os.path.exists(file_path):
+                                print(f"✅ File found, proceeding with labor analysis...")
+                                
+                                # Extract file contents for AI analysis
+                                try:
+                                    extracted = extract_multiple_files([file_path])
+                                    
+                                    if extracted['success'] and extracted.get('combined_text'):
+                                        file_contents = extracted['combined_text']
+                                        
+                                        print(f"✅ Loaded {len(file_contents)} chars from labor file")
+                                        
+                                        # Clear the pending session
+                                        clear_conversation_context(conversation_id, 'pending_analysis_session')
+                                        
+                                        # Override user_request to make it analysis-focused
+                                        user_request = f"Analyze this labor data file comprehensively. Provide insights on overtime patterns, productivity, cost analysis, staffing efficiency, and actionable recommendations. File: {os.path.basename(file_path)}"
+                                        
+                                        print(f"✅ Proceeding to Handler 9 (GPT-4 File Analysis) with labor data...")
+                                        
+                                        # Set file_paths so Handler 9 knows we have files
+                                        file_paths = [file_path]
+                                        
+                                        # Continue to Handler 9 or 10 with file_contents set
+                                        # No early return - let it fall through
+                                        
+                                    else:
+                                        print(f"❌ Could not extract labor file contents")
+                                        return jsonify({
+                                            'success': False,
+                                            'error': 'Could not read labor data file'
+                                        }), 500
+                                        
+                                except Exception as extract_error:
+                                    print(f"❌ Error extracting labor file: {extract_error}")
+                                    return jsonify({
+                                        'success': False,
+                                        'error': f'Error reading labor data: {str(extract_error)}'
+                                    }), 500
+                            else:
+                                print(f"❌ Labor file not found: {file_path}")
+                                return jsonify({
+                                    'success': False,
+                                    'error': 'Labor data file no longer exists'
+                                }), 404
+                        else:
+                            print(f"⚠️ No files in session")
+                    else:
+                        print(f"⚠️ Session not found or has no files")
+                        
+                except Exception as session_error:
+                    print(f"❌ Error loading labor session: {session_error}")
+                    # Don't fail - just continue without session data
+        
+        # ========================================================================
+        # END HANDLER 4.5
+        # ========================================================================
         
         # HANDLER 5: Smart analyzer continuation check
         if not file_paths and conversation_id:
@@ -643,7 +741,7 @@ Be comprehensive and professional."""
                 try:
                     context = kb.get_context_for_task(request, max_context=max_context)
                     if context:
-                        return f"\n\n=== SHIFTWORK SOLUTIONS KNOWLEDGE BASE ===\nUse this information from our 30+ years of expertise:\n\n{context}\n\n=== END KNOWLEDGE BASE ===\n\n"
+                        return f"\n\n=== SHIFTWORK SOLUTIONS KNOWLEDGE BASE ===\nUse this information from our Hundreds of years of expertise:\n\n{context}\n\n=== END KNOWLEDGE BASE ===\n\n"
                     return ""
                 except Exception as e:
                     print(f"Knowledge context retrieval failed: {e}")
