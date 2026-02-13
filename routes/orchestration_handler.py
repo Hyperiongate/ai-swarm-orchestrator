@@ -85,8 +85,8 @@ from proactive_suggestions import get_proactive_suggestions
 from conversation_summarizer import get_conversation_summarizer
 from proactive_curiosity_engine import get_curiosity_engine
 
-# Import background processor
-from background_file_processor import get_background_processor
+# Import labor analysis processor
+from labor_analysis_processor import get_labor_processor
 
 # Create blueprint
 orchestration_bp = Blueprint('orchestration', __name__)
@@ -237,8 +237,8 @@ def orchestrate():
                                     db.commit()
                                     db.close()
                                     
-                                    # Submit to background processor
-                                    processor = get_background_processor()
+                                    # Submit to labor analysis processor
+                                    processor = get_labor_processor()
                                     job_id = f"LABOR_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
                                     
                                     result = processor.submit_job(
@@ -247,7 +247,6 @@ def orchestrate():
                                         user_request=f"Analyze this labor data comprehensively. Provide insights on overtime patterns, productivity, cost analysis, staffing efficiency, and actionable recommendations. File: {os.path.basename(file_path)}",
                                         conversation_id=conversation_id,
                                         task_id=task_id,
-                                        user_name="User"
                                     )
                                     
                                     if result['success']:
