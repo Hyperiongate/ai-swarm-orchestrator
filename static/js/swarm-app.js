@@ -1078,7 +1078,23 @@ function sendMessage() {
                 handleClarificationResponse(data);
                 return;
             }
-            
+            if (data.mode === 'analysis_offer' && data.session_id) {
+            if (data.conversation_id) {
+                currentConversationId = data.conversation_id;
+                localStorage.setItem('currentConversationId', currentConversationId);
+                updateUrlWithConversation(currentConversationId);
+            }
+            sessionStorage.setItem('pending_labor_analysis', data.session_id);
+            var offerHtml = data.response + '<div style="margin-top: 20px; display: flex; gap: 10px; flex-wrap: wrap;">';
+            offerHtml += '<button onclick="acceptLaborAnalysis(\'' + data.session_id + '\')" style="flex: 1; min-width: 150px; padding: 12px; background: linear-gradient(135deg, #4caf50 0%, #81c784 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600;">✅ Yes, analyze it</button>';
+            offerHtml += '<button onclick="quickLaborSummary(\'' + data.session_id + '\')" style="flex: 1; min-width: 150px; padding: 12px; background: linear-gradient(135deg, #2196f3 0%, #64b5f6 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600;">📊 Quick summary</button>';
+            offerHtml += '<button onclick="declineLaborAnalysis()" style="padding: 12px 20px; background: #f0f0f0; color: #666; border: none; border-radius: 8px; cursor: pointer; font-weight: 600;">Not now</button>';
+            offerHtml += '</div>';
+            addMessage('assistant', offerHtml, null, currentMode);
+            updateMemoryIndicator(true, 2);
+            loadConversations();
+            return;
+        }
             if (data.conversation_id) {
                 currentConversationId = data.conversation_id;
                 localStorage.setItem('currentConversationId', currentConversationId);
