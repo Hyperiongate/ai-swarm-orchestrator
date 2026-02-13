@@ -1,22 +1,19 @@
 """
 Orchestration Handler - Main AI Task Processing (REFACTORED)
 Created: January 31, 2026
-Last Updated: February 13, 2026 - ADDED LABOR SESSION RETRIEVAL (Handler 4.5)
+Last Updated: February 13, 2026 - ADDED BACKGROUND PROCESSING FOR LARGE LABOR FILES
 
-CRITICAL FIX (February 13, 2026 - Session 2):
-- Added Handler 4.5: Labor Session Retrieval
-- When user clicks "Yes, analyze it", system now:
-  1. Retrieves session_id from request
-  2. Loads analysis session from database
-  3. Extracts labor file path from session
-  4. Loads file contents for AI analysis
-  5. Continues to regular conversation handler WITH file data
-- This completes the labor analysis workflow end-to-end
+CRITICAL FIX (February 13, 2026 - Session 3):
+- Handler 4.5 now routes large labor files (>2MB) to background processing
+- Prevents worker timeouts on large datasets
+- Small files still processed immediately
+- User gets instant "Processing in background..." response
+- Results posted to conversation when complete
 
 PREVIOUS FIXES:
-- Restored full regular conversation handler (was stubbed out on Feb 10)
-- Labor workflow: detection → offer → user clicks yes → full analysis
-- Refactored into modular handlers for maintainability
+- Handler 4.5: Labor Session Retrieval (loads file when user clicks "Yes")
+- Restored full regular conversation handler
+- Labor workflow: detection → offer → user clicks yes → analysis
 
 Author: Jim @ Shiftwork Solutions LLC
 """
@@ -25,6 +22,7 @@ from flask import Blueprint, request, jsonify, session
 import time
 import os
 import json
+import uuid
 from datetime import datetime
 
 # Import database functions
@@ -87,6 +85,9 @@ from proactive_suggestions import get_proactive_suggestions
 from conversation_summarizer import get_conversation_summarizer
 from proactive_curiosity_engine import get_curiosity_engine
 
+# Import background processor
+from background_file_processor import get_background_processor
+
 # Create blueprint
 orchestration_bp = Blueprint('orchestration', __name__)
 
@@ -102,6 +103,7 @@ def orchestrate():
     """
     Main orchestration endpoint - routes requests to appropriate handlers.
     
+    UPDATED February 13, 2026 (Session 3): Added background processing for large labor files
     UPDATED February 13, 2026 (Session 2): Added Handler 4.5 for labor session retrieval
     UPDATED February 13, 2026 (Session 1): Restored regular conversation handler
     UPDATED February 10, 2026: Refactored into modular handlers
@@ -170,10 +172,11 @@ def orchestrate():
                 return labor_response
         
         # ========================================================================
-        # HANDLER 4.5: LABOR SESSION RETRIEVAL - NEW February 13, 2026
+        # HANDLER 4.5: LABOR SESSION RETRIEVAL WITH BACKGROUND PROCESSING
+        # Updated February 13, 2026 - Session 3
         # ========================================================================
         # If labor_handler returned None, check if there's a pending labor session
-        # This handles the case where user clicked "Yes, analyze it"
+        # Large files (>2MB) go to background processing, small files process immediately
         if not labor_response and conversation_id:
             # Try to get session_id from request or conversation context
             pending_session_id = None
@@ -190,7 +193,7 @@ def orchestrate():
             
             print(f"🔍 HANDLER 4.5: Checking for pending labor session: {pending_session_id}")
             
-            # If we have a session_id, load it and perform analysis
+            # If we have a session_id, load it and decide on processing approach
             if pending_session_id:
                 print(f"✅ Found pending labor session: {pending_session_id}")
                 
@@ -210,7 +213,82 @@ def orchestrate():
                             
                             # Check if file exists
                             if os.path.exists(file_path):
-                                print(f"✅ File found, proceeding with labor analysis...")
+                                # Get file size to decide on processing approach
+                                file_size = os.path.getsize(file_path)
+                                file_size_mb = round(file_size / (1024 * 1024), 2)
+                                
+                                print(f"📏 File size: {file_size_mb}MB")
+                                
+                                # DECISION POINT: Large file = background, small file = immediate
+                                LARGE_FILE_THRESHOLD_MB = 2.0  # Files >2MB go to background
+                                
+                                if file_size_mb > LARGE_FILE_THRESHOLD_MB:
+                                    # ===== LARGE FILE: BACKGROUND PROCESSING =====
+                                    print(f"🔄 File is large ({file_size_mb}MB) - using background processing")
+                                    
+                                    # Clear the pending session
+                                    clear_conversation_context(conversation_id, 'pending_analysis_session')
+                                    
+                                    # Create task
+                                    db = get_db()
+                                    cursor = db.execute('INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
+                                                       (user_request, 'processing_background', conversation_id))
+                                    task_id = cursor.lastrowid
+                                    db.commit()
+                                    db.close()
+                                    
+                                    # Submit to background processor
+                                    processor = get_background_processor()
+                                    job_id = f"LABOR_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+                                    
+                                    result = processor.submit_job(
+                                        job_id=job_id,
+                                        file_path=file_path,
+                                        user_request=f"Analyze this labor data comprehensively. Provide insights on overtime patterns, productivity, cost analysis, staffing efficiency, and actionable recommendations. File: {os.path.basename(file_path)}",
+                                        conversation_id=conversation_id,
+                                        task_id=task_id,
+                                        user_name="User"
+                                    )
+                                    
+                                    if result['success']:
+                                        # Post initial "processing in background" message
+                                        initial_msg = f"""🔄 **Analyzing labor data in background...**
+
+**File:** {os.path.basename(file_path)} ({file_size_mb}MB)
+**Estimated time:** ~{result['estimated_minutes']} minutes
+
+I'm performing comprehensive analysis of all labor records:
+- Overtime patterns and cost exposure
+- Staffing distribution by department
+- Shift balance and coverage gaps
+- Day-of-week and monthly trends
+- Headcount efficiency metrics
+
+**You can continue using the app while I work on this!**
+
+I'll post the complete analysis here when finished, including detailed insights."""
+                                        
+                                        add_message(conversation_id, 'assistant', initial_msg, task_id,
+                                                   {'orchestrator': 'background_labor_processor', 'job_id': job_id})
+                                        
+                                        return jsonify({
+                                            'success': True,
+                                            'task_id': task_id,
+                                            'conversation_id': conversation_id,
+                                            'result': convert_markdown_to_html(initial_msg),
+                                            'orchestrator': 'background_labor_processor',
+                                            'job_id': job_id,
+                                            'background_processing': True,
+                                            'estimated_minutes': result['estimated_minutes'],
+                                            'execution_time': time.time() - overall_start
+                                        })
+                                    else:
+                                        # Background submission failed - fall back to immediate processing
+                                        print(f"⚠️ Background processing failed: {result.get('error')}, falling back to immediate")
+                                        # Continue to immediate processing below
+                                
+                                # ===== SMALL FILE OR FALLBACK: IMMEDIATE PROCESSING =====
+                                print(f"✅ File is small ({file_size_mb}MB) or fallback - processing immediately")
                                 
                                 # Extract file contents for AI analysis
                                 try:
@@ -219,20 +297,25 @@ def orchestrate():
                                     if extracted['success'] and extracted.get('combined_text'):
                                         file_contents = extracted['combined_text']
                                         
+                                        # Truncate if very large
+                                        if len(file_contents) > 200000:
+                                            print(f"⚠️ File content very large ({len(file_contents)} chars) - truncating")
+                                            file_contents = file_contents[:200000] + f"\n\n... (truncated {len(file_contents) - 200000} characters)"
+                                        
                                         print(f"✅ Loaded {len(file_contents)} chars from labor file")
                                         
                                         # Clear the pending session
                                         clear_conversation_context(conversation_id, 'pending_analysis_session')
                                         
                                         # Override user_request to make it analysis-focused
-                                        user_request = f"Analyze this labor data file comprehensively. Provide insights on overtime patterns, productivity, cost analysis, staffing efficiency, and actionable recommendations. File: {os.path.basename(file_path)}"
+                                        user_request = f"Analyze this labor data comprehensively. Provide insights on overtime patterns, productivity, cost analysis, staffing efficiency, and actionable recommendations. File: {os.path.basename(file_path)}"
                                         
                                         print(f"✅ Proceeding to Handler 9 (GPT-4 File Analysis) with labor data...")
                                         
                                         # Set file_paths so Handler 9 knows we have files
                                         file_paths = [file_path]
                                         
-                                        # Continue to Handler 9 or 10 with file_contents set
+                                        # Continue to Handler 9 with file_contents set
                                         # No early return - let it fall through
                                         
                                     else:
