@@ -16,9 +16,13 @@ import traceback
 from typing import Dict, Any, Optional
 from datetime import datetime
 import os
+import pandas as pd
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.utils.dataframe import dataframe_to_rows
 
 from file_content_reader import extract_multiple_files
-from database import get_db, add_message
+from database import get_db, add_message, save_generated_document
 from orchestration.ai_clients import call_gpt4
 
 
@@ -214,17 +218,33 @@ LABOR DATA FILE - ANALYZE COMPREHENSIVELY
 
 USER REQUEST: {job['user_request']}
 
-Please provide a comprehensive labor data analysis including:
+Provide a comprehensive labor data analysis with these EXACT sections (use markdown headers):
 
-1. **Executive Summary** - Key findings and critical insights
-2. **Overtime Analysis** - Patterns, costs, and recommendations
-3. **Staffing Distribution** - By department, shift, and role
-4. **Coverage Analysis** - Gaps, imbalances, and optimization opportunities
-5. **Productivity Metrics** - Efficiency indicators and trends
-6. **Cost Analysis** - Labor cost exposure and savings opportunities
-7. **Recommendations** - Specific, actionable next steps
+## Executive Summary
+3-4 key findings with specific numbers. What stands out most?
 
-Be comprehensive and professional. Include specific numbers and data points from the file.
+## Overtime Analysis
+- Total OT hours and cost
+- Which departments/roles have highest OT
+- Day-of-week and time patterns
+- Red flags or concerns
+
+## Staffing Distribution
+- Headcount by department
+- FT vs PT breakdown
+- Shift coverage balance
+- Any gaps or surpluses
+
+## Cost Insights
+- Total labor cost exposure
+- Cost per hour trends
+- Highest cost areas
+- Potential savings opportunities
+
+## Actionable Recommendations
+Top 3-5 specific actions with expected impact
+
+Use bullet points, numbers, and clear headers. Be specific with data from the file.
 
 {"**Note: Analysis based on first 150,000 characters of data due to file size.**" if truncated else ""}
 """
@@ -242,17 +262,110 @@ Be comprehensive and professional. Include specific numbers and data points from
             print(f"✅ GPT-4 analysis complete: {len(actual_output)} chars")
             
             # Update progress
+            job['progress'] = 70
+            job['current_step'] = 'Creating Excel report...'
+            self._update_job_db(job_id, 'processing', 70, 'Creating Excel report')
+            
+            # Create Excel report with the analysis
+            report_filename = f"Labor_Analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+            report_path = f"/tmp/{report_filename}"
+            
+            try:
+                # Create workbook
+                wb = Workbook()
+                ws = wb.active
+                ws.title = "Analysis Summary"
+                
+                # Add title
+                ws['A1'] = "LABOR DATA ANALYSIS REPORT"
+                ws['A1'].font = Font(size=16, bold=True)
+                ws['A1'].fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+                ws['A1'].font = Font(size=16, bold=True, color="FFFFFF")
+                
+                ws['A2'] = f"File: {job['file_name']}"
+                ws['A3'] = f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                ws['A4'] = f"File Size: {job['file_size_mb']}MB"
+                
+                # Add analysis text (wrapped)
+                ws['A6'] = "ANALYSIS"
+                ws['A6'].font = Font(size=14, bold=True)
+                
+                # Split analysis into lines and add to cells
+                row = 7
+                for line in actual_output.split('\n'):
+                    if line.strip():
+                        ws[f'A{row}'] = line
+                        ws[f'A{row}'].alignment = Alignment(wrap_text=True, vertical='top')
+                        row += 1
+                
+                # Set column width
+                ws.column_dimensions['A'].width = 100
+                
+                # Save workbook
+                wb.save(report_path)
+                print(f"📊 Excel report created: {report_path}")
+                
+                # Save to database as generated document
+                doc_id = save_generated_document(
+                    filename=report_filename,
+                    original_name=f"Labor Analysis - {job['file_name']}",
+                    document_type='xlsx',
+                    file_path=report_path,
+                    file_size=os.path.getsize(report_path),
+                    task_id=job['task_id'],
+                    conversation_id=job['conversation_id'],
+                    project_id=None,
+                    title=f"Labor Analysis Report",
+                    description=f"Comprehensive labor data analysis for {job['file_name']}",
+                    category='analysis'
+                )
+                
+                document_url = f"/api/generated-documents/{doc_id}/download"
+                print(f"📥 Report available for download: {document_url}")
+                
+            except Exception as report_error:
+                print(f"⚠️ Could not create Excel report: {report_error}")
+                traceback.print_exc()
+                document_url = None
+                doc_id = None
+            
+            # Update progress
             job['progress'] = 90
             job['current_step'] = 'Posting results...'
             self._update_job_db(job_id, 'processing', 90, 'Posting results')
             
+            # Format the response message with download link
+            if document_url:
+                response_message = f"""## ✅ Labor Analysis Complete
+
+{actual_output}
+
+---
+
+**📊 [Download Full Excel Report]({document_url})**
+
+This comprehensive Excel report includes all analysis details and is ready for stakeholder distribution."""
+            else:
+                response_message = actual_output
+            
             # Post result to conversation
+            metadata = {
+                'orchestrator': 'labor_analysis_processor',
+                'job_id': job_id,
+                'file_analysis': True
+            }
+            
+            if doc_id:
+                metadata['document_created'] = True
+                metadata['document_type'] = 'xlsx'
+                metadata['document_id'] = doc_id
+            
             add_message(
                 job['conversation_id'],
                 'assistant',
-                actual_output,
+                response_message,
                 job['task_id'],
-                {'orchestrator': 'labor_analysis_processor', 'job_id': job_id, 'file_analysis': True}
+                metadata
             )
             
             print(f"✅ Results posted to conversation {job['conversation_id']}")
