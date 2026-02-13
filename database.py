@@ -303,6 +303,23 @@ def init_db():
         )
     ''')
     
+    # Conversation context table - stores temporary key-value pairs for workflows
+    # ADDED February 10, 2026: Support for labor analysis workflow
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS conversation_context (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id TEXT NOT NULL,
+            key TEXT NOT NULL,
+            value TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(conversation_id, key),
+            FOREIGN KEY (conversation_id) REFERENCES conversations(conversation_id)
+        )
+    ''')
+    
+    # Generated documents table
+    
     # Generated documents table
     db.execute('''
         CREATE TABLE IF NOT EXISTS generated_documents (
@@ -604,6 +621,7 @@ def init_db():
     db.execute('CREATE INDEX IF NOT EXISTS idx_conv_messages_conv_id ON conversation_messages(conversation_id)')
     db.execute('CREATE INDEX IF NOT EXISTS idx_conv_messages_created ON conversation_messages(created_at)')
     db.execute('CREATE INDEX IF NOT EXISTS idx_tasks_conversation ON tasks(conversation_id)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_conv_context_conv_id ON conversation_context(conversation_id)')
     
     # Generated documents indexes
     db.execute('CREATE INDEX IF NOT EXISTS idx_gen_docs_created ON generated_documents(created_at DESC)')
