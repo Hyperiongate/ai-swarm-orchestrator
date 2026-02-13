@@ -80,10 +80,12 @@ def handle_file_upload(files, project_id, conversation_id):
                             )
                             
                             # Return early with offer
-                            return file_paths, jsonify({
-                                "response": offer_message,
+                            return [], jsonify({
+                                "success": True,
                                 "mode": "analysis_offer",
-                                "session_id": session_result['session_id']
+                                "response": offer_message,
+                                "session_id": session_result['session_id'],
+                                "conversation_id": conversation_id
                             })
                 except Exception as e:
                     print(f"Labor detection failed: {e}")
