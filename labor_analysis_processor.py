@@ -336,15 +336,43 @@ Use bullet points, numbers, and clear headers. Be specific with data from the fi
             
             # Format the response message with download link
             if document_url:
-                response_message = f"""## ✅ Labor Analysis Complete
+                response_message = f"""✅ LABOR ANALYSIS COMPLETE
 
-{actual_output}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
----
+EXECUTIVE SUMMARY
 
-**📊 [Download Full Excel Report]({document_url})**
+{self._extract_section(actual_output, 'Executive Summary')}
 
-This comprehensive Excel report includes all analysis details and is ready for stakeholder distribution."""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+OVERTIME ANALYSIS
+
+{self._extract_section(actual_output, 'Overtime Analysis')}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+STAFFING DISTRIBUTION
+
+{self._extract_section(actual_output, 'Staffing Distribution')}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+COST INSIGHTS
+
+{self._extract_section(actual_output, 'Cost Insights')}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+RECOMMENDATIONS
+
+{self._extract_section(actual_output, 'Actionable Recommendations')}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 DOWNLOAD FULL EXCEL REPORT
+File ID: {doc_id}
+"""
             else:
                 response_message = actual_output
             
@@ -375,7 +403,8 @@ This comprehensive Excel report includes all analysis details and is ready for s
             job['completed_at'] = datetime.now().isoformat()
             job['progress'] = 100
             job['current_step'] = 'Complete'
-            job['result'] = actual_output
+            job['result'] = response_message
+            job['document_id'] = doc_id  # Store for status API
             
             self._update_job_db(job_id, 'completed', 100, 'Complete')
             
@@ -427,6 +456,37 @@ Please try uploading the file again, or contact support if the issue persists.""
             
             print(f"❌ Job {job_id} failed: {error_msg}")
             traceback.print_exc()
+    
+    def _extract_section(self, text: str, section_name: str) -> str:
+        """Extract a specific section from the analysis and clean it up."""
+        try:
+            # Find the section
+            lines = text.split('\n')
+            in_section = False
+            section_lines = []
+            
+            for line in lines:
+                # Check if this is the start of our section
+                if section_name.lower() in line.lower() and ('##' in line or line.isupper()):
+                    in_section = True
+                    continue
+                
+                # Check if we hit the next section
+                if in_section and ('##' in line or (line.isupper() and len(line.strip()) > 5)):
+                    break
+                
+                # Collect lines in this section
+                if in_section and line.strip():
+                    # Clean up markdown formatting
+                    clean_line = line.replace('**', '').replace('##', '').strip()
+                    if clean_line and not clean_line.startswith('#'):
+                        section_lines.append(clean_line)
+            
+            return '\n'.join(section_lines) if section_lines else f"[{section_name} section not found]"
+            
+        except Exception as e:
+            print(f"⚠️ Error extracting section {section_name}: {e}")
+            return f"[Error extracting {section_name}]"
     
     def _update_job_db(self, job_id: str, status: str, progress: int, current_step: str):
         """Update job status in database."""
