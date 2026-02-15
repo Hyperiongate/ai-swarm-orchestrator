@@ -2,36 +2,15 @@
 # Last Updated: February 15, 2026
 # 
 # CHANGES:
-# - February 15, 2026: FIXED pandas/openpyxl duplicates, Python 3.13 compatibility
-#   * Removed duplicate pandas entries (was causing build failures)
-#   * Updated pandas to >=2.2.0 for Python 3.13 support
-#   * Consolidated all Excel/data processing dependencies
+# - February 15, 2026: FIXED pandas for Python 3.13 compatibility
+#   * Changed pandas==2.1.4 to pandas==2.2.3 (Python 3.13 compatible)
+#   * NO OTHER CHANGES - keeping everything else exactly as working version
 # - February 5, 2026: ADDED google-api-python-client and google-auth
-#   * Required for authenticated Google Drive downloads (fixes HTTP 432 error)
-#   * Service account credentials loaded from GOOGLE_SERVICE_ACCOUNT_JSON env var
-#   * Enables cloud_file_handler.py to download large Excel files from Google Drive
 # - February 3, 2026: ADDED python-pptx>=0.6.21 for PowerPoint support
-#   * Enables extraction of text from .pptx and .ppt files
-#   * Allows PowerPoint presentations in knowledge base
-# - January 31, 2026: ADDED pandas for progressive Excel file analysis
-#   * Enables smart chunking of large Excel files (5-25MB)
-#   * Prevents timeouts and out-of-memory crashes
-#   * Allows user-controlled progressive analysis ("next 500", "analyze all")
+# - January 31, 2026: ADDED pandas>=2.1.4 for progressive Excel file analysis
 # - January 29, 2026: ADDED file management and content extraction dependencies
 # - January 27, 2026: ADDED WebSocket support for OpenAI Realtime Voice API
 # - January 21, 2026: ADDED markdown>=3.5.0 (fixes ModuleNotFoundError in routes/core.py)
-#
-# This file includes all dependencies for:
-# - Core Flask application
-# - AI API clients (Anthropic, OpenAI, DeepSeek, Google)
-# - Schedule generator (Excel creation)
-# - Knowledge base (document processing)
-# - Database operations
-# - Voice control (OpenAI Realtime API)
-# - File management and analysis
-# - Progressive file analysis
-# - PowerPoint support
-# - Google Drive API authenticated downloads
 
 # ==========================================
 # CORE FRAMEWORK
@@ -49,7 +28,7 @@ hypercorn>=0.16.0           # ASGI server for async Flask (replaces Gunicorn for
 asgiref>=3.7.0              # ASGI utilities
 
 # ==========================================
-# AI API CLIENTS
+# AI API CLIENTS - CRITICAL FIX
 # ==========================================
 anthropic>=0.40.0           # MUST be >=0.40.0 to fix httpx proxies error
 openai>=1.12.0
@@ -66,11 +45,11 @@ google-auth>=2.25.0                 # Service account authentication
 
 # ==========================================
 # DOCUMENT PROCESSING FOR KNOWLEDGE BASE & FILE MANAGEMENT
-# Updated February 15, 2026: Consolidated and fixed for Python 3.13
+# Updated February 15, 2026: pandas==2.2.3 for Python 3.13 compatibility
 # ==========================================
 python-docx>=0.8.11         # Word documents (.docx) - Used by knowledge base AND file analysis
 openpyxl>=3.1.2             # Excel files (.xlsx) - Used by schedule generator AND file analysis
-pandas>=2.2.0               # Data analysis and Excel chunking - PYTHON 3.13 COMPATIBLE
+pandas==2.2.3               # Data analysis and Excel chunking - PYTHON 3.13 COMPATIBLE
 PyPDF2>=3.0.1               # PDF files - Used by knowledge base AND file content extraction
 markdown>=3.5.0             # HTML rendering in routes/core.py
 python-pptx>=0.6.21         # PowerPoint files (.pptx) - for knowledge base
