@@ -1206,22 +1206,6 @@ except ImportError as e:
     print(f"ℹ️  Background File Processor routes not found: {e}")
 except Exception as e:
     print(f"⚠️  Background File Processor registration failed: {e}")
-# ============================================================================
-# BACKGROUND FILE PROCESSOR BLUEPRINT (Added February 5, 2026)
-# Handles large files (50MB+) in background threads
-# ============================================================================
-try:
-    from routes.background_jobs import background_jobs_bp
-    app.register_blueprint(background_jobs_bp)
-    print("✅ Background File Processor API registered")
-    print("   - Process files 50MB+ in background")
-    print("   - 1,000 row chunks")
-    print("   - Progress tracking")
-    print("   - Job status API")
-except ImportError as e:
-    print(f"ℹ️  Background File Processor routes not found: {e}")
-except Exception as e:
-    print(f"⚠️  Background File Processor registration failed: {e}")
 # KNOWLEDGE BACKUP SYSTEM BLUEPRINT (Added February 4, 2026)
 # ============================================================================
 try:
