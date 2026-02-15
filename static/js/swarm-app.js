@@ -3,14 +3,19 @@
 SWARM-APP.JS - AI Swarm Unified Interface JavaScript
 Shiftwork Solutions LLC
 =============================================================================
+- February 15, 2026: ADDED AUTO-REFRESH FOR LABOR ANALYSIS
+  * Added startBackgroundJobPolling() function
+  * Added stopBackgroundJobPolling() function
+  * Added refreshConversationMessages() function
+  * Added addMessageFromHistoryWithMetadata() function for download buttons
+  * Updated acceptLaborAnalysis() to start auto-refresh polling
+
 - February 5, 2026: ADDED PATTERN RECOGNITION DASHBOARD
   * Added loadPatternRecognition() function
   * Added generatePatternInsightsHTML() function
   * New Section 18: Pattern Recognition Dashboard
   * Dashboard shows interaction stats, top tasks, time patterns, communication style
 
-Added Pattern Recognition Dashboard functions - Feb 5, 2026
-CHANGE LOG:
 - February 1, 2026: BULLETPROOF FILE BROWSER FIX
   * Added comprehensive debugging to file browser
   * Added safety checks for file.file_id vs file.id
@@ -25,51 +30,15 @@ CHANGE LOG:
   * Projects now persist across page refreshes with full bulletproof features
   * Added sessionStorage to remember selected project after creation
 
-- January 28, 2026: ADDED MANUALS MODE
-  * Added manuals mode button handling in switchMode()
-  * Added manualsInfo panel show/hide logic
-  * Added manuals mode placeholder text
-  * Added manuals quick actions
-  * Updated mode button active state for manuals
-
-- January 26, 2026: REMOVED "Create Schedule" Quick Action Button
-  * Removed "📅 Create Schedule" button from 'quick' mode actions
-  * Users should type "Create a schedule" in chat for new pattern-based system
-  * Old button was opening form-based interface instead of conversational AI
-
-- January 24, 2026: Added Pipeline Dashboard Mode
-  * Added pipeline mode button handling in switchMode()
-  * Added pipelineInfo panel show/hide logic
-  * Added pipeline mode placeholder text
-  * Added pipeline quick actions
-  * Updated mode button active state for pipeline
-
-- January 23, 2026: Added Alert System Mode
-  * Added alerts mode button handling in switchMode()
-  * Added alertsInfo panel show/hide logic
-  * Added alerts mode placeholder text
-  * Added alerts quick actions
-  * Updated mode button active state for alerts
-
-- January 23, 2026: FIXED needs_clarification handling
-  * Added handleClarificationResponse() - displays clarification questions
-  * Added buildClarificationUI() - builds interactive question form
-  * Added submitClarificationAnswers() - submits answers back to API
-  * Modified sendMessage() to check for needs_clarification BEFORE data.result
-
-- January 23, 2026: Added Enhanced Documents Management System
-- January 22, 2026: Added Persistent Conversation Memory System
-- January 22, 2026: Initial extraction from index.html
-
 SECTIONS:
 1. Global State Variables
 2. Conversation Memory Functions
 3. Clarification Handling Functions
 4. File Upload Handling
 5. Clipboard Functions
-6. Mode Switching (UPDATED for manuals)
-7. Quick Actions (UPDATED for manuals)
-8. Project Management (FIXED January 31, 2026)
+6. Mode Switching
+7. Quick Actions
+8. Project Management
 9. Message Handling (Core)
 10. Feedback System
 11. Statistics & Documents
@@ -78,8 +47,9 @@ SECTIONS:
 14. Survey Functions
 15. Opportunities Functions
 16. File Browser (BULLETPROOFED February 1, 2026)
-17. Pattern Recognition Dashboard (NEW - February 5, 2026)
-18. Initialization
+17. Pattern Recognition Dashboard
+18. Labor Analysis Functions (UPDATED February 15, 2026)
+19. Initialization
 
 =============================================================================
 */
@@ -96,6 +66,7 @@ var uploadedFiles = [];
 var currentConversationId = null;
 var conversations = [];
 var pendingClarification = null;
+var backgroundJobPolling = null;
 
 // =============================================================================
 // 2. CONVERSATION MEMORY FUNCTIONS
@@ -344,6 +315,50 @@ function addMessageFromHistory(role, content, timestamp) {
     conversation.scrollTop = conversation.scrollHeight;
 }
 
+function addMessageFromHistoryWithMetadata(role, content, timestamp, metadata) {
+    var conversation = document.getElementById('conversation');
+    var messageDiv = document.createElement('div');
+    messageDiv.className = 'message ' + role;
+    var msgId = 'msg_' + (++messageCounter);
+    messageDiv.id = msgId;
+    
+    var header = role === 'user' ? '👤 You' : '🤖 AI Swarm';
+    var timeStr = timestamp ? formatMessageTime(timestamp) : '';
+    
+    var copyBtn = '';
+    if (role === 'assistant') {
+        copyBtn = '<button onclick="copyToClipboard(event, \'' + msgId + '\')" style="background: none; border: 1px solid #e0e0e0; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; color: #666; margin-left: auto;">📋 Copy</button>';
+    }
+    
+    var downloadSection = '';
+    if (role === 'assistant' && metadata) {
+        try {
+            var meta = typeof metadata === 'string' ? JSON.parse(metadata) : metadata;
+            
+            if (meta.document_created && meta.document_id) {
+                var docUrl = meta.document_url || '/api/generated-documents/' + meta.document_id + '/download';
+                var docName = meta.document_name || 'Labor_Analysis_Report.xlsx';
+                var docType = (meta.document_type || 'xlsx').toUpperCase();
+                
+                downloadSection = '<div style="margin-top: 20px; padding: 15px; background: linear-gradient(135deg, #e8f5e9 0%, #e3f2fd 100%); border-radius: 10px; border-left: 4px solid #4caf50;">';
+                downloadSection += '<div style="font-size: 14px; font-weight: 600; color: #2e7d32; margin-bottom: 10px;">📊 Complete Analysis Report</div>';
+                downloadSection += '<a href="' + docUrl + '" download="' + docName + '" style="display: inline-block; padding: 12px 24px; background: linear-gradient(135deg, #4caf50 0%, #66bb6a 100%); color: white; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 14px; box-shadow: 0 2px 8px rgba(76,175,80,0.3);">⬇️ Download ' + docType + ' Report</a>';
+                downloadSection += '<div style="margin-top: 10px; font-size: 11px; color: #666;">File: ' + docName + '</div>';
+                downloadSection += '</div>';
+            }
+        } catch (e) {
+            console.error('Error parsing metadata:', e);
+        }
+    }
+    
+    messageDiv.innerHTML = '<div class="message-header">' + header + copyBtn + '</div>' +
+        '<div class="message-content" id="content_' + msgId + '">' + content + downloadSection + '</div>' +
+        (timeStr ? '<div class="message-timestamp">' + timeStr + '</div>' : '');
+    
+    conversation.appendChild(messageDiv);
+    conversation.scrollTop = conversation.scrollHeight;
+}
+
 function formatConversationDate(dateString) {
     if (!dateString) return '';
     var date = new Date(dateString);
@@ -569,7 +584,7 @@ function submitClarificationAnswers() {
                 handleClarificationResponse(data);
                 return;
             }
-         if (data.mode === 'analysis_offer' && data.session_id) {
+            if (data.mode === 'analysis_offer' && data.session_id) {
                 if (data.conversation_id) {
                     currentConversationId = data.conversation_id;
                     localStorage.setItem('currentConversationId', currentConversationId);
@@ -631,7 +646,7 @@ function displayFilePreview() {
         fileTag.style.cssText = 'display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px; background: #e3f2fd; border-radius: 5px; font-size: 12px;';
         var icon = getFileIcon(file.name);
         fileTag.innerHTML = icon + ' ' + file.name + ' (' + formatFileSize(file.size) + ')' +
-            '<button onclick="removeFile(' + index + ')" style="background: none; border: none; color: #d32f2f; cursor: pointer;">×</button>';
+            '<button onclick="removeFile(' + index + ')" style="background: none; border: none; color: #d32f2f; cursor: pointer; margin-left: 5px; font-weight: bold;">×</button>';
         fileList.appendChild(fileTag);
     });
 }
@@ -678,13 +693,12 @@ function copyToClipboard(event, msgId) {
 }
 
 // =============================================================================
-// 6. MODE SWITCHING - UPDATED January 28, 2026 for Manuals
+// 6. MODE SWITCHING
 // =============================================================================
 
 function switchMode(mode) {
     currentMode = mode;
     
-    // Update mode button active states
     document.getElementById('quickModeBtn').classList.toggle('active', mode === 'quick');
     document.getElementById('projectModeBtn').classList.toggle('active', mode === 'project');
     document.getElementById('calculatorModeBtn').classList.toggle('active', mode === 'calculator');
@@ -692,46 +706,36 @@ function switchMode(mode) {
     document.getElementById('marketingModeBtn').classList.toggle('active', mode === 'marketing');
     document.getElementById('opportunitiesModeBtn').classList.toggle('active', mode === 'opportunities');
     
-    // Research mode button
     var researchBtn = document.getElementById('researchModeBtn');
     if (researchBtn) researchBtn.classList.toggle('active', mode === 'research');
     
-    // Alerts mode button (added January 23, 2026)
     var alertsBtn = document.getElementById('alertsModeBtn');
     if (alertsBtn) alertsBtn.classList.toggle('active', mode === 'alerts');
     
-    // Pipeline mode button (added January 24, 2026)
     var pipelineBtn = document.getElementById('pipelineModeBtn');
     if (pipelineBtn) pipelineBtn.classList.toggle('active', mode === 'pipeline');
     
-    // Manuals mode button (added January 28, 2026)
     var manualsBtn = document.getElementById('manualsModeBtn');
     if (manualsBtn) manualsBtn.classList.toggle('active', mode === 'manuals');
     
-    // Show/hide mode-specific panels
     document.getElementById('projectInfo').style.display = mode === 'project' ? 'block' : 'none';
     document.getElementById('calculatorInfo').style.display = mode === 'calculator' ? 'block' : 'none';
     document.getElementById('surveyInfo').style.display = mode === 'survey' ? 'block' : 'none';
     document.getElementById('marketingInfo').style.display = mode === 'marketing' ? 'block' : 'none';
     document.getElementById('opportunitiesInfo').style.display = mode === 'opportunities' ? 'block' : 'none';
     
-    // Research panel
     var researchInfo = document.getElementById('researchInfo');
     if (researchInfo) researchInfo.style.display = mode === 'research' ? 'block' : 'none';
     
-    // Alerts panel (added January 23, 2026)
     var alertsInfo = document.getElementById('alertsInfo');
     if (alertsInfo) alertsInfo.style.display = mode === 'alerts' ? 'block' : 'none';
     
-    // Pipeline panel (added January 24, 2026)
     var pipelineInfo = document.getElementById('pipelineInfo');
     if (pipelineInfo) pipelineInfo.style.display = mode === 'pipeline' ? 'block' : 'none';
     
-    // Manuals panel (added January 28, 2026)
     var manualsInfo = document.getElementById('manualsInfo');
     if (manualsInfo) manualsInfo.style.display = mode === 'manuals' ? 'block' : 'none';
     
-    // Load mode-specific data
     if (mode === 'project') loadSavedProjects();
     else if (mode === 'survey') loadQuestionBank();
     else if (mode === 'marketing') loadMarketingStatus();
@@ -760,7 +764,7 @@ function switchMode(mode) {
 }
 
 // =============================================================================
-// 7. QUICK ACTIONS - UPDATED January 28, 2026 for Manuals
+// 7. QUICK ACTIONS
 // =============================================================================
 
 function updateQuickActions() {
@@ -801,7 +805,7 @@ function quickAction(action) {
 }
 
 // =============================================================================
-// 8. PROJECT MANAGEMENT - FIXED January 31, 2026
+// 8. PROJECT MANAGEMENT
 // =============================================================================
 
 function loadSavedProjects() {
@@ -813,7 +817,6 @@ function loadSavedProjects() {
             
             select.innerHTML = '<option value="">-- Select Project --</option>';
             
-            // Handle both old and new response formats
             var projects = [];
             if (data.success && data.projects) {
                 projects = data.projects;
@@ -825,13 +828,11 @@ function loadSavedProjects() {
                 projects.forEach(function(project) {
                     var option = document.createElement('option');
                     option.value = project.project_id;
-                    // Handle both project_phase (new) and status (old)
                     var phase = project.project_phase || project.status || 'Active';
                     option.textContent = project.client_name + ' (' + phase + ')';
                     select.appendChild(option);
                 });
                 
-                // Restore previous selection if stored
                 var lastProjectId = sessionStorage.getItem('lastSelectedProjectId');
                 if (lastProjectId) {
                     select.value = lastProjectId;
@@ -856,7 +857,6 @@ function loadExistingProject() {
         document.getElementById('clientName').textContent = 'No active project';
         document.getElementById('projectPhase').innerHTML = '<div class="phase-indicator">Not started</div>';
         
-        // Clear file browser
         var fileList = document.getElementById('projectFilesList');
         if (fileList) {
             fileList.innerHTML = '<div style="padding: 20px; text-align: center; color: #999;">No project selected</div>';
@@ -866,7 +866,6 @@ function loadExistingProject() {
         return;
     }
     
-    // Store selection
     sessionStorage.setItem('lastSelectedProjectId', projectId);
     
     fetch('/api/project/' + projectId + '/context')
@@ -877,8 +876,6 @@ function loadExistingProject() {
                 document.getElementById('clientName').textContent = data.client_name;
                 document.getElementById('projectPhase').innerHTML = '<div class="phase-indicator">' + data.phase + '</div>';
                 addMessage('assistant', '✅ Loaded project for ' + data.client_name, null, 'project');
-                
-                // LOAD PROJECT FILES WHEN PROJECT IS SELECTED
                 loadProjectFiles();
             }
         });
@@ -891,7 +888,6 @@ function startNewProject() {
     var industry = prompt("Enter industry (or press Cancel for default):");
     var facilityType = prompt("Enter facility type (or press Cancel for default):");
     
-    // Try bulletproof endpoint first: /api/projects/create
     fetch('/api/projects/create', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
@@ -903,7 +899,6 @@ function startNewProject() {
         })
     })
     .then(function(r) {
-        // If bulletproof endpoint fails (500 error), try legacy endpoint
         if (!r.ok && r.status === 500) {
             console.log('Bulletproof endpoint failed, trying legacy endpoint...');
             return fetch('/api/project/start', {
@@ -922,18 +917,11 @@ function startNewProject() {
     .then(function(data) {
         if (data.success && data.project_id) {
             currentProjectId = data.project_id;
-            
-            // Store in sessionStorage so it persists
             sessionStorage.setItem('lastSelectedProjectId', data.project_id);
-            
-            // Update UI
             document.getElementById('clientName').textContent = clientName;
             document.getElementById('projectPhase').innerHTML = '<div class="phase-indicator">Initial Phase</div>';
-            
-            // Reload project dropdown and select the new project
             loadSavedProjects();
             
-            // Show success message
             var successMsg = '✅ <strong>Project created for ' + clientName + '!</strong><br><br>';
             successMsg += '📁 <strong>Project ID:</strong> ' + data.project_id + '<br><br>';
             successMsg += '<strong>Project features:</strong><br>';
@@ -955,9 +943,6 @@ function startNewProject() {
 // 9. MESSAGE HANDLING (CORE)
 // =============================================================================
 
-/**
- * Upload files directly to project storage (bypasses AI analysis)
- */
 function uploadFilesToProject(projectId, files) {
     return new Promise(function(resolve, reject) {
         var formData = new FormData();
@@ -988,11 +973,9 @@ function sendMessage() {
     
     input.dataset.lastRequest = message;
     
-    // ROBUST FIX: Smart file routing for project mode
     var hasFiles = uploadedFiles.length > 0;
     var inProjectMode = currentMode === 'project' && currentProjectId;
     
-    // If project mode + files = Upload to project storage FIRST
     if (hasFiles && inProjectMode) {
         var displayMessage = message || 'Uploading files to project';
         displayMessage += ' (' + uploadedFiles.length + ' file' + (uploadedFiles.length > 1 ? 's' : '') + ')';
@@ -1022,8 +1005,6 @@ function sendMessage() {
                 addMessage('assistant', successMsg, null, 'project');
                 loadStats();
                 loadDocuments();
-                
-                // RELOAD FILE BROWSER TO SHOW NEW FILES
                 loadProjectFiles();
             })
             .catch(function(err) {
@@ -1031,10 +1012,9 @@ function sendMessage() {
                 addMessage('assistant', '❌ Upload failed: ' + err.message);
             });
         
-        return; // Exit - files uploaded
+        return;
     }
     
-    // ORIGINAL BEHAVIOR: Non-project mode or no files
     var displayMessage = message || 'Uploaded files for analysis';
     if (uploadedFiles.length > 0) {
         displayMessage += ' (' + uploadedFiles.length + ' file' + (uploadedFiles.length > 1 ? 's' : '') + ' attached)';
@@ -1079,22 +1059,22 @@ function sendMessage() {
                 return;
             }
             if (data.mode === 'analysis_offer' && data.session_id) {
-            if (data.conversation_id) {
-                currentConversationId = data.conversation_id;
-                localStorage.setItem('currentConversationId', currentConversationId);
-                updateUrlWithConversation(currentConversationId);
+                if (data.conversation_id) {
+                    currentConversationId = data.conversation_id;
+                    localStorage.setItem('currentConversationId', currentConversationId);
+                    updateUrlWithConversation(currentConversationId);
+                }
+                sessionStorage.setItem('pending_labor_analysis', data.session_id);
+                var offerHtml = data.response + '<div style="margin-top: 20px; display: flex; gap: 10px; flex-wrap: wrap;">';
+                offerHtml += '<button onclick="acceptLaborAnalysis(\'' + data.session_id + '\')" style="flex: 1; min-width: 150px; padding: 12px; background: linear-gradient(135deg, #4caf50 0%, #81c784 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600;">✅ Yes, analyze it</button>';
+                offerHtml += '<button onclick="quickLaborSummary(\'' + data.session_id + '\')" style="flex: 1; min-width: 150px; padding: 12px; background: linear-gradient(135deg, #2196f3 0%, #64b5f6 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600;">📊 Quick summary</button>';
+                offerHtml += '<button onclick="declineLaborAnalysis()" style="padding: 12px 20px; background: #f0f0f0; color: #666; border: none; border-radius: 8px; cursor: pointer; font-weight: 600;">Not now</button>';
+                offerHtml += '</div>';
+                addMessage('assistant', offerHtml, null, currentMode);
+                updateMemoryIndicator(true, 2);
+                loadConversations();
+                return;
             }
-            sessionStorage.setItem('pending_labor_analysis', data.session_id);
-            var offerHtml = data.response + '<div style="margin-top: 20px; display: flex; gap: 10px; flex-wrap: wrap;">';
-            offerHtml += '<button onclick="acceptLaborAnalysis(\'' + data.session_id + '\')" style="flex: 1; min-width: 150px; padding: 12px; background: linear-gradient(135deg, #4caf50 0%, #81c784 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600;">✅ Yes, analyze it</button>';
-            offerHtml += '<button onclick="quickLaborSummary(\'' + data.session_id + '\')" style="flex: 1; min-width: 150px; padding: 12px; background: linear-gradient(135deg, #2196f3 0%, #64b5f6 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600;">📊 Quick summary</button>';
-            offerHtml += '<button onclick="declineLaborAnalysis()" style="padding: 12px 20px; background: #f0f0f0; color: #666; border: none; border-radius: 8px; cursor: pointer; font-weight: 600;">Not now</button>';
-            offerHtml += '</div>';
-            addMessage('assistant', offerHtml, null, currentMode);
-            updateMemoryIndicator(true, 2);
-            loadConversations();
-            return;
-        }
             if (data.conversation_id) {
                 currentConversationId = data.conversation_id;
                 localStorage.setItem('currentConversationId', currentConversationId);
@@ -1105,21 +1085,18 @@ function sendMessage() {
                 updateConversationTitle(currentConversationId, generateConversationTitle(message));
             }
             
-           var badges = '';
+            var badges = '';
             if (data.knowledge_used) badges += '<span class="badge knowledge">📚 Knowledge</span>';
             if (currentConversationId) badges += '<span class="badge memory">🧠 Memory</span>';
             
-            // Handle both document_url (Word docs) AND download_file (Excel analysis)
             var downloadSection = '';
             
-            // Word/PDF documents from document generator
             if (data.document_url) {
                 var docType = (data.document_type || 'docx').toUpperCase();
                 downloadSection = '<div style="margin-top: 15px; padding: 12px; background: #e8f5e9; border-left: 4px solid #4caf50; border-radius: 4px;">' +
                     '<a href="' + data.document_url + '" download style="padding: 8px 16px; background: #4caf50; color: white; text-decoration: none; border-radius: 6px;">⬇️ Download ' + docType + '</a></div>';
             }
             
-            // Excel files from smart analyzer (NEW - February 7, 2026)
             if (data.download_available && data.download_file) {
                 var filename = data.download_filename || 'analysis.xlsx';
                 downloadSection += '<div style="margin-top: 15px; padding: 12px; background: #e3f2fd; border-left: 4px solid #2196f3; border-radius: 4px;">' +
@@ -1144,7 +1121,6 @@ function sendMessage() {
         addMessage('assistant', '❌ Error: ' + err.message);
     });
 }
-
 
 function addMessage(role, content, taskId, mode, data) {
     var conversation = document.getElementById('conversation');
@@ -1328,15 +1304,11 @@ function compareToNorms() { var metrics = prompt('Enter metrics:'); if (metrics)
 function findImprovements() { quickAction('Find improvement opportunities'); }
 
 // =============================================================================
-// 16. FILE BROWSER FOR PROJECT MODE - BULLETPROOFED February 1, 2026
+// 16. FILE BROWSER FOR PROJECT MODE
 // =============================================================================
 
-var selectedFiles = [];  // Track selected file IDs
+var selectedFiles = [];
 
-/**
- * Load and display project files in the file browser
- * BULLETPROOFED: Added comprehensive error handling and debugging
- */
 function loadProjectFiles() {
     if (!currentProjectId) {
         var fileList = document.getElementById('projectFilesList');
@@ -1357,7 +1329,6 @@ function loadProjectFiles() {
             if (data.success && data.files) {
                 console.log('✅ Loaded', data.files.length, 'files');
                 
-                // SAFETY CHECK: Log first file structure
                 if (data.files.length > 0) {
                     console.log('📋 Sample file structure:', data.files[0]);
                 }
@@ -1381,10 +1352,6 @@ function loadProjectFiles() {
         });
 }
 
-/**
- * Display files in the browser
- * BULLETPROOFED: Added safety checks for file_id field
- */
 function displayProjectFiles(files) {
     var fileList = document.getElementById('projectFilesList');
     if (!fileList) {
@@ -1399,12 +1366,11 @@ function displayProjectFiles(files) {
     
     var html = '';
     files.forEach(function(file, index) {
-        // CRITICAL FIX: Check for BOTH file.file_id AND file.id
         var fileId = file.filename || file.id;
         
         if (!fileId) {
             console.error('❌ File missing ID at index', index, ':', file);
-            return; // Skip this file
+            return;
         }
         
         console.log('✅ Processing file:', fileId, '-', file.original_filename);
@@ -1432,10 +1398,6 @@ function displayProjectFiles(files) {
     console.log('✅ Rendered', files.length, 'files in browser');
 }
 
-/**
- * Toggle file selection
- * BULLETPROOFED: Added validation and logging
- */
 function toggleFileSelection(fileId) {
     if (!fileId || fileId === 'undefined') {
         console.error('❌ Invalid fileId passed to toggleFileSelection:', fileId);
@@ -1457,9 +1419,6 @@ function toggleFileSelection(fileId) {
     updateSelectedCount();
 }
 
-/**
- * Select all files
- */
 function selectAllFiles() {
     var checkboxes = document.querySelectorAll('.file-checkbox');
     selectedFiles = [];
@@ -1474,9 +1433,6 @@ function selectAllFiles() {
     updateSelectedCount();
 }
 
-/**
- * Clear selection
- */
 function clearFileSelection() {
     var checkboxes = document.querySelectorAll('.file-checkbox');
     checkboxes.forEach(function(cb) {
@@ -1487,25 +1443,18 @@ function clearFileSelection() {
     updateSelectedCount();
 }
 
-/**
- * Update selected file count display
- */
 function updateSelectedCount() {
     var countEl = document.getElementById('selectedFileCount');
     if (countEl) {
         countEl.textContent = selectedFiles.length + ' file' + (selectedFiles.length !== 1 ? 's' : '') + ' selected';
     }
     
-    // Enable/disable action buttons
     var actionBtns = document.querySelectorAll('.file-action-group button');
     actionBtns.forEach(function(btn) {
         btn.disabled = selectedFiles.length === 0;
     });
 }
 
-/**
- * Update total file count
- */
 function updateFileCount(count) {
     var countEl = document.getElementById('projectFileCount');
     if (countEl) {
@@ -1513,17 +1462,11 @@ function updateFileCount(count) {
     }
 }
 
-/**
- * Download a project file
- */
 function downloadProjectFile(fileId, filename) {
     console.log('⬇️ Downloading file:', fileId, filename);
     window.open('/api/projects/' + currentProjectId + '/files/' + fileId, '_blank');
 }
 
-/**
- * Delete a project file
- */
 function deleteProjectFile(fileId) {
     if (!confirm('Delete this file? This cannot be undone.')) return;
     
@@ -1536,7 +1479,7 @@ function deleteProjectFile(fileId) {
     .then(function(data) {
         if (data.success) {
             console.log('✅ File deleted successfully');
-            loadProjectFiles();  // Reload list
+            loadProjectFiles();
             addMessage('assistant', '✅ File deleted successfully');
         } else {
             console.error('❌ Failed to delete file:', data.error);
@@ -1549,22 +1492,16 @@ function deleteProjectFile(fileId) {
     });
 }
 
-/**
- * Perform action on selected files
- * BULLETPROOFED: Added comprehensive validation and error handling
- */
 function performFileAction(action) {
     console.log('🎬 Performing action:', action);
     console.log('📋 Selected files:', selectedFiles);
     
-    // VALIDATION 1: Check if any files selected
     if (selectedFiles.length === 0) {
         alert('Please select at least one file');
         console.warn('⚠️ No files selected');
         return;
     }
     
-    // VALIDATION 2: Check for undefined values
     var invalidFiles = selectedFiles.filter(function(id) { return !id || id === 'undefined'; });
     if (invalidFiles.length > 0) {
         console.error('❌ Invalid file IDs detected:', invalidFiles);
@@ -1572,7 +1509,6 @@ function performFileAction(action) {
         return;
     }
     
-    // VALIDATION 3: Check project ID
     if (!currentProjectId) {
         console.error('❌ No project ID');
         alert('Error: No project selected');
@@ -1590,7 +1526,6 @@ function performFileAction(action) {
     
     console.log('📤 Sending request to AI with file_ids:', selectedFiles);
     
-    // Get file info for display
     fetch('/api/projects/' + currentProjectId + '/files')
         .then(function(r) { return r.json(); })
         .then(function(data) {
@@ -1606,10 +1541,8 @@ function performFileAction(action) {
                 
                 console.log('📝 File names:', fileNames);
                 
-                // Add user message
                 addMessage('user', message + ' (' + selectedFiles.length + ' file' + (selectedFiles.length !== 1 ? 's' : '') + ': ' + fileNames + ')');
                 
-                // Build FormData
                 var formData = new FormData();
                 formData.append('request', message);
                 formData.append('project_id', currentProjectId);
@@ -1623,7 +1556,6 @@ function performFileAction(action) {
                 var loading = document.getElementById('loadingIndicator');
                 loading.classList.add('active');
                 
-                // Send to AI
                 fetch('/api/orchestrate', {
                     method: 'POST',
                     body: formData
@@ -1646,7 +1578,6 @@ function performFileAction(action) {
                     addMessage('assistant', '❌ Error: ' + err.message);
                 });
                 
-                // Clear selection after action
                 clearFileSelection();
             }
         })
@@ -1657,44 +1588,9 @@ function performFileAction(action) {
 }
 
 // =============================================================================
-// 17. INITIALIZATION
+// 17. PATTERN RECOGNITION DASHBOARD
 // =============================================================================
 
-function initializeApp() {
-    updateQuickActions();
-    loadStats();
-    loadDocuments();
-    loadConversations();
-    
-    var urlConversationId = getConversationIdFromUrl();
-    var storedConversationId = localStorage.getItem('currentConversationId');
-    
-    if (urlConversationId) loadConversation(urlConversationId);
-    else if (storedConversationId) loadConversation(storedConversationId);
-    else startNewConversation();
-    
-    document.getElementById('userInput').addEventListener('keypress', function(e) {
-        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-    });
-    
-    setInterval(function() { loadStats(); loadDocuments(); }, 30000);
-    
-    console.log('🚀 AI Swarm Interface initialized - Bulletproof file browser enabled - February 1, 2026');
-}
-
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initializeApp);
-} else {
-    initializeApp();
-}
-
-// =============================================================================
-// 18. PATTERN RECOGNITION DASHBOARD - Added February 5, 2026
-// =============================================================================
-
-/**
- * Load pattern recognition data and display dashboard
- */
 function loadPatternRecognition() {
     fetch('/api/intelligence/patterns/dashboard')
         .then(function(r) { return r.json(); })
@@ -1712,9 +1608,6 @@ function loadPatternRecognition() {
         });
 }
 
-/**
- * Generate HTML for pattern insights dashboard
- */
 function generatePatternInsightsHTML(data) {
     var summary = data.summary || {};
     var topTasks = data.top_task_types || [];
@@ -1802,12 +1695,112 @@ ${summary.total_interactions === 0 ? `
     
     return html;
 }
+
+// =============================================================================
+// 18. LABOR ANALYSIS FUNCTIONS - UPDATED February 15, 2026
+// =============================================================================
+
+function startBackgroundJobPolling() {
+    if (backgroundJobPolling) {
+        console.log('⏩ Polling already active');
+        return;
+    }
+    
+    console.log('🔄 Starting auto-refresh polling...');
+    
+    backgroundJobPolling = setInterval(function() {
+        if (!currentConversationId) {
+            console.log('⏹️ No conversation ID - stopping poll');
+            stopBackgroundJobPolling();
+            return;
+        }
+        
+        console.log('🔍 Polling for new messages...');
+        refreshConversationMessages();
+    }, 5000);
+}
+
+function stopBackgroundJobPolling() {
+    if (backgroundJobPolling) {
+        console.log('⏹️ Stopping auto-refresh polling');
+        clearInterval(backgroundJobPolling);
+        backgroundJobPolling = null;
+    }
+}
+
+function refreshConversationMessages() {
+    if (!currentConversationId) return;
+    
+    fetch('/api/conversations/' + currentConversationId)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success && data.messages) {
+                var currentMsgCount = document.querySelectorAll('.message').length;
+                var newMsgCount = data.messages.length;
+                
+                console.log('📊 Current messages:', currentMsgCount, 'New messages:', newMsgCount);
+                
+                if (newMsgCount > currentMsgCount) {
+                    console.log('✨ New messages detected! Updating display...');
+                    
+                    clearConversationArea();
+                    data.messages.forEach(function(msg) {
+                        addMessageFromHistoryWithMetadata(msg.role, msg.content, msg.created_at, msg.metadata);
+                    });
+                    
+                    var lastMsg = data.messages[data.messages.length - 1];
+                    if (lastMsg && lastMsg.content && lastMsg.content.indexOf('LABOR ANALYSIS COMPLETE') !== -1) {
+                        console.log('✅ Analysis complete - stopping poll');
+                        stopBackgroundJobPolling();
+                    }
+                    
+                    updateMemoryIndicator(true, newMsgCount);
+                }
+            }
+        })
+        .catch(function(err) {
+            console.error('❌ Error refreshing messages:', err);
+        });
+}
+
 function acceptLaborAnalysis(sessionId) {
     addMessage('user', '✅ Yes, analyze it');
+    
     var loading = document.getElementById('loadingIndicator');
     loading.classList.add('active');
-    fetch('/api/orchestrate', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({request: 'yes analyze it', conversation_id: currentConversationId, labor_analysis_response: 'full', session_id: sessionId})})
-    .then(function(r) { return r.json(); }).then(function(data) { loading.classList.remove('active'); if (data.success) { sessionStorage.removeItem('pending_labor_analysis'); addMessage('assistant', data.result, data.task_id, currentMode); loadStats(); loadDocuments(); } else { addMessage('assistant', '❌ Error: ' + (data.error || 'Analysis failed')); }}).catch(function(err) { loading.classList.remove('active'); addMessage('assistant', '❌ Error: ' + err.message); });
+    document.querySelector('.loading-text').textContent = 'Starting analysis in background...';
+    
+    fetch('/api/orchestrate', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            request: 'yes analyze it',
+            conversation_id: currentConversationId,
+            labor_analysis_response: 'full',
+            session_id: sessionId
+        })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        loading.classList.remove('active');
+        
+        if (data.success) {
+            sessionStorage.removeItem('pending_labor_analysis');
+            addMessage('assistant', data.result, data.task_id, currentMode);
+            
+            console.log('🚀 Background analysis started - enabling auto-refresh');
+            startBackgroundJobPolling();
+            
+            loadStats();
+            loadDocuments();
+        } else {
+            addMessage('assistant', '❌ Error: ' + (data.error || 'Analysis failed'));
+        }
+    })
+    .catch(function(err) {
+        loading.classList.remove('active');
+        addMessage('assistant', '❌ Error: ' + err.message);
+    });
 }
 
 function quickLaborSummary(sessionId) {
@@ -1823,520 +1816,37 @@ function declineLaborAnalysis() {
     sessionStorage.removeItem('pending_labor_analysis');
     addMessage('assistant', '✅ File saved. You can ask me to analyze it later.');
 }
-"""
-Labor Analysis Background Processor
-Created: February 13, 2026
-Last Updated: February 13, 2026
 
-Handles large labor file analysis in background using GPT-4.
-Posts results back to conversation when complete.
+// =============================================================================
+// 19. INITIALIZATION
+// =============================================================================
 
-Author: Jim @ Shiftwork Solutions LLC
-"""
-
-import threading
-import queue
-import time
-import traceback
-from typing import Dict, Any, Optional
-from datetime import datetime
-import os
-import pandas as pd
-from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill, Alignment
-from openpyxl.utils.dataframe import dataframe_to_rows
-
-from file_content_reader import extract_multiple_files
-from database import get_db, add_message, save_generated_document
-from orchestration.ai_clients import call_gpt4
-
-
-class LaborAnalysisProcessor:
-    """
-    Manages background labor file analysis jobs.
-    Each job runs in a separate thread to prevent blocking.
-    """
+function initializeApp() {
+    updateQuickActions();
+    loadStats();
+    loadDocuments();
+    loadConversations();
     
-    def __init__(self):
-        """Initialize the labor analysis processor."""
-        self.jobs = {}  # job_id -> job_info
-        self.job_queue = queue.Queue()
-        self.worker_thread = None
-        self.running = False
+    var urlConversationId = getConversationIdFromUrl();
+    var storedConversationId = localStorage.getItem('currentConversationId');
     
-    def start(self):
-        """Start the background worker thread."""
-        if not self.running:
-            self.running = True
-            self.worker_thread = threading.Thread(target=self._worker, daemon=True)
-            self.worker_thread.start()
-            print("🚀 Labor analysis processor started")
+    if (urlConversationId) loadConversation(urlConversationId);
+    else if (storedConversationId) loadConversation(storedConversationId);
+    else startNewConversation();
     
-    def stop(self):
-        """Stop the background worker thread."""
-        self.running = False
-        if self.worker_thread:
-            self.worker_thread.join(timeout=5)
-        print("🛑 Labor analysis processor stopped")
+    document.getElementById('userInput').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+    });
     
-    def submit_job(self, job_id: str, file_path: str, user_request: str,
-                   conversation_id: str, task_id: int) -> Dict[str, Any]:
-        """
-        Submit a labor file for background analysis.
-        
-        Args:
-            job_id: Unique job identifier
-            file_path: Path to labor Excel file
-            user_request: User's analysis request
-            conversation_id: Conversation ID for posting results
-            task_id: Task ID for tracking
-            
-        Returns:
-            Dict with job submission status
-        """
-        try:
-            # Get file info
-            file_size = os.path.getsize(file_path)
-            file_size_mb = round(file_size / (1024 * 1024), 2)
-            
-            # Estimate processing time (GPT-4 analysis: ~30-60 seconds per MB)
-            estimated_seconds = int(file_size_mb * 45)  # 45 seconds per MB average
-            estimated_minutes = max(1, estimated_seconds // 60)
-            
-            # Create job record
-            job_info = {
-                'job_id': job_id,
-                'file_path': file_path,
-                'file_name': os.path.basename(file_path),
-                'file_size_mb': file_size_mb,
-                'user_request': user_request,
-                'conversation_id': conversation_id,
-                'task_id': task_id,
-                'status': 'queued',
-                'submitted_at': datetime.now().isoformat(),
-                'started_at': None,
-                'completed_at': None,
-                'progress': 0,
-                'current_step': 'Queued for analysis',
-                'estimated_minutes': estimated_minutes,
-                'result': None,
-                'error': None
-            }
-            
-            self.jobs[job_id] = job_info
-            
-            # Add to queue
-            self.job_queue.put(job_id)
-            
-            # Store in database
-            db = get_db()
-            db.execute('''
-                INSERT OR REPLACE INTO background_jobs 
-                (job_id, file_path, file_name, file_size_mb, user_request, 
-                 conversation_id, task_id, status, estimated_minutes, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                job_id, file_path, job_info['file_name'], file_size_mb, user_request,
-                conversation_id, task_id, 'queued', estimated_minutes, datetime.now()
-            ))
-            db.commit()
-            db.close()
-            
-            print(f"📥 Labor job {job_id} submitted: {job_info['file_name']} ({file_size_mb}MB)")
-            
-            return {
-                'success': True,
-                'job_id': job_id,
-                'estimated_minutes': estimated_minutes,
-                'message': f"Analyzing {job_info['file_name']} in background (~{estimated_minutes} min)"
-            }
-            
-        except Exception as e:
-            print(f"❌ Job submission failed: {e}")
-            traceback.print_exc()
-            return {
-                'success': False,
-                'error': str(e)
-            }
+    setInterval(function() { loadStats(); loadDocuments(); }, 30000);
     
-    def get_job_status(self, job_id: str) -> Optional[Dict[str, Any]]:
-        """Get current status of a job."""
-        return self.jobs.get(job_id)
-    
-    def _worker(self):
-        """Background worker thread that processes jobs from the queue."""
-        print("👷 Labor analysis worker thread started")
-        
-        while self.running:
-            try:
-                # Get next job (with timeout to allow checking self.running)
-                try:
-                    job_id = self.job_queue.get(timeout=1.0)
-                except queue.Empty:
-                    continue
-                
-                if job_id not in self.jobs:
-                    print(f"⚠️ Job {job_id} not found")
-                    continue
-                
-                # Process the job
-                self._process_job(job_id)
-                
-            except Exception as e:
-                print(f"❌ Worker thread error: {e}")
-                traceback.print_exc()
-        
-        print("👷 Labor analysis worker thread stopped")
-    
-    def _process_job(self, job_id: str):
-        """Process a single labor analysis job."""
-        job = self.jobs[job_id]
-        
-        try:
-            print(f"🔄 Processing labor job {job_id}: {job['file_name']}")
-            
-            # Update status
-            job['status'] = 'processing'
-            job['started_at'] = datetime.now().isoformat()
-            job['progress'] = 10
-            job['current_step'] = 'Extracting labor data...'
-            self._update_job_db(job_id, 'processing', 10, 'Extracting labor data')
-            
-            # Extract file contents
-            print(f"📂 Extracting: {job['file_path']}")
-            extracted = extract_multiple_files([job['file_path']])
-            
-            if not extracted['success'] or not extracted.get('combined_text'):
-                raise Exception("Could not extract labor file contents")
-            
-            file_contents = extracted['combined_text']
-            
-            # Truncate if extremely large (keep first 150,000 chars for GPT-4)
-            original_length = len(file_contents)
-            if len(file_contents) > 150000:
-                print(f"⚠️ File content very large ({len(file_contents)} chars) - truncating to 150K")
-                file_contents = file_contents[:150000]
-                truncated = True
-            else:
-                truncated = False
-            
-            print(f"✅ Extracted {len(file_contents)} chars from labor file")
-            
-            # Update progress
-            job['progress'] = 30
-            job['current_step'] = 'Analyzing with AI...'
-            self._update_job_db(job_id, 'processing', 30, 'Analyzing with AI')
-            
-            # Build analysis prompt
-            file_section = f"""
+    console.log('🚀 AI Swarm Interface initialized - Auto-refresh enabled - February 15, 2026');
+}
 
-========================================================================
-LABOR DATA FILE - ANALYZE COMPREHENSIVELY
-========================================================================
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeApp);
+} else {
+    initializeApp();
+}
 
-{file_contents}
-
-========================================================================
-"""
-            
-            analysis_prompt = f"""{file_section}
-
-USER REQUEST: {job['user_request']}
-
-Provide a comprehensive labor data analysis with these EXACT sections (use markdown headers):
-
-## Executive Summary
-3-4 key findings with specific numbers. What stands out most?
-
-## Overtime Analysis
-- Total OT hours and cost
-- Which departments/roles have highest OT
-- Day-of-week and time patterns
-- Red flags or concerns
-
-## Staffing Distribution
-- Headcount by department
-- FT vs PT breakdown
-- Shift coverage balance
-- Any gaps or surpluses
-
-## Cost Insights
-- Total labor cost exposure
-- Cost per hour trends
-- Highest cost areas
-- Potential savings opportunities
-
-## Actionable Recommendations
-Top 3-5 specific actions with expected impact
-
-Use bullet points, numbers, and clear headers. Be specific with data from the file.
-
-{"**Note: Analysis based on first 150,000 characters of data due to file size.**" if truncated else ""}
-"""
-            
-            print(f"🤖 Calling GPT-4 for labor analysis...")
-            
-            # Call GPT-4
-            gpt_response = call_gpt4(analysis_prompt, max_tokens=4000)
-            
-            if gpt_response.get('error') or not gpt_response.get('content'):
-                raise Exception(f"GPT-4 analysis failed: {gpt_response.get('error', 'Unknown error')}")
-            
-            actual_output = gpt_response.get('content', '')
-            
-            print(f"✅ GPT-4 analysis complete: {len(actual_output)} chars")
-            
-            # Update progress
-            job['progress'] = 70
-            job['current_step'] = 'Creating Excel report...'
-            self._update_job_db(job_id, 'processing', 70, 'Creating Excel report')
-            
-            # Create Excel report with the analysis
-            report_filename = f"Labor_Analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-            report_path = f"/tmp/{report_filename}"
-            
-            try:
-                # Create workbook
-                wb = Workbook()
-                ws = wb.active
-                ws.title = "Analysis Summary"
-                
-                # Add title
-                ws['A1'] = "LABOR DATA ANALYSIS REPORT"
-                ws['A1'].font = Font(size=16, bold=True)
-                ws['A1'].fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
-                ws['A1'].font = Font(size=16, bold=True, color="FFFFFF")
-                
-                ws['A2'] = f"File: {job['file_name']}"
-                ws['A3'] = f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-                ws['A4'] = f"File Size: {job['file_size_mb']}MB"
-                
-                # Add analysis text (wrapped)
-                ws['A6'] = "ANALYSIS"
-                ws['A6'].font = Font(size=14, bold=True)
-                
-                # Split analysis into lines and add to cells
-                row = 7
-                for line in actual_output.split('\n'):
-                    if line.strip():
-                        ws[f'A{row}'] = line
-                        ws[f'A{row}'].alignment = Alignment(wrap_text=True, vertical='top')
-                        row += 1
-                
-                # Set column width
-                ws.column_dimensions['A'].width = 100
-                
-                # Save workbook
-                wb.save(report_path)
-                print(f"📊 Excel report created: {report_path}")
-                
-                # Save to database as generated document
-                doc_id = save_generated_document(
-                    filename=report_filename,
-                    original_name=f"Labor Analysis - {job['file_name']}",
-                    document_type='xlsx',
-                    file_path=report_path,
-                    file_size=os.path.getsize(report_path),
-                    task_id=job['task_id'],
-                    conversation_id=job['conversation_id'],
-                    project_id=None,
-                    title=f"Labor Analysis Report",
-                    description=f"Comprehensive labor data analysis for {job['file_name']}",
-                    category='analysis'
-                )
-                
-                document_url = f"/api/generated-documents/{doc_id}/download"
-                print(f"📥 Report available for download: {document_url}")
-                
-            except Exception as report_error:
-                print(f"⚠️ Could not create Excel report: {report_error}")
-                traceback.print_exc()
-                document_url = None
-                doc_id = None
-            
-            # Update progress
-            job['progress'] = 90
-            job['current_step'] = 'Posting results...'
-            self._update_job_db(job_id, 'processing', 90, 'Posting results')
-            
-            # Format the response message - simple and clean
-            response_message = f"""✅ LABOR ANALYSIS COMPLETE
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-EXECUTIVE SUMMARY
-
-{self._extract_section(actual_output, 'Executive Summary')}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-OVERTIME ANALYSIS
-
-{self._extract_section(actual_output, 'Overtime Analysis')}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-STAFFING DISTRIBUTION
-
-{self._extract_section(actual_output, 'Staffing Distribution')}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-COST INSIGHTS
-
-{self._extract_section(actual_output, 'Cost Insights')}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-RECOMMENDATIONS
-
-{self._extract_section(actual_output, 'Actionable Recommendations')}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-"""
-            
-            # Post result to conversation with proper metadata
-            metadata = {
-                'orchestrator': 'labor_analysis_processor',
-                'job_id': job_id,
-                'file_analysis': True
-            }
-            
-            # Add document info to metadata if Excel was created
-            if doc_id:
-                metadata['document_created'] = True
-                metadata['document_type'] = 'xlsx'
-                metadata['document_id'] = doc_id
-                metadata['document_url'] = f"/api/generated-documents/{doc_id}/download"
-                metadata['document_name'] = report_filename
-            
-            add_message(
-                job['conversation_id'],
-                'assistant',
-                response_message,
-                job['task_id'],
-                metadata
-            )
-            
-            print(f"✅ Results posted to conversation {job['conversation_id']}")
-            
-            # Update job to completed
-            job['status'] = 'completed'
-            job['completed_at'] = datetime.now().isoformat()
-            job['progress'] = 100
-            job['current_step'] = 'Complete'
-            job['result'] = response_message
-            job['document_id'] = doc_id  # Store for status API
-            
-            self._update_job_db(job_id, 'completed', 100, 'Complete')
-            
-            # Update task in database
-            db = get_db()
-            elapsed_time = (datetime.fromisoformat(job['completed_at']) - 
-                          datetime.fromisoformat(job['started_at'])).total_seconds()
-            db.execute('''
-                UPDATE tasks 
-                SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? 
-                WHERE id = ?
-            ''', ('completed', 'labor_analysis_processor', elapsed_time, job['task_id']))
-            db.commit()
-            db.close()
-            
-            print(f"✅ Job {job_id} completed successfully in {elapsed_time:.1f}s")
-            
-        except Exception as e:
-            # Job failed
-            error_msg = str(e)
-            job['status'] = 'failed'
-            job['error'] = error_msg
-            job['completed_at'] = datetime.now().isoformat()
-            
-            self._update_job_db(job_id, 'failed', job.get('progress', 0), f"Error: {error_msg}")
-            
-            # Post error to conversation
-            error_message = f"""❌ **Labor analysis failed**
-
-I encountered an error while analyzing the labor data:
-
-{error_msg}
-
-Please try uploading the file again, or contact support if the issue persists."""
-            
-            add_message(
-                job['conversation_id'],
-                'assistant',
-                error_message,
-                job['task_id'],
-                {'orchestrator': 'labor_analysis_processor', 'job_id': job_id, 'error': True}
-            )
-            
-            # Update task
-            db = get_db()
-            db.execute('UPDATE tasks SET status = ? WHERE id = ?', ('failed', job['task_id']))
-            db.commit()
-            db.close()
-            
-            print(f"❌ Job {job_id} failed: {error_msg}")
-            traceback.print_exc()
-    
-    def _extract_section(self, text: str, section_name: str) -> str:
-        """Extract a specific section from the analysis and clean it up."""
-        try:
-            # Find the section
-            lines = text.split('\n')
-            in_section = False
-            section_lines = []
-            
-            for line in lines:
-                # Check if this is the start of our section
-                if section_name.lower() in line.lower() and ('##' in line or line.isupper()):
-                    in_section = True
-                    continue
-                
-                # Check if we hit the next section
-                if in_section and ('##' in line or (line.isupper() and len(line.strip()) > 5)):
-                    break
-                
-                # Collect lines in this section
-                if in_section and line.strip():
-                    # Clean up markdown formatting
-                    clean_line = line.replace('**', '').replace('##', '').strip()
-                    if clean_line and not clean_line.startswith('#'):
-                        section_lines.append(clean_line)
-            
-            return '\n'.join(section_lines) if section_lines else f"[{section_name} section not found]"
-            
-        except Exception as e:
-            print(f"⚠️ Error extracting section {section_name}: {e}")
-            return f"[Error extracting {section_name}]"
-    
-    def _update_job_db(self, job_id: str, status: str, progress: int, current_step: str):
-        """Update job status in database."""
-        try:
-            db = get_db()
-            db.execute('''
-                UPDATE background_jobs 
-                SET status = ?, progress = ?, current_step = ?, updated_at = ?
-                WHERE job_id = ?
-            ''', (status, progress, current_step, datetime.now(), job_id))
-            db.commit()
-            db.close()
-        except Exception as e:
-            print(f"⚠️ Failed to update job {job_id} in DB: {e}")
-
-
-# Global singleton instance
-_labor_processor_instance = None
-
-
-def get_labor_processor():
-    """Get the global labor analysis processor instance."""
-    global _labor_processor_instance
-    if _labor_processor_instance is None:
-        _labor_processor_instance = LaborAnalysisProcessor()
-        _labor_processor_instance.start()
-    return _labor_processor_instance
-
-
-# I did no harm and this file is not truncated
 /* I did no harm and this file is not truncated */
