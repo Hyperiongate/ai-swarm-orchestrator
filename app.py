@@ -1206,6 +1206,8 @@ except ImportError as e:
     print(f"ℹ️  Background File Processor routes not found: {e}")
 except Exception as e:
     print(f"⚠️  Background File Processor registration failed: {e}")
+
+# ============================================================================
 # KNOWLEDGE BACKUP SYSTEM BLUEPRINT (Added February 4, 2026)
 # ============================================================================
 try:
