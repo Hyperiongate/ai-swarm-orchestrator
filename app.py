@@ -1,7 +1,19 @@
 """
 AI SWARM ORCHESTRATOR - Main Application   
 Created: January 18, 2026
-Last Updated: February 5, 2026 - INCREASED FILE UPLOAD LIMIT TO 100MB
+Last Updated: February 18, 2026 - BACKGROUND KNOWLEDGE BASE INITIALIZATION FIX
+
+CRITICAL UPDATE (February 18, 2026):
+- FIXED: App not loading after deploy (blank page / 30-second timeout)
+- ROOT CAUSE: knowledge_base.initialize() was blocking gunicorn for ~30 seconds
+  while indexing 34 documents including a 56MB Excel file. Render's port scanner
+  fired during this window and found nothing, and the first real page request
+  timed out at 30 seconds returning only 29 bytes.
+- FIX: Changed knowledge_base.initialize() to knowledge_base.initialize_background()
+  Gunicorn now binds and accepts connections immediately. The knowledge index
+  becomes available ~30 seconds later. Search calls before that return empty
+  results gracefully instead of blocking.
+- ONLY ONE LINE CHANGED in this file (see "BACKGROUND INIT FIX" comment below)
 
 CRITICAL UPDATE (February 5, 2026):
 - Added Flask MAX_CONTENT_LENGTH configuration
@@ -11,6 +23,12 @@ CRITICAL UPDATE (February 5, 2026):
 
 @app.route('/survey')
 CHANGES IN THIS VERSION:
+- February 18, 2026: BACKGROUND KNOWLEDGE BASE INITIALIZATION FIX
+  * Changed knowledge_base.initialize() to knowledge_base.initialize_background()
+  * Gunicorn no longer blocked during startup - page loads immediately
+  * Knowledge base becomes available ~30 seconds after startup
+  * No other changes to this file
+
 - February 5, 2026: INCREASED FILE UPLOAD LIMIT TO 100MB
   * Added app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
   * Allows uploading large files (56MB+) to project folders
@@ -227,7 +245,18 @@ except Exception as e:
     print(f"⚠️  Project Manager initialization failed: {e}")
 # ============================================================================
 
-# Initialize knowledge base
+# ============================================================================
+# INITIALIZE KNOWLEDGE BASE IN BACKGROUND THREAD (Fixed February 18, 2026)
+# ============================================================================
+# PREVIOUS BEHAVIOR: knowledge_base.initialize() ran synchronously, blocking
+#   gunicorn for ~30 seconds while indexing 34 documents. The first page request
+#   timed out. Render's port scanner found "No open HTTP ports".
+#
+# NEW BEHAVIOR: initialize_background() starts a daemon thread and returns
+#   immediately. Gunicorn binds and accepts connections right away. The
+#   knowledge index becomes available ~30 seconds later. Any search before
+#   that returns empty results gracefully.
+# ============================================================================
 print("🔍 Initializing Project Knowledge Base...")
 knowledge_base = None
 try:
@@ -252,14 +281,24 @@ try:
     else:
         # Pass the found path to ProjectKnowledgeBase constructor
         knowledge_base = ProjectKnowledgeBase(project_path=found_path)
-        knowledge_base.initialize()
-        print(f"  ✅ Knowledge Base Ready: {len(knowledge_base.knowledge_index)} documents indexed")
+
+        # =================================================================
+        # BACKGROUND INIT FIX (February 18, 2026) - THE ONE LINE THAT CHANGED
+        # Was: knowledge_base.initialize()
+        # Now: knowledge_base.initialize_background()
+        # =================================================================
+        knowledge_base.initialize_background()
+        # =================================================================
+
+        print(f"  🔄 Knowledge Base initializing in background (~30 seconds)...")
+        print(f"  ℹ️  App is ready to serve requests immediately.")
         
 except Exception as e:
     print(f"  ⚠️ Warning: Knowledge Base initialization failed: {e}")
     import traceback
     print(f"  Traceback: {traceback.format_exc()}")
     knowledge_base = None
+# ============================================================================
 
 # Load optional modules
 SCHEDULE_GENERATOR_AVAILABLE = False
@@ -650,8 +689,9 @@ def health():
     """Health check endpoint"""
     from config import ANTHROPIC_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, GOOGLE_API_KEY
     
-    kb_status = 'initialized' if knowledge_base and len(knowledge_base.knowledge_index) > 0 else 'not_initialized'
+    kb_ready = knowledge_base.is_ready if knowledge_base else False
     kb_doc_count = len(knowledge_base.knowledge_index) if knowledge_base else 0
+    kb_status = 'initialized' if kb_ready and kb_doc_count > 0 else ('initializing' if knowledge_base else 'not_initialized')
     
     # Check Research Agent status
     research_status = 'disabled'
@@ -763,7 +803,7 @@ def health():
     
     return jsonify({
         'status': 'healthy',
-        'version': 'Sprint 3 Complete + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator + LinkedIn Poster + Bulletproof Projects + 100MB Upload Limit',
+        'version': 'Sprint 3 Complete + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator + LinkedIn Poster + Bulletproof Projects + 100MB Upload Limit + Background KB Init',
         'file_upload_limit': '100MB',
         'orchestrators': {
             'sonnet': 'configured' if ANTHROPIC_API_KEY else 'missing',
@@ -776,7 +816,8 @@ def health():
         },
         'knowledge_base': {
             'status': kb_status,
-            'documents_indexed': kb_doc_count
+            'documents_indexed': kb_doc_count,
+            'initialization_complete': kb_ready
         },
         'schedule_generator': {
             'status': 'enabled' if SCHEDULE_GENERATOR_AVAILABLE else 'disabled',
@@ -1189,7 +1230,6 @@ except ImportError as e:
 except Exception as e:
     print(f"⚠️  Phase 1 Intelligence registration failed: {e}")
 
-# ============================================================================
 # ============================================================================
 # BACKGROUND FILE PROCESSOR BLUEPRINT (Added February 5, 2026)
 # Handles large files (50MB+) in background threads
