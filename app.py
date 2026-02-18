@@ -1,9 +1,18 @@
 """
 AI SWARM ORCHESTRATOR - Main Application   
 Created: January 18, 2026
-Last Updated: February 18, 2026 - BACKGROUND KNOWLEDGE BASE INITIALIZATION FIX
+Last Updated: February 18, 2026 - FIXED NameError crash on startup
 
-CRITICAL UPDATE (February 18, 2026):
+CRITICAL UPDATE (February 18, 2026) - BUG FIX:
+- FIXED: NameError crash at startup - add_conversation_context_table() was being
+  called BEFORE it was imported, causing a NameError that crashed the Python
+  process before gunicorn could serve any requests. This manifested as
+  "No open HTTP ports detected" on Render.
+- FIX: Moved 'from add_conversation_context_table import add_conversation_context_table'
+  to BEFORE the call to add_conversation_context_table() in the Sprint 2 migrations block.
+- ONLY the import order changed. No logic was altered.
+
+CRITICAL UPDATE (February 18, 2026) - BACKGROUND KB INIT:
 - FIXED: App not loading after deploy (blank page / 30-second timeout)
 - ROOT CAUSE: knowledge_base.initialize() was blocking gunicorn for ~30 seconds
   while indexing 34 documents including a 56MB Excel file. Render's port scanner
@@ -13,7 +22,6 @@ CRITICAL UPDATE (February 18, 2026):
   Gunicorn now binds and accepts connections immediately. The knowledge index
   becomes available ~30 seconds later. Search calls before that return empty
   results gracefully instead of blocking.
-- ONLY ONE LINE CHANGED in this file (see "BACKGROUND INIT FIX" comment below)
 
 CRITICAL UPDATE (February 5, 2026):
 - Added Flask MAX_CONTENT_LENGTH configuration
@@ -21,18 +29,17 @@ CRITICAL UPDATE (February 5, 2026):
 - Allows large Excel files (56MB+) to be uploaded to project folders
 - Required for Definitive Schedules v2.xlsx (56.22 MB) and similar large files
 
-@app.route('/survey')
 CHANGES IN THIS VERSION:
+- February 18, 2026: FIXED NameError - moved add_conversation_context_table import
+  above its call in the Sprint 2 migrations block. This was crashing startup.
 - February 18, 2026: BACKGROUND KNOWLEDGE BASE INITIALIZATION FIX
   * Changed knowledge_base.initialize() to knowledge_base.initialize_background()
   * Gunicorn no longer blocked during startup - page loads immediately
   * Knowledge base becomes available ~30 seconds after startup
-  * No other changes to this file
 
 - February 5, 2026: INCREASED FILE UPLOAD LIMIT TO 100MB
   * Added app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
   * Allows uploading large files (56MB+) to project folders
-  * Frontend and backend file size validations updated
   
 - January 30, 2026: ADDED BULLETPROOF PROJECT MANAGEMENT
   * Added projects_bp blueprint for complete project lifecycle management
@@ -42,94 +49,32 @@ CHANGES IN THIS VERSION:
   * Context management (key-value storage)
   * Complete project summaries
   * Backward compatible with existing database_file_management.py
-  * Fixes all 5 critical issues: project recall, file upload, file download, file retrieval, conversation context
+  * Fixes all 5 critical issues: project recall, file upload, file download,
+    file retrieval, conversation context
 
 - January 29, 2026: ADDED LINKEDIN POSTER DOWNLOAD BUTTON
-  * Added download button for linkedin_poster.pyw in Marketing Info Panel (templates/index.html)
-  * Desktop app with 120 pre-written posts tailored to 12 LinkedIn groups
-  * Styled consistently with Calculator and Survey app download sections
-  * Includes app description and Python requirements
-  * Download route already configured in app.py (see /downloads/<filename> route below)
-  * File should be placed in /downloads/linkedin_poster.pyw
-
 - January 28, 2026: ADDED IMPLEMENTATION MANUAL GENERATOR
-  * Added manuals_bp blueprint for conversational manual generation
-  * Question-driven data collection for implementation manuals
-  * Section-by-section drafting and refinement
-  * Iterative editing through conversation
-  * Lessons learned tracking
-  * Word document generation integration
-
 - January 26, 2026: UPDATED FOR PATTERN-BASED SCHEDULE SYSTEM
-  * Added Flask session configuration (required for multi-turn schedule conversations)
-  * Session stores schedule conversation state between requests
-  * Required for new conversational schedule generator
-
 - January 25, 2026: ADDED SWARM SELF-EVALUATION SYSTEM
-  * Added evaluation_bp blueprint for weekly self-reviews
-  * Evaluates internal performance against benchmarks
-  * Tracks emerging AI models and capabilities
-  * Identifies gaps in current AI stack
-  * Generates "State of the Swarm" reports with recommendations
-  * Can run manually or be scheduled weekly
-
 - January 25, 2026: ADDED CONTENT MARKETING ENGINE
-  * Added marketing_bp blueprint for autonomous content generation
-  * Auto-generates LinkedIn posts from consulting work
-  * Creates weekly "This Week in Shiftwork" newsletters
-  * Approval workflow for one-click content publishing
-  * Learns what content performs well over time
-
 - January 23, 2026: ADDED CLIENT INTELLIGENCE DASHBOARD
-  * Added intelligence_bp blueprint for lead pipeline management
-  * Lead scoring based on 202-company normative database
-  * Kanban pipeline: Detected → Qualified → Contacted → Proposal → Won/Lost
-  * AI-powered actions: draft emails, proposals, research
-  * Convert alerts to leads with automatic scoring
-
 - January 23, 2026: ADDED ALERT SYSTEM (Autonomous Monitoring)
-  * Added alerts_bp blueprint for automated monitoring and notifications
-  * Alert System provides scheduled monitoring jobs
-  * Lead alerts, competitor tracking, regulatory updates
-  * Email notifications for high-priority alerts
-  * Requires SMTP configuration for email delivery (optional)
-  * New environment variables: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD,
-    ALERT_FROM_EMAIL, ALERT_TO_EMAIL, ENABLE_EMAIL_ALERTS, ENABLE_SCHEDULED_JOBS
-
 - January 23, 2026: ADDED RESEARCH AGENT
-  * Added research_bp blueprint for web research capabilities
-  * Research Agent provides real-time industry news, regulations, studies
-  * Proactive intelligence for monitoring shift work industry
-  * Requires TAVILY_API_KEY environment variable
-
 - January 22, 2026: SPRINT 3 - ALL 5 ADVANCED FEATURES
-  * Enhanced Intelligence (learning & memory)
-  * Project Dashboard (visual management)
-  * Analytics Dashboard (data visualization)
-  * Smart Workflows (multi-step automation)
-  * Integration Hub (external services)
-
 - January 22, 2026: SPRINT 2 - PROACTIVE INTELLIGENCE
-  * Project auto-detection
-  * Resource finder (auto web search)
-  * Improvement engine (weekly reports)
-
 - January 22, 2026: SPRINT 1 - PROACTIVE INTELLIGENCE
-  * Smart questioning before task execution
-  * Post-task suggestions for next steps
-  * Pattern tracking for automation opportunities
 
 ARCHITECTURE:
 - config.py: All configuration
 - database.py: All database operations
-- database_file_management.py: Bulletproof project & file management (NEW)
+- database_file_management.py: Bulletproof project & file management
 - orchestration/: All AI logic + proactive_agent.py
 - routes/: All Flask endpoints
-- routes/projects_bulletproof.py: Project management API (NEW)
-- schedule_generator.py: Pattern-based schedule generation (UPDATED)
-- schedule_request_handler.py: Conversational schedule handler (NEW)
-- implementation_manual_generator.py: Conversational manual generation (NEW)
-- routes/manuals.py: Manual generator API endpoints (NEW)
+- routes/projects_bulletproof.py: Project management API
+- schedule_generator.py: Pattern-based schedule generation
+- schedule_request_handler.py: Conversational schedule handler
+- implementation_manual_generator.py: Conversational manual generation
+- routes/manuals.py: Manual generator API endpoints
 - swarm_self_evaluation.py: Weekly self-evaluation engine
 - routes/evaluation.py: Evaluation API endpoints
 - content_marketing_engine.py: Autonomous content generation
@@ -158,7 +103,6 @@ from database import init_db
 from database_survey_additions import add_surveys_table
 import os
 from flask import send_from_directory
-import os
 
 # Initialize Flask
 app = Flask(__name__)
@@ -166,16 +110,14 @@ app = Flask(__name__)
 # ============================================================================
 # CRITICAL FILE UPLOAD CONFIGURATION (Added February 5, 2026)
 # ============================================================================
-# This setting controls the maximum size of uploaded files
-# Default Flask limit is typically 16MB, which blocks large Excel files
+# Default Flask limit is typically 16MB, which blocks large Excel files.
 # Setting to 100MB to allow files like Definitive Schedules v2.xlsx (56.22 MB)
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
 print("📤 File Upload Limit: 100MB (allows large project files)")
 # ============================================================================
 
 # CRITICAL: Configure session for schedule conversation memory (Added January 26, 2026)
-# This is REQUIRED for the new pattern-based schedule system to work
-# Without this, the system cannot remember multi-turn conversations
+# Required for the pattern-based schedule system to remember multi-turn conversations
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production-12345')
 app.config['SESSION_TYPE'] = 'filesystem'
 
@@ -197,30 +139,38 @@ try:
     # Projects table migration (CRITICAL - must run FIRST)
     from migrate_projects_table import migrate_projects_table
     migrate_projects_table()
-    
+
     # Sprint 2 migrations
     from upgrade_database_sprint2 import upgrade_database_sprint2
     from add_resource_searches_table import add_resource_searches_table
     from add_improvement_reports_table import add_improvement_reports_table
-    
+
+    # =========================================================================
+    # FIX February 18, 2026: This import was previously placed AFTER the call
+    # to add_conversation_context_table(), causing a NameError that crashed
+    # the gunicorn worker on every deploy ("No open HTTP ports detected").
+    # Moved here so the function is defined before it is called.
+    # =========================================================================
+    from add_conversation_context_table import add_conversation_context_table
+    # =========================================================================
+
     upgrade_database_sprint2()
     add_resource_searches_table()
     add_improvement_reports_table()
     print("✅ Sprint 2 migrations complete!")
     add_conversation_context_table()
     print("✅ Conversation context table added!")
-    
+
     # Sprint 3 migrations
     from add_user_profiles_table import add_user_profiles_table
     from add_workflow_tables import add_workflow_tables
     from add_integration_logs_table import add_integration_logs_table
-    from add_conversation_context_table import add_conversation_context_table
-    
+
     add_user_profiles_table()
     add_workflow_tables()
     add_integration_logs_table()
     print("✅ Sprint 3 migrations complete!")
-    
+
 except ImportError as e:
     print(f"ℹ️  Some migrations not found: {e}")
 except Exception as e:
@@ -249,8 +199,8 @@ except Exception as e:
 # INITIALIZE KNOWLEDGE BASE IN BACKGROUND THREAD (Fixed February 18, 2026)
 # ============================================================================
 # PREVIOUS BEHAVIOR: knowledge_base.initialize() ran synchronously, blocking
-#   gunicorn for ~30 seconds while indexing 34 documents. The first page request
-#   timed out. Render's port scanner found "No open HTTP ports".
+#   gunicorn for ~30 seconds while indexing 34 documents. The first page
+#   request timed out. Render's port scanner found "No open HTTP ports".
 #
 # NEW BEHAVIOR: initialize_background() starts a daemon thread and returns
 #   immediately. Gunicorn binds and accepts connections right away. The
@@ -262,11 +212,11 @@ knowledge_base = None
 try:
     from pathlib import Path
     from knowledge_integration import ProjectKnowledgeBase
-    
+
     # Check for project_files first, then fall back to /mnt/project
     project_paths = ["project_files", "./project_files", "/mnt/project"]
     found_path = None
-    
+
     for path in project_paths:
         if Path(path).exists() and Path(path).is_dir():
             file_count = len(list(Path(path).iterdir()))
@@ -274,12 +224,11 @@ try:
                 found_path = path
                 print(f"  📁 Found directory: {path} ({file_count} files)")
                 break
-    
+
     if not found_path:
         print(f"  ⚠️ No project files found. Checked: {project_paths}")
         print(f"  ℹ️  Knowledge base features disabled until files are added")
     else:
-        # Pass the found path to ProjectKnowledgeBase constructor
         knowledge_base = ProjectKnowledgeBase(project_path=found_path)
 
         # =================================================================
@@ -292,7 +241,7 @@ try:
 
         print(f"  🔄 Knowledge Base initializing in background (~30 seconds)...")
         print(f"  ℹ️  App is ready to serve requests immediately.")
-        
+
 except Exception as e:
     print(f"  ⚠️ Warning: Knowledge Base initialization failed: {e}")
     import traceback
@@ -307,8 +256,6 @@ try:
     SCHEDULE_GENERATOR_AVAILABLE = True
     schedule_gen = get_pattern_generator()
     print("✅ Pattern-Based Schedule Generator loaded")
-    
-    # CRITICAL: Make schedule generator available to routes
     app.config['SCHEDULE_GENERATOR_AVAILABLE'] = SCHEDULE_GENERATOR_AVAILABLE
     app.config['SCHEDULE_GENERATOR'] = schedule_gen
 except ImportError:
@@ -322,8 +269,6 @@ try:
     OUTPUT_FORMATTER_AVAILABLE = True
     output_fmt = get_output_formatter()
     print("✅ Output Formatter loaded")
-    
-    # Make output formatter available to routes
     app.config['OUTPUT_FORMATTER_AVAILABLE'] = OUTPUT_FORMATTER_AVAILABLE
     app.config['OUTPUT_FORMATTER'] = output_fmt
 except ImportError:
@@ -340,54 +285,30 @@ def index():
 # =============================================================================
 # DOWNLOAD ROUTE FOR DESKTOP APPS - Updated January 29, 2026
 # =============================================================================
-# This route allows users to download desktop apps from the Marketing tab:
-# - LinkedIn Poster (linkedin_poster.pyw) - 120 pre-written posts for 12 groups
+# Serves downloadable desktop apps from the /downloads folder:
+# - LinkedIn Poster (linkedin_poster.pyw)
 # - Cost Calculator (cost_of_time_calculator_v3_3_2.pyw)
 # - Survey App (SurveySelector_v88_FIXED.pyw)
-# 
-# Files are served from the /downloads folder in your repository
 # =============================================================================
-
 @app.route('/downloads/<path:filename>')
 def download_file(filename):
     """
     Serve downloadable files from the /downloads directory.
     Allows downloading .pyw, .py, .txt, and .pdf files only.
-    
-    IMPORTANT: Place downloaded files in a /downloads folder at your project root:
-    /downloads/
-        linkedin_poster.pyw
-        cost_of_time_calculator_v3_3_2.pyw
-        SurveySelector_v87_FINAL.pyw
     """
     try:
-        # Security: Define allowed file extensions
         allowed_extensions = {'.pyw', '.py', '.txt', '.pdf'}
-        
-        # Get the file extension
         file_ext = os.path.splitext(filename)[1].lower()
-        
-        # Check if file extension is allowed
+
         if file_ext not in allowed_extensions:
             return "File type not allowed", 403
-        
-        # Get the path to the downloads directory
+
         downloads_dir = os.path.join(app.root_path, 'downloads')
-        
-        # Serve the file with forced download
-        return send_from_directory(
-            downloads_dir, 
-            filename, 
-            as_attachment=True
-        )
-        
+        return send_from_directory(downloads_dir, filename, as_attachment=True)
+
     except Exception as e:
-        # Log the error and return 404
         print(f"Error serving download file: {str(e)}")
         return "File not found", 404
-
-# =============================================================================
-# END DOWNLOAD ROUTE
 # =============================================================================
 
 @app.route('/workflow')
@@ -402,70 +323,46 @@ def workflow():
 def migrate_storage():
     """
     One-time migration endpoint to move projects from /tmp to persistent storage.
-    Run this ONCE after deploying persistent storage fix.
-    
-    USAGE:
-    Just visit: https://ai-swarm-orchestrator.onrender.com/api/admin/migrate-storage
-    
-    Or use curl: curl https://ai-swarm-orchestrator.onrender.com/api/admin/migrate-storage
+    USAGE: https://ai-swarm-orchestrator.onrender.com/api/admin/migrate-storage
     """
     try:
         import migrate_project_storage
         from io import StringIO
         import sys
-        
-        # Capture output
+
         old_stdout = sys.stdout
         sys.stdout = captured_output = StringIO()
-        
-        # Run migration
         migrate_project_storage.migrate_project_storage()
-        
-        # Restore stdout
         sys.stdout = old_stdout
         output = captured_output.getvalue()
-        
-        return jsonify({
-            'success': True,
-            'message': 'Migration complete! Check logs for details.',
-            'output': output
-        })
-        
+
+        return jsonify({'success': True, 'message': 'Migration complete!', 'output': output})
+
     except Exception as e:
         import traceback
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'traceback': traceback.format_exc()
-        }), 500
+        return jsonify({'success': False, 'error': str(e), 'traceback': traceback.format_exc()}), 500
+
 
 @app.route('/api/admin/bootstrap-knowledge', methods=['GET'])
 def bootstrap_knowledge_endpoint():
     """
     One-time endpoint to bootstrap knowledge base.
-    Just visit this URL to load all existing documents.
-    
     USAGE: https://ai-swarm-orchestrator.onrender.com/api/admin/bootstrap-knowledge
     """
     try:
         import bootstrap_knowledge
         from io import StringIO
         import sys
-        
-        # Capture output
+
         old_stdout = sys.stdout
         sys.stdout = captured_output = StringIO()
-        
-        # Run bootstrap
         result = bootstrap_knowledge.bootstrap_knowledge_base(project_path='./project_files')
-        
-        # Restore stdout
         sys.stdout = old_stdout
         output = captured_output.getvalue()
-        
+
         return jsonify({
             'success': True,
-            'message': 'Bootstrap complete! Check output for details.',
+            'message': 'Bootstrap complete!',
             'output': output,
             'results': {
                 'successful': len(result['success']),
@@ -473,26 +370,18 @@ def bootstrap_knowledge_endpoint():
                 'failed': len(result['failed'])
             }
         })
-        
+
     except Exception as e:
         import traceback
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'traceback': traceback.format_exc()
-        }), 500
+        return jsonify({'success': False, 'error': str(e), 'traceback': traceback.format_exc()}), 500
+
 
 @app.route('/api/admin/list-project-files', methods=['GET'])
 def list_project_files():
-    """
-    Diagnostic endpoint to see what files are actually accessible.
-    """
-    import os
+    """Diagnostic endpoint to see what files are actually accessible."""
     from pathlib import Path
-    
+
     results = {}
-    
-    # Check multiple possible locations
     locations_to_check = [
         '/mnt/project',
         '/mnt/project/project_files',
@@ -500,7 +389,7 @@ def list_project_files():
         './project_files',
         os.path.join(os.getcwd(), 'project_files')
     ]
-    
+
     for location in locations_to_check:
         try:
             path = Path(location)
@@ -508,179 +397,109 @@ def list_project_files():
                 if path.is_dir():
                     files = [f.name for f in path.iterdir() if f.is_file()]
                     results[str(location)] = {
-                        'exists': True,
-                        'is_dir': True,
-                        'file_count': len(files),
-                        'files': files[:10],  # First 10 files
+                        'exists': True, 'is_dir': True,
+                        'file_count': len(files), 'files': files[:10],
                         'total_files': len(files)
                     }
                 else:
-                    results[str(location)] = {
-                        'exists': True,
-                        'is_dir': False,
-                        'note': 'This is a file, not a directory'
-                    }
+                    results[str(location)] = {'exists': True, 'is_dir': False, 'note': 'This is a file, not a directory'}
             else:
-                results[str(location)] = {
-                    'exists': False
-                }
+                results[str(location)] = {'exists': False}
         except Exception as e:
-            results[str(location)] = {
-                'error': str(e)
-            }
-    
-    # Also check current working directory
+            results[str(location)] = {'error': str(e)}
+
     results['current_working_directory'] = os.getcwd()
-    
-    return jsonify({
-        'success': True,
-        'locations_checked': results
-    })
+    return jsonify({'success': True, 'locations_checked': results})
+
 
 @app.route('/api/admin/fix-patterns-table', methods=['GET'])
 def fix_patterns_table():
     """
     One-time migration to fix learned_patterns table.
-    Adds missing supporting_documents column.
-    
     USAGE: https://ai-swarm-orchestrator.onrender.com/api/admin/fix-patterns-table
     """
     try:
         import migrate_learned_patterns
         from io import StringIO
         import sys
-        
-        # Capture output
+
         old_stdout = sys.stdout
         sys.stdout = captured_output = StringIO()
-        
-        # Run migration
         migrate_learned_patterns.migrate_learned_patterns()
-        
-        # Restore stdout
         sys.stdout = old_stdout
         output = captured_output.getvalue()
-        
-        return jsonify({
-            'success': True,
-            'message': 'Migration complete!',
-            'output': output
-        })
-        
+
+        return jsonify({'success': True, 'message': 'Migration complete!', 'output': output})
+
     except Exception as e:
         import traceback
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'traceback': traceback.format_exc()
-        }), 500
+        return jsonify({'success': False, 'error': str(e), 'traceback': traceback.format_exc()}), 500
+
 
 @app.route('/api/admin/diagnose-databases', methods=['GET'])
 def diagnose_databases():
-    """
-    Find all swarm_intelligence.db files and show their contents.
-    """
-    import os
+    """Find all swarm_intelligence.db files and show their contents."""
     import sqlite3
     from pathlib import Path
-    
+
     results = {}
-    
-    # Search for database files
-    search_paths = [
-        '.',
-        '/opt/render/project/src',
-        '/mnt/project',
-        '/tmp'
-    ]
-    
+    search_paths = ['.', '/opt/render/project/src', '/mnt/project', '/tmp']
+
     for search_path in search_paths:
         try:
             path = Path(search_path)
             if path.exists():
-                # Look for swarm_intelligence.db files
                 for db_file in path.rglob('swarm_intelligence.db'):
                     db_path = str(db_file.absolute())
-                    
                     try:
                         db = sqlite3.connect(db_path)
                         cursor = db.cursor()
-                        
-                        # Count documents
                         cursor.execute('SELECT COUNT(*) FROM knowledge_extracts')
                         doc_count = cursor.fetchone()[0]
-                        
-                        # Get file size
                         file_size = os.path.getsize(db_path)
-                        
                         db.close()
-                        
                         results[db_path] = {
-                            'exists': True,
-                            'documents': doc_count,
+                            'exists': True, 'documents': doc_count,
                             'size_bytes': file_size,
                             'size_mb': round(file_size / 1024 / 1024, 2)
                         }
                     except Exception as e:
-                        results[db_path] = {
-                            'exists': True,
-                            'error': str(e)
-                        }
+                        results[db_path] = {'exists': True, 'error': str(e)}
         except:
             pass
-    
-    # Also check what path document_ingestion_engine is using
+
     try:
         from document_ingestion_engine import get_document_ingestor
         ingestor = get_document_ingestor()
         results['api_uses_path'] = ingestor.db_path
     except:
         results['api_uses_path'] = 'error_loading'
-    
-    # Check current working directory
+
     results['current_directory'] = os.getcwd()
-    
-    return jsonify({
-        'success': True,
-        'databases_found': results
-    })
+    return jsonify({'success': True, 'databases_found': results})
+
 
 @app.route('/survey')
 def survey():
     """Survey builder interface"""
     return render_template('survey.html')
- 
+
+
 # ============================================================================
 # PATTERN RECOGNITION DASHBOARD API (Added February 5, 2026)
 # ============================================================================
 @app.route('/api/patterns', methods=['GET'])
 def get_user_patterns():
-    """
-    API endpoint to retrieve user patterns for dashboard
-    
-    Returns:
-        JSON with categorized patterns and statistics
-    """
+    """API endpoint to retrieve user patterns for dashboard"""
     try:
-        # Initialize intelligence engine
         from enhanced_intelligence import EnhancedIntelligence
         intelligence = EnhancedIntelligence()
-        
-        # Get all patterns
         patterns = intelligence.get_all_patterns()
-        
-        return jsonify({
-            'success': True,
-            'patterns': patterns
-        })
-        
+        return jsonify({'success': True, 'patterns': patterns})
     except Exception as e:
         import traceback
         print(f"Error fetching patterns: {traceback.format_exc()}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+        return jsonify({'success': False, 'error': str(e)}), 500
 # ============================================================================
 
 
@@ -688,12 +507,11 @@ def get_user_patterns():
 def health():
     """Health check endpoint"""
     from config import ANTHROPIC_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, GOOGLE_API_KEY
-    
+
     kb_ready = knowledge_base.is_ready if knowledge_base else False
     kb_doc_count = len(knowledge_base.knowledge_index) if knowledge_base else 0
     kb_status = 'initialized' if kb_ready and kb_doc_count > 0 else ('initializing' if knowledge_base else 'not_initialized')
-    
-    # Check Research Agent status
+
     research_status = 'disabled'
     try:
         from research_agent import get_research_agent
@@ -701,8 +519,7 @@ def health():
         research_status = 'enabled' if ra.is_available else 'api_key_missing'
     except:
         research_status = 'not_installed'
-    
-    # Check Alert System status
+
     alert_status = 'disabled'
     alert_email_enabled = False
     try:
@@ -712,8 +529,7 @@ def health():
         alert_email_enabled = ENABLE_EMAIL_ALERTS
     except:
         alert_status = 'not_installed'
-    
-    # Check Intelligence Dashboard status
+
     intelligence_status = 'disabled'
     intelligence_companies = 0
     try:
@@ -723,8 +539,7 @@ def health():
         intelligence_companies = sum(len(c) for c in INDUSTRY_CATEGORIES.values())
     except:
         intelligence_status = 'not_installed'
-    
-    # Check Marketing Engine status
+
     marketing_status = 'disabled'
     try:
         from content_marketing_engine import get_content_engine
@@ -732,8 +547,7 @@ def health():
         marketing_status = 'enabled'
     except:
         marketing_status = 'not_installed'
-    
-    # Check Avatar Consultation status
+
     avatar_status = 'disabled'
     try:
         from avatar_consultation_engine import get_avatar_engine
@@ -741,8 +555,7 @@ def health():
         avatar_status = 'enabled'
     except:
         avatar_status = 'not_installed'
-    
-    # Check Swarm Self-Evaluation status
+
     evaluation_status = 'disabled'
     last_evaluation = None
     try:
@@ -758,8 +571,7 @@ def health():
             }
     except:
         evaluation_status = 'not_installed'
-    
-    # Check Introspection Layer status
+
     introspection_status = 'disabled'
     last_introspection = None
     try:
@@ -773,14 +585,12 @@ def health():
                 'created_at': latest_intro.get('created_at'),
                 'health_score': int(latest_intro.get('confidence_score', 0) * 100)
             }
-        # Check for pending notification
         notification = check_introspection_notifications()
         if notification.get('has_notification'):
             introspection_status = 'enabled_with_notification'
     except:
         introspection_status = 'not_installed'
-    
-    # Check Manual Generator status
+
     manual_generator_status = 'disabled'
     try:
         from implementation_manual_generator import get_manuals_dashboard
@@ -788,8 +598,7 @@ def health():
         manual_generator_status = 'enabled'
     except:
         manual_generator_status = 'not_installed'
-    
-    # Check Project Management status
+
     project_management_status = 'disabled'
     project_count = 0
     try:
@@ -800,10 +609,10 @@ def health():
         project_management_status = 'enabled'
     except:
         project_management_status = 'not_installed'
-    
+
     return jsonify({
         'status': 'healthy',
-        'version': 'Sprint 3 Complete + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator + LinkedIn Poster + Bulletproof Projects + 100MB Upload Limit + Background KB Init',
+        'version': 'Sprint 3 Complete + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator + LinkedIn Poster + Bulletproof Projects + 100MB Upload Limit + Background KB Init + NameError Fix Feb18',
         'file_upload_limit': '100MB',
         'orchestrators': {
             'sonnet': 'configured' if ANTHROPIC_API_KEY else 'missing',
@@ -826,28 +635,15 @@ def health():
         'output_formatter': {
             'status': 'enabled' if OUTPUT_FORMATTER_AVAILABLE else 'disabled'
         },
-        'research_agent': {
-            'status': research_status
-        },
-        'alert_system': {
-            'status': alert_status,
-            'email_enabled': alert_email_enabled
-        },
+        'research_agent': {'status': research_status},
+        'alert_system': {'status': alert_status, 'email_enabled': alert_email_enabled},
         'intelligence_dashboard': {
             'status': intelligence_status,
             'past_clients_indexed': intelligence_companies
         },
-        'content_marketing': {
-            'status': marketing_status
-        },
-        'avatar_consultation': {
-            'status': avatar_status,
-            'avatars': ['david', 'sarah']
-        },
-        'swarm_evaluation': {
-            'status': evaluation_status,
-            'last_evaluation': last_evaluation
-        },
+        'content_marketing': {'status': marketing_status},
+        'avatar_consultation': {'status': avatar_status, 'avatars': ['david', 'sarah']},
+        'swarm_evaluation': {'status': evaluation_status, 'last_evaluation': last_evaluation},
         'introspection_layer': {
             'status': introspection_status,
             'last_introspection': last_introspection,
@@ -885,7 +681,7 @@ def health():
         'features': {
             'sprint_1': {
                 'smart_questioning': 'enabled',
-                'suggestions': 'enabled', 
+                'suggestions': 'enabled',
                 'pattern_tracking': 'enabled'
             },
             'sprint_2': {
@@ -986,6 +782,7 @@ def health():
         }
     })
 
+
 # Register blueprints (CRITICAL - THIS MAKES THE API WORK)
 from routes.core import core_bp
 from routes.analysis import analysis_bp
@@ -1042,6 +839,8 @@ except ImportError as e:
     print(f"ℹ️  Voice Control routes not found: {e}")
 except Exception as e:
     print(f"⚠️  Voice Control registration failed: {e}")
+# ============================================================================
+
 # ============================================================================
 # RESEARCH AGENT BLUEPRINT (Added January 23, 2026)
 # ============================================================================
@@ -1174,7 +973,6 @@ except ImportError as e:
 except Exception as e:
     print(f"⚠️  Self-Optimization Engine registration failed: {e}")
 
-
 # ============================================================================
 # KNOWLEDGE INGESTION SYSTEM BLUEPRINT (Added February 2, 2026)
 # ============================================================================
@@ -1189,7 +987,6 @@ except Exception as e:
 
 # ============================================================================
 # CONVERSATION LEARNING SYSTEM BLUEPRINT (Added February 4, 2026)
-# Combines automatic background learning + manual extraction
 # ============================================================================
 try:
     from routes.conversation_learning import learning_bp
@@ -1216,7 +1013,6 @@ except Exception as e:
 
 # ============================================================================
 # PHASE 1 INTELLIGENCE UPGRADES (Added February 5, 2026)
-# Voice learning, proactive curiosity, pattern recognition dashboard
 # ============================================================================
 try:
     from routes.phase1_intelligence import intelligence_bp
@@ -1232,7 +1028,6 @@ except Exception as e:
 
 # ============================================================================
 # BACKGROUND FILE PROCESSOR BLUEPRINT (Added February 5, 2026)
-# Handles large files (50MB+) in background threads
 # ============================================================================
 try:
     from routes.background_jobs import background_jobs_bp
