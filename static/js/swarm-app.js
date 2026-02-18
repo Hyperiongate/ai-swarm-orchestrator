@@ -3,6 +3,23 @@
 SWARM-APP.JS - AI Swarm Unified Interface JavaScript
 Shiftwork Solutions LLC
 =============================================================================
+CHANGE LOG:
+
+- February 18, 2026: FIXED AUTO-REFRESH AND PROGRESS INDICATOR
+  * Fixed refreshConversationMessages() - was comparing DOM count to server
+    count which was unreliable. Now uses lastKnownMessageCount variable that
+    tracks the server-side message count properly.
+  * Fixed startBackgroundJobPolling() - now injects a persistent animated
+    progress banner into the conversation area so the user always knows
+    analysis is running, even if they scroll or wait a long time.
+  * Fixed stopBackgroundJobPolling() - now removes the progress banner when
+    analysis completes so the UI is clean.
+  * Fixed acceptLaborAnalysis() - sets lastKnownMessageCount from the
+    current conversation state before polling starts, so the comparison
+    baseline is correct from the first poll.
+  * Loading spinner now hides immediately after "background started" message
+    but progress banner remains visible throughout background processing.
+
 - February 15, 2026: ADDED AUTO-REFRESH FOR LABOR ANALYSIS
   * Added startBackgroundJobPolling() function
   * Added stopBackgroundJobPolling() function
@@ -48,7 +65,7 @@ SECTIONS:
 15. Opportunities Functions
 16. File Browser (BULLETPROOFED February 1, 2026)
 17. Pattern Recognition Dashboard
-18. Labor Analysis Functions (UPDATED February 15, 2026)
+18. Labor Analysis Functions (FIXED February 18, 2026)
 19. Initialization
 
 =============================================================================
@@ -67,6 +84,10 @@ var currentConversationId = null;
 var conversations = [];
 var pendingClarification = null;
 var backgroundJobPolling = null;
+
+// FIX February 18, 2026: Tracks server-side message count so polling
+// comparison is reliable (not based on DOM element count which is unpredictable)
+var lastKnownMessageCount = 0;
 
 // =============================================================================
 // 2. CONVERSATION MEMORY FUNCTIONS
@@ -172,11 +193,14 @@ function loadConversation(conversationId) {
                 clearConversationArea();
                 
                 if (data.messages && data.messages.length > 0) {
+                    // FIX February 18, 2026: Update lastKnownMessageCount when loading a conversation
+                    lastKnownMessageCount = data.messages.length;
                     data.messages.forEach(function(msg) {
                         addMessageFromHistory(msg.role, msg.content, msg.created_at);
                     });
                     updateMemoryIndicator(true, data.messages.length);
                 } else {
+                    lastKnownMessageCount = 0;
                     updateMemoryIndicator(true, 0);
                 }
                 
@@ -1697,64 +1721,174 @@ ${summary.total_interactions === 0 ? `
 }
 
 // =============================================================================
-// 18. LABOR ANALYSIS FUNCTIONS - UPDATED February 15, 2026
+// 18. LABOR ANALYSIS FUNCTIONS - FIXED February 18, 2026
 // =============================================================================
 
+/**
+ * Injects a persistent animated progress banner into the conversation area.
+ * This stays visible throughout background processing so the user always
+ * knows something is working, regardless of how long it takes.
+ * FIX: February 18, 2026 - replaces the unreliable loading spinner approach.
+ */
+function showAnalysisProgressBanner() {
+    // Remove any existing banner first to avoid duplicates
+    removeAnalysisProgressBanner();
+
+    var conversation = document.getElementById('conversation');
+    if (!conversation) return;
+
+    var banner = document.createElement('div');
+    banner.id = 'analysisProgressBanner';
+    banner.style.cssText = [
+        'margin: 15px 0',
+        'padding: 20px 25px',
+        'background: linear-gradient(135deg, #1a237e 0%, #283593 50%, #303f9f 100%)',
+        'border-radius: 12px',
+        'color: white',
+        'border-left: 5px solid #7986cb',
+        'box-shadow: 0 4px 20px rgba(26,35,126,0.4)'
+    ].join(';');
+
+    banner.innerHTML = [
+        '<div style="display:flex;align-items:center;gap:15px;margin-bottom:12px;">',
+            '<div id="analysisPulse" style="',
+                'width:18px;height:18px;border-radius:50%;',
+                'background:#7986cb;flex-shrink:0;',
+                'animation:analysisPulse 1.4s ease-in-out infinite;',
+            '"></div>',
+            '<div style="font-size:16px;font-weight:700;">⚙️ Labor Analysis Running in Background</div>',
+        '</div>',
+        '<div style="font-size:13px;opacity:0.9;line-height:1.6;margin-bottom:14px;">',
+            'Your data is being analyzed. This typically takes <strong>3–8 minutes</strong> for large files.<br>',
+            'The results will appear here automatically when complete — no refresh needed.',
+        '</div>',
+        '<div style="background:rgba(255,255,255,0.12);border-radius:8px;padding:12px;">',
+            '<div style="font-size:12px;font-weight:600;margin-bottom:8px;opacity:0.8;">What\'s being analyzed:</div>',
+            '<div style="font-size:12px;opacity:0.9;line-height:1.8;">',
+                '⏱ Overtime patterns &amp; cost exposure<br>',
+                '👥 Staffing distribution by department<br>',
+                '🔄 Shift balance &amp; coverage gaps<br>',
+                '📅 Day-of-week &amp; monthly trends<br>',
+                '💰 Headcount efficiency metrics',
+            '</div>',
+        '</div>',
+        '<div style="margin-top:12px;font-size:11px;opacity:0.7;text-align:center;">',
+            '🔄 Checking for results every 5 seconds...',
+        '</div>'
+    ].join('');
+
+    // Inject the pulse keyframe animation if not already present
+    if (!document.getElementById('analysisPulseStyle')) {
+        var style = document.createElement('style');
+        style.id = 'analysisPulseStyle';
+        style.textContent = '@keyframes analysisPulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:0.4;transform:scale(1.3);}}';
+        document.head.appendChild(style);
+    }
+
+    conversation.appendChild(banner);
+    conversation.scrollTop = conversation.scrollHeight;
+}
+
+/**
+ * Removes the progress banner when analysis completes.
+ */
+function removeAnalysisProgressBanner() {
+    var banner = document.getElementById('analysisProgressBanner');
+    if (banner) {
+        banner.parentNode.removeChild(banner);
+    }
+}
+
+/**
+ * Starts polling the conversation for new messages every 5 seconds.
+ * Uses lastKnownMessageCount (server count) for reliable comparison —
+ * NOT DOM element count which is unpredictable.
+ * FIX: February 18, 2026
+ */
 function startBackgroundJobPolling() {
     if (backgroundJobPolling) {
         console.log('⏩ Polling already active');
         return;
     }
-    
-    console.log('🔄 Starting auto-refresh polling...');
-    
+
+    console.log('🔄 Starting auto-refresh polling (baseline message count: ' + lastKnownMessageCount + ')');
+
+    showAnalysisProgressBanner();
+
     backgroundJobPolling = setInterval(function() {
         if (!currentConversationId) {
             console.log('⏹️ No conversation ID - stopping poll');
             stopBackgroundJobPolling();
             return;
         }
-        
-        console.log('🔍 Polling for new messages...');
+
+        console.log('🔍 Polling for new messages (known count: ' + lastKnownMessageCount + ')...');
         refreshConversationMessages();
     }, 5000);
 }
 
+/**
+ * Stops polling and cleans up the progress banner.
+ * FIX: February 18, 2026 - now also removes the banner.
+ */
 function stopBackgroundJobPolling() {
     if (backgroundJobPolling) {
         console.log('⏹️ Stopping auto-refresh polling');
         clearInterval(backgroundJobPolling);
         backgroundJobPolling = null;
     }
+    removeAnalysisProgressBanner();
 }
 
+/**
+ * Fetches the current conversation from the server and compares the
+ * server message count to lastKnownMessageCount. If new messages exist,
+ * redraws the conversation and updates the counter.
+ *
+ * FIX: February 18, 2026 - Previous version compared DOM element count
+ * to server count which was always mismatched (welcome message, banners,
+ * etc. inflated DOM count). Now uses a dedicated JS variable that tracks
+ * only the server-side message count.
+ */
 function refreshConversationMessages() {
     if (!currentConversationId) return;
-    
+
     fetch('/api/conversations/' + currentConversationId)
         .then(function(r) { return r.json(); })
         .then(function(data) {
             if (data.success && data.messages) {
-                var currentMsgCount = document.querySelectorAll('.message').length;
-                var newMsgCount = data.messages.length;
-                
-                console.log('📊 Current messages:', currentMsgCount, 'New messages:', newMsgCount);
-                
-                if (newMsgCount > currentMsgCount) {
+                var serverMsgCount = data.messages.length;
+
+                console.log('📊 Server messages: ' + serverMsgCount + ' | Last known: ' + lastKnownMessageCount);
+
+                if (serverMsgCount > lastKnownMessageCount) {
                     console.log('✨ New messages detected! Updating display...');
-                    
+
+                    // Update our baseline before redrawing
+                    lastKnownMessageCount = serverMsgCount;
+
+                    // Remove the progress banner before redrawing so it doesn't
+                    // get caught inside clearConversationArea()
+                    removeAnalysisProgressBanner();
+
+                    // Redraw all messages
                     clearConversationArea();
                     data.messages.forEach(function(msg) {
                         addMessageFromHistoryWithMetadata(msg.role, msg.content, msg.created_at, msg.metadata);
                     });
-                    
+
+                    // Check if analysis is complete
                     var lastMsg = data.messages[data.messages.length - 1];
                     if (lastMsg && lastMsg.content && lastMsg.content.indexOf('LABOR ANALYSIS COMPLETE') !== -1) {
                         console.log('✅ Analysis complete - stopping poll');
                         stopBackgroundJobPolling();
+                    } else {
+                        // Analysis still running - re-show the banner after redraw
+                        showAnalysisProgressBanner();
                     }
-                    
-                    updateMemoryIndicator(true, newMsgCount);
+
+                    updateMemoryIndicator(true, serverMsgCount);
+                    loadConversations();
                 }
             }
         })
@@ -1763,13 +1897,19 @@ function refreshConversationMessages() {
         });
 }
 
+/**
+ * Handles user clicking "Yes, analyze it".
+ * Sets lastKnownMessageCount from the current conversation state so the
+ * polling baseline is correct from the very first poll.
+ * FIX: February 18, 2026
+ */
 function acceptLaborAnalysis(sessionId) {
     addMessage('user', '✅ Yes, analyze it');
-    
+
     var loading = document.getElementById('loadingIndicator');
     loading.classList.add('active');
-    document.querySelector('.loading-text').textContent = 'Starting analysis in background...';
-    
+    document.querySelector('.loading-text').textContent = 'Submitting analysis job...';
+
     fetch('/api/orchestrate', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
@@ -1783,14 +1923,35 @@ function acceptLaborAnalysis(sessionId) {
     .then(function(r) { return r.json(); })
     .then(function(data) {
         loading.classList.remove('active');
-        
+
         if (data.success) {
             sessionStorage.removeItem('pending_labor_analysis');
             addMessage('assistant', data.result, data.task_id, currentMode);
-            
-            console.log('🚀 Background analysis started - enabling auto-refresh');
-            startBackgroundJobPolling();
-            
+
+            // FIX: Set baseline message count BEFORE starting the poll.
+            // Fetch current message count from server so we know exactly
+            // how many messages exist right now. Poll will fire when count exceeds this.
+            if (currentConversationId) {
+                fetch('/api/conversations/' + currentConversationId)
+                    .then(function(r) { return r.json(); })
+                    .then(function(convData) {
+                        if (convData.success && convData.messages) {
+                            lastKnownMessageCount = convData.messages.length;
+                            console.log('🎯 Polling baseline set to ' + lastKnownMessageCount + ' messages');
+                        }
+                        console.log('🚀 Background analysis started - enabling auto-refresh');
+                        startBackgroundJobPolling();
+                    })
+                    .catch(function() {
+                        // Fallback: estimate count from DOM messages (better than 0)
+                        lastKnownMessageCount = document.querySelectorAll('.message').length;
+                        console.log('⚠️ Could not fetch count - using DOM estimate: ' + lastKnownMessageCount);
+                        startBackgroundJobPolling();
+                    });
+            } else {
+                startBackgroundJobPolling();
+            }
+
             loadStats();
             loadDocuments();
         } else {
@@ -1840,7 +2001,7 @@ function initializeApp() {
     
     setInterval(function() { loadStats(); loadDocuments(); }, 30000);
     
-    console.log('🚀 AI Swarm Interface initialized - Auto-refresh enabled - February 15, 2026');
+    console.log('🚀 AI Swarm Interface initialized - Auto-refresh fixed - February 18, 2026');
 }
 
 if (document.readyState === 'loading') {
