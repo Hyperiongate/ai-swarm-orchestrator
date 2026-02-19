@@ -714,6 +714,7 @@ Be comprehensive and professional."""
                             'orchestrator': 'pattern_schedule_generator', 'shift_length': shift_length,
                             'pattern': pattern_key})
                 
+                save_schedule_context(conversation_id, {})  # Clear DB context
                 session.pop('schedule_context', None)
                 
                 suggestions = []
