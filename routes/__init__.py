@@ -1,38 +1,25 @@
 """
-Routes Utils Package - Utility Functions for Route Handlers
-Created: February 10, 2026
-Last Updated: February 18, 2026 - COMMITTED TO GITHUB (was missing, causing import failures)
+Routes Package - Flask Blueprint Registration
+Created: January 18, 2026
+Last Updated: February 19, 2026 - RESTORED correct content (was accidentally overwritten
+  with routes/utils/__init__.py content during February 18 commit, causing
+  ModuleNotFoundError: No module named 'routes.response_utils' on startup)
 
 CHANGELOG:
-- February 18, 2026: CRITICAL FIX - This file and its siblings (conversation_utils.py,
-  response_utils.py) existed only on the Render server and were wiped on every deploy.
-  All three files are now committed to GitHub. This __init__.py now properly exports
-  all utility functions so 'from routes.utils import ...' works correctly.
+- February 19, 2026: RESTORED - File was accidentally overwritten with utils exports.
+  Routes package __init__.py should be a simple placeholder only. All utility
+  function exports belong in routes/utils/__init__.py, not here.
+- January 18, 2026: Created as part of initial routes package structure.
 
 PURPOSE:
-Exports all utility functions used by route handlers:
-  - convert_markdown_to_html: Converts AI markdown responses to styled HTML
-  - should_create_document: Detects if request needs a downloadable document
-  - store_conversation_context: Saves temporary key-value data for a conversation
-  - get_conversation_context: Retrieves temporary key-value data for a conversation
-  - clear_conversation_context: Deletes temporary key-value data for a conversation
+This file makes the routes/ directory a Python package.
+All blueprint registrations happen in app.py, not here.
+Utility function exports live in routes/utils/__init__.py.
 
 AUTHOR: Jim @ Shiftwork Solutions LLC
 """
 
-from .response_utils import convert_markdown_to_html, should_create_document
-from .conversation_utils import (
-    store_conversation_context,
-    get_conversation_context,
-    clear_conversation_context
-)
-
-__all__ = [
-    'convert_markdown_to_html',
-    'should_create_document',
-    'store_conversation_context',
-    'get_conversation_context',
-    'clear_conversation_context',
-]
+# Blueprints are registered in app.py via explicit imports.
+# Do not add blueprint imports here.
 
 # I did no harm and this file is not truncated
