@@ -189,7 +189,7 @@ def orchestrate():
             
             # If not in request, check conversation context
             if not pending_session_id:
-                pending_session_id = get_conversation_context(conversation_id, 'pending_analysis_session')
+                pending_session_id = get_context_value(conversation_id, 'pending_analysis_session')
             
             print(f"🔍 HANDLER 4.5: Checking for pending labor session: {pending_session_id}")
             
