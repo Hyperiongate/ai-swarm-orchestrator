@@ -2025,6 +2025,45 @@ def search_files_in_project(project_id):
     
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+# ============================================================================
+# KNOWLEDGE BASE DIAGNOSTIC ENDPOINT - Added February 19, 2026
+# ============================================================================
+@core_bp.route('/api/admin/kb-diagnostic', methods=['GET'])
+def kb_diagnostic():
+    """
+    Diagnostic endpoint to verify knowledge base search is working.
+    Tests a query and shows exactly what the KB returns.
+    Usage: /api/admin/kb-diagnostic?q=20/60/20
+    """
+    import sys
+    import time
+    query = request.args.get('q', '20/60/20')
+    app_module = sys.modules.get('app')
+    knowledge_base = getattr(app_module, 'knowledge_base', None) if app_module else None
 
+    if not knowledge_base:
+        return jsonify({'error': 'Knowledge base not initialized', 'success': False})
+
+    start = time.time()
+    is_ready = knowledge_base.is_ready
+    doc_count = len(knowledge_base.knowledge_index)
+    term_count = len(knowledge_base.global_term_frequency)
+
+    results = knowledge_base.semantic_search(query, max_results=5) if is_ready else []
+    context = knowledge_base.get_context_for_task(query) if is_ready else ''
+    elapsed = round(time.time() - start, 2)
+
+    return jsonify({
+        'success': True,
+        'query': query,
+        'kb_ready': is_ready,
+        'documents_indexed': doc_count,
+        'terms_indexed': term_count,
+        'search_results_count': len(results),
+        'search_results': results,
+        'context_length': len(context),
+        'context_preview': context[:500] if context else '',
+        'elapsed_seconds': elapsed
+    })
 
 # I did no harm and this file is not truncated
