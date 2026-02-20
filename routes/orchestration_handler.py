@@ -1171,6 +1171,53 @@ Be comprehensive and professional."""
             except Exception as curiosity_error:
                 print(f"Curiosity engine failed (non-critical): {curiosity_error}")
 
+            # ================================================================
+            # DOCUMENT GENERATION - Added February 20, 2026
+            #
+            # PROBLEM FIXED: When users asked for a checklist, report,
+            # proposal, or other document, the AI generated the content as
+            # chat text but no file was created, so the download button
+            # never appeared. The AI would then incorrectly tell users it
+            # could not provide downloadable files.
+            #
+            # FIX: Detect document-type requests and pass the AI response
+            # text to document_generator.py which creates a real .docx file
+            # in /tmp/outputs/ and returns a download URL. The response JSON
+            # now includes document_created=True and document_url so the
+            # frontend renders the download button.
+            # ================================================================
+            document_created = False
+            document_url = None
+            document_id = None
+            document_type = None
+
+            try:
+                from document_generator import is_document_request, generate_document
+
+                if is_document_request(user_request) and actual_output and not actual_output.startswith('Error'):
+                    print(f"Document request detected - generating .docx file")
+
+                    doc_result = generate_document(
+                        user_request=user_request,
+                        ai_response_text=actual_output,
+                        task_id=task_id,
+                        conversation_id=conversation_id,
+                        project_id=project_id
+                    )
+
+                    if doc_result.get('success'):
+                        document_created = True
+                        document_url = doc_result['document_url']
+                        document_id = doc_result.get('document_id')
+                        document_type = 'docx'
+                        print(f"Document generated: {document_url}")
+                    else:
+                        print(f"Document generation failed (non-critical): {doc_result.get('error')}")
+
+            except Exception as doc_gen_error:
+                # Non-fatal: document generation failure must never break the response
+                print(f"Document generation error (non-critical): {doc_gen_error}")
+
             return jsonify({
                 'success': True, 'task_id': task_id, 'conversation_id': conversation_id,
                 'result': formatted_output, 'orchestrator': orchestrator,
@@ -1179,7 +1226,11 @@ Be comprehensive and professional."""
                 'knowledge_applied': knowledge_applied, 'knowledge_used': knowledge_applied,
                 'knowledge_sources': knowledge_sources, 'formatting_applied': True,
                 'suggestions': suggestions,
-                'curious_question': curious_question
+                'curious_question': curious_question,
+                'document_created': document_created,
+                'document_url': document_url,
+                'document_id': document_id,
+                'document_type': document_type
             })
         except Exception as orchestration_error:
             import traceback
