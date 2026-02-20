@@ -1,12 +1,25 @@
 """
 Proactive Curiosity Engine - Phase 1 Component 2
 Created: February 5, 2026
+Last Updated: February 20, 2026 - FIXED missing table creation (Stress Test)
 
-Makes the AI naturally curious like a senior consultant.
-Asks follow-up questions even when NOT explicitly needed for task execution.
+CHANGELOG:
 
-BEHAVIOR:
-- After completing tasks, asks curious follow-up questions
+- February 20, 2026: FIXED missing proactive_suggestions table
+  BUG: _get_recent_curiosity_count() and _log_curiosity() both reference the
+       'proactive_suggestions' table, which was never created by any migration.
+       Result: Every curiosity logging call raised OperationalError (no such table),
+       caught silently by try/except. Curiosity stats always returned {}.
+       Curiosity budget check always returned 0 (caught exception = 0 count),
+       meaning the max_curiosity_per_conversation limit never enforced correctly.
+  FIX: Added _ensure_table() called from __init__ that creates the table with
+       CREATE TABLE IF NOT EXISTS. Safe to run on every startup - no-op if already
+       exists. No migration file needed; the table is small and owned by this module.
+  No other logic changed. No function signatures changed. Fully backward compatible.
+
+FEATURES:
+- Makes the AI naturally curious like a senior consultant
+- Asks follow-up questions even when NOT explicitly needed for task execution
 - Digs deeper into interesting topics
 - Shows genuine interest in outcomes and context
 - Learns Jim's preferences for when curiosity is welcome
@@ -15,6 +28,7 @@ Author: Jim @ Shiftwork Solutions LLC
 """
 
 import json
+import re
 import random
 from datetime import datetime
 from database import get_db
@@ -22,7 +36,7 @@ from database import get_db
 
 class ProactiveCuriosityEngine:
     """Generates natural, contextual follow-up questions"""
-    
+
     def __init__(self):
         # Curiosity templates organized by context
         self.curiosity_patterns = {
@@ -57,74 +71,108 @@ class ProactiveCuriosityEngine:
                 "What would you want people to learn from this experience?"
             ]
         }
-        
+
         # Track when curiosity was expressed to avoid being annoying
         self.curiosity_history = []
         self.max_curiosity_per_conversation = 3
-    
+
+        # ====================================================================
+        # FIX (February 20, 2026): Create the proactive_suggestions table
+        # if it doesn't exist. Previously missing, causing silent failures in
+        # _log_curiosity() and _get_recent_curiosity_count().
+        # ====================================================================
+        self._ensure_table()
+        # ====================================================================
+
+    def _ensure_table(self):
+        """
+        Create the proactive_suggestions table if it doesn't exist.
+        Safe to call on every instantiation - CREATE TABLE IF NOT EXISTS is idempotent.
+        """
+        try:
+            db = get_db()
+            db.execute('''
+                CREATE TABLE IF NOT EXISTS proactive_suggestions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    conversation_id TEXT NOT NULL,
+                    suggestion_type TEXT NOT NULL,
+                    suggestion_text TEXT NOT NULL,
+                    reasoning TEXT,
+                    user_action TEXT DEFAULT NULL,
+                    created_at TEXT DEFAULT (datetime('now'))
+                )
+            ''')
+            db.execute('''
+                CREATE INDEX IF NOT EXISTS idx_proactive_suggestions_conversation
+                ON proactive_suggestions (conversation_id)
+            ''')
+            db.commit()
+            db.close()
+        except Exception as e:
+            print(f"⚠️ Could not create proactive_suggestions table: {e}")
+
     def should_be_curious(self, conversation_id, response_context):
         """
         Determine if AI should ask a curious follow-up question.
-        
+
         Args:
             conversation_id: Current conversation
             response_context: Context from the just-completed response
-            
+
         Returns:
             dict with {should_ask: bool, question: str or None, reason: str}
         """
-        
+
         # Check curiosity budget for this conversation
         recent_questions = self._get_recent_curiosity_count(conversation_id)
-        
+
         if recent_questions >= self.max_curiosity_per_conversation:
             return {
                 'should_ask': False,
                 'question': None,
                 'reason': 'curiosity_budget_exhausted'
             }
-        
+
         # Analyze context for curiosity triggers
         triggers = self._detect_curiosity_triggers(response_context)
-        
+
         if not triggers:
             return {
                 'should_ask': False,
                 'question': None,
                 'reason': 'no_curiosity_triggers'
             }
-        
+
         # Select best question based on triggers
         question = self._select_curious_question(triggers, response_context)
-        
+
         if question:
             # Log this curiosity expression
             self._log_curiosity(conversation_id, question, triggers)
-            
+
             return {
                 'should_ask': True,
                 'question': question,
                 'reason': f"triggered_by_{triggers[0]['type']}"
             }
-        
+
         return {
             'should_ask': False,
             'question': None,
             'reason': 'no_good_question_found'
         }
-    
+
     def _detect_curiosity_triggers(self, context):
         """
         Detect what aspects of the context warrant curiosity.
-        
+
         Returns:
             list of trigger dicts: [{type, data, priority}]
         """
-        
+
         triggers = []
         user_request = context.get('user_request', '').lower()
-        ai_response = context.get('ai_response', '').lower()
-        
+
         # Trigger 1: Schedule was designed
         if any(word in user_request for word in ['schedule', 'dupont', 'panama', 'rotation']):
             triggers.append({
@@ -132,10 +180,9 @@ class ProactiveCuriosityEngine:
                 'data': {},
                 'priority': 8
             })
-        
+
         # Trigger 2: Client mentioned
         # Look for capitalized words that might be client names
-        import re
         potential_clients = re.findall(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b', context.get('user_request', ''))
         if potential_clients and len(potential_clients[0]) > 3:
             triggers.append({
@@ -143,7 +190,7 @@ class ProactiveCuriosityEngine:
                 'data': {'client': potential_clients[0]},
                 'priority': 7
             })
-        
+
         # Trigger 3: Problem was solved
         if any(word in user_request for word in ['fix', 'problem', 'issue', 'error']):
             triggers.append({
@@ -151,112 +198,114 @@ class ProactiveCuriosityEngine:
                 'data': {},
                 'priority': 6
             })
-        
+
         # Trigger 4: Numbers mentioned (employees, hours, etc.)
-        numbers = re.findall(r'(\d+)\s*(employees?|workers?|people|hours?|shifts?)', user_request.lower())
+        numbers = re.findall(r'(\d+)\s*(employees?|workers?|people|hours?|shifts?)', user_request)
         if numbers:
             triggers.append({
                 'type': 'after_numbers_mentioned',
                 'data': {'number': f"{numbers[0][0]} {numbers[0][1]}"},
                 'priority': 5
             })
-        
+
         # Trigger 5: Industry mentioned
         industries = ['manufacturing', 'healthcare', 'mining', 'food', 'pharmaceutical', 'distribution']
-        mentioned_industries = [ind for ind in industries if ind in user_request.lower()]
+        mentioned_industries = [ind for ind in industries if ind in user_request]
         if mentioned_industries:
             triggers.append({
                 'type': 'after_industry_mentioned',
                 'data': {'industry': mentioned_industries[0]},
                 'priority': 4
             })
-        
+
         # Sort by priority (highest first)
         triggers.sort(key=lambda x: x['priority'], reverse=True)
-        
+
         return triggers
-    
+
     def _select_curious_question(self, triggers, context):
         """
         Select the best curious question based on triggers.
-        
+
         Returns:
             str: The question to ask, or None
         """
-        
+
         if not triggers:
             # Use general curiosity as fallback
             return random.choice(self.curiosity_patterns['general_curiosity'])
-        
+
         # Use highest priority trigger
         top_trigger = triggers[0]
         trigger_type = top_trigger['type']
-        
+
         if trigger_type not in self.curiosity_patterns:
             return None
-        
+
         # Get question template
         question_templates = self.curiosity_patterns[trigger_type]
         question_template = random.choice(question_templates)
-        
+
         # Fill in placeholders
         data = top_trigger.get('data', {})
         question = question_template.format(**data) if data else question_template
-        
+
         return question
-    
+
     def _get_recent_curiosity_count(self, conversation_id):
         """Count how many curious questions asked in this conversation"""
         try:
             db = get_db()
-            
+
             count = db.execute('''
                 SELECT COUNT(*) as cnt FROM proactive_suggestions
                 WHERE conversation_id = ?
                 AND suggestion_type = 'curious_followup'
             ''', (conversation_id,)).fetchone()
-            
+
             db.close()
-            
+
             return count['cnt'] if count else 0
-        except:
+        except Exception as e:
+            print(f"⚠️ Could not count curiosity: {e}")
             return 0
-    
+
     def _log_curiosity(self, conversation_id, question, triggers):
         """Log that we asked a curious question"""
         try:
             db = get_db()
-            
+
             db.execute('''
                 INSERT INTO proactive_suggestions
                 (conversation_id, suggestion_type, suggestion_text, reasoning)
                 VALUES (?, ?, ?, ?)
             ''', (conversation_id, 'curious_followup', question,
                   json.dumps({'triggers': [t['type'] for t in triggers]})))
-            
+
             db.commit()
             db.close()
         except Exception as e:
             print(f"⚠️ Could not log curiosity: {e}")
-    
+
     def get_curiosity_stats(self):
         """Get statistics about curiosity behavior"""
         try:
             db = get_db()
-            
+
             stats = db.execute('''
-                SELECT 
+                SELECT
                     COUNT(*) as total_questions,
                     COUNT(DISTINCT conversation_id) as conversations_with_curiosity,
                     AVG(CASE WHEN user_action = 'engaged' THEN 1.0 ELSE 0.0 END) as engagement_rate
                 FROM proactive_suggestions
                 WHERE suggestion_type = 'curious_followup'
             ''').fetchone()
-            
+
             db.close()
-            
+
             return dict(stats) if stats else {}
-        except:
+        except Exception as e:
+            print(f"⚠️ Could not get curiosity stats: {e}")
             return {}
 
 
