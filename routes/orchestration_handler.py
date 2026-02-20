@@ -1057,7 +1057,7 @@ preferences, implementation, or change management:
 
 """
 
-                completion_prompt = f"""{knowledge_context}{project_context}{file_context}{conversation_history}{learning_context}{client_profile_context}{avoidance_context}{specialized_context}{summary_context}{file_section}{identity_block}
+                completion_prompt = f"""{project_context}{file_context}{conversation_history}{learning_context}{client_profile_context}{avoidance_context}{specialized_context}{summary_context}{file_section}
 USER REQUEST: {user_request}
 
 Please complete this request fully. Provide the actual deliverable.
@@ -1069,10 +1069,18 @@ Be comprehensive and professional."""
                 if file_contents:
                     print(f"Completion prompt contains {len(file_contents)} chars of file content")
 
+                # Build system prompt from KB context + identity block
+                # This passes authoritative instructions via the Anthropic system=
+                # parameter rather than the user turn, so Claude cannot ignore them.
+                # (Fixed February 19, 2026)
+                api_system_prompt = None
+                if knowledge_context or identity_block:
+                    api_system_prompt = f"{knowledge_context}{identity_block}".strip()
+
                 if orchestrator == 'opus':
-                    response = call_claude_opus(completion_prompt, conversation_history=conversation_context, files_attached=bool(file_contents))
+                    response = call_claude_opus(completion_prompt, conversation_history=conversation_context, files_attached=bool(file_contents), system_prompt=api_system_prompt)
                 else:
-                    response = call_claude_sonnet(completion_prompt, conversation_history=conversation_context, files_attached=bool(file_contents))
+                    response = call_claude_sonnet(completion_prompt, conversation_history=conversation_context, files_attached=bool(file_contents), system_prompt=api_system_prompt)
 
                 if isinstance(response, dict):
                     if response.get('error'):
