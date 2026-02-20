@@ -1,57 +1,49 @@
 """
 AI SWARM ORCHESTRATOR - Main Application   
 Created: January 18, 2026
-Last Updated: February 18, 2026 - FIXED NameError crash on startup
+Last Updated: February 20, 2026 - TWO BUG FIXES (Stress Test)
 
-CRITICAL UPDATE (February 18, 2026) - BUG FIX:
-- FIXED: NameError crash at startup - add_conversation_context_table() was being
-  called BEFORE it was imported, causing a NameError that crashed the Python
-  process before gunicorn could serve any requests. This manifested as
-  "No open HTTP ports detected" on Render.
-- FIX: Moved 'from add_conversation_context_table import add_conversation_context_table'
-  to BEFORE the call to add_conversation_context_table() in the Sprint 2 migrations block.
-- ONLY the import order changed. No logic was altered.
+CHANGELOG:
 
-CRITICAL UPDATE (February 18, 2026) - BACKGROUND KB INIT:
-- FIXED: App not loading after deploy (blank page / 30-second timeout)
-- ROOT CAUSE: knowledge_base.initialize() was blocking gunicorn for ~30 seconds
-  while indexing 34 documents including a 56MB Excel file. Render's port scanner
-  fired during this window and found nothing, and the first real page request
-  timed out at 30 seconds returning only 29 bytes.
-- FIX: Changed knowledge_base.initialize() to knowledge_base.initialize_background()
-  Gunicorn now binds and accepts connections immediately. The knowledge index
-  becomes available ~30 seconds later. Search calls before that return empty
-  results gracefully instead of blocking.
+- February 20, 2026: BUG FIX #1 - intelligence_bp name conflict (CRITICAL - CRASH ON STARTUP)
+  PROBLEM: routes/intelligence.py and routes/phase1_intelligence.py both declare
+           Blueprint(name='intelligence'). app.py registers routes.intelligence first,
+           then imports routes.phase1_intelligence into the same variable name
+           (intelligence_bp), overwriting it. When Flask tries to register the second
+           blueprint, it detects the name 'intelligence' is already taken and raises
+           AssertionError, crashing the entire application on startup.
+  FIX: Import phase1_intelligence blueprint under a distinct alias and register it
+       with name='phase1_intelligence'. The url_prefix='/api/intelligence' on that
+       blueprint is unchanged, so ALL /api/intelligence/voice/*, /curiosity/*,
+       and /patterns/* URLs are completely unaffected. Only the internal Flask
+       registry key changes.
+  CHANGED LINES: Phase 1 Intelligence registration block only (~5 lines).
 
-CRITICAL UPDATE (February 5, 2026):
-- Added Flask MAX_CONTENT_LENGTH configuration
-- Increased file upload limit from default to 100MB
-- Allows large Excel files (56MB+) to be uploaded to project folders
-- Required for Definitive Schedules v2.xlsx (56.22 MB) and similar large files
+- February 20, 2026: BUG FIX #2 - conversation_learning import path (SILENT FEATURE FAILURE)
+  PROBLEM: app.py imported conversation_learning from routes.conversation_learning,
+           but the file lives at the root level (conversation_learning.py), not in
+           the routes/ folder. This caused ImportError on every startup, caught
+           silently by the try/except block. The Conversation Learning system
+           (automatic + manual extract-lessons) was never registered and never ran.
+  FIX: Changed import from 'routes.conversation_learning' to 'conversation_learning'
+       (root-level module). Also renamed the imported variable to conv_learning_bp
+       to prevent any future collision with the routes.learning learning_bp import.
+  CHANGED LINES: Conversation Learning registration block only (~5 lines).
 
-CHANGES IN THIS VERSION:
-- February 18, 2026: FIXED NameError - moved add_conversation_context_table import
-  above its call in the Sprint 2 migrations block. This was crashing startup.
-- February 18, 2026: BACKGROUND KNOWLEDGE BASE INITIALIZATION FIX
-  * Changed knowledge_base.initialize() to knowledge_base.initialize_background()
-  * Gunicorn no longer blocked during startup - page loads immediately
-  * Knowledge base becomes available ~30 seconds after startup
+  No other logic changed in either fix. All other blueprints, routes, migrations,
+  initialization order, and behavior are completely preserved.
+
+- February 18, 2026: FIXED NameError crash on startup
+  add_conversation_context_table() was called before its import. Moved import above call.
+
+- February 18, 2026: BACKGROUND KB INIT
+  Changed knowledge_base.initialize() to knowledge_base.initialize_background()
+  Gunicorn binds immediately; knowledge index becomes available ~30 seconds later.
 
 - February 5, 2026: INCREASED FILE UPLOAD LIMIT TO 100MB
-  * Added app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
-  * Allows uploading large files (56MB+) to project folders
-  
-- January 30, 2026: ADDED BULLETPROOF PROJECT MANAGEMENT
-  * Added projects_bp blueprint for complete project lifecycle management
-  * Project creation, updates, search, and retrieval
-  * File upload/download with proper storage
-  * Conversation tracking with message history
-  * Context management (key-value storage)
-  * Complete project summaries
-  * Backward compatible with existing database_file_management.py
-  * Fixes all 5 critical issues: project recall, file upload, file download,
-    file retrieval, conversation context
+  Added app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
 
+- January 30, 2026: ADDED BULLETPROOF PROJECT MANAGEMENT
 - January 29, 2026: ADDED LINKEDIN POSTER DOWNLOAD BUTTON
 - January 28, 2026: ADDED IMPLEMENTATION MANUAL GENERATOR
 - January 26, 2026: UPDATED FOR PATTERN-BASED SCHEDULE SYSTEM
@@ -93,6 +85,7 @@ ARCHITECTURE:
 - analytics_engine.py: Analytics API
 - workflow_engine.py: Automation engine
 - integration_hub.py: External integrations
+- conversation_learning.py: Unified conversation learning (root level)
 - app.py (this file): Bootstrap and initialization
 
 AUTHOR: Jim @ Shiftwork Solutions LLC
@@ -612,7 +605,7 @@ def health():
 
     return jsonify({
         'status': 'healthy',
-        'version': 'Sprint 3 Complete + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator + LinkedIn Poster + Bulletproof Projects + 100MB Upload Limit + Background KB Init + NameError Fix Feb18',
+        'version': 'Sprint 3 Complete + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator + LinkedIn Poster + Bulletproof Projects + 100MB Upload Limit + Background KB Init + NameError Fix Feb18 + Blueprint Fix Feb20',
         'file_upload_limit': '100MB',
         'orchestrators': {
             'sonnet': 'configured' if ANTHROPIC_API_KEY else 'missing',
@@ -988,9 +981,14 @@ except Exception as e:
 # ============================================================================
 # CONVERSATION LEARNING SYSTEM BLUEPRINT (Added February 4, 2026)
 # ============================================================================
+# FIX February 20, 2026: Import from root-level conversation_learning module,
+# not routes.conversation_learning (that file does not exist). Using alias
+# conv_learning_bp to avoid any collision with the routes.learning learning_bp
+# imported above.
+# ============================================================================
 try:
-    from routes.conversation_learning import learning_bp
-    app.register_blueprint(learning_bp)
+    from conversation_learning import learning_bp as conv_learning_bp
+    app.register_blueprint(conv_learning_bp)
     print("✅ Unified Conversation Learning API registered")
     print("   - Automatic: learn_from_conversation()")
     print("   - Manual: /api/conversations/{id}/extract-lessons")
@@ -1014,9 +1012,18 @@ except Exception as e:
 # ============================================================================
 # PHASE 1 INTELLIGENCE UPGRADES (Added February 5, 2026)
 # ============================================================================
+# FIX February 20, 2026: routes/phase1_intelligence.py uses
+# Blueprint(name='intelligence'), which collides with routes/intelligence.py
+# (also name='intelligence'). Flask raises AssertionError on the second
+# register_blueprint() call, crashing startup. Fix: import under a distinct
+# alias and pass name='phase1_intelligence' to register_blueprint().
+# The url_prefix='/api/intelligence' on the blueprint object is unchanged,
+# so all /api/intelligence/voice/*, /curiosity/*, /patterns/* URLs are
+# completely unaffected. Only the internal Flask registry key changes.
+# ============================================================================
 try:
-    from routes.phase1_intelligence import intelligence_bp
-    app.register_blueprint(intelligence_bp)
+    from routes.phase1_intelligence import intelligence_bp as phase1_intelligence_bp
+    app.register_blueprint(phase1_intelligence_bp, name='phase1_intelligence')
     print("✅ Phase 1 Intelligence API registered")
     print("   - Voice conversation learning")
     print("   - Proactive curiosity engine")
