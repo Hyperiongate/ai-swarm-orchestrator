@@ -1,36 +1,45 @@
 """
 AI Clients Module
 Created: January 21, 2026
-Last Updated: January 30, 2026 - CRITICAL FILE ATTACHMENT FIX
+Last Updated: February 19, 2026 - ADDED SYSTEM PROMPT PARAMETER FOR KB INJECTION
 
-CHANGES IN THIS VERSION:
-- January 30, 2026: CRITICAL FILE ATTACHMENT AWARENESS FIX
-  * Added files_attached parameter to call_claude_sonnet()
-  * Added files_attached parameter to call_claude_opus()
+CHANGELOG:
+
+- February 19, 2026: ADDED SYSTEM PROMPT PARAMETER FOR KNOWLEDGE BASE INJECTION
+  * PROBLEM: Knowledge base content and identity instructions were being injected
+    into the user message turn, where they competed with capabilities and formatting
+    blocks and were treated as optional context by the AI. The AI defaulted to its
+    generic training knowledge instead of Shiftwork Solutions proprietary content.
+  * FIX: Added optional system_prompt parameter to call_claude_sonnet() and
+    call_claude_opus(). When provided, this is passed as the Anthropic API's
+    system= parameter, which Claude treats as authoritative instructions that
+    override user-turn content. The knowledge base content and identity block
+    from orchestration_handler.py now travel as the system prompt, making them
+    the highest-priority instructions Claude receives.
+  * orchestration_handler.py passes knowledge_context + identity_block as the
+    system_prompt argument. No other behavior changes.
+  * Backward compatible - system_prompt defaults to None, existing calls unaffected.
+
+- January 30, 2026: CRITICAL FILE ATTACHMENT FIX
+  * Added files_attached parameter to call_claude_sonnet() and call_claude_opus()
   * When files are attached, AI receives EXPLICIT WARNING it cannot ignore
-  * This forces AI to acknowledge and read attached files
   * Fixes pattern-matching issue where AI says "I don't see files"
 
 - January 29, 2026: ROBUST CAPABILITY INJECTION
-  * CRITICAL FIX: ALL AI calls now inject system capabilities
+  * ALL AI calls now inject system capabilities
   * call_claude_sonnet() now ALWAYS knows what it can do
-  * call_claude_opus() now ALWAYS knows what it can do  
+  * call_claude_opus() now ALWAYS knows what it can do
   * call_gpt4(), call_deepseek(), call_gemini() all get capabilities
   * Fixes "I don't have the ability to..." false negatives
-  * AI is now ALWAYS aware of file handling, document creation, etc.
 
 - January 25, 2026: FIXED CONVERSATION MEMORY NOT BEING USED
   * Modified call_claude_sonnet() to accept optional conversation_history parameter
   * Modified call_claude_opus() to accept optional conversation_history parameter
   * Now properly formats conversation history as message array for Anthropic API
   * Anthropic API requires alternating user/assistant messages
-  * This fixes the issue where Claude said "I don't have access to previous conversations"
-  * Result: AI now has full conversation context and remembers previous messages
+  * Fixes the issue where Claude said "I don't have access to previous conversations"
 
-All AI API calls in one place.
-Clean, simple, no indentation nightmares.
-
-MERGED VERSION: Combines formatting requirements with dict return structure
+Author: Jim @ Shiftwork Solutions LLC
 """
 
 import anthropic
@@ -55,29 +64,32 @@ deepseek_client = OpenAI(
 if config.GOOGLE_API_KEY:
     genai.configure(api_key=config.GOOGLE_API_KEY)
 
-# 🔧 CRITICAL: Import system capabilities
+# Import system capabilities
 try:
     from orchestration.system_capabilities import get_system_capabilities_prompt
     CAPABILITIES_AVAILABLE = True
 except ImportError:
-    print("⚠️ WARNING: system_capabilities module not found - AI will not know its capabilities!")
+    print("WARNING: system_capabilities module not found - AI will not know its capabilities!")
     CAPABILITIES_AVAILABLE = False
     def get_system_capabilities_prompt():
         return ""
 
-def call_claude_sonnet(prompt, max_tokens=4000, conversation_history=None, files_attached=False):
+
+def call_claude_sonnet(prompt, max_tokens=4000, conversation_history=None, files_attached=False, system_prompt=None):
     """
-    Call Claude Sonnet (primary orchestrator)
-    
+    Call Claude Sonnet (primary orchestrator).
+
     Args:
         prompt: The current user request/prompt
         max_tokens: Maximum tokens in response
         conversation_history: Optional list of prior messages [{'role': 'user'|'assistant', 'content': '...'}]
         files_attached: Boolean indicating if files are attached to this request
-    
+        system_prompt: Optional system prompt string. When provided, passed as the Anthropic API
+                       system= parameter so Claude treats it as authoritative instructions.
+                       Used by orchestration_handler.py to inject knowledge base content
+                       and identity block at the highest priority level. (Added Feb 19, 2026)
+
     Returns dict with 'content' and 'usage'
-    
-    CRITICAL FIX (January 30, 2026): Added files_attached parameter to force AI acknowledgment
     """
     if not anthropic_client:
         return {
@@ -85,16 +97,16 @@ def call_claude_sonnet(prompt, max_tokens=4000, conversation_history=None, files
             'usage': {'input_tokens': 0, 'output_tokens': 0},
             'error': True
         }
-    
-    # 🔧 CRITICAL: Inject capabilities FIRST so AI knows what it can do
+
+    # Inject capabilities so AI knows what it can do
     capabilities = get_system_capabilities_prompt() if CAPABILITIES_AVAILABLE else ""
-    
-    # 🔧 CRITICAL FIX (January 30, 2026): Add explicit file attachment warning
+
+    # Add explicit file attachment warning when files present
     file_warning = ""
     if files_attached:
         file_warning = """
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚠️ CRITICAL: FILES ARE ATTACHED TO THIS REQUEST
+CRITICAL: FILES ARE ATTACHED TO THIS REQUEST
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 The user has attached files to this request. The file contents appear BELOW in the prompt.
@@ -104,58 +116,65 @@ DO NOT say "I don't see any files" - the files ARE present and you MUST read the
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 """
-    
-    # Add formatting requirements
+
+    # Build the user-turn prompt with capabilities and formatting
     enhanced_prompt = f"{capabilities}\n\n{file_warning}{prompt}\n\n{config.FORMATTING_REQUIREMENTS}"
-    
+
     try:
         # Build messages array with conversation history
         messages = []
-        
-        # Add conversation history if provided
+
         if conversation_history and len(conversation_history) > 0:
             for msg in conversation_history:
-                # Skip if not proper format
                 if not isinstance(msg, dict) or 'role' not in msg or 'content' not in msg:
                     continue
-                
-                # Only include user and assistant messages
                 if msg['role'] in ['user', 'assistant']:
                     messages.append({
                         'role': msg['role'],
                         'content': msg['content']
                     })
-        
+
         # Add current prompt as final user message
         messages.append({
             'role': 'user',
             'content': enhanced_prompt
         })
-        
+
         # Ensure messages alternate user/assistant and start with user
-        # Anthropic API requires this
         if len(messages) > 1:
-            # Remove any leading assistant messages
             while messages and messages[0]['role'] == 'assistant':
                 messages.pop(0)
-            
-            # Ensure alternating pattern
-            cleaned_messages = [messages[0]]  # Start with first user message
+
+            cleaned_messages = [messages[0]]
             for i in range(1, len(messages)):
-                # Only add if it alternates with previous
                 if messages[i]['role'] != cleaned_messages[-1]['role']:
                     cleaned_messages.append(messages[i])
-            
+
             messages = cleaned_messages
-        
-        # Make API call with full conversation context
-        response = anthropic_client.messages.create(
-            model=config.CLAUDE_SONNET_MODEL,
-            max_tokens=max_tokens,
-            messages=messages,
-            timeout=config.ANTHROPIC_TIMEOUT
-        )
-        
+
+        # ====================================================================
+        # FIXED February 19, 2026: Pass system_prompt as Anthropic system= param
+        #
+        # When system_prompt is provided (knowledge base context + identity block
+        # from orchestration_handler.py), it goes into the system= parameter of
+        # the API call. The Anthropic API treats this as the highest-priority
+        # instruction set that Claude must follow. This is why it works when
+        # injecting the same content into the user message did not - the system
+        # prompt cannot be overridden by user-turn content.
+        # ====================================================================
+        api_kwargs = {
+            'model': config.CLAUDE_SONNET_MODEL,
+            'max_tokens': max_tokens,
+            'messages': messages,
+            'timeout': config.ANTHROPIC_TIMEOUT
+        }
+
+        if system_prompt:
+            api_kwargs['system'] = system_prompt
+            print(f"Using system prompt ({len(system_prompt)} chars) for KB injection")
+
+        response = anthropic_client.messages.create(**api_kwargs)
+
         return {
             'content': response.content[0].text,
             'usage': {
@@ -171,19 +190,21 @@ DO NOT say "I don't see any files" - the files ARE present and you MUST read the
             'error': True
         }
 
-def call_claude_opus(prompt, max_tokens=4000, conversation_history=None, files_attached=False):
+
+def call_claude_opus(prompt, max_tokens=4000, conversation_history=None, files_attached=False, system_prompt=None):
     """
-    Call Claude Opus (strategic supervisor)
-    
+    Call Claude Opus (strategic supervisor).
+
     Args:
         prompt: The current user request/prompt
         max_tokens: Maximum tokens in response
         conversation_history: Optional list of prior messages
         files_attached: Boolean indicating if files are attached to this request
-    
+        system_prompt: Optional system prompt string. When provided, passed as the Anthropic API
+                       system= parameter so Claude treats it as authoritative instructions.
+                       (Added Feb 19, 2026 - mirrors call_claude_sonnet behavior)
+
     Returns dict with 'content' and 'usage'
-    
-    CRITICAL FIX (January 30, 2026): Added files_attached parameter to force AI acknowledgment
     """
     if not anthropic_client:
         return {
@@ -191,16 +212,16 @@ def call_claude_opus(prompt, max_tokens=4000, conversation_history=None, files_a
             'usage': {'input_tokens': 0, 'output_tokens': 0},
             'error': True
         }
-    
-    # 🔧 CRITICAL: Inject capabilities FIRST so AI knows what it can do
+
+    # Inject capabilities so AI knows what it can do
     capabilities = get_system_capabilities_prompt() if CAPABILITIES_AVAILABLE else ""
-    
-    # 🔧 CRITICAL FIX (January 30, 2026): Add explicit file attachment warning
+
+    # Add explicit file attachment warning when files present
     file_warning = ""
     if files_attached:
         file_warning = """
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚠️ CRITICAL: FILES ARE ATTACHED TO THIS REQUEST
+CRITICAL: FILES ARE ATTACHED TO THIS REQUEST
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 The user has attached files to this request. The file contents appear BELOW in the prompt.
@@ -210,15 +231,14 @@ DO NOT say "I don't see any files" - the files ARE present and you MUST read the
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 """
-    
-    # Add formatting requirements
+
+    # Build the user-turn prompt with capabilities and formatting
     enhanced_prompt = f"{capabilities}\n\n{file_warning}{prompt}\n\n{config.FORMATTING_REQUIREMENTS}"
-    
+
     try:
         # Build messages array with conversation history
         messages = []
-        
-        # Add conversation history if provided
+
         if conversation_history and len(conversation_history) > 0:
             for msg in conversation_history:
                 if not isinstance(msg, dict) or 'role' not in msg or 'content' not in msg:
@@ -228,33 +248,39 @@ DO NOT say "I don't see any files" - the files ARE present and you MUST read the
                         'role': msg['role'],
                         'content': msg['content']
                     })
-        
+
         # Add current prompt as final user message
         messages.append({
             'role': 'user',
             'content': enhanced_prompt
         })
-        
+
         # Ensure messages alternate user/assistant and start with user
         if len(messages) > 1:
             while messages and messages[0]['role'] == 'assistant':
                 messages.pop(0)
-            
+
             cleaned_messages = [messages[0]]
             for i in range(1, len(messages)):
                 if messages[i]['role'] != cleaned_messages[-1]['role']:
                     cleaned_messages.append(messages[i])
-            
+
             messages = cleaned_messages
-        
-        # Make API call with full conversation context
-        response = anthropic_client.messages.create(
-            model=config.CLAUDE_OPUS_MODEL,
-            max_tokens=max_tokens,
-            messages=messages,
-            timeout=config.ANTHROPIC_TIMEOUT
-        )
-        
+
+        # Pass system_prompt as Anthropic system= parameter when provided
+        api_kwargs = {
+            'model': config.CLAUDE_OPUS_MODEL,
+            'max_tokens': max_tokens,
+            'messages': messages,
+            'timeout': config.ANTHROPIC_TIMEOUT
+        }
+
+        if system_prompt:
+            api_kwargs['system'] = system_prompt
+            print(f"Using system prompt ({len(system_prompt)} chars) for KB injection")
+
+        response = anthropic_client.messages.create(**api_kwargs)
+
         return {
             'content': response.content[0].text,
             'usage': {
@@ -270,12 +296,11 @@ DO NOT say "I don't see any files" - the files ARE present and you MUST read the
             'error': True
         }
 
+
 def call_gpt4(prompt, max_tokens=4000):
     """
     Call GPT-4 (design specialist)
     Returns dict with 'content' and 'usage'
-    
-    ROBUST FIX (January 29, 2026): Now ALWAYS injects system capabilities
     """
     if not openai_client:
         return {
@@ -283,11 +308,10 @@ def call_gpt4(prompt, max_tokens=4000):
             'usage': {'input_tokens': 0, 'output_tokens': 0},
             'error': True
         }
-    
-    # 🔧 CRITICAL: Inject capabilities so AI knows what it can do
+
     capabilities = get_system_capabilities_prompt() if CAPABILITIES_AVAILABLE else ""
     enhanced_prompt = f"{capabilities}\n\n{prompt}"
-    
+
     try:
         response = openai_client.chat.completions.create(
             model=config.GPT4_MODEL,
@@ -298,7 +322,7 @@ def call_gpt4(prompt, max_tokens=4000):
             max_tokens=max_tokens,
             timeout=config.OPENAI_TIMEOUT
         )
-        
+
         return {
             'content': response.choices[0].message.content,
             'usage': {
@@ -313,12 +337,11 @@ def call_gpt4(prompt, max_tokens=4000):
             'error': True
         }
 
+
 def call_deepseek(prompt, max_tokens=4000):
     """
     Call DeepSeek (code specialist)
     Returns dict with 'content' and 'usage'
-    
-    ROBUST FIX (January 29, 2026): Now ALWAYS injects system capabilities
     """
     if not deepseek_client:
         return {
@@ -326,11 +349,10 @@ def call_deepseek(prompt, max_tokens=4000):
             'usage': {'input_tokens': 0, 'output_tokens': 0},
             'error': True
         }
-    
-    # 🔧 CRITICAL: Inject capabilities so AI knows what it can do
+
     capabilities = get_system_capabilities_prompt() if CAPABILITIES_AVAILABLE else ""
     enhanced_prompt = f"{capabilities}\n\n{prompt}"
-    
+
     try:
         response = deepseek_client.chat.completions.create(
             model=config.DEEPSEEK_MODEL,
@@ -341,7 +363,7 @@ def call_deepseek(prompt, max_tokens=4000):
             max_tokens=max_tokens,
             timeout=config.DEEPSEEK_TIMEOUT
         )
-        
+
         return {
             'content': response.choices[0].message.content,
             'usage': {
@@ -356,12 +378,11 @@ def call_deepseek(prompt, max_tokens=4000):
             'error': True
         }
 
+
 def call_gemini(prompt, max_tokens=4000):
     """
     Call Google Gemini (multimodal specialist)
     Returns dict with 'content' and 'usage'
-    
-    ROBUST FIX (January 29, 2026): Now ALWAYS injects system capabilities
     """
     if not config.GOOGLE_API_KEY:
         return {
@@ -369,11 +390,10 @@ def call_gemini(prompt, max_tokens=4000):
             'usage': {'input_tokens': 0, 'output_tokens': 0},
             'error': True
         }
-    
-    # 🔧 CRITICAL: Inject capabilities so AI knows what it can do
+
     capabilities = get_system_capabilities_prompt() if CAPABILITIES_AVAILABLE else ""
     enhanced_prompt = f"{capabilities}\n\n{prompt}"
-    
+
     try:
         model = genai.GenerativeModel(config.GEMINI_MODEL)
         response = model.generate_content(
@@ -382,11 +402,11 @@ def call_gemini(prompt, max_tokens=4000):
                 max_output_tokens=max_tokens,
             )
         )
-        
+
         return {
             'content': response.text,
             'usage': {
-                'input_tokens': 0,  # Gemini doesn't provide token counts
+                'input_tokens': 0,
                 'output_tokens': 0
             }
         }
@@ -396,5 +416,6 @@ def call_gemini(prompt, max_tokens=4000):
             'usage': {'input_tokens': 0, 'output_tokens': 0},
             'error': True
         }
+
 
 # I did no harm and this file is not truncated
