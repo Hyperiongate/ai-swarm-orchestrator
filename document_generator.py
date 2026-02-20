@@ -1,287 +1,465 @@
 """
-DOCUMENT GENERATOR MODULE
-Created: January 19, 2026
-Last Updated: January 19, 2026
+Document Generator - AI Response to Downloadable Word Document
+Created: February 20, 2026
 
 PURPOSE:
-Creates professional, formatted documents (Word, PowerPoint, PDF, Excel)
-instead of plain text output. Uses Claude's document creation skills to
-generate client-ready files.
+    When the AI generates a checklist, report, proposal, guide, or other
+    document-type response in Handler 10, this module converts that text
+    into an actual downloadable .docx file using python-docx.
 
-INTEGRATION:
-This module integrates with the AI Swarm to detect when the user needs
-a document and automatically creates a properly formatted file.
+    This fixes the bug where the AI would describe or list document content
+    in the chat window but tell users "I cannot provide downloadable files"
+    because no file was actually being created.
 
-AUTHOR: Jim @ Shiftwork Solutions LLC
+CHANGELOG:
+- February 20, 2026: Initial creation
+  * Converts markdown AI responses to professional Word documents
+  * Detects document-type requests (checklist, report, proposal, etc.)
+  * Parses headings (H1/H2/H3), bullet lists, numbered lists, checkboxes,
+    bold/italic text, and plain paragraphs
+  * Saves to /tmp/outputs/ so existing download_handler.py can serve them
+  * Returns document_url, document_id for Handler 10 JSON response
+  * Integrates with existing save_generated_document() database function
+
+Author: Jim @ Shiftwork Solutions LLC
 """
 
-import subprocess
 import os
-import json
+import re
+import uuid
 from datetime import datetime
 
+from docx import Document
+from docx.shared import Pt, Inches, RGBColor
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-class DocumentGenerator:
+
+# ---------------------------------------------------------------------------
+# DOCUMENT TYPE DETECTION
+# ---------------------------------------------------------------------------
+
+# Keywords that indicate the user wants a deliverable document file
+DOCUMENT_REQUEST_KEYWORDS = [
+    'checklist', 'check list',
+    'report', 'reports',
+    'proposal', 'proposals',
+    'document', 'documents',
+    'template', 'templates',
+    'manual', 'manuals',
+    'guide', 'guides',
+    'summary', 'summaries',
+    'plan', 'plans',
+    'agenda', 'agendas',
+    'outline', 'outlines',
+    'memo', 'memos',
+    'letter', 'letters',
+    'word doc', 'word document',
+    '.docx',
+    'downloadable',
+    'download',
+    'save as',
+    'export',
+    'formatted document',
+]
+
+# Phrases that explicitly ask for a file to be generated
+EXPLICIT_FILE_PHRASES = [
+    'create a', 'create an',
+    'generate a', 'generate an',
+    'make a', 'make an',
+    'write a', 'write an',
+    'build a', 'build an',
+    'produce a', 'produce an',
+    'give me a', 'give me an',
+    'provide a', 'provide an',
+    'prepare a', 'prepare an',
+    'draft a', 'draft an',
+    'put together a', 'put together an',
+    'put together the',
+    'can you create', 'can you make', 'can you generate',
+    'can you write', 'can you build',
+    'i need a', 'i need an',
+    'i want a', 'i want an',
+    'i would like a', 'i would like an',
+]
+
+
+def is_document_request(user_request):
     """
-    Generates professional documents using Claude's document creation skills
+    Detect whether the user's request is for a downloadable document.
+
+    Returns True if the request contains both:
+    1. An action phrase (create, generate, make, etc.)
+    2. A document keyword (checklist, report, proposal, etc.)
+
+    OR if it contains an explicit download/file keyword.
+
+    Args:
+        user_request (str): The user's original request text
+
+    Returns:
+        bool: True if this looks like a document creation request
     """
-    
-    def __init__(self, output_dir="/mnt/user-data/outputs"):
-        self.output_dir = output_dir
-        self.skills_path = "/mnt/skills/public"
-        
-    def detect_document_type(self, user_request, content_hint=""):
-        """
-        Detect what type of document the user wants
-        
-        Returns: document_type (docx, pptx, pdf, xlsx, or None)
-        """
-        request_lower = user_request.lower()
-        
-        # PowerPoint indicators
-        if any(word in request_lower for word in ['powerpoint', 'presentation', 'slides', 'deck', 'ppt', 'pptx']):
-            return 'pptx'
-        
-        # PDF indicators
-        if any(word in request_lower for word in ['pdf', 'report', 'executive summary']) and 'pdf' in request_lower:
-            return 'pdf'
-        
-        # Excel indicators
-        if any(word in request_lower for word in ['spreadsheet', 'excel', 'calculator', 'cost analysis', 'xlsx']):
-            return 'xlsx'
-        
-        # Word document indicators (default for most documents)
-        if any(word in request_lower for word in [
-            'document', 'letter', 'memo', 'proposal', 'contract',
-            'data collection', 'word', 'docx', 'implementation', 'scope of work'
-        ]):
-            return 'docx'
-        
-        # Check content hint for clues
-        if 'slide' in content_hint.lower():
-            return 'pptx'
-        
-        # Default to Word for professional documents
-        return 'docx'
-    
-    def should_create_document(self, user_request):
-        """
-        Determine if this request should result in a file
-        Returns: (should_create: bool, document_type: str)
-        """
-        request_lower = user_request.lower()
-        
-        # Questions don't need documents
-        if request_lower.startswith(('what', 'how', 'why', 'when', 'where', 'who', 'is', 'are', 'can', 'should')):
-            return False, None
-        
-        # Creation requests DO need documents
-        if any(word in request_lower for word in [
-            'create', 'generate', 'make', 'build', 'write', 'draft', 'prepare', 'develop'
-        ]):
-            doc_type = self.detect_document_type(user_request)
-            return True, doc_type
-        
-        # "I need" statements
-        if 'i need' in request_lower or 'need a' in request_lower:
-            doc_type = self.detect_document_type(user_request)
-            return True, doc_type
-        
-        return False, None
-    
-    def create_word_document(self, content, filename=None, template_style="professional"):
-        """
-        Create a professional Word document using docx skill
-        
-        Args:
-            content: The text content to put in the document
-            filename: Output filename (auto-generated if None)
-            template_style: Style template (professional, report, letter)
-            
-        Returns:
-            filepath to the created document
-        """
-        if not filename:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"document_{timestamp}.docx"
-        
-        output_path = os.path.join(self.output_dir, filename)
-        
-        # Create a Node.js script to generate the .docx
-        script = self._generate_docx_script(content, output_path, template_style)
-        script_path = "/tmp/create_doc.js"
-        
-        with open(script_path, 'w') as f:
-            f.write(script)
-        
+    if not user_request:
+        return False
+
+    req_lower = user_request.lower()
+
+    # Explicit download requests always qualify
+    for kw in ['downloadable', 'download', '.docx', 'word doc', 'word document',
+               'save as', 'export', 'formatted document']:
+        if kw in req_lower:
+            return True
+
+    # Require both an action phrase AND a document keyword
+    has_action = any(phrase in req_lower for phrase in EXPLICIT_FILE_PHRASES)
+    has_doc_keyword = any(kw in req_lower for kw in DOCUMENT_REQUEST_KEYWORDS)
+
+    return has_action and has_doc_keyword
+
+
+# ---------------------------------------------------------------------------
+# DOCUMENT TITLE EXTRACTION
+# ---------------------------------------------------------------------------
+
+def extract_document_title(user_request, ai_response):
+    """
+    Extract a meaningful document title from the request or AI response.
+
+    Looks for:
+    1. H1 heading in AI response (# Title)
+    2. Key noun phrase in user request
+    3. Falls back to generic "Document" title
+
+    Args:
+        user_request (str): Original user request
+        ai_response (str): AI-generated response text
+
+    Returns:
+        str: Document title
+    """
+    # Try to find H1 heading in AI response
+    h1_match = re.search(r'^#\s+(.+)$', ai_response, re.MULTILINE)
+    if h1_match:
+        return h1_match.group(1).strip()
+
+    # Try to extract from user request
+    req_lower = user_request.lower()
+
+    # Common patterns: "create a [X] for [client]"
+    patterns = [
+        r'(?:create|make|generate|write|build|produce|prepare|draft)\s+(?:a|an|the)\s+(.+?)(?:\s+for\s+|\s+about\s+|\s+on\s+|$)',
+        r'(?:give me|provide|i need|i want)\s+(?:a|an)\s+(.+?)(?:\s+for\s+|\s+about\s+|\s+on\s+|$)',
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, req_lower)
+        if match:
+            raw_title = match.group(1).strip()
+            # Capitalize first letter of each word
+            return raw_title.title()
+
+    # Timestamp-based fallback
+    timestamp = datetime.now().strftime('%B %d, %Y')
+    return f"Document - {timestamp}"
+
+
+# ---------------------------------------------------------------------------
+# MARKDOWN TO DOCX CONVERTER
+# ---------------------------------------------------------------------------
+
+def markdown_to_docx(title, markdown_text):
+    """
+    Convert markdown-formatted AI response text into a Word document.
+
+    Handles:
+    - H1 (#), H2 (##), H3 (###) headings
+    - Bullet lists (- item, * item)
+    - Numbered lists (1. item)
+    - Checkbox lists (- [ ] item, - [x] item)
+    - Bold text (**text**)
+    - Italic text (*text*)
+    - Horizontal rules (---, ***)
+    - Plain paragraphs
+
+    Args:
+        title (str): Document title for the cover/heading
+        markdown_text (str): Markdown-formatted text from AI response
+
+    Returns:
+        Document: python-docx Document object ready to save
+    """
+    doc = Document()
+
+    # Set page margins (1.25" sides, 1" top/bottom - professional standard)
+    for section in doc.sections:
+        section.top_margin = Inches(1.0)
+        section.bottom_margin = Inches(1.0)
+        section.left_margin = Inches(1.25)
+        section.right_margin = Inches(1.25)
+
+    # --- Document title ---
+    title_para = doc.add_heading(title, level=0)
+    title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    # Add company subtitle
+    subtitle = doc.add_paragraph('Shiftwork Solutions LLC')
+    subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    subtitle_run = subtitle.runs[0]
+    subtitle_run.font.size = Pt(11)
+    subtitle_run.font.color.rgb = RGBColor(0x66, 0x7E, 0xEA)
+
+    # Add date
+    date_para = doc.add_paragraph(datetime.now().strftime('%B %d, %Y'))
+    date_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    date_para.runs[0].font.size = Pt(10)
+    date_para.runs[0].font.color.rgb = RGBColor(0x88, 0x88, 0x88)
+
+    # Spacer
+    doc.add_paragraph('')
+
+    # --- Parse and add content line by line ---
+    lines = markdown_text.split('\n')
+
+    for line in lines:
+        line = line.rstrip()
+
+        # Skip blank lines (add spacing naturally)
+        if not line.strip():
+            continue
+
+        # Skip lines that are just the same as the title (avoid duplication)
+        if line.strip() == f'# {title}' or line.strip() == title:
+            continue
+
+        # H1
+        if re.match(r'^#\s+', line):
+            text = re.sub(r'^#\s+', '', line).strip()
+            doc.add_heading(_strip_markdown_inline(text), level=1)
+
+        # H2
+        elif re.match(r'^##\s+', line):
+            text = re.sub(r'^##\s+', '', line).strip()
+            doc.add_heading(_strip_markdown_inline(text), level=2)
+
+        # H3
+        elif re.match(r'^###\s+', line):
+            text = re.sub(r'^###\s+', '', line).strip()
+            doc.add_heading(_strip_markdown_inline(text), level=3)
+
+        # Horizontal rule
+        elif re.match(r'^[-*_]{3,}$', line.strip()):
+            # Add a thin paragraph with a bottom border as a visual separator
+            p = doc.add_paragraph()
+            p.paragraph_format.space_before = Pt(4)
+            p.paragraph_format.space_after = Pt(4)
+
+        # Checkbox (- [ ] or - [x])
+        elif re.match(r'^-\s+\[[ xX]\]\s+', line):
+            checked = bool(re.match(r'^-\s+\[[xX]\]', line))
+            text = re.sub(r'^-\s+\[[ xX]\]\s+', '', line).strip()
+            text = _strip_markdown_inline(text)
+            prefix = '[x]' if checked else '[ ]'
+            p = doc.add_paragraph(style='List Bullet')
+            _add_run_with_formatting(p, f'{prefix}  {text}')
+
+        # Bullet list (- or *)
+        elif re.match(r'^[-*]\s+', line):
+            text = re.sub(r'^[-*]\s+', '', line).strip()
+            p = doc.add_paragraph(style='List Bullet')
+            _add_inline_runs(p, text)
+
+        # Numbered list (1. 2. etc.)
+        elif re.match(r'^\d+\.\s+', line):
+            text = re.sub(r'^\d+\.\s+', '', line).strip()
+            p = doc.add_paragraph(style='List Number')
+            _add_inline_runs(p, text)
+
+        # Indented bullet (  - item)
+        elif re.match(r'^\s{2,}[-*]\s+', line):
+            text = re.sub(r'^\s+[-*]\s+', '', line).strip()
+            p = doc.add_paragraph(style='List Bullet 2')
+            _add_inline_runs(p, text)
+
+        # Plain paragraph
+        else:
+            text = line.strip()
+            if text:
+                p = doc.add_paragraph()
+                _add_inline_runs(p, text)
+
+    return doc
+
+
+def _strip_markdown_inline(text):
+    """
+    Remove markdown inline formatting (bold, italic, code) from text.
+    Used where python-docx style handles formatting (headings).
+
+    Args:
+        text (str): Text with possible markdown formatting
+
+    Returns:
+        str: Plain text
+    """
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+    text = re.sub(r'\*(.+?)\*', r'\1', text)
+    text = re.sub(r'`(.+?)`', r'\1', text)
+    text = re.sub(r'__(.+?)__', r'\1', text)
+    text = re.sub(r'_(.+?)_', r'\1', text)
+    return text
+
+
+def _add_run_with_formatting(paragraph, text):
+    """
+    Add a simple text run to a paragraph with no inline formatting.
+
+    Args:
+        paragraph: python-docx Paragraph
+        text (str): Plain text
+    """
+    paragraph.add_run(text)
+
+
+def _add_inline_runs(paragraph, text):
+    """
+    Parse inline markdown formatting and add appropriately styled runs.
+
+    Handles:
+    - **bold** -> bold run
+    - *italic* -> italic run
+    - `code` -> monospace run
+    - plain text -> normal run
+
+    Args:
+        paragraph: python-docx Paragraph
+        text (str): Text with possible inline markdown
+    """
+    # Pattern matches bold, italic, code, or plain text segments
+    pattern = r'(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`|[^*`]+)'
+    segments = re.findall(pattern, text)
+
+    if not segments:
+        paragraph.add_run(text)
+        return
+
+    for segment in segments:
+        if segment.startswith('**') and segment.endswith('**'):
+            # Bold
+            run = paragraph.add_run(segment[2:-2])
+            run.bold = True
+        elif segment.startswith('*') and segment.endswith('*') and len(segment) > 2:
+            # Italic
+            run = paragraph.add_run(segment[1:-1])
+            run.italic = True
+        elif segment.startswith('`') and segment.endswith('`'):
+            # Code - monospace
+            run = paragraph.add_run(segment[1:-1])
+            run.font.name = 'Courier New'
+            run.font.size = Pt(10)
+        else:
+            paragraph.add_run(segment)
+
+
+# ---------------------------------------------------------------------------
+# MAIN GENERATION FUNCTION
+# ---------------------------------------------------------------------------
+
+def generate_document(user_request, ai_response_text, task_id=None,
+                      conversation_id=None, project_id=None):
+    """
+    Generate a downloadable Word document from an AI response.
+
+    This is the main entry point called from orchestration_handler.py
+    Handler 10 when a document-type request is detected.
+
+    Steps:
+    1. Extract a meaningful title from the request/response
+    2. Convert markdown AI response to python-docx Document
+    3. Save to /tmp/outputs/ so download_handler.py can serve it
+    4. Register in database via save_generated_document()
+    5. Return document metadata for JSON response
+
+    Args:
+        user_request (str): Original user request text
+        ai_response_text (str): AI-generated markdown response
+        task_id (int, optional): Task ID for database record
+        conversation_id (str, optional): Conversation ID for database record
+        project_id (str, optional): Project ID for database record
+
+    Returns:
+        dict: {
+            'success': bool,
+            'document_url': str,      # e.g. '/api/download/doc_20260220_123456.docx'
+            'document_id': int,       # database ID
+            'document_type': 'docx',
+            'filename': str,
+            'error': str              # only on failure
+        }
+    """
+    try:
+        # 1. Extract title
+        title = extract_document_title(user_request, ai_response_text)
+        print(f"Document generator: title='{title}'")
+
+        # 2. Convert markdown to Word document
+        doc = markdown_to_docx(title, ai_response_text)
+
+        # 3. Save to /tmp/outputs/
+        os.makedirs('/tmp/outputs', exist_ok=True)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        safe_title = re.sub(r'[^\w\s-]', '', title).strip().replace(' ', '_')[:40]
+        filename = f"doc_{timestamp}_{safe_title}.docx"
+        file_path = os.path.join('/tmp/outputs', filename)
+
+        doc.save(file_path)
+
+        file_size = os.path.getsize(file_path)
+        print(f"Document generator: saved {filename} ({file_size} bytes)")
+
+        # 4. Register in database
+        doc_id = None
         try:
-            # Install docx if not already installed
-            subprocess.run(['npm', 'install', '-g', 'docx'], 
-                         capture_output=True, timeout=30)
-            
-            # Run the script
-            result = subprocess.run(['node', script_path],
-                                  capture_output=True, 
-                                  text=True,
-                                  timeout=30)
-            
-            if result.returncode == 0 and os.path.exists(output_path):
-                return output_path
-            else:
-                print(f"Error creating Word doc: {result.stderr}")
-                return None
-                
-        except Exception as e:
-            print(f"Exception creating Word doc: {e}")
-            return None
-    
-    def _generate_docx_script(self, content, output_path, style):
-        """Generate Node.js script for creating Word document"""
-        
-        # Parse content into sections
-        lines = content.split('\n')
-        paragraphs = []
-        
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            
-            # Detect headings
-            if line.startswith('# '):
-                paragraphs.append({'type': 'heading1', 'text': line[2:]})
-            elif line.startswith('## '):
-                paragraphs.append({'type': 'heading2', 'text': line[3:]})
-            elif line.startswith('### '):
-                paragraphs.append({'type': 'heading3', 'text': line[4:]})
-            elif line.startswith('- ') or line.startswith('• '):
-                paragraphs.append({'type': 'bullet', 'text': line[2:]})
-            elif line.startswith(('1.', '2.', '3.', '4.', '5.')):
-                paragraphs.append({'type': 'numbered', 'text': line[3:]})
-            else:
-                paragraphs.append({'type': 'normal', 'text': line})
-        
-        # Generate JavaScript code
-        return f"""
-const {{ Document, Packer, Paragraph, TextRun, AlignmentType, HeadingLevel }} = require('docx');
-const fs = require('fs');
+            from database import save_generated_document
+            doc_id = save_generated_document(
+                filename=filename,
+                original_name=title,
+                document_type='docx',
+                file_path=file_path,
+                file_size=file_size,
+                task_id=task_id,
+                conversation_id=conversation_id,
+                project_id=project_id,
+                title=title,
+                description=f"Generated from request: {user_request[:200]}",
+                category='document'
+            )
+            print(f"Document generator: registered as doc_id={doc_id}")
+        except Exception as db_error:
+            # Non-fatal - file exists even if DB save fails
+            print(f"Document generator: DB save failed (non-critical): {db_error}")
 
-const paragraphs = {json.dumps(paragraphs)};
+        # 5. Build download URL
+        # Use /api/download/ which is served by existing download_handler.py
+        document_url = f'/api/download/{filename}'
 
-const children = paragraphs.map(p => {{
-    if (p.type === 'heading1') {{
-        return new Paragraph({{
-            text: p.text,
-            heading: HeadingLevel.HEADING_1,
-            spacing: {{ before: 240, after: 120 }}
-        }});
-    }} else if (p.type === 'heading2') {{
-        return new Paragraph({{
-            text: p.text,
-            heading: HeadingLevel.HEADING_2,
-            spacing: {{ before: 200, after: 100 }}
-        }});
-    }} else if (p.type === 'bullet') {{
-        return new Paragraph({{
-            text: p.text,
-            bullet: {{ level: 0 }},
-            spacing: {{ before: 60, after: 60 }}
-        }});
-    }} else {{
-        return new Paragraph({{
-            text: p.text,
-            spacing: {{ before: 60, after: 60 }}
-        }});
-    }}
-}});
+        return {
+            'success': True,
+            'document_url': document_url,
+            'document_id': doc_id,
+            'document_type': 'docx',
+            'filename': filename,
+            'file_size': file_size,
+            'title': title
+        }
 
-const doc = new Document({{
-    sections: [{{
-        properties: {{
-            page: {{
-                size: {{ width: 12240, height: 15840 }},
-                margin: {{ top: 1440, right: 1440, bottom: 1440, left: 1440 }}
-            }}
-        }},
-        children: children
-    }}]
-}});
-
-Packer.toBuffer(doc).then(buffer => {{
-    fs.writeFileSync('{output_path}', buffer);
-    console.log('Document created successfully');
-}}).catch(err => {{
-    console.error('Error:', err);
-    process.exit(1);
-}});
-"""
-    
-    def create_powerpoint(self, content, filename=None):
-        """
-        Create a professional PowerPoint presentation
-        
-        Returns:
-            filepath to the created presentation
-        """
-        if not filename:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"presentation_{timestamp}.pptx"
-        
-        output_path = os.path.join(self.output_dir, filename)
-        
-        # For now, return None - full PowerPoint creation requires html2pptx
-        # This would be implemented using the pptx skill
-        print("PowerPoint creation requires html2pptx setup - returning None for now")
-        return None
-    
-    def create_pdf(self, content, filename=None):
-        """
-        Create a professional PDF document
-        
-        Returns:
-            filepath to the created PDF
-        """
-        if not filename:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"document_{timestamp}.pdf"
-        
-        # First create a Word doc, then convert to PDF
-        docx_path = self.create_word_document(content, filename.replace('.pdf', '.docx'))
-        
-        if not docx_path:
-            return None
-        
-        output_path = os.path.join(self.output_dir, filename)
-        
-        try:
-            # Convert to PDF using LibreOffice
-            subprocess.run([
-                'soffice', '--headless', '--convert-to', 'pdf',
-                '--outdir', self.output_dir, docx_path
-            ], capture_output=True, timeout=30)
-            
-            if os.path.exists(output_path):
-                # Clean up intermediate docx
-                os.remove(docx_path)
-                return output_path
-            else:
-                print(f"PDF conversion failed")
-                return docx_path  # Return docx if PDF fails
-                
-        except Exception as e:
-            print(f"Exception creating PDF: {e}")
-            return docx_path  # Return docx if PDF fails
-
-
-# Singleton instance
-_document_generator = None
-
-def get_document_generator():
-    """Get or create the document generator singleton"""
-    global _document_generator
-    if _document_generator is None:
-        _document_generator = DocumentGenerator()
-    return _document_generator
+    except Exception as e:
+        import traceback
+        print(f"Document generator ERROR: {traceback.format_exc()}")
+        return {
+            'success': False,
+            'error': str(e)
+        }
 
 
 # I did no harm and this file is not truncated
