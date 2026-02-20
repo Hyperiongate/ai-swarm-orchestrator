@@ -1,9 +1,28 @@
 """
 Orchestration Handler - Main AI Task Processing (REFACTORED)
 Created: January 31, 2026
-Last Updated: February 19, 2026 - FIXED KNOWLEDGE BASE PROMPT INJECTION
+Last Updated: February 20, 2026 - ADDED CONTRACT/PROPOSAL TEMPLATE HANDLER
 
 CHANGELOG:
+
+- February 20, 2026: ADDED CONTRACT/PROPOSAL TEMPLATE HANDLER (Handler 3.5)
+  * PROBLEM: Asking for a contract or proposal caused the AI to generate a
+    generic template from training knowledge instead of using uploaded templates,
+    and it never asked for client-specific details before generating.
+  * FIX: Added Handler 3.5 that intercepts contract/proposal requests before
+    the regular AI flow. Step 1 asks 4 clarifying questions (client name,
+    address, project cost, payment terms). Step 2 retrieves the uploaded
+    template from Knowledge Management DB by document_type, injects the
+    client answers, generates the filled document, and creates a .docx download.
+  * Added 4 helper functions: _detect_template_request(), 
+    _build_contract_questions_html(), _get_template_from_kb(),
+    _build_contract_generation_prompt()
+
+- February 20, 2026: ADDED DOCUMENT GENERATION TO HANDLER 10
+  * Added document_generator.py integration so Handler 10 creates downloadable
+    .docx files when users request checklists, reports, proposals, etc.
+  * Response JSON now includes document_created, document_url, document_id,
+    document_type fields that the frontend uses to show the download button.
 
 - February 19, 2026: FIXED KNOWLEDGE BASE PROMPT INJECTION
   * PROBLEM: Knowledge base content was being found and assembled correctly
@@ -186,6 +205,163 @@ def orchestrate():
             )
             if selected_context:
                 file_contents += "\n\n" + selected_context
+
+        # ========================================================================
+        # HANDLER 3.5: CONTRACT / PROPOSAL TEMPLATE HANDLER
+        # Added February 20, 2026
+        #
+        # PROBLEM FIXED: When users asked for a contract or proposal, the AI
+        # generated a generic template from its training knowledge instead of
+        # using the actual contracts/proposals uploaded to the Knowledge tab.
+        # The AI also never asked for client-specific details before generating.
+        #
+        # FIX: Intercept contract/proposal requests before the regular AI flow.
+        # Step 1 - If no clarification answers yet: ask the 4 required questions
+        #          and return immediately (do not proceed to AI generation).
+        # Step 2 - If clarification answers ARE present: retrieve the uploaded
+        #          template from the Knowledge Management DB by document_type,
+        #          inject client answers into the prompt, generate the filled
+        #          document, and create a downloadable .docx file.
+        # ========================================================================
+        contract_type = _detect_template_request(user_request)
+
+        if contract_type and not clarification_answers:
+            # STEP 1: Ask clarifying questions before generating
+            print(f"Contract/proposal request detected: {contract_type} - asking clarifying questions")
+
+            if not conversation_id:
+                conversation_id = create_conversation(mode=mode, project_id=project_id)
+
+            add_message(conversation_id, 'user', user_request)
+
+            questions_html = _build_contract_questions_html(contract_type)
+
+            db = get_db()
+            cursor = db.execute(
+                'INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
+                (user_request, 'needs_clarification', conversation_id)
+            )
+            task_id = cursor.lastrowid
+            db.commit()
+            db.close()
+
+            add_message(conversation_id, 'assistant', questions_html, task_id,
+                       {'waiting_for_input': True, 'template_type': contract_type})
+
+            return jsonify({
+                'success': True,
+                'task_id': task_id,
+                'conversation_id': conversation_id,
+                'result': questions_html,
+                'needs_input': True,
+                'template_type': contract_type,
+                'orchestrator': 'contract_handler',
+                'execution_time': time.time() - overall_start
+            })
+
+        if contract_type and clarification_answers:
+            # STEP 2: Generate filled contract using KB template + client answers
+            print(f"Contract answers received - generating {contract_type}")
+
+            if not conversation_id:
+                conversation_id = create_conversation(mode=mode, project_id=project_id)
+
+            add_message(conversation_id, 'user', user_request)
+
+            db = get_db()
+            cursor = db.execute(
+                'INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
+                (user_request, 'processing', conversation_id)
+            )
+            task_id = cursor.lastrowid
+            db.commit()
+
+            # Retrieve template from Knowledge Management DB
+            template_content = _get_template_from_kb(contract_type)
+
+            # Build generation prompt with template + client answers
+            from orchestration.ai_clients import call_claude_sonnet
+            gen_prompt = _build_contract_generation_prompt(
+                contract_type, template_content, clarification_answers
+            )
+
+            api_system_prompt = (
+                "You are an expert assistant for Shiftwork Solutions LLC. "
+                "When filling in a contract or proposal, use the provided template "
+                "structure exactly. Do not add new sections or change the legal language. "
+                "Only fill in the blank fields with the client information provided."
+            )
+
+            response = call_claude_sonnet(
+                gen_prompt,
+                conversation_history=None,
+                files_attached=False,
+                system_prompt=api_system_prompt
+            )
+
+            if isinstance(response, dict):
+                actual_output = response.get('content', '') if not response.get('error') else f"Error: {response.get('content')}"
+            else:
+                actual_output = str(response)
+
+            formatted_output = convert_markdown_to_html(actual_output)
+
+            # Generate downloadable .docx
+            document_created = False
+            document_url = None
+            document_id = None
+
+            try:
+                from document_generator import generate_document
+                client_name = clarification_answers.get('client_name', 'Client')
+                doc_title = f"Shiftwork Solutions - {contract_type.title()} - {client_name}"
+
+                doc_result = generate_document(
+                    user_request=doc_title,
+                    ai_response_text=actual_output,
+                    task_id=task_id,
+                    conversation_id=conversation_id,
+                    project_id=project_id
+                )
+
+                if doc_result.get('success'):
+                    document_created = True
+                    document_url = doc_result['document_url']
+                    document_id = doc_result.get('document_id')
+                    print(f"Contract document generated: {document_url}")
+
+            except Exception as doc_err:
+                print(f"Contract doc generation error (non-critical): {doc_err}")
+
+            total_time = time.time() - overall_start
+            db.execute(
+                'UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
+                ('completed', 'contract_handler', total_time, task_id)
+            )
+            db.commit()
+            db.close()
+
+            add_message(conversation_id, 'assistant', actual_output, task_id,
+                       {'orchestrator': 'contract_handler', 'template_type': contract_type,
+                        'document_created': document_created, 'document_url': document_url})
+
+            return jsonify({
+                'success': True,
+                'task_id': task_id,
+                'conversation_id': conversation_id,
+                'result': formatted_output,
+                'orchestrator': 'contract_handler',
+                'template_type': contract_type,
+                'document_created': document_created,
+                'document_url': document_url,
+                'document_id': document_id,
+                'document_type': 'docx',
+                'execution_time': total_time
+            })
+
+        # ========================================================================
+        # END HANDLER 3.5
+        # ========================================================================
 
         # HANDLER 4: Labor analysis response handler
         if conversation_id:
@@ -1245,6 +1421,308 @@ Be comprehensive and professional."""
         import traceback
         print(f"CRITICAL ERROR: {traceback.format_exc()}")
         return jsonify({'success': False, 'error': f'Server error: {str(e)}'}), 500
+
+
+
+# ============================================================================
+# CONTRACT / PROPOSAL HANDLER HELPERS
+# Added February 20, 2026
+# ============================================================================
+
+def _detect_template_request(user_request):
+    """
+    Detect whether the user is asking for a contract or proposal document.
+
+    Returns 'contract', 'proposal', or None.
+
+    Added February 20, 2026 - Handler 3.5
+    """
+    if not user_request:
+        return None
+
+    req_lower = user_request.lower()
+
+    CONTRACT_KEYWORDS = [
+        'contract', 'agreement', 'project agreement',
+        'service agreement', 'consulting agreement'
+    ]
+    PROPOSAL_KEYWORDS = [
+        'proposal', 'bid', 'quote', 'scope of work', 'sow',
+        'project proposal', 'consulting proposal'
+    ]
+
+    if any(k in req_lower for k in CONTRACT_KEYWORDS):
+        return 'contract'
+    if any(k in req_lower for k in PROPOSAL_KEYWORDS):
+        return 'proposal'
+    return None
+
+
+def _build_contract_questions_html(contract_type):
+    """
+    Build the HTML clarification questions UI for contract/proposal requests.
+
+    Asks for client name, address, project cost, and payment terms.
+    Uses the same styling as the existing clarification UI in swarm-app.js.
+
+    Added February 20, 2026 - Handler 3.5
+    """
+    doc_label = contract_type.title()
+
+    html = (
+        f'<div style="background: linear-gradient(135deg, #e8f5e9 0%, #f3e5f5 100%); '
+        f'border-radius: 12px; padding: 20px; margin: 10px 0;">'
+        f'<div style="font-weight: 600; font-size: 16px; color: #333; margin-bottom: 15px;">'
+        f'📋 I\'ll prepare the {doc_label} for you. I just need a few details first:'
+        f'</div>'
+    )
+
+    questions = [
+        ('client_name',    'What is the client company name?',               'e.g. Acme Foods Inc.'),
+        ('client_address', 'What is the client address?',                    'e.g. 123 Main St, Chicago IL 60601'),
+        ('project_cost',   'What is the total project investment amount?',   'e.g. $99,000'),
+        ('payment_terms',  'How would you like payments structured?',
+         'e.g. 50% upon signing, 25% at mid-point, 25% on completion'),
+    ]
+
+    for field, question, placeholder in questions:
+        html += (
+            f'<div style="background: white; border-radius: 8px; padding: 15px; margin-bottom: 12px;">'
+            f'<div style="font-weight: 500; color: #333; margin-bottom: 8px;">'
+            f'{question} <span style="color: #d32f2f;">*</span></div>'
+            f'<input type="text" id="contract_field_{field}" placeholder="{placeholder}" '
+            f'style="width: 100%; padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; '
+            f'font-size: 14px; box-sizing: border-box;">'
+            f'</div>'
+        )
+
+    html += (
+        f'<div style="margin-top: 20px; text-align: center;">'
+        f'<button onclick="submitContractAnswers(\'{contract_type}\')" '
+        f'style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); '
+        f'color: white; border: none; padding: 12px 30px; border-radius: 8px; '
+        f'font-weight: 600; cursor: pointer; font-size: 15px;">'
+        f'✨ Generate {doc_label}</button>'
+        f'</div></div>'
+    )
+
+    # Inline JS to submit answers - uses same /api/orchestrate endpoint with
+    # clarification_answers so Handler 3.5 Step 2 picks it up
+    html += '''
+<script>
+function submitContractAnswers(contractType) {
+    var fields = ['client_name', 'client_address', 'project_cost', 'payment_terms'];
+    var answers = {};
+    var missing = [];
+
+    fields.forEach(function(f) {
+        var el = document.getElementById('contract_field_' + f);
+        if (el && el.value.trim()) {
+            answers[f] = el.value.trim();
+        } else {
+            missing.push(f.replace('_', ' '));
+        }
+    });
+
+    if (missing.length > 0) {
+        alert('Please fill in: ' + missing.join(', '));
+        return;
+    }
+
+    var loading = document.getElementById('loadingIndicator');
+    if (loading) loading.classList.add('active');
+
+    var formData = new FormData();
+    formData.append('request', 'Generate the ' + contractType + ' with the provided client details');
+    formData.append('clarification_answers', JSON.stringify(answers));
+    if (typeof currentConversationId !== 'undefined' && currentConversationId) {
+        formData.append('conversation_id', currentConversationId);
+    }
+
+    fetch('/api/orchestrate', { method: 'POST', body: formData })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (loading) loading.classList.remove('active');
+        if (data.success) {
+            if (data.conversation_id && typeof currentConversationId !== 'undefined') {
+                currentConversationId = data.conversation_id;
+                localStorage.setItem('currentConversationId', currentConversationId);
+            }
+            var downloadSection = '';
+            if (data.document_url) {
+                var docType = (data.document_type || 'docx').toUpperCase();
+                downloadSection = '<div style="margin-top:15px;padding:12px;background:#e8f5e9;border-left:4px solid #4caf50;border-radius:4px;">'
+                    + '<a href="' + data.document_url + '" download style="padding:8px 16px;background:#4caf50;color:white;text-decoration:none;border-radius:6px;">⬇️ Download ' + docType + '</a></div>';
+            }
+            if (typeof addMessage === 'function') {
+                addMessage('assistant', data.result + downloadSection, data.task_id, 'quick');
+            }
+            if (typeof loadConversations === 'function') loadConversations();
+            if (typeof loadDocuments === 'function') loadDocuments();
+        } else {
+            alert('Error: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(function(err) {
+        if (loading) loading.classList.remove('active');
+        alert('Error: ' + err.message);
+    });
+}
+</script>
+'''
+
+    return html
+
+
+def _get_template_from_kb(doc_type):
+    """
+    Retrieve the full content of an uploaded contract or proposal template
+    from the Knowledge Management database (swarm_intelligence.db).
+
+    Searches knowledge_extracts by document_type matching 'contract' or 'proposal'.
+    Returns the raw extracted content, or a fallback message if not found.
+
+    Added February 20, 2026 - Handler 3.5
+    """
+    import sqlite3
+
+    db_path = os.environ.get('KNOWLEDGE_DB_PATH', 'swarm_intelligence.db')
+
+    try:
+        db = sqlite3.connect(db_path)
+        db.row_factory = sqlite3.Row
+
+        # Check table exists
+        exists = db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='knowledge_extracts'"
+        ).fetchone()
+
+        if not exists:
+            db.close()
+            print(f"knowledge_extracts table not found in {db_path}")
+            return ""
+
+        # Search by document_type (exact match first, then LIKE)
+        row = db.execute(
+            '''SELECT document_name, document_type, extracted_data
+               FROM knowledge_extracts
+               WHERE LOWER(document_type) = ?
+               ORDER BY extracted_at DESC
+               LIMIT 1''',
+            (doc_type.lower(),)
+        ).fetchone()
+
+        if not row:
+            # Try partial match
+            row = db.execute(
+                '''SELECT document_name, document_type, extracted_data
+                   FROM knowledge_extracts
+                   WHERE LOWER(document_type) LIKE ?
+                   ORDER BY extracted_at DESC
+                   LIMIT 1''',
+                (f'%{doc_type.lower()}%',)
+            ).fetchone()
+
+        db.close()
+
+        if row:
+            print(f"Template found: {row['document_name']} (type: {row['document_type']})")
+            # extracted_data is JSON - try to get raw content from it
+            try:
+                extracted = json.loads(row['extracted_data'])
+                # Look for raw_content, content, or full_text keys
+                raw = (extracted.get('raw_content')
+                       or extracted.get('content')
+                       or extracted.get('full_text')
+                       or extracted.get('text', ''))
+                if raw:
+                    return raw
+                # Fall back to stringifying the insights as structured content
+                insights = extracted.get('insights', [])
+                patterns = extracted.get('patterns', [])
+                parts = [f"Template: {row['document_name']}"]
+                for item in insights[:20]:
+                    if isinstance(item, dict):
+                        parts.append(str(item.get('content', item)))
+                    else:
+                        parts.append(str(item))
+                for item in patterns[:10]:
+                    if isinstance(item, dict):
+                        parts.append(str(item.get('pattern', item)))
+                    else:
+                        parts.append(str(item))
+                return '\n'.join(parts)
+            except (json.JSONDecodeError, Exception) as parse_err:
+                print(f"Template JSON parse error: {parse_err}")
+                return str(row['extracted_data'])[:5000]
+        else:
+            print(f"No {doc_type} template found in knowledge_extracts")
+            return ""
+
+    except Exception as e:
+        print(f"Template retrieval error: {e}")
+        return ""
+
+
+def _build_contract_generation_prompt(contract_type, template_content, answers):
+    """
+    Build the AI generation prompt for filling in a contract or proposal.
+
+    Injects the KB template as the structural reference and the client
+    answers as the fill-in values.
+
+    Added February 20, 2026 - Handler 3.5
+    """
+    from datetime import datetime
+
+    client_name    = answers.get('client_name',    '___')
+    client_address = answers.get('client_address', '___')
+    project_cost   = answers.get('project_cost',   '___')
+    payment_terms  = answers.get('payment_terms',  '50% upon execution, 25% Phase 2 completion, 25% final delivery')
+    today          = datetime.now().strftime('%B %d, %Y')
+
+    doc_label = contract_type.title()
+
+    if template_content:
+        template_section = (
+            f"REFERENCE TEMPLATE (from our uploaded {doc_label} files):\n"
+            f"Use this as the structural and legal framework. Keep all sections, "
+            f"clauses, and language intact. Only fill in the blanks.\n\n"
+            f"{template_content}\n\n"
+            f"END OF TEMPLATE\n"
+        )
+    else:
+        template_section = (
+            f"NOTE: No uploaded {doc_label} template was found in the knowledge base. "
+            f"Generate a professional Shiftwork Solutions {doc_label} using our standard "
+            f"format: scope of work, phases, client responsibilities, investment & payment "
+            f"terms, IP/confidentiality, and signature block.\n\n"
+        )
+
+    prompt = f"""You are preparing a {doc_label} for Shiftwork Solutions LLC.
+
+{template_section}
+CLIENT INFORMATION:
+- Client Company: {client_name}
+- Client Address: {client_address}
+- Total Project Investment: {project_cost}
+- Payment Structure: {payment_terms}
+- Date: {today}
+- Project Manager: Jim Goodwin
+- Contact: (415) 763-5005 | https://shift-work.com
+
+INSTRUCTIONS:
+1. Use the template structure exactly — do not add or remove sections
+2. Replace every blank field (_____ or ____) with the client information above
+3. Fill in the payment schedule section with the payment structure provided
+4. Keep all legal language, protection clauses, and formatting from the template
+5. Where the template says "Client: _____" replace with "{client_name}"
+6. Where the template says "Facility: _____" use "{client_name} facility"
+7. Return the COMPLETE filled-in {doc_label} — do not truncate or summarize
+
+Generate the complete {doc_label} now:"""
+
+    return prompt
 
 
 # I did no harm and this file is not truncated
