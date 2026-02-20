@@ -1,61 +1,57 @@
 """
 SWARM PROJECT KNOWLEDGE INTEGRATION MODULE - ENHANCED
 Created: January 19, 2026
-Last Updated: February 19, 2026 - FIXED TOKENIZER AND SEARCH BUGS
+Last Updated: February 19, 2026 - ADDED index_single_file() FOR LIVE KB UPDATES
 
 CHANGELOG:
 
-- February 19, 2026: TOKENIZER AND SEARCH FIXES
-  * PROBLEM 1: _tokenize() used regex r'\b[a-z]+\b' which only matches pure
+- February 19, 2026 (Session 2): ADDED index_single_file() FOR LIVE KB UPDATES
+  * PROBLEM: Files uploaded through the app UI were analyzed on-demand but never
+    added to the knowledge base index. They had no lasting value beyond the single
+    conversation in which they were uploaded. The KB only contained files from the
+    GitHub project_files/ folder, indexed at startup.
+  * FIX: Added public method index_single_file(file_path) that indexes any file
+    into the live KB immediately after upload. Uses all existing private methods
+    (_extract_content, _extract_metadata, _extract_semantic_keywords) so behavior
+    is identical to startup indexing. Also updates self.document_terms and
+    self.global_term_frequency in memory so TF-IDF scoring stays accurate for
+    all future searches without requiring a restart.
+  * Uses INSERT OR REPLACE so re-uploading the same filename updates the record.
+  * Wrapped in full error handling - KB failure never breaks an upload.
+  * Called from routes/handlers/file_handler.py after every successful file save.
+  * Returns dict with success bool, filename, and word_count for logging.
+
+- February 19, 2026 (Session 1): TOKENIZER AND SEARCH FIXES
+  * PROBLEM 1: _tokenize() used regex r'\b[a-z]+\b' which only matched pure
     alphabetic words. All numeric shiftwork terms were invisible to the indexer:
-    20/60/20, 2-2-3, 24/7, 12-hour, 8-hour, 70/70, etc. Queries about these
-    concepts returned empty results even though the content existed in the files.
-  * FIX 1: New regex captures alphanumeric tokens including hyphens and slashes:
-    r'[a-z0-9]+(?:[-/][a-z0-9]+)*' - matches 20/60/20, 2-2-3, 12-hour, 24/7.
-  * PROBLEM 2: _wait_for_ready() timeout was 2 seconds in both semantic_search()
-    and get_context_for_task(). Background init takes ~30 seconds. Any request
-    in the first 28 seconds returned empty results silently.
-  * FIX 2: Increased timeout in get_context_for_task() to 15 seconds. Search
-    requests will wait up to 15 seconds for the index before giving up.
-    semantic_search() keeps 2 second timeout since it may be called frequently.
-  * PROBLEM 3: _extract_smart_excerpt() used strip('.,;:!?()') but not hyphens
-    or slashes, so numeric terms never matched query_terms and excerpts always
-    fell back to first 100 words regardless of content relevance.
-  * FIX 3: excerpt word comparison now normalizes using same tokenizer logic.
-  * PROBLEM 4: max_context default of 5000 chars was too small - truncated
-    useful context from 3 documents.
-  * FIX 4: Increased max_context default from 5000 to 8000.
+    20/60/20, 2-2-3, 24/7, 12-hour, 8-hour, 70/70, etc.
+  * FIX 1: New regex r'[a-z0-9]+(?:[-/][a-z0-9]+)*' captures alphanumeric
+    tokens including hyphens and slashes.
+  * PROBLEM 2: _wait_for_ready() timeout was 2 seconds - requests in first 28
+    seconds of startup returned empty results silently.
+  * FIX 2: get_context_for_task() timeout increased to 15 seconds.
+  * PROBLEM 3: _extract_smart_excerpt() excerpts always fell back to first 100
+    words because numeric terms never matched query_terms.
+  * FIX 3: Excerpt word comparison now normalizes using same tokenizer logic.
+  * PROBLEM 4: max_context default of 5000 chars truncated useful content.
+  * FIX 4: Increased max_context default to 8000.
   * PROBLEM 5: _extract_keywords() missing numeric shiftwork terms.
-  * FIX 5: Added 20/60/20, 2-2-3, 24/7, 12-hour, 8-hour, 10-hour, 70/70
-    to keyword extraction list.
+  * FIX 5: Added 20/60/20, 2-2-3, 24/7, 12-hour, 8-hour, 10-hour, 70/70.
 
 - February 18, 2026: BACKGROUND THREADING FIX
-  * PROBLEM: Knowledge base initialization was blocking gunicorn for ~30 seconds
-    on startup while indexing 34 documents (including 56MB Excel files). This
-    caused Render port scanner to time out and first real page request to
-    return a 30-second timeout error (29 bytes) instead of the full HTML page.
-  * FIX: Added initialize_background() method that runs the full initialization
-    in a daemon thread. Gunicorn now binds and accepts connections immediately.
-  * Added _initialization_complete threading.Event() flag so search methods
-    can check readiness without blocking.
-  * Added _db_lock threading.Lock() to protect SQLite writes from the background
-    thread (SQLite is not thread-safe by default for concurrent writes).
-  * search(), semantic_search(), and get_context_for_task() now return empty
-    results gracefully if called before init completes (instead of crashing).
-  * initialize() still works exactly as before - no breaking changes.
-  * app.py only needs one change: initialize() -> initialize_background()
+  * Added initialize_background() - gunicorn starts instantly, KB indexes in ~30s
+  * Added _initialization_complete threading.Event() flag
+  * Added _db_lock threading.Lock() for thread-safe SQLite writes
+  * search(), semantic_search(), get_context_for_task() degrade gracefully
 
 - January 29, 2026: MAJOR ENHANCEMENT
-  * Added semantic search capabilities with TF-IDF-like scoring
-  * Implemented multi-document context assembly
-  * Added priority system: PROJECT KNOWLEDGE FIRST, then external sources
+  * Added semantic search with TF-IDF-like scoring
+  * Multi-document context assembly
+  * Priority system: PROJECT KNOWLEDGE FIRST
   * Enhanced excerpt extraction with relevance highlighting
-  * Added comprehensive document metadata tracking
-  * Implemented knowledge source citation tracking
-  * Added category-based search filtering
-  * Enhanced template and framework retrieval
-  * Added cross-document concept linking
-  * Improved error handling and fallback mechanisms
+  * Comprehensive document metadata tracking
+  * Knowledge source citation tracking
+  * Category-based search filtering
 
 PURPOSE:
 Integrates the entire Shiftwork Solutions project knowledge base into the AI Swarm,
@@ -111,6 +107,7 @@ class EnhancedProjectKnowledgeBase:
     5. Cross-document concept linking
     6. Background initialization (February 18, 2026) - gunicorn starts instantly
     7. Fixed tokenizer (February 19, 2026) - numeric terms now indexed correctly
+    8. Live file indexing (February 19, 2026) - uploaded files join the KB index
     """
 
     def __init__(self, project_path="/mnt/project", db_path="swarm_intelligence.db"):
@@ -121,13 +118,10 @@ class EnhancedProjectKnowledgeBase:
         self.global_term_frequency = Counter()  # Term frequency across all docs
         self.total_documents = 0
 
-        # =====================================================================
-        # BACKGROUND THREADING SUPPORT (Added February 18, 2026)
-        # =====================================================================
+        # Background threading support (Added February 18, 2026)
         self._initialization_complete = threading.Event()
         self._db_lock = threading.Lock()
         self._init_thread = None
-        # =====================================================================
 
     # =========================================================================
     # BACKGROUND INITIALIZATION (Added February 18, 2026)
@@ -140,9 +134,6 @@ class EnhancedProjectKnowledgeBase:
         Gunicorn binds to the port and accepts connections immediately.
         The knowledge index becomes available ~30 seconds later.
         Any search called before init completes returns empty results gracefully.
-
-        This is the RECOMMENDED way to initialize in production (app.py).
-        The original initialize() method is still available and unchanged.
         """
         print("Starting knowledge base initialization in background thread...")
         print("   Gunicorn will accept connections immediately.")
@@ -164,7 +155,6 @@ class EnhancedProjectKnowledgeBase:
             import traceback
             print(traceback.format_exc())
         finally:
-            # Always set the event so callers don't wait forever
             self._initialization_complete.set()
 
     @property
@@ -176,7 +166,6 @@ class EnhancedProjectKnowledgeBase:
         """
         Wait up to timeout seconds for initialization to complete.
         Returns True if ready, False if still initializing after timeout.
-        Used by search methods so they degrade gracefully rather than crashing.
         """
         if self._initialization_complete.is_set():
             return True
@@ -188,15 +177,12 @@ class EnhancedProjectKnowledgeBase:
 
     def initialize(self):
         """
-        Initialize the ENHANCED knowledge base (synchronous - original behavior):
+        Initialize the ENHANCED knowledge base (synchronous):
         1. Create knowledge_documents table
         2. Extract all documents
         3. Build searchable index
         4. Calculate TF-IDF scores for semantic search
         5. Build concept linkage map
-
-        Called directly by initialize_background() worker thread.
-        Can also be called directly for synchronous initialization (legacy).
         """
         print("Initializing ENHANCED Project Knowledge Base...")
 
@@ -204,7 +190,6 @@ class EnhancedProjectKnowledgeBase:
         self._index_all_documents()
         self._build_semantic_index()
 
-        # Mark as complete
         self._initialization_complete.set()
 
         print(f"ENHANCED Knowledge Base Ready:")
@@ -276,10 +261,6 @@ class EnhancedProjectKnowledgeBase:
         Tokenize text for semantic search.
 
         FIXED February 19, 2026:
-        Previous regex r'\b[a-z]+\b' only matched pure alphabetic words, making
-        all numeric shiftwork terms invisible: 20/60/20, 2-2-3, 24/7, 12-hour,
-        8-hour, 70/70, etc.
-
         New regex r'[a-z0-9]+(?:[-/][a-z0-9]+)*' captures:
         - Pure alphabetic words: schedule, overtime, employee
         - Hyphenated terms: 12-hour, work-life, 2-2-3, day-on-day-off
@@ -294,31 +275,23 @@ class EnhancedProjectKnowledgeBase:
             'it', 'its', 'as', 'if', 'when', 'where', 'which', 'who', 'whom'
         }
 
-        # FIXED: capture alphanumeric tokens with optional hyphen/slash separators
         words = re.findall(r'[a-z0-9]+(?:[-/][a-z0-9]+)*', text.lower())
-
-        # Filter stopwords; keep tokens with length > 1 (allows numbers like 8, 12)
         meaningful_words = [w for w in words if w not in stopwords and len(w) > 1]
 
         return meaningful_words
 
     def _calculate_tf_idf(self, term, document_terms):
-        """
-        Calculate TF-IDF score for a term in a document.
-        TF = Term frequency in document
-        IDF = log(Total documents / Documents containing term)
-        """
+        """Calculate TF-IDF score for a term in a document."""
         if term not in document_terms:
             return 0.0
 
         tf = document_terms[term]
-
         docs_with_term = self.global_term_frequency.get(term, 0)
+
         if docs_with_term == 0:
             return 0.0
 
         idf = math.log(self.total_documents / docs_with_term)
-
         return tf * idf
 
     def _index_all_documents(self):
@@ -408,6 +381,144 @@ class EnhancedProjectKnowledgeBase:
             db.commit()
             db.close()
 
+    # =========================================================================
+    # LIVE FILE INDEXING (Added February 19, 2026)
+    # =========================================================================
+
+    def index_single_file(self, file_path):
+        """
+        Index a single file into the live knowledge base immediately.
+
+        Called by file_handler.py after every successful file upload so that
+        uploaded documents become searchable in all future conversations,
+        not just the current one.
+
+        Uses INSERT OR REPLACE so re-uploading the same filename updates the
+        existing record rather than creating a duplicate.
+
+        Also updates self.document_terms and self.global_term_frequency in
+        memory so TF-IDF scoring stays accurate without requiring a restart.
+
+        Args:
+            file_path: Full path string or Path object to the uploaded file
+
+        Returns:
+            dict with keys:
+                success (bool): True if indexed successfully
+                filename (str): Name of the file indexed
+                word_count (int): Number of words indexed
+                error (str): Error message if success is False
+        """
+        file_path = Path(file_path)
+
+        if not file_path.exists():
+            return {
+                'success': False,
+                'filename': file_path.name,
+                'word_count': 0,
+                'error': f'File not found: {file_path}'
+            }
+
+        try:
+            # Extract content using existing machinery
+            content = self._extract_content(file_path)
+
+            if not content or not content.strip():
+                return {
+                    'success': False,
+                    'filename': file_path.name,
+                    'word_count': 0,
+                    'error': 'No text content could be extracted from file'
+                }
+
+            # Build metadata and keywords using existing machinery
+            metadata = self._extract_metadata(file_path, content)
+            semantic_keywords = self._extract_semantic_keywords(content)
+
+            # ----------------------------------------------------------------
+            # 1. Update the database (thread-safe)
+            # ----------------------------------------------------------------
+            with self._db_lock:
+                db = sqlite3.connect(self.db_path, check_same_thread=False)
+
+                # INSERT OR REPLACE handles re-uploads of the same filename
+                db.execute('''
+                    INSERT OR REPLACE INTO knowledge_documents
+                    (filename, file_type, title, content, keywords, category,
+                     word_count, metadata, semantic_keywords, indexed_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ''', (
+                    file_path.name,
+                    file_path.suffix,
+                    metadata['title'],
+                    content[:50000],
+                    metadata['keywords'],
+                    metadata['category'],
+                    metadata['word_count'],
+                    json.dumps(metadata),
+                    ', '.join(semantic_keywords[:50])
+                ))
+
+                db.commit()
+                db.close()
+
+            # ----------------------------------------------------------------
+            # 2. Update in-memory knowledge index
+            # ----------------------------------------------------------------
+            self.knowledge_index[file_path.name] = {
+                'content': content,
+                'metadata': metadata,
+                'semantic_keywords': semantic_keywords
+            }
+
+            # ----------------------------------------------------------------
+            # 3. Update in-memory TF-IDF structures so scoring stays accurate
+            # If the file already existed, remove its old term counts first
+            # ----------------------------------------------------------------
+            if file_path.name in self.document_terms:
+                old_terms = self.document_terms[file_path.name]
+                for term in old_terms:
+                    if self.global_term_frequency[term] > 1:
+                        self.global_term_frequency[term] -= 1
+                    else:
+                        del self.global_term_frequency[term]
+
+            # Add new term counts
+            words = self._tokenize(content.lower())
+            new_term_freq = Counter(words)
+            self.document_terms[file_path.name] = new_term_freq
+
+            for term in set(words):
+                self.global_term_frequency[term] += 1
+
+            # Update total document count
+            self.total_documents = len(self.knowledge_index)
+
+            print(f"KB: Indexed uploaded file: {file_path.name} ({metadata['word_count']} words)")
+
+            return {
+                'success': True,
+                'filename': file_path.name,
+                'word_count': metadata['word_count'],
+                'category': metadata['category'],
+                'error': None
+            }
+
+        except Exception as e:
+            import traceback
+            print(f"KB: Failed to index {file_path.name}: {e}")
+            print(traceback.format_exc())
+            return {
+                'success': False,
+                'filename': file_path.name,
+                'word_count': 0,
+                'error': str(e)
+            }
+
+    # =========================================================================
+    # END LIVE FILE INDEXING
+    # =========================================================================
+
     def _extract_semantic_keywords(self, content):
         """
         Extract semantically important keywords using domain knowledge.
@@ -415,7 +526,7 @@ class EnhancedProjectKnowledgeBase:
         regardless of tokenizer behavior.
         """
         domain_terms = {
-            # Numeric rules and ratios - critical for Shiftwork Solutions methodology
+            # Numeric rules and ratios
             '20/60/20', '70/70', '80/20',
 
             # Schedule patterns - numeric
@@ -536,8 +647,7 @@ class EnhancedProjectKnowledgeBase:
     def _extract_keywords(self, content):
         """
         Extract relevant keywords from content.
-        FIXED February 19, 2026: Added numeric shiftwork terms that were
-        previously missing from keyword extraction.
+        FIXED February 19, 2026: Added numeric shiftwork terms.
         """
         terms = [
             # Numeric ratios and rules
@@ -591,27 +701,15 @@ class EnhancedProjectKnowledgeBase:
         """
         ENHANCED SEMANTIC SEARCH using TF-IDF-like scoring.
         Returns empty list gracefully if called before initialization completes.
-
-        Args:
-            query: Search query
-            max_results: Maximum results to return (1-15)
-            category_filter: Optional category to filter by
-
-        Returns:
-            List of relevant documents with scores and excerpts
         """
-        # 2 second timeout - semantic_search may be called frequently
         if not self._wait_for_ready(timeout=2.0):
             return []
 
         query_lower = query.lower()
         query_terms = self._tokenize(query_lower)
 
-        # Also build a set of raw query phrases for exact matching
-        # This catches multi-word terms that tokenization splits apart
         query_phrases = set()
         query_phrases.add(query_lower)
-        # Add individual slash/hyphen terms from query
         for term in re.findall(r'[a-z0-9]+(?:[-/][a-z0-9]+)+', query_lower):
             query_phrases.add(term)
 
@@ -626,7 +724,7 @@ class EnhancedProjectKnowledgeBase:
 
             score = 0
 
-            # 1. Exact phrase match (highest weight)
+            # 1. Exact phrase match
             if query_lower in content:
                 score += 50
 
@@ -641,7 +739,7 @@ class EnhancedProjectKnowledgeBase:
                 tf_idf = self._calculate_tf_idf(term, doc_terms)
                 score += tf_idf * 10
 
-            # 4. Title matches (high relevance)
+            # 4. Title matches
             title_lower = metadata['title'].lower()
             title_term_matches = sum(1 for term in query_terms if term in title_lower)
             score += title_term_matches * 15
@@ -659,7 +757,7 @@ class EnhancedProjectKnowledgeBase:
             )
             score += semantic_matches * 8
 
-            # 7. Direct semantic keyword phrase matches (catches 20/60/20 etc.)
+            # 7. Direct semantic keyword phrase matches
             for phrase in query_phrases:
                 if any(phrase == kw.lower() for kw in semantic_keywords):
                     score += 20
@@ -706,12 +804,9 @@ class EnhancedProjectKnowledgeBase:
     def _extract_smart_excerpt(self, content, query_terms, query_phrases=None, context_words=100):
         """
         Extract the most relevant excerpt using query terms.
-        Prioritizes sections with multiple query term matches.
 
         FIXED February 19, 2026: Added query_phrases parameter so numeric terms
         like 20/60/20 can be located in content even when tokenizer splits them.
-        Previously all excerpts fell back to first 100 words because numeric
-        terms never matched query_terms.
         """
         if query_phrases is None:
             query_phrases = set()
@@ -719,19 +814,15 @@ class EnhancedProjectKnowledgeBase:
         words = content.split()
         content_lower = content.lower()
 
-        # First try to find position of exact phrase matches
         phrase_positions = []
         for phrase in query_phrases:
             if phrase and phrase in content_lower:
                 idx = content_lower.find(phrase)
-                # Convert character position to approximate word position
                 word_pos = len(content_lower[:idx].split())
                 phrase_positions.append(word_pos)
 
-        # Find positions of tokenized term matches
         term_positions = []
         for i, word in enumerate(words):
-            # Normalize word using same tokenizer logic
             word_tokens = re.findall(r'[a-z0-9]+(?:[-/][a-z0-9]+)*', word.lower())
             for token in word_tokens:
                 if token in query_terms:
@@ -743,7 +834,6 @@ class EnhancedProjectKnowledgeBase:
         if not all_positions:
             return ' '.join(words[:context_words]) + '...'
 
-        # Find the position with highest density of matches
         best_center = all_positions[0]
         best_density = 1
 
@@ -787,25 +877,11 @@ class EnhancedProjectKnowledgeBase:
         Get relevant context from knowledge base for a specific task.
 
         THIS IS THE PRIORITY FUNCTION - Always called FIRST before external sources.
-        Returns empty string gracefully if called before initialization completes.
 
         FIXED February 19, 2026:
-        - Increased _wait_for_ready timeout from 2 to 15 seconds. Background init
-          takes ~30 seconds. Requests arriving in the first 28 seconds were
-          silently getting empty context despite the knowledge base being
-          nearly ready.
-        - Increased max_context default from 5000 to 8000 to allow richer context
-          from multiple documents without premature truncation.
-
-        Returns a formatted context string to inject into AI prompts with:
-        - Relevant excerpts from multiple documents
-        - Source citations
-        - Relevance indicators
+        - Increased _wait_for_ready timeout to 15 seconds
+        - Increased max_context default to 8000
         """
-        # FIXED: 15 second timeout allows knowledge base to finish initializing
-        # before giving up. semantic_search() keeps its 2 second timeout since
-        # it may be called in loops, but get_context_for_task is the primary
-        # injection point and should wait longer.
         if not self._wait_for_ready(timeout=15.0):
             print("Knowledge base not ready after 15 seconds - returning empty context")
             return ""
@@ -837,11 +913,7 @@ class EnhancedProjectKnowledgeBase:
         return context
 
     def search(self, query, max_results=5):
-        """
-        Backwards compatible search method.
-        Calls semantic_search for better results.
-        Returns empty list gracefully if not yet ready.
-        """
+        """Backwards compatible search method."""
         return self.semantic_search(query, max_results)
 
     def get_document(self, filename):
