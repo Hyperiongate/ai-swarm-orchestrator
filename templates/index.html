@@ -557,6 +557,7 @@
                     <button class="mode-btn" onclick="switchMode('pipeline')" id="pipelineModeBtn">📊 Pipeline</button>
                     <button class="mode-btn" onclick="switchMode('manuals')" id="manualsModeBtn">📝 Manuals</button>
                     <button class="mode-btn" onclick="window.location.href='/knowledge'" id="knowledgeModeBtn">🧠 Knowledge</button>
+                    <button class="mode-btn" onclick="switchMode('casestudies')" id="casestudiesModeBtn">✍️ Case Studies</button>
                 </div>
             </div>
         </div>
@@ -1076,7 +1077,56 @@ document.addEventListener('DOMContentLoaded', function() {
                         <div style="text-align: center; color: #999; padding: 20px;">Loading...</div>
                     </div>
                 </div>
-                
+                <!-- Case Studies Panel (casestudies mode only) -->
+<div class="casestudies-info" id="casestudiesInfo" style="display: none;">
+    <h3>✍️ Case Study Generator</h3>
+    <div style="padding: 10px; background: white; border-radius: 6px; font-size: 12px; margin-bottom: 15px; border-left: 3px solid #667eea;" id="caseStudiesStatus">
+        <strong>Status:</strong> Checking...
+    </div>
+
+    <div style="font-size: 13px; font-weight: 600; color: #555; margin: 15px 0 8px 0; padding-bottom: 5px; border-bottom: 1px solid #e0e0e0;">✍️ Create New</div>
+
+    <div style="margin-bottom: 10px;">
+        <label style="display: block; font-size: 12px; font-weight: 600; color: #555; margin-bottom: 5px;">Industry</label>
+        <select id="csIndustry" style="width: 100%; padding: 9px; border: 2px solid #e0e0e0; border-radius: 6px; font-size: 13px; box-sizing: border-box;">
+            <option value="">-- Select Industry --</option>
+            <option value="manufacturing">Manufacturing</option>
+            <option value="pharmaceutical">Pharmaceutical</option>
+            <option value="food_processing">Food Processing</option>
+            <option value="mining">Mining</option>
+            <option value="consumer_products">Consumer Products</option>
+            <option value="beverage">Beverage</option>
+            <option value="utilities">Utilities</option>
+            <option value="paper_packaging">Paper &amp; Packaging</option>
+            <option value="technology">Technology</option>
+            <option value="oil_gas_energy">Oil, Gas &amp; Energy</option>
+            <option value="chemicals">Chemicals</option>
+            <option value="automotive">Automotive</option>
+            <option value="transportation">Transportation</option>
+            <option value="healthcare">Healthcare</option>
+            <option value="government_mint">Government / Mint</option>
+            <option value="gaming_hospitality">Gaming &amp; Hospitality</option>
+            <option value="other">Other</option>
+        </select>
+    </div>
+
+    <div style="margin-bottom: 10px;">
+        <label style="display: block; font-size: 12px; font-weight: 600; color: #555; margin-bottom: 5px;">Problem</label>
+        <textarea id="csProblem" placeholder="Describe the client's scheduling problem..." style="width: 100%; padding: 9px; border: 2px solid #e0e0e0; border-radius: 6px; font-size: 12px; height: 80px; resize: vertical; box-sizing: border-box; font-family: inherit;"></textarea>
+    </div>
+
+    <div style="margin-bottom: 15px;">
+        <label style="display: block; font-size: 12px; font-weight: 600; color: #555; margin-bottom: 5px;">Solution</label>
+        <textarea id="csSolution" placeholder="Describe the solution applied..." style="width: 100%; padding: 9px; border: 2px solid #e0e0e0; border-radius: 6px; font-size: 12px; height: 80px; resize: vertical; box-sizing: border-box; font-family: inherit;"></textarea>
+    </div>
+
+    <button onclick="generateCaseStudy()" style="width: 100%; padding: 12px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 700; font-size: 14px; margin-bottom: 15px;">✍️ Generate Case Study</button>
+
+    <div style="font-size: 13px; font-weight: 600; color: #555; margin: 15px 0 8px 0; padding-bottom: 5px; border-bottom: 1px solid #e0e0e0;">📚 Saved Studies</div>
+    <div id="savedCaseStudiesList" style="max-height: 250px; overflow-y: auto;">
+        <div style="text-align: center; color: #999; padding: 15px; font-size: 12px;">Loading...</div>
+    </div>
+</div>
                 <!-- Quick Actions Section -->
                 <h3 style="margin-top: 20px;">Quick Actions</h3>
                 <ul class="quick-actions" id="quickActions"></ul>
@@ -2090,6 +2140,135 @@ document.addEventListener('DOMContentLoaded', function() {
         checkManualsStatus();
     }, 500);
 });     
+        // =============================================================================
+// CASE STUDY GENERATOR FUNCTIONS - Added February 21, 2026
+// =============================================================================
+
+function checkCaseStudiesStatus() {
+    fetch('/api/case-studies/status')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var statusDiv = document.getElementById('caseStudiesStatus');
+            if (data.available) {
+                statusDiv.innerHTML = '<strong>✅ Status:</strong> Ready — AI generation online';
+                loadSavedCaseStudies();
+            } else {
+                statusDiv.innerHTML = '<strong>⚠️ Status:</strong> Not available';
+            }
+        })
+        .catch(function() {
+            var statusDiv = document.getElementById('caseStudiesStatus');
+            if (statusDiv) statusDiv.innerHTML = '<strong>❌ Status:</strong> Error connecting';
+        });
+}
+
+function loadSavedCaseStudies() {
+    fetch('/api/case-studies/list')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var listDiv = document.getElementById('savedCaseStudiesList');
+            if (!listDiv) return;
+            if (data.success && data.case_studies && data.case_studies.length > 0) {
+                var html = '';
+                data.case_studies.forEach(function(study) {
+                    html += '<div style="padding: 10px; background: white; border-radius: 6px; margin-bottom: 8px; border-left: 3px solid #667eea; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">';
+                    html += '<div style="font-size: 12px; font-weight: 600; color: #333; margin-bottom: 4px;">' + escapeHtml(study.title) + '</div>';
+                    html += '<div style="font-size: 11px; color: #888; margin-bottom: 8px;">' + (study.industry_display || study.industry) + '</div>';
+                    html += '<div style="display: flex; gap: 5px;">';
+                    html += '<button onclick="viewCaseStudy(' + study.id + ')" style="flex: 1; padding: 5px; font-size: 11px; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer;">👁 View</button>';
+                    html += '<button onclick="downloadCaseStudy(' + study.id + ')" style="flex: 1; padding: 5px; font-size: 11px; background: #4caf50; color: white; border: none; border-radius: 4px; cursor: pointer;">⬇ Word</button>';
+                    html += '<button onclick="deleteCaseStudy(' + study.id + ')" style="flex: 1; padding: 5px; font-size: 11px; background: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer;">🗑</button>';
+                    html += '</div></div>';
+                });
+                listDiv.innerHTML = html;
+            } else {
+                listDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 15px; font-size: 12px;">No case studies yet</div>';
+            }
+        });
+}
+
+function generateCaseStudy() {
+    var industry = document.getElementById('csIndustry').value;
+    var problem = document.getElementById('csProblem').value.trim();
+    var solution = document.getElementById('csSolution').value.trim();
+
+    if (!industry) { alert('Please select an industry'); return; }
+    if (!problem || problem.length < 20) { alert('Please describe the problem (at least 20 characters)'); return; }
+    if (!solution || solution.length < 20) { alert('Please describe the solution (at least 20 characters)'); return; }
+
+    addMessage('user', '✍️ Generate case study — Industry: ' + industry + '\nProblem: ' + problem + '\nSolution: ' + solution);
+
+    var loading = document.getElementById('loadingIndicator');
+    loading.classList.add('active');
+    document.querySelector('.loading-text').textContent = 'Generating SEO-optimized case study... (30-60 seconds)';
+
+    fetch('/api/case-studies/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ industry: industry, problem: problem, solution: solution })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        loading.classList.remove('active');
+        if (data.success) {
+            var msg = '✅ **Case study generated!**\n\n';
+            msg += '**Title:** ' + data.title + '\n';
+            msg += '**Industry:** ' + data.industry_display + '\n';
+            msg += '**Word Count:** ~' + data.word_count + ' words\n\n';
+            msg += '---\n\n' + data.content + '\n\n---\n\n';
+            msg += '**ID ' + data.id + '** saved to library. Use the Word button to download.';
+            addMessage('assistant', msg);
+            document.getElementById('csProblem').value = '';
+            document.getElementById('csSolution').value = '';
+            document.getElementById('csIndustry').value = '';
+            loadSavedCaseStudies();
+        } else {
+            var errMsg = '❌ Generation failed: ' + (data.error || 'Unknown error');
+            if (data.errors) errMsg += '\n' + data.errors.join('\n');
+            addMessage('assistant', errMsg);
+        }
+    })
+    .catch(function(err) {
+        loading.classList.remove('active');
+        addMessage('assistant', '❌ Error: ' + err.message);
+    });
+}
+
+function viewCaseStudy(studyId) {
+    fetch('/api/case-studies/' + studyId)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                var study = data.case_study;
+                addMessage('assistant', '## ' + study.title + '\n\n' + study.content);
+            } else {
+                addMessage('assistant', '❌ Could not load case study');
+            }
+        });
+}
+
+function downloadCaseStudy(studyId) {
+    window.location.href = '/api/case-studies/download/' + studyId;
+}
+
+function deleteCaseStudy(studyId) {
+    if (!confirm('Delete this case study? This cannot be undone.')) return;
+    fetch('/api/case-studies/' + studyId, { method: 'DELETE' })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                loadSavedCaseStudies();
+                addMessage('assistant', '🗑 Case study deleted.');
+            }
+        });
+}
+
+// Wire up Case Studies tab initialization
+document.addEventListener('DOMContentLoaded', function() {
+    setTimeout(function() {
+        checkCaseStudiesStatus();
+    }, 600);
+});
     </script>
 </body>
 </html>
