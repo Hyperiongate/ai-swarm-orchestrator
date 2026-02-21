@@ -1,53 +1,29 @@
 """
 Orchestration Handler - Main AI Task Processing (REFACTORED)
 Created: January 31, 2026
-Last Updated: February 20, 2026 - ADDED CONTRACT/PROPOSAL TEMPLATE HANDLER
+Last Updated: February 21, 2026 - FIXED clarification_answers NameError
 
 CHANGELOG:
 
+- February 21, 2026: FIXED clarification_answers NameError breaking every request
+  PROBLEM: Handler 3.5 (Contract/Proposal) referenced clarification_answers
+    at the top of the handler chain (after Handler 3), but clarification_answers
+    was only parsed inside Handler 10 - hundreds of lines later. This caused a
+    NameError on EVERY request (contract or not). The NameError was caught by
+    the outer try/except, which returned a 500 error before ever reaching
+    analyze_task_with_sonnet. This is why the TIME-SENSITIVE research_agent
+    override was not firing - the request never reached that code.
+  FIX: Moved the clarification_answers parsing block to immediately AFTER
+    Handler 3 and BEFORE Handler 3.5. This is the correct location since
+    Handler 3.5 needs it, and it must be available for the full handler chain.
+    Removed the duplicate parsing block that was inside Handler 10.
+  IMPACT: This fix unblocks Handler 10 (regular conversation), the research
+    agent time-sensitive override, and all specialist dispatching.
+
 - February 20, 2026: ADDED CONTRACT/PROPOSAL TEMPLATE HANDLER (Handler 3.5)
-  * PROBLEM: Asking for a contract or proposal caused the AI to generate a
-    generic template from training knowledge instead of using uploaded templates,
-    and it never asked for client-specific details before generating.
-  * FIX: Added Handler 3.5 that intercepts contract/proposal requests before
-    the regular AI flow. Step 1 asks 4 clarifying questions (client name,
-    address, project cost, payment terms). Step 2 retrieves the uploaded
-    template from Knowledge Management DB by document_type, injects the
-    client answers, generates the filled document, and creates a .docx download.
-  * Added 4 helper functions: _detect_template_request(), 
-    _build_contract_questions_html(), _get_template_from_kb(),
-    _build_contract_generation_prompt()
-
 - February 20, 2026: ADDED DOCUMENT GENERATION TO HANDLER 10
-  * Added document_generator.py integration so Handler 10 creates downloadable
-    .docx files when users request checklists, reports, proposals, etc.
-  * Response JSON now includes document_created, document_url, document_id,
-    document_type fields that the frontend uses to show the download button.
-
 - February 19, 2026: FIXED KNOWLEDGE BASE PROMPT INJECTION
-  * PROBLEM: Knowledge base content was being found and assembled correctly
-    (confirmed via /api/admin/kb-diagnostic showing score 153.5 for 20/60/20)
-    but the AI was ignoring it and returning generic answers. Root cause was
-    a weak prompt instruction that treated KB content as optional background.
-  * FIX 1: get_knowledge_context_for_prompt() - increased max_context from
-    3000 to 6000 chars so richer excerpts from multiple documents reach the AI.
-  * FIX 2: get_knowledge_context_for_prompt() - replaced weak "Use this
-    information" instruction with authoritative MUST USE directive. The AI now
-    receives an explicit instruction that KB content is primary and authoritative.
-  * FIX 3: completion_prompt - added IDENTITY and INSTRUCTIONS block before
-    USER REQUEST. Tells the AI it is a Shiftwork Solutions expert, that KB
-    content in the prompt is from 30+ years of real consulting experience, and
-    that it must draw from that content rather than generic knowledge.
-  * FIX 4: Fixed "Hundreds of years" typo in knowledge context wrapper.
-  * No other changes - all handlers, routing, and logic are identical.
-
 - February 13, 2026 (Session 3): ADDED BACKGROUND PROCESSING FOR LARGE LABOR FILES
-  * Handler 4.5 now routes large labor files (>2MB) to background processing
-  * Prevents worker timeouts on large datasets
-  * Small files still processed immediately
-  * User gets instant "Processing in background..." response
-  * Results posted to conversation when complete
-
 - February 13, 2026 (Session 2): Handler 4.5 Labor Session Retrieval
 - February 13, 2026 (Session 1): Restored full regular conversation handler
 - February 10, 2026: Refactored into modular handlers
@@ -143,6 +119,7 @@ def orchestrate():
     """
     Main orchestration endpoint - routes requests to appropriate handlers.
 
+    UPDATED February 21, 2026: Fixed clarification_answers NameError
     UPDATED February 19, 2026: Fixed knowledge base prompt injection
     UPDATED February 13, 2026 (Session 3): Added background processing for large labor files
     UPDATED February 13, 2026 (Session 2): Added Handler 4.5 for labor session retrieval
@@ -205,6 +182,39 @@ def orchestrate():
             )
             if selected_context:
                 file_contents += "\n\n" + selected_context
+
+        # ====================================================================
+        # PARSE CLARIFICATION ANSWERS
+        # MOVED here February 21, 2026 - previously parsed inside Handler 10
+        # which caused NameError when Handler 3.5 used clarification_answers
+        # before it was defined, silently breaking every single request.
+        # Must be parsed here so Handler 3.5 (and all subsequent handlers)
+        # have access to it.
+        # ====================================================================
+        clarification_answers = None
+        if request.is_json:
+            clarification_answers_raw = request.json.get('clarification_answers')
+            if clarification_answers_raw:
+                if isinstance(clarification_answers_raw, str):
+                    try:
+                        clarification_answers = json.loads(clarification_answers_raw)
+                    except:
+                        clarification_answers = None
+                else:
+                    clarification_answers = clarification_answers_raw
+        else:
+            clarification_answers_str = request.form.get('clarification_answers')
+            if clarification_answers_str:
+                try:
+                    clarification_answers = json.loads(clarification_answers_str)
+                except:
+                    clarification_answers = None
+
+        if clarification_answers:
+            print(f"Clarification answers received: {clarification_answers}")
+        # ====================================================================
+        # END CLARIFICATION ANSWERS PARSING
+        # ====================================================================
 
         # ========================================================================
         # HANDLER 3.5: CONTRACT / PROPOSAL TEMPLATE HANDLER
@@ -710,28 +720,9 @@ Be comprehensive and professional."""
             if file_contents:
                 print(f"Retrieved file contents from conversation history")
 
-        # Parse clarification answers
-        clarification_answers = None
-        if request.is_json:
-            clarification_answers_raw = request.json.get('clarification_answers')
-            if clarification_answers_raw:
-                if isinstance(clarification_answers_raw, str):
-                    try:
-                        clarification_answers = json.loads(clarification_answers_raw)
-                    except:
-                        clarification_answers = None
-                else:
-                    clarification_answers = clarification_answers_raw
-        else:
-            clarification_answers_str = request.form.get('clarification_answers')
-            if clarification_answers_str:
-                try:
-                    clarification_answers = json.loads(clarification_answers_str)
-                except:
-                    clarification_answers = None
-
+        # NOTE: clarification_answers already parsed above (moved from here Feb 21, 2026)
+        # Apply clarification answers to user_request if present
         if clarification_answers:
-            print(f"Clarification answers received: {clarification_answers}")
             context_additions = []
             for field, value in clarification_answers.items():
                 context_additions.append(f"{field}: {value}")
@@ -1017,27 +1008,8 @@ Be comprehensive and professional."""
 
             # ====================================================================
             # FIXED February 19, 2026: AUTHORITATIVE KNOWLEDGE BASE INJECTION
-            #
-            # PREVIOUS PROBLEM: max_context=3000 was too small, and the instruction
-            # "Use this information" was too weak - the AI treated KB content as
-            # optional background and defaulted to generic training knowledge.
-            #
-            # FIX: Increased max_context to 6000. Replaced weak instruction with
-            # an authoritative MUST USE directive. The completion_prompt now also
-            # includes an IDENTITY block that tells the AI it is a Shiftwork
-            # Solutions expert and must draw from the KB content, not generic
-            # knowledge, when answering shiftwork questions.
             # ====================================================================
             def get_knowledge_context_for_prompt(kb, user_req, max_context=6000):
-                """
-                Get knowledge context to include in completion prompts.
-
-                FIXED February 19, 2026:
-                - Increased max_context from 3000 to 6000 to allow richer excerpts
-                - Changed instruction from weak "Use this information" to authoritative
-                  MUST USE directive so the AI treats KB content as primary source
-                - Fixed "Hundreds of years" typo
-                """
                 if not kb:
                     return ""
                 try:
@@ -1198,16 +1170,6 @@ ATTACHED FILES - READ THESE CAREFULLY
                 else:
                     file_section = ""
 
-                # ================================================================
-                # FIXED February 19, 2026: Added IDENTITY block to completion_prompt
-                #
-                # The knowledge_context contains the KB excerpts but without a clear
-                # instruction the AI defaults to generic training knowledge.
-                # The IDENTITY AND INSTRUCTIONS block tells the AI:
-                # 1. It IS a Shiftwork Solutions expert assistant
-                # 2. KB content in the prompt is authoritative - use it first
-                # 3. Generic answers are unacceptable when KB content exists
-                # ================================================================
                 identity_block = ""
                 if knowledge_context:
                     identity_block = """
@@ -1245,10 +1207,6 @@ Be comprehensive and professional."""
                 if file_contents:
                     print(f"Completion prompt contains {len(file_contents)} chars of file content")
 
-                # Build system prompt from KB context + identity block
-                # This passes authoritative instructions via the Anthropic system=
-                # parameter rather than the user turn, so Claude cannot ignore them.
-                # (Fixed February 19, 2026)
                 api_system_prompt = None
                 if knowledge_context or identity_block:
                     api_system_prompt = f"{knowledge_context}{identity_block}".strip()
@@ -1349,18 +1307,6 @@ Be comprehensive and professional."""
 
             # ================================================================
             # DOCUMENT GENERATION - Added February 20, 2026
-            #
-            # PROBLEM FIXED: When users asked for a checklist, report,
-            # proposal, or other document, the AI generated the content as
-            # chat text but no file was created, so the download button
-            # never appeared. The AI would then incorrectly tell users it
-            # could not provide downloadable files.
-            #
-            # FIX: Detect document-type requests and pass the AI response
-            # text to document_generator.py which creates a real .docx file
-            # in /tmp/outputs/ and returns a download URL. The response JSON
-            # now includes document_created=True and document_url so the
-            # frontend renders the download button.
             # ================================================================
             document_created = False
             document_url = None
@@ -1391,7 +1337,6 @@ Be comprehensive and professional."""
                         print(f"Document generation failed (non-critical): {doc_result.get('error')}")
 
             except Exception as doc_gen_error:
-                # Non-fatal: document generation failure must never break the response
                 print(f"Document generation error (non-critical): {doc_gen_error}")
 
             return jsonify({
@@ -1423,7 +1368,6 @@ Be comprehensive and professional."""
         return jsonify({'success': False, 'error': f'Server error: {str(e)}'}), 500
 
 
-
 # ============================================================================
 # CONTRACT / PROPOSAL HANDLER HELPERS
 # Added February 20, 2026
@@ -1432,9 +1376,7 @@ Be comprehensive and professional."""
 def _detect_template_request(user_request):
     """
     Detect whether the user is asking for a contract or proposal document.
-
     Returns 'contract', 'proposal', or None.
-
     Added February 20, 2026 - Handler 3.5
     """
     if not user_request:
@@ -1461,10 +1403,6 @@ def _detect_template_request(user_request):
 def _build_contract_questions_html(contract_type):
     """
     Build the HTML clarification questions UI for contract/proposal requests.
-
-    Asks for client name, address, project cost, and payment terms.
-    Uses the same styling as the existing clarification UI in swarm-app.js.
-
     Added February 20, 2026 - Handler 3.5
     """
     doc_label = contract_type.title()
@@ -1506,8 +1444,6 @@ def _build_contract_questions_html(contract_type):
         f'</div></div>'
     )
 
-    # Inline JS to submit answers - uses same /api/orchestrate endpoint with
-    # clarification_answers so Handler 3.5 Step 2 picks it up
     html += '''
 <script>
 function submitContractAnswers(contractType) {
@@ -1577,11 +1513,7 @@ function submitContractAnswers(contractType) {
 def _get_template_from_kb(doc_type):
     """
     Retrieve the full content of an uploaded contract or proposal template
-    from the Knowledge Management database (swarm_intelligence.db).
-
-    Searches knowledge_extracts by document_type matching 'contract' or 'proposal'.
-    Returns the raw extracted content, or a fallback message if not found.
-
+    from the Knowledge Management database.
     Added February 20, 2026 - Handler 3.5
     """
     import sqlite3
@@ -1592,7 +1524,6 @@ def _get_template_from_kb(doc_type):
         db = sqlite3.connect(db_path)
         db.row_factory = sqlite3.Row
 
-        # Check table exists
         exists = db.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='knowledge_extracts'"
         ).fetchone()
@@ -1602,7 +1533,6 @@ def _get_template_from_kb(doc_type):
             print(f"knowledge_extracts table not found in {db_path}")
             return ""
 
-        # Search by document_type (exact match first, then LIKE)
         row = db.execute(
             '''SELECT document_name, document_type, extracted_data
                FROM knowledge_extracts
@@ -1613,7 +1543,6 @@ def _get_template_from_kb(doc_type):
         ).fetchone()
 
         if not row:
-            # Try partial match
             row = db.execute(
                 '''SELECT document_name, document_type, extracted_data
                    FROM knowledge_extracts
@@ -1627,17 +1556,14 @@ def _get_template_from_kb(doc_type):
 
         if row:
             print(f"Template found: {row['document_name']} (type: {row['document_type']})")
-            # extracted_data is JSON - try to get raw content from it
             try:
                 extracted = json.loads(row['extracted_data'])
-                # Look for raw_content, content, or full_text keys
                 raw = (extracted.get('raw_content')
                        or extracted.get('content')
                        or extracted.get('full_text')
                        or extracted.get('text', ''))
                 if raw:
                     return raw
-                # Fall back to stringifying the insights as structured content
                 insights = extracted.get('insights', [])
                 patterns = extracted.get('patterns', [])
                 parts = [f"Template: {row['document_name']}"]
@@ -1667,10 +1593,6 @@ def _get_template_from_kb(doc_type):
 def _build_contract_generation_prompt(contract_type, template_content, answers):
     """
     Build the AI generation prompt for filling in a contract or proposal.
-
-    Injects the KB template as the structural reference and the client
-    answers as the fill-in values.
-
     Added February 20, 2026 - Handler 3.5
     """
     from datetime import datetime
