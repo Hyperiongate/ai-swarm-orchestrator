@@ -1053,6 +1053,18 @@ except Exception as e:
     print(f"⚠️  Phase 1 Intelligence registration failed: {e}")
 
 # ============================================================================
+# CASE STUDY GENERATOR BLUEPRINT (Added February 21, 2026)
+# ============================================================================
+try:
+    from routes.case_studies import case_studies_bp
+    app.register_blueprint(case_studies_bp)
+    print("✅ Case Study Generator API registered")
+except ImportError as e:
+    print(f"ℹ️  Case Study Generator routes not found: {e}")
+except Exception as e:
+    print(f"⚠️  Case Study Generator registration failed: {e}")
+
+# ============================================================================
 # BACKGROUND FILE PROCESSOR BLUEPRINT (Added February 5, 2026)
 # ============================================================================
 try:
