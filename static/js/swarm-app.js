@@ -742,6 +742,9 @@ function switchMode(mode) {
     var manualsBtn = document.getElementById('manualsModeBtn');
     if (manualsBtn) manualsBtn.classList.toggle('active', mode === 'manuals');
     
+    var casestudiesBtn = document.getElementById('casestudiesModeBtn');
+    if (casestudiesBtn) casestudiesBtn.classList.toggle('active', mode === 'casestudies');
+    
     document.getElementById('projectInfo').style.display = mode === 'project' ? 'block' : 'none';
     document.getElementById('calculatorInfo').style.display = mode === 'calculator' ? 'block' : 'none';
     document.getElementById('surveyInfo').style.display = mode === 'survey' ? 'block' : 'none';
