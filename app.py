@@ -116,6 +116,12 @@ app.config['SESSION_TYPE'] = 'filesystem'
 
 # Initialize database (includes all tables from all sprints)
 init_db()
+# Run missing table migrations (Added February 21, 2026)
+try:
+    from migrate_missing_tables import run_migration
+    run_migration()
+except Exception as e:
+    print(f"⚠️  Migration warning: {e}")
 
 # Initialize survey tables
 try:
