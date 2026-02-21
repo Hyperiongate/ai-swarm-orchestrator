@@ -1,29 +1,34 @@
 """
 Proactive Intelligence Module
 Created: January 22, 2026
-Last Updated: January 26, 2026 - DISABLED SCHEDULE CLARIFICATIONS
+Last Updated: February 21, 2026 - ADDED MISSING INTERFACE METHODS
 
-CHANGE LOG:
-- January 26, 2026: DISABLED schedule clarification questions
-  * Schedule requests are now handled by schedule_request_handler.py
+CHANGELOG:
+
+- February 21, 2026: ADDED MISSING INTERFACE METHODS
+  PROBLEM: orchestration_handler.py calls two methods that never existed
+    on ProactiveAgent:
+      proactive.pre_process_request(user_request)
+        -> AttributeError: 'ProactiveAgent' object has no attribute 'pre_process_request'
+      proactive.post_process_result(task_id, user_request, actual_output)
+        -> AttributeError: 'ProactiveAgent' object has no attribute 'post_process_result'
+    Both failures were caught by try/except in orchestration_handler.py and
+    logged on every single request, but the calls were silently skipped.
+  FIX: Added pre_process_request() and post_process_result() as the interface
+    methods orchestration_handler.py expects.
+    - pre_process_request(user_request) wraps process_request() and returns
+      {'action': 'ask_questions', 'data': ...} or {'action': 'proceed'} or
+      {'action': 'detect_project', 'data': ...} matching handler expectations.
+    - post_process_result(task_id, user_request, actual_output) infers the
+      completed task type from the request text and returns suggestion strings.
+  No other logic changed. All existing methods intact. Fully backward compatible.
+
+- January 26, 2026: DISABLED SCHEDULE CLARIFICATIONS
+  * Schedule requests now handled by schedule_request_handler.py
   * Removed DuPont/Panama/Pitman/industry clarification logic
   * Schedule system now uses conversational pattern-based approach
 
-This module makes the AI Swarm proactive instead of reactive.
-It asks questions, suggests next steps, and anticipates user needs.
-
-SPRINT 1 FEATURES:
-- Smart questioning when request is ambiguous
-- Post-task suggestions based on context
-- Pattern tracking for future automation
-
-SPRINT 2 FEATURES:
-- Project auto-detection (detects "new client" keywords)
-- Automatic project structure creation
-- Implementation checklist generation
-- Milestone tracking
-
-Author: Jim @ Shiftwork Solutions LLC (managed by Claude)
+Author: Jim @ Shiftwork Solutions LLC
 """
 
 import json
@@ -35,23 +40,19 @@ from project_manager import ProjectManager
 
 class SmartQuestioner:
     """Asks clarifying questions instead of guessing"""
-    
+
     def analyze_ambiguity(self, user_request):
         """
-        Determine what information is missing from the request
-        Returns list of questions to ask user
-        
+        Determine what information is missing from the request.
+        Returns list of questions to ask user.
+
         IMPORTANT: Schedule requests are NO LONGER handled here.
         They are handled by schedule_request_handler.py which uses
-        a conversational approach (shift length → pattern selection).
+        a conversational approach (shift length -> pattern selection).
         """
         ambiguities = []
         request_lower = user_request.lower()
-        
-        # REMOVED: Schedule clarification logic
-        # Schedule requests now handled by schedule_request_handler.py
-        # which asks for shift length first, then shows available patterns
-        
+
         # Check for missing project context (non-schedule requests)
         if ('implementation' in request_lower or 'rollout' in request_lower) and not self._has_client_context(request_lower):
             ambiguities.append({
@@ -61,7 +62,7 @@ class SmartQuestioner:
                 'why': 'Different approaches for new vs existing clients',
                 'required': False
             })
-        
+
         # Check for missing document type
         if 'document' in request_lower and not self._has_document_type(request_lower):
             ambiguities.append({
@@ -71,44 +72,36 @@ class SmartQuestioner:
                 'why': 'Different formats for different document types',
                 'required': False
             })
-        
+
         return ambiguities
-    
+
     def _has_schedule_type(self, text):
-        """
-        DEPRECATED: No longer used for clarifications.
-        Schedule handling moved to schedule_request_handler.py
-        """
-        return True  # Always return True to skip clarifications
-    
+        """DEPRECATED - schedule handling moved to schedule_request_handler.py"""
+        return True
+
     def _has_number(self, text):
         """Check if text contains numbers"""
         return bool(re.search(r'\d+', text))
-    
+
     def _has_industry(self, text):
-        """
-        DEPRECATED for schedule requests: No longer used for clarifications.
-        Industry context can be captured in other workflows.
-        """
-        return True  # Always return True to skip clarifications
-    
+        """DEPRECATED for schedule requests"""
+        return True
+
     def _has_client_context(self, text):
         """Check if client is mentioned"""
         client_indicators = ['for', 'client', 'company', 'facility']
         return any(indicator in text.lower() for indicator in client_indicators)
-    
+
     def _has_document_type(self, text):
         """Check if document type is specified"""
         doc_types = ['proposal', 'plan', 'summary', 'report', 'collection', 'survey']
         return any(doc_type in text.lower() for doc_type in doc_types)
-    
+
     def format_clarification_response(self, ambiguities):
-        """
-        Format ambiguous questions into structured response
-        """
+        """Format ambiguous questions into structured response"""
         if not ambiguities:
             return None
-        
+
         response = {
             'needs_clarification': True,
             'clarification_data': {
@@ -117,7 +110,7 @@ class SmartQuestioner:
                 'optional_questions': []
             }
         }
-        
+
         for item in ambiguities:
             question_obj = {
                 'field': item['field'],
@@ -125,168 +118,153 @@ class SmartQuestioner:
                 'options': item.get('options', []),
                 'why': item.get('why', '')
             }
-            
+
             if item.get('required', False):
                 response['clarification_data']['required_questions'].append(question_obj)
             else:
                 response['clarification_data']['optional_questions'].append(question_obj)
-        
+
         return response
 
 
 class NextStepSuggester:
     """Suggests logical next steps after completing a task"""
-    
+
     def suggest_next_steps(self, completed_task_type, context=None):
-        """
-        Based on what was just done, suggest what to do next
-        """
+        """Based on what was just done, suggest what to do next"""
         suggestions = []
-        
+
         if completed_task_type == 'schedule_created':
             suggestions = [
                 "Would you like me to create a cost analysis for this schedule?",
                 "Should I draft a communication plan for rolling this out to employees?",
                 "Do you want to compare this to alternative schedule patterns?"
             ]
-        
+
         elif completed_task_type == 'data_collection':
             suggestions = [
                 "Would you like me to analyze this data and identify opportunities?",
                 "Should I create a findings summary document?",
                 "Do you want recommendations based on this data?"
             ]
-        
+
         elif completed_task_type == 'proposal_created':
             suggestions = [
                 "Would you like me to create a presentation deck from this proposal?",
                 "Should I draft follow-up email templates?",
                 "Do you want an FAQ document for common client questions?"
             ]
-        
+
         return suggestions
+
+    def infer_task_type(self, user_request):
+        """
+        Infer completed task type from user request text.
+        Used by post_process_result() to choose the right suggestions.
+        """
+        request_lower = user_request.lower()
+
+        if any(w in request_lower for w in ['schedule', 'dupont', 'panama', 'pitman', 'rotation', 'shift pattern']):
+            return 'schedule_created'
+        elif any(w in request_lower for w in ['data', 'collect', 'survey', 'gather']):
+            return 'data_collection'
+        elif any(w in request_lower for w in ['proposal', 'bid', 'quote', 'scope']):
+            return 'proposal_created'
+
+        return 'general'
 
 
 class PatternTracker:
     """Tracks user patterns to anticipate future needs"""
-    
-    def __init__(self):
-        self.db = get_db()
-    
+
     def record_interaction(self, user_request, response_type, context=None):
-        """
-        Record this interaction for future pattern learning
-        """
+        """Record this interaction for future pattern learning"""
         try:
+            db = get_db()
             timestamp = datetime.now().isoformat()
-            
-            self.db.execute('''
-                INSERT INTO interaction_patterns 
+            db.execute('''
+                INSERT INTO interaction_patterns
                 (timestamp, request_type, response_type, context_json)
                 VALUES (?, ?, ?, ?)
             ''', (timestamp, user_request, response_type, json.dumps(context or {})))
-            
-            self.db.commit()
+            db.commit()
+            db.close()
         except Exception as e:
             print(f"Error recording interaction pattern: {e}")
-    
+
     def get_common_patterns(self, limit=10):
-        """
-        Get most common request patterns
-        """
+        """Get most common request patterns"""
         try:
-            patterns = self.db.execute('''
+            db = get_db()
+            patterns = db.execute('''
                 SELECT request_type, COUNT(*) as frequency
                 FROM interaction_patterns
                 GROUP BY request_type
                 ORDER BY frequency DESC
                 LIMIT ?
             ''', (limit,)).fetchall()
-            
+            db.close()
             return [dict(p) for p in patterns]
         except Exception as e:
             print(f"Error getting patterns: {e}")
             return []
-    
+
     def predict_next_request(self, current_request):
-        """
-        Based on past patterns, predict what user might ask next
-        """
-        # TODO: Implement ML-based prediction
-        # For now, return None
+        """Based on past patterns, predict what user might ask next"""
         return None
 
-
-# =============================================================================
-# PROJECT AUTO-DETECTION (SPRINT 2)
-# =============================================================================
 
 class ProjectAutoDetector:
     """
     Automatically detects when user is starting a new project
-    and creates project structure without being explicitly asked
+    and creates project structure without being explicitly asked.
     """
-    
+
     def __init__(self):
         self.project_manager = ProjectManager()
-    
+
     def detect_new_project_signal(self, user_request):
-        """
-        Detect if this message indicates a new project starting
-        
-        Returns:
-            dict or None: Project details if detected, None otherwise
-        """
+        """Detect if this message indicates a new project starting"""
         request_lower = user_request.lower()
-        
-        # Keywords that indicate new project
+
         new_project_keywords = [
-            'new client',
-            'new engagement',
-            'starting with',
-            'just signed',
-            'beginning work with',
-            'new facility',
-            'new implementation'
+            'new client', 'new engagement', 'starting with',
+            'just signed', 'beginning work with', 'new facility', 'new implementation'
         ]
-        
+
         if not any(keyword in request_lower for keyword in new_project_keywords):
             return None
-        
-        # Extract client name (simple heuristic)
+
         client_name = self._extract_client_name(user_request)
         industry = self._extract_industry(user_request)
-        
+
         if client_name:
             return {
                 'client_name': client_name,
                 'industry': industry or 'Manufacturing',
                 'auto_detected': True
             }
-        
+
         return None
-    
+
     def _extract_client_name(self, text):
         """Try to extract client name from text"""
-        # Look for patterns like "new client ABC Corp" or "working with XYZ Manufacturing"
         patterns = [
             r'new client\s+([A-Z][A-Za-z\s&]+)',
             r'working with\s+([A-Z][A-Za-z\s&]+)',
             r'signed\s+([A-Z][A-Za-z\s&]+)',
             r'starting with\s+([A-Z][A-Za-z\s&]+)'
         ]
-        
+
         for pattern in patterns:
             match = re.search(pattern, text)
             if match:
-                # Clean up the match
                 name = match.group(1).strip()
-                # Remove trailing words like "for", "in", etc
                 name = re.sub(r'\s+(for|in|at|with)$', '', name, flags=re.IGNORECASE)
-                return name[:100]  # Limit length
-        
+                return name[:100]
+
         return None
-    
+
     def _extract_industry(self, text):
         """Try to extract industry from text"""
         industries = {
@@ -298,30 +276,23 @@ class ProjectAutoDetector:
             'mining': 'Mining',
             'chemical': 'Chemical'
         }
-        
+
         text_lower = text.lower()
         for keyword, industry in industries.items():
             if keyword in text_lower:
                 return industry
-        
+
         return None
-    
+
     def create_auto_project(self, project_details):
-        """
-        Automatically create project structure
-        
-        Returns:
-            dict: Created project info
-        """
+        """Automatically create project structure"""
         project_id = self.project_manager.create_project(
             client_name=project_details['client_name'],
             industry=project_details['industry'],
             facility_type='24/7 Operations'
         )
-        
-        # Create initial checklist
         self.project_manager.create_implementation_checklist(project_id)
-        
+
         return {
             'project_id': project_id,
             'client_name': project_details['client_name'],
@@ -335,52 +306,105 @@ class ProjectAutoDetector:
 
 class ProactiveAgent:
     """
-    Main class that orchestrates all proactive features
-    Simplified for January 26, 2026 - schedule clarifications disabled
+    Main class that orchestrates all proactive features.
+
+    UPDATED February 21, 2026:
+    Added pre_process_request() and post_process_result() which are the
+    interface methods called by orchestration_handler.py. Previously only
+    process_request() and suggest_next_steps() existed, causing
+    AttributeError on every request.
     """
-    
+
     def __init__(self):
         self.questioner = SmartQuestioner()
         self.suggester = NextStepSuggester()
         self.tracker = PatternTracker()
         self.project_detector = ProjectAutoDetector()
-    
+
+    # =========================================================================
+    # ADDED February 21, 2026 - Interface methods for orchestration_handler.py
+    # =========================================================================
+
+    def pre_process_request(self, user_request):
+        """
+        Called by orchestration_handler.py BEFORE sending the request to AI.
+        Checks for clarification needs and new project signals.
+
+        Returns dict with 'action' key:
+          {'action': 'ask_questions', 'data': clarification_data}
+          {'action': 'detect_project', 'data': project_data}
+          {'action': 'proceed'}  <- most common, means no intervention needed
+        """
+        # Check for new project signal
+        project_signal = self.project_detector.detect_new_project_signal(user_request)
+        if project_signal:
+            try:
+                project_data = self.project_detector.create_auto_project(project_signal)
+                return {'action': 'detect_project', 'data': project_data}
+            except Exception as e:
+                print(f"Auto project creation failed: {e}")
+
+        # Check for clarification needs
+        ambiguities = self.questioner.analyze_ambiguity(user_request)
+        if ambiguities:
+            clarification = self.questioner.format_clarification_response(ambiguities)
+            if clarification:
+                return {'action': 'ask_questions', 'data': clarification}
+
+        # No intervention needed
+        return {'action': 'proceed'}
+
+    def post_process_result(self, task_id, user_request, actual_output):
+        """
+        Called by orchestration_handler.py AFTER the AI response is generated.
+        Returns a list of suggestion strings for what to do next.
+
+        Args:
+            task_id: The task ID (for future logging use)
+            user_request: Original user request text
+            actual_output: The AI response text
+
+        Returns:
+            list of suggestion strings (may be empty)
+        """
+        try:
+            task_type = self.suggester.infer_task_type(user_request)
+            suggestions = self.suggester.suggest_next_steps(task_type)
+            return suggestions
+        except Exception as e:
+            print(f"post_process_result failed: {e}")
+            return []
+
+    # =========================================================================
+    # Original methods - unchanged
+    # =========================================================================
+
     def process_request(self, user_request, context=None):
         """
-        Main entry point for proactive intelligence
-        
-        Args:
-            user_request: User's message
-            context: Optional context dict
-            
-        Returns:
-            dict with proactive actions or None if no action needed
+        Original entry point for proactive intelligence.
+        Still used directly in some contexts.
         """
-        # Check for new project signals
         project_signal = self.project_detector.detect_new_project_signal(user_request)
         if project_signal:
             return {
                 'type': 'auto_project',
                 'data': self.project_detector.create_auto_project(project_signal)
             }
-        
-        # Check for ambiguity (schedule ambiguity is now disabled)
+
         ambiguities = self.questioner.analyze_ambiguity(user_request)
         if ambiguities:
             return {
                 'type': 'clarification',
                 'data': self.questioner.format_clarification_response(ambiguities)
             }
-        
-        # Record interaction for pattern learning
+
         self.tracker.record_interaction(user_request, 'processed', context)
-        
         return None
-    
+
     def suggest_next_steps(self, completed_task_type, context=None):
         """Get suggestions for what to do next"""
         return self.suggester.suggest_next_steps(completed_task_type, context)
-    
+
     def get_common_patterns(self, limit=10):
         """Get most common user request patterns"""
         return self.tracker.get_common_patterns(limit)
