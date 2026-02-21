@@ -738,12 +738,22 @@ Respond ONLY with valid JSON:
         request_lower_ts = user_request.lower()
         is_time_sensitive = any(kw in request_lower_ts for kw in TIME_SENSITIVE_KEYWORDS)
 
+        # DIAGNOSTIC: unconditional prints - fires on every request so we can
+        # confirm this code is running and see exactly what Sonnet returned.
+        # Added February 21, 2026.
+        print(f"DIAGNOSTIC: is_time_sensitive={is_time_sensitive} | request={user_request[:50]}")
+        print(f"DIAGNOSTIC: specialists_needed={analysis.get('specialists_needed', [])}")
+
         if is_time_sensitive:
             specialists = analysis.get('specialists_needed', [])
             if 'research_agent' not in specialists:
                 specialists = ['research_agent'] + specialists
                 analysis['specialists_needed'] = specialists
-                print(f"⏰ TIME-SENSITIVE OVERRIDE: forced research_agent for: {user_request[:60]}")
+                print(f"TIME-SENSITIVE OVERRIDE: forced research_agent for: {user_request[:60]}")
+            else:
+                print(f"TIME-SENSITIVE: research_agent already in specialists - no override needed")
+        else:
+            print(f"NOT TIME-SENSITIVE: no research_agent override applied")
         # ================================================================
 
         # Boost confidence if strong knowledge match
