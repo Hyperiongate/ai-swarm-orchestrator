@@ -774,6 +774,7 @@ function switchMode(mode) {
     else if (mode === 'alerts' && typeof checkAlertStatus === 'function') checkAlertStatus();
     else if (mode === 'pipeline' && typeof checkPipelineStatus === 'function') checkPipelineStatus();
     else if (mode === 'manuals' && typeof checkManualsStatus === 'function') checkManualsStatus();
+    else if (mode === 'casestudies' && typeof checkCaseStudiesStatus === 'function') checkCaseStudiesStatus();
     
     updateQuickActions();
     
@@ -788,7 +789,8 @@ function switchMode(mode) {
         'research': "Type your research topic... (e.g., 'Latest OSHA fatigue regulations')",
         'alerts': "Type your request... (e.g., 'Add ABC Manufacturing to monitored clients')",
         'pipeline': "Type your request... (e.g., 'Show me high priority leads')",
-        'manuals': "Type your request... (e.g., 'Create implementation manual for Acme Manufacturing')"
+        'manuals': "Type your request... (e.g., 'Create implementation manual for Acme Manufacturing')",
+        'casestudies': "Select industry, problem, and solution in the panel to generate a case study"
     };
     input.placeholder = placeholders[mode] || placeholders['quick'];
 }
@@ -820,6 +822,8 @@ function updateQuickActions() {
             '<li onclick="if(typeof viewAllManuals===\'function\')viewAllManuals()">👁️ All Manuals</li>' +
             '<li onclick="if(typeof viewLessons===\'function\')viewLessons()">💡 Lessons</li>' +
             '<li onclick="quickAction(\'Continue my manual for [client name]\')">📝 Continue</li>',
+        'casestudies': '<li onclick="if(typeof generateCaseStudy===\'function\')generateCaseStudy()">✍️ New Study</li>' +
+            '<li onclick="if(typeof loadSavedCaseStudies===\'function\')loadSavedCaseStudies()">📚 Refresh Library</li>',
         'default': '<li onclick="quickAction(\'data collection\')">📋 Data Collection Doc</li>' +
             '<li onclick="quickAction(\'proposal\')">📄 Create Proposal</li>' +
             '<li onclick="quickAction(\'analyze files\')">📊 Analyze Files</li>' +
