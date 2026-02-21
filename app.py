@@ -116,12 +116,7 @@ app.config['SESSION_TYPE'] = 'filesystem'
 
 # Initialize database (includes all tables from all sprints)
 init_db()
-# Run missing table migrations (Added February 21, 2026)
-try:
-    from migrate_missing_tables import run_migration
-    run_migration()
-except Exception as e:
-    print(f"⚠️  Migration warning: {e}")
+
 
 # Initialize survey tables
 try:
@@ -309,6 +304,24 @@ def download_file(filename):
         print(f"Error serving download file: {str(e)}")
         return "File not found", 404
 # =============================================================================
+
+@app.route('/api/admin/run-missing-tables-migration', methods=['GET'])
+def run_missing_tables_migration():
+    """One-time migration to add missing tables. Run once after deploy."""
+    try:
+        from migrate_missing_tables import run_migration
+        from io import StringIO
+        import sys
+        old_stdout = sys.stdout
+        sys.stdout = captured = StringIO()
+        results = run_migration()
+        sys.stdout = old_stdout
+        output = captured.getvalue()
+        return jsonify({'success': results['success'], 'output': output, 'results': results})
+    except Exception as e:
+        import traceback
+        return jsonify({'success': False, 'error': str(e), 'traceback': traceback.format_exc()}), 500
+
 
 @app.route('/workflow')
 def workflow():
