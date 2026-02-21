@@ -1,190 +1,309 @@
 """
-AI SWARM ORCHESTRATOR - Configuration
-Created: January 18, 2026
-Last Updated: January 31, 2026 - FIXED DATABASE PATH FOR PERSISTENCE
+Database Migration Script - Missing Tables and Columns
+Created: February 21, 2026
+Purpose: Add missing tables and columns identified from runtime warnings:
 
-CHANGES IN THIS VERSION:
-- January 31, 2026: FIXED DATABASE PATH FOR PERSISTENCE
-  * Changed DATABASE from 'swarm_intelligence.db' (ephemeral) 
-  * To '/mnt/project/swarm_intelligence.db' (persistent disk)
-  * Projects and files now survive server restarts and deployments
-  * Uses Render's persistent disk mounted at /mnt/project
+  WARNING 1: no such table: avoidance_patterns
+    -> avoidance_patterns table referenced in add_avoidance_pattern() and
+       get_avoidance_context() in database.py but never created in init_db()
 
-- January 23, 2026: ADDED ALERT SYSTEM CONFIGURATION
-  * Added SMTP configuration for email alerts (SendGrid, Gmail, custom)
-  * Added alert recipient email configuration
-  * Added enable flags for email alerts and scheduled jobs
-  * Added alert check interval configuration
+  WARNING 2: no such table: conversation_summaries
+    -> conversation_summarizer.py tries to read/write this table but it
+       was never added to init_db()
 
-- January 21, 2026: FIXED - Updated to Claude Opus 4.5 model name
+  WARNING 3: no such column: conversation_id (proactive_suggestions)
+    -> proactive_suggestions table exists but is missing conversation_id column
+    -> proactive_curiosity_engine.py expects this column
 
-CRITICAL FIX: Changed CLAUDE_OPUS_MODEL from claude-opus-4-20241229 (doesn't exist) 
-to claude-opus-4-5-20251101 (Opus 4.5)
+  WARNING 4: no such table: user_profiles
+    -> EnhancedIntelligence references user_profiles but it was never created
 
-All API keys, model names, and system configuration.
-AUTHOR: Jim @ Shiftwork Solutions LLC
+This script is SAFE to run multiple times:
+  - All CREATE TABLE statements use IF NOT EXISTS
+  - All ALTER TABLE statements catch "duplicate column" errors and continue
+  - Existing data is never modified or deleted
+
+Run on Render via: python migrate_missing_tables.py
+Or: call run_migration() from app startup
 """
 
+import sqlite3
 import os
+import sys
+from datetime import datetime
 
 # ============================================================================
-# API KEYS - FROM ENVIRONMENT VARIABLES
+# CONFIGURATION
 # ============================================================================
 
-ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY')
-OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
-DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY')
-GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY')
-GROQ_API_KEY = os.environ.get('GROQ_API_KEY')
+# FIXED February 21, 2026: Match config.py exactly
+# config.py sets DATABASE = '/mnt/project/swarm_intelligence.db'
+# The persistent Render disk is mounted at /mnt/project
+# Fall back to local path if persistent disk is not mounted (local dev)
+if os.path.isdir('/mnt/project'):
+    DATABASE = '/mnt/project/swarm_intelligence.db'
+else:
+    DATABASE = 'swarm_intelligence.db'
 
-# Tavily API (Research Agent)
-TAVILY_API_KEY = os.environ.get('TAVILY_API_KEY')
+print(f"Migration target database: {DATABASE}")
 
-# Microsoft 365
-MS365_CLIENT_ID = os.environ.get('MS365_CLIENT_ID')
-MS365_CLIENT_SECRET = os.environ.get('MS365_CLIENT_SECRET')
-MS365_TENANT_ID = os.environ.get('MS365_TENANT_ID')
 
-# LinkedIn
-LINKEDIN_ACCESS_TOKEN = os.environ.get('LINKEDIN_ACCESS_TOKEN')
+def get_db():
+    db = sqlite3.connect(DATABASE)
+    db.row_factory = sqlite3.Row
+    return db
 
-# ============================================================================
-# EMAIL / SMTP CONFIGURATION (Alert System)
-# ============================================================================
 
-# SMTP Server Configuration
-# For SendGrid: smtp.sendgrid.net, port 587, user='apikey', password=SENDGRID_API_KEY
-# For Gmail: smtp.gmail.com, port 587, use app password
-# For custom SMTP: set appropriate values
-SMTP_HOST = os.environ.get('SMTP_HOST', 'smtp.sendgrid.net')
-SMTP_PORT = int(os.environ.get('SMTP_PORT', 587))
-SMTP_USER = os.environ.get('SMTP_USER', 'apikey')
-SMTP_PASSWORD = os.environ.get('SMTP_PASSWORD') or os.environ.get('SENDGRID_API_KEY')
+def column_exists(db, table, column):
+    """Check if a column exists in a table"""
+    try:
+        cursor = db.execute(f"PRAGMA table_info({table})")
+        columns = [row['name'] for row in cursor.fetchall()]
+        return column in columns
+    except Exception:
+        return False
 
-# Alert Email Configuration
-ALERT_FROM_EMAIL = os.environ.get('ALERT_FROM_EMAIL', 'alerts@shiftworksolutions.com')
-ALERT_TO_EMAIL = os.environ.get('ALERT_TO_EMAIL', '')  # Set to Jim's email
 
-# Alert System Feature Flags
-ENABLE_EMAIL_ALERTS = os.environ.get('ENABLE_EMAIL_ALERTS', 'false').lower() == 'true'
-ENABLE_SCHEDULED_JOBS = os.environ.get('ENABLE_SCHEDULED_JOBS', 'false').lower() == 'true'
+def table_exists(db, table):
+    """Check if a table exists"""
+    row = db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        (table,)
+    ).fetchone()
+    return row is not None
 
-# Alert Check Interval (in minutes)
-ALERT_CHECK_INTERVAL = int(os.environ.get('ALERT_CHECK_INTERVAL', 60))
 
-# ============================================================================
-# DATABASE - FIXED January 31, 2026
-# ============================================================================
+def run_migration():
+    """
+    Run all migrations. Safe to run multiple times.
+    Returns dict with results.
+    """
+    results = {
+        'started_at': datetime.now().isoformat(),
+        'migrations': [],
+        'errors': [],
+        'success': True
+    }
 
-# CRITICAL: Database must be on persistent disk to survive restarts
-# Render persistent disk is mounted at /mnt/project
-DATABASE = '/mnt/project/swarm_intelligence.db'
+    db = get_db()
 
-# ============================================================================
-# FORMATTING REQUIREMENTS (Added to every prompt)
-# ============================================================================
+    try:
+        # ====================================================================
+        # MIGRATION 1: avoidance_patterns table
+        # Referenced in database.py add_avoidance_pattern() and
+        # get_avoidance_context() but never created in init_db()
+        # ====================================================================
+        if not table_exists(db, 'avoidance_patterns'):
+            print("Creating avoidance_patterns table...")
+            db.execute('''
+                CREATE TABLE IF NOT EXISTS avoidance_patterns (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    pattern_data TEXT NOT NULL,
+                    severity TEXT DEFAULT 'medium' CHECK(severity IN ('low', 'medium', 'high')),
+                    times_violated INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            db.execute('CREATE INDEX IF NOT EXISTS idx_avoidance_severity ON avoidance_patterns(severity)')
+            db.execute('CREATE INDEX IF NOT EXISTS idx_avoidance_created ON avoidance_patterns(created_at DESC)')
+            db.commit()
+            results['migrations'].append('Created avoidance_patterns table')
+            print("  ✅ avoidance_patterns table created")
+        else:
+            results['migrations'].append('avoidance_patterns table already exists - skipped')
+            print("  ℹ️  avoidance_patterns table already exists")
 
-FORMATTING_REQUIREMENTS = """
-FORMAT YOUR RESPONSE PROFESSIONALLY:
+        # ====================================================================
+        # MIGRATION 2: conversation_summaries table
+        # Used by conversation_summarizer.py to store rolling conversation
+        # summaries that provide context to the AI across long conversations
+        # ====================================================================
+        if not table_exists(db, 'conversation_summaries'):
+            print("Creating conversation_summaries table...")
+            db.execute('''
+                CREATE TABLE IF NOT EXISTS conversation_summaries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    conversation_id TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    message_count_at_summary INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (conversation_id) REFERENCES conversations(conversation_id)
+                )
+            ''')
+            db.execute('CREATE INDEX IF NOT EXISTS idx_conv_summaries_conv_id ON conversation_summaries(conversation_id)')
+            db.execute('CREATE INDEX IF NOT EXISTS idx_conv_summaries_created ON conversation_summaries(created_at DESC)')
+            db.commit()
+            results['migrations'].append('Created conversation_summaries table')
+            print("  ✅ conversation_summaries table created")
+        else:
+            results['migrations'].append('conversation_summaries table already exists - skipped')
+            print("  ℹ️  conversation_summaries table already exists")
 
-1. Use clear paragraphs, NOT walls of text
-2. Use markdown headers (##) sparingly - only for major sections
-3. Use bullet points for lists of 3+ items
-4. Keep paragraphs under 4 sentences
-5. Use bold (**text**) only for critical emphasis
-6. Break up dense content with whitespace
-Maximum line length: 100 characters (wrap longer content)
-7. For professional consulting outputs, use clean prose without formatting symbols
+        # ====================================================================
+        # MIGRATION 3: proactive_suggestions - add conversation_id column
+        # The table exists but is missing conversation_id and response_id
+        # columns that proactive_curiosity_engine.py expects
+        # ====================================================================
+        print("Checking proactive_suggestions columns...")
 
-YOUR OUTPUT WILL BE CHECKED. If it contains excessive markdown, walls of text, or
-poor formatting, it will be automatically reformatted, which wastes processing time.
-Format your response professionally from the start.
-"""
+        if not column_exists(db, 'proactive_suggestions', 'conversation_id'):
+            try:
+                db.execute('ALTER TABLE proactive_suggestions ADD COLUMN conversation_id TEXT')
+                db.execute('CREATE INDEX IF NOT EXISTS idx_suggestions_conversation ON proactive_suggestions(conversation_id)')
+                db.commit()
+                results['migrations'].append('Added conversation_id column to proactive_suggestions')
+                print("  ✅ Added conversation_id to proactive_suggestions")
+            except sqlite3.OperationalError as e:
+                if 'duplicate column' in str(e).lower():
+                    results['migrations'].append('conversation_id already exists in proactive_suggestions - skipped')
+                    print("  ℹ️  conversation_id already exists in proactive_suggestions")
+                else:
+                    results['errors'].append(f'proactive_suggestions.conversation_id: {e}')
+                    print(f"  ❌ Error adding conversation_id: {e}")
+        else:
+            results['migrations'].append('proactive_suggestions.conversation_id already exists - skipped')
+            print("  ℹ️  conversation_id already exists in proactive_suggestions")
 
-# ============================================================================
-# API TIMEOUTS
-# ============================================================================
+        # Also add response_id if missing (used by curiosity engine)
+        if not column_exists(db, 'proactive_suggestions', 'response_id'):
+            try:
+                db.execute('ALTER TABLE proactive_suggestions ADD COLUMN response_id TEXT')
+                db.commit()
+                results['migrations'].append('Added response_id column to proactive_suggestions')
+                print("  ✅ Added response_id to proactive_suggestions")
+            except sqlite3.OperationalError as e:
+                if 'duplicate column' in str(e).lower():
+                    print("  ℹ️  response_id already exists in proactive_suggestions")
+                else:
+                    results['errors'].append(f'proactive_suggestions.response_id: {e}')
+                    print(f"  ❌ Error adding response_id: {e}")
 
-ANTHROPIC_TIMEOUT = 180  # seconds
-OPENAI_TIMEOUT = 120
-DEEPSEEK_TIMEOUT = 120
-GEMINI_TIMEOUT = 120
+        # ====================================================================
+        # MIGRATION 4: user_profiles table
+        # EnhancedIntelligence (enhanced_intelligence.py) expects this table
+        # for tracking user interaction patterns and learning
+        # ====================================================================
+        if not table_exists(db, 'user_profiles'):
+            print("Creating user_profiles table...")
+            db.execute('''
+                CREATE TABLE IF NOT EXISTS user_profiles (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT UNIQUE NOT NULL DEFAULT 'default',
+                    interaction_count INTEGER DEFAULT 0,
+                    preferred_response_style TEXT DEFAULT 'detailed',
+                    common_topics TEXT,
+                    satisfaction_scores TEXT,
+                    last_interaction TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    profile_data TEXT
+                )
+            ''')
+            db.execute('CREATE INDEX IF NOT EXISTS idx_user_profiles_user_id ON user_profiles(user_id)')
+            # Insert default user profile
+            db.execute('''
+                INSERT OR IGNORE INTO user_profiles (user_id, interaction_count)
+                VALUES ('default', 0)
+            ''')
+            db.commit()
+            results['migrations'].append('Created user_profiles table with default record')
+            print("  ✅ user_profiles table created")
+        else:
+            results['migrations'].append('user_profiles table already exists - skipped')
+            print("  ℹ️  user_profiles table already exists")
 
-# ============================================================================
-# MODEL CONFIGURATIONS - CRITICAL FIX: Updated Opus to 4.5
-# ============================================================================
+        # ====================================================================
+        # MIGRATION 5: client_profiles table
+        # database.py has get_client_profile() and update_client_profile()
+        # functions that reference this table - verify it exists
+        # ====================================================================
+        if not table_exists(db, 'client_profiles'):
+            print("Creating client_profiles table...")
+            db.execute('''
+                CREATE TABLE IF NOT EXISTS client_profiles (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    client_name TEXT UNIQUE NOT NULL,
+                    profile_data TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            db.execute('CREATE INDEX IF NOT EXISTS idx_client_profiles_name ON client_profiles(client_name)')
+            db.commit()
+            results['migrations'].append('Created client_profiles table')
+            print("  ✅ client_profiles table created")
+        else:
+            results['migrations'].append('client_profiles table already exists - skipped')
+            print("  ℹ️  client_profiles table already exists")
 
-CLAUDE_SONNET_MODEL = "claude-sonnet-4-20250514"  # Sonnet 4
-CLAUDE_OPUS_MODEL = "claude-opus-4-5-20251101"    # FIXED: Opus 4.5 (was using non-existent 20241229)
-GPT4_MODEL = "gpt-4-turbo-preview"
-DEEPSEEK_MODEL = "deepseek-chat"
-GEMINI_MODEL = "gemini-1.5-pro"
+        # ====================================================================
+        # VERIFY ALL CRITICAL TABLES EXIST
+        # ====================================================================
+        print("\nVerifying all critical tables...")
+        critical_tables = [
+            'tasks', 'projects', 'conversations', 'conversation_messages',
+            'conversation_context', 'generated_documents', 'research_logs',
+            'research_briefings', 'learning_patterns', 'learning_records',
+            'specialist_calls', 'consensus_validations', 'user_feedback',
+            'user_patterns', 'proactive_suggestions', 'background_jobs',
+            'smart_analyzer_state', 'analysis_sessions',
+            # Newly added
+            'avoidance_patterns', 'conversation_summaries',
+            'user_profiles', 'client_profiles'
+        ]
 
-# ============================================================================
-# DEFAULT TOKENS
-# ============================================================================
+        all_present = True
+        for table in critical_tables:
+            exists = table_exists(db, table)
+            status = "✅" if exists else "❌"
+            print(f"  {status} {table}")
+            if not exists:
+                all_present = False
+                results['errors'].append(f'Table still missing after migration: {table}')
 
-DEFAULT_MAX_TOKENS = 4000
-SONNET_MAX_TOKENS = 4000
-OPUS_MAX_TOKENS = 4000
+        results['all_tables_present'] = all_present
 
-# ============================================================================
-# ESCALATION THRESHOLDS
-# ============================================================================
+    except Exception as e:
+        import traceback
+        results['success'] = False
+        results['errors'].append(f'Migration failed: {str(e)}')
+        print(f"\n❌ MIGRATION ERROR: {e}")
+        traceback.print_exc()
+    finally:
+        db.close()
 
-CONFIDENCE_THRESHOLD_LOW = 0.7  # Below this = escalate to Opus
-COMPLEXITY_THRESHOLD = 0.8      # Above this = escalate to Opus
+    results['completed_at'] = datetime.now().isoformat()
+    results['success'] = results['success'] and len(results['errors']) == 0
 
-# ============================================================================
-# CONSENSUS VALIDATION
-# ============================================================================
+    print(f"\n{'✅ Migration complete' if results['success'] else '❌ Migration completed with errors'}")
+    print(f"  Migrations applied: {len(results['migrations'])}")
+    print(f"  Errors: {len(results['errors'])}")
 
-CONSENSUS_THRESHOLD = 0.85  # 85% agreement required
-ENABLE_CONSENSUS_BY_DEFAULT = True
+    return results
 
-# ============================================================================
-# DEEPSEEK CONFIGURATION
-# ============================================================================
 
-DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+if __name__ == '__main__':
+    print("=" * 60)
+    print("AI Swarm Orchestrator - Database Migration")
+    print("February 21, 2026")
+    print("=" * 60)
+    print()
 
-# ============================================================================
-# KNOWLEDGE BASE
-# ============================================================================
+    results = run_migration()
 
-KNOWLEDGE_BASE_PATHS = [
-    "/mnt/project",
-    "project_files",
-    "./project_files"
-]
+    print("\nMigrations applied:")
+    for m in results['migrations']:
+        print(f"  • {m}")
 
-# ============================================================================
-# OPTIONAL INTEGRATIONS
-# ============================================================================
-
-MICROSOFT_365_ENABLED = False
-SOCIAL_MEDIA_ENABLED = False
-CALCULATOR_ENABLED = True
-SURVEY_BUILDER_ENABLED = False
-
-# ============================================================================
-# ALERT SYSTEM DEFAULTS
-# ============================================================================
-
-# Default scheduled job times (24-hour format, server timezone)
-DEFAULT_LEAD_SCAN_TIME = '07:00'
-DEFAULT_REGULATORY_SCAN_TIME = '06:00'
-DEFAULT_COMPETITOR_SCAN_TIME = '08:00'  # Weekly (Monday)
-DEFAULT_BRIEFING_TIME = '07:30'
-
-# Alert priority thresholds for email notification
-# Alerts at or above this priority will trigger immediate email
-EMAIL_PRIORITY_THRESHOLD = 'high'  # 'critical', 'high', 'medium', 'low'
-
-# Maximum alerts per category in daily briefing
-MAX_ALERTS_PER_CATEGORY = 5
-
-# Days to keep dismissed alerts before cleanup
-DISMISSED_ALERT_RETENTION_DAYS = 30
+    if results['errors']:
+        print("\nErrors:")
+        for e in results['errors']:
+            print(f"  ✗ {e}")
+        sys.exit(1)
+    else:
+        print("\n✅ All migrations successful")
+        sys.exit(0)
 
 # I did no harm and this file is not truncated
