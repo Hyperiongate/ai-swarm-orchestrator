@@ -1,9 +1,22 @@
 """
 Orchestration Handler - Main AI Task Processing (REFACTORED)
 Created: January 31, 2026
-Last Updated: February 21, 2026 - FIXED clarification_answers NameError
+Last Updated: February 21, 2026 - RESEARCH AGENT SYNTHESIS: feed Tavily results to Sonnet for proper answer
 
 CHANGELOG:
+
+- February 21, 2026: RESEARCH AGENT SYNTHESIS
+  PROBLEM: When research_agent (Tavily) ran and returned raw web results, those
+    results were used as actual_output directly via "if specialist_output: actual_output = specialist_output".
+    This caused the raw dump (Research Summary: ..., Sources Found (7): ...) to be
+    shown to the user instead of a professional synthesized answer.
+  FIX: When specialist_output exists AND came from research_agent, feed the research
+    results back to Sonnet with a synthesis prompt. Sonnet reads the raw Tavily data
+    and produces a clean, professional, consultant-quality answer. For all other
+    specialists (gpt4, deepseek, gemini), the existing behavior is preserved - their
+    output is used directly as actual_output.
+  IMPACT: Time-sensitive queries (OSHA news, regulations, etc.) now return a
+    properly formatted answer that integrates web research with consulting expertise.
 
 - February 21, 2026: FIXED clarification_answers NameError breaking every request
   PROBLEM: Handler 3.5 (Contract/Proposal) referenced clarification_answers
@@ -119,6 +132,7 @@ def orchestrate():
     """
     Main orchestration endpoint - routes requests to appropriate handlers.
 
+    UPDATED February 21, 2026: Research agent synthesis (feed Tavily results to Sonnet)
     UPDATED February 21, 2026: Fixed clarification_answers NameError
     UPDATED February 19, 2026: Fixed knowledge base prompt injection
     UPDATED February 13, 2026 (Session 3): Added background processing for large labor files
@@ -988,8 +1002,15 @@ Be comprehensive and professional."""
                 except Exception as opus_error:
                     print(f"Opus guidance failed: {opus_error}")
 
+            # ================================================================
+            # SPECIALIST EXECUTION
+            # Track which specialists ran and whether research_agent was used,
+            # so we know whether to synthesize the output afterward.
+            # ================================================================
             specialist_results = []
             specialist_output = None
+            research_agent_ran = False
+
             if specialists_needed:
                 for specialist_info in specialists_needed:
                     if isinstance(specialist_info, dict):
@@ -999,10 +1020,14 @@ Be comprehensive and professional."""
                         specialist = specialist_info
                         specialist_task = user_request
                     if specialist and specialist.lower() != 'none':
+                        print(f"Executing specialist: {specialist}")
                         result = execute_specialist_task(specialist, specialist_task, file_paths=file_paths, file_contents=file_contents)
                         specialist_results.append(result)
                         if result.get('success') and result.get('output'):
                             specialist_output = result.get('output')
+                            if specialist.lower() == 'research_agent':
+                                research_agent_ran = True
+                                print(f"Research agent completed - will synthesize with Sonnet")
 
             from orchestration.ai_clients import call_claude_opus, call_claude_sonnet
 
@@ -1074,7 +1099,7 @@ END KNOWLEDGE BASE - Answer using the above as your primary source.
             # Specialized knowledge
             specialized_context = ""
             try:
-                specialist = get_specialized_knowledge()
+                specialist_kb = get_specialized_knowledge()
 
                 industry = None
                 if project_id:
@@ -1084,7 +1109,7 @@ END KNOWLEDGE BASE - Answer using the above as your primary source.
                     if proj:
                         industry = proj['industry']
 
-                specialized_context = specialist.build_expertise_context(user_request, industry)
+                specialized_context = specialist_kb.build_expertise_context(user_request, industry)
                 if specialized_context:
                     print(f"Injected specialized knowledge for {industry or 'general'}")
             except Exception as spec_error:
@@ -1153,9 +1178,66 @@ This project folder contains: {file_stats.get('total_files', 0)} files
                     conversation_history += f"{role_label}: {content_preview}\n"
                 conversation_history += "=== END CONVERSATION HISTORY ===\n\n"
 
-            if specialist_output:
+            # ================================================================
+            # GENERATE ACTUAL OUTPUT
+            #
+            # THREE PATHS:
+            # 1. research_agent ran → synthesize Tavily results with Sonnet
+            #    so user gets a professional answer, not a raw data dump.
+            # 2. Other specialist ran (gpt4, deepseek, gemini) → use output directly.
+            # 3. No specialist → Sonnet generates the response from scratch.
+            # ================================================================
+
+            if research_agent_ran and specialist_output:
+                # PATH 1: Research agent ran - synthesize with Sonnet
+                print(f"Synthesizing research agent results with Sonnet...")
+
+                synthesis_prompt = f"""{project_context}{conversation_history}
+USER QUESTION: {user_request}
+
+CURRENT WEB RESEARCH RESULTS (retrieved this moment via Tavily):
+{specialist_output}
+
+You are a senior consulting partner at Shiftwork Solutions LLC with 30+ years
+of experience. Using the web research results above as your primary source of
+current information, provide a clear, professional answer to the user's question.
+
+INSTRUCTIONS:
+- Lead with the most relevant and recent findings from the research
+- Organize the information clearly - use headers if there are multiple topics
+- Include specific details (dates, companies, dollar amounts) from the sources
+- Add your consulting perspective where it adds value
+- Cite sources naturally (e.g. "According to OSHA's news releases..." or "A Fox 10 report noted...")
+- Keep the tone professional but conversational - this is an internal consulting tool
+- If the research reveals something directly relevant to shift work operations, highlight it
+
+Provide a complete, synthesized answer now:"""
+
+                print(f"Sending synthesis prompt to Sonnet ({len(synthesis_prompt)} chars)...")
+                response = call_claude_sonnet(
+                    synthesis_prompt,
+                    conversation_history=None,
+                    files_attached=False,
+                    system_prompt=None
+                )
+
+                if isinstance(response, dict):
+                    if response.get('error'):
+                        # Synthesis failed - fall back to raw research output
+                        print(f"Synthesis failed, using raw research output")
+                        actual_output = specialist_output
+                    else:
+                        actual_output = response.get('content', '')
+                        print(f"Research synthesis complete ({len(actual_output)} chars)")
+                else:
+                    actual_output = str(response)
+
+            elif specialist_output and not research_agent_ran:
+                # PATH 2: Non-research specialist ran - use output directly
                 actual_output = specialist_output
+
             else:
+                # PATH 3: No specialist - Sonnet generates response
                 if file_contents:
                     file_section = f"""
 
