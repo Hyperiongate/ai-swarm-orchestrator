@@ -1,28 +1,35 @@
 """
 Proactive Curiosity Engine - Phase 1 Component 2
 Created: February 5, 2026
-Last Updated: February 20, 2026 - FIXED missing table creation (Stress Test)
+Last Updated: February 21, 2026 - FIXED table column migration + curiosity nonsense
 
 CHANGELOG:
+
+- February 21, 2026: FIXED proactive_suggestions COLUMN MIGRATION + CLIENT NAME STOPWORDS
+  PROBLEM 1: _ensure_table() used CREATE TABLE IF NOT EXISTS which is idempotent -
+    it will NOT add a missing column to an already-existing table. The table was
+    originally created without the conversation_id column in an earlier migration.
+    Result: Every _log_curiosity() and _get_recent_curiosity_count() call failed
+    with "no such column: conversation_id" despite _ensure_table() running at init.
+  FIX 1: Added ALTER TABLE fallback in _ensure_table(). After CREATE TABLE IF NOT
+    EXISTS runs, we inspect the actual columns and ADD any that are missing. This
+    safely upgrades the existing table schema without dropping data.
+
+  PROBLEM 2: _detect_curiosity_triggers() used re.findall to find "client names"
+    but matched common English question words (What, How, When, Where, Who, Why)
+    because they are Capitalized at the start of sentences.
+    Result: "What did OSHA announce this week?" triggered after_client_mention
+    with client="What", producing "What's the most interesting thing about
+    What's operation?" as the curious follow-up.
+  FIX 2: Added QUESTION_WORD_STOPWORDS set. Client name candidates are filtered
+    against this set before triggering after_client_mention. Any single word
+    matching a stopword is discarded. Multi-word matches are also checked
+    so "What Is" doesn't slip through.
 
 - February 20, 2026: FIXED missing proactive_suggestions table
   BUG: _get_recent_curiosity_count() and _log_curiosity() both reference the
        'proactive_suggestions' table, which was never created by any migration.
-       Result: Every curiosity logging call raised OperationalError (no such table),
-       caught silently by try/except. Curiosity stats always returned {}.
-       Curiosity budget check always returned 0 (caught exception = 0 count),
-       meaning the max_curiosity_per_conversation limit never enforced correctly.
-  FIX: Added _ensure_table() called from __init__ that creates the table with
-       CREATE TABLE IF NOT EXISTS. Safe to run on every startup - no-op if already
-       exists. No migration file needed; the table is small and owned by this module.
-  No other logic changed. No function signatures changed. Fully backward compatible.
-
-FEATURES:
-- Makes the AI naturally curious like a senior consultant
-- Asks follow-up questions even when NOT explicitly needed for task execution
-- Digs deeper into interesting topics
-- Shows genuine interest in outcomes and context
-- Learns Jim's preferences for when curiosity is welcome
+  FIX: Added _ensure_table() called from __init__.
 
 Author: Jim @ Shiftwork Solutions LLC
 """
@@ -34,11 +41,27 @@ from datetime import datetime
 from database import get_db
 
 
+# =============================================================================
+# STOPWORDS FOR CLIENT NAME DETECTION
+# Added February 21, 2026
+# These are common English words that appear capitalized at sentence start
+# and should never be treated as client names.
+# =============================================================================
+QUESTION_WORD_STOPWORDS = {
+    'What', 'How', 'When', 'Where', 'Who', 'Why', 'Which', 'Is', 'Are',
+    'Does', 'Did', 'Do', 'Was', 'Were', 'Has', 'Have', 'Had', 'Can',
+    'Could', 'Would', 'Should', 'Will', 'Shall', 'May', 'Might', 'Must',
+    'Any', 'Some', 'The', 'This', 'That', 'These', 'Those', 'Please',
+    'Tell', 'Show', 'Give', 'Find', 'Look', 'Search', 'Help', 'Create',
+    'Make', 'Write', 'Draft', 'Generate', 'Explain', 'Describe', 'List',
+    'OSHA', 'DOL', 'EPA'  # Agencies that shouldn't trigger client curiosity
+}
+
+
 class ProactiveCuriosityEngine:
     """Generates natural, contextual follow-up questions"""
 
     def __init__(self):
-        # Curiosity templates organized by context
         self.curiosity_patterns = {
             'after_schedule_design': [
                 "How did the team react to this schedule when you've used it before?",
@@ -72,25 +95,27 @@ class ProactiveCuriosityEngine:
             ]
         }
 
-        # Track when curiosity was expressed to avoid being annoying
         self.curiosity_history = []
         self.max_curiosity_per_conversation = 3
 
-        # ====================================================================
-        # FIX (February 20, 2026): Create the proactive_suggestions table
-        # if it doesn't exist. Previously missing, causing silent failures in
-        # _log_curiosity() and _get_recent_curiosity_count().
-        # ====================================================================
+        # Create/upgrade the proactive_suggestions table
         self._ensure_table()
-        # ====================================================================
 
     def _ensure_table(self):
         """
-        Create the proactive_suggestions table if it doesn't exist.
-        Safe to call on every instantiation - CREATE TABLE IF NOT EXISTS is idempotent.
+        Create the proactive_suggestions table if it doesn't exist,
+        AND add any missing columns to an already-existing table.
+
+        UPDATED February 21, 2026:
+        Added ALTER TABLE migration for conversation_id column.
+        CREATE TABLE IF NOT EXISTS is idempotent but won't add columns to
+        an existing table. We inspect actual columns after creation and
+        ALTER TABLE ADD COLUMN for any that are missing.
         """
         try:
             db = get_db()
+
+            # Step 1: Create table if it doesn't exist at all
             db.execute('''
                 CREATE TABLE IF NOT EXISTS proactive_suggestions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -107,7 +132,36 @@ class ProactiveCuriosityEngine:
                 ON proactive_suggestions (conversation_id)
             ''')
             db.commit()
+
+            # Step 2: Inspect actual columns and add any that are missing
+            # This handles the case where the table existed before conversation_id
+            # was added to the schema.
+            existing_cols = {
+                row[1] for row in db.execute('PRAGMA table_info(proactive_suggestions)').fetchall()
+            }
+
+            required_cols = {
+                'conversation_id': 'TEXT NOT NULL DEFAULT ""',
+                'suggestion_type': 'TEXT NOT NULL DEFAULT ""',
+                'suggestion_text': 'TEXT NOT NULL DEFAULT ""',
+                'reasoning':       'TEXT',
+                'user_action':     'TEXT DEFAULT NULL',
+                'created_at':      "TEXT DEFAULT (datetime('now'))"
+            }
+
+            for col_name, col_def in required_cols.items():
+                if col_name not in existing_cols:
+                    try:
+                        db.execute(
+                            f'ALTER TABLE proactive_suggestions ADD COLUMN {col_name} {col_def}'
+                        )
+                        db.commit()
+                        print(f"✅ Added missing column to proactive_suggestions: {col_name}")
+                    except Exception as alter_err:
+                        print(f"⚠️ Could not add column {col_name}: {alter_err}")
+
             db.close()
+
         except Exception as e:
             print(f"⚠️ Could not create proactive_suggestions table: {e}")
 
@@ -115,15 +169,9 @@ class ProactiveCuriosityEngine:
         """
         Determine if AI should ask a curious follow-up question.
 
-        Args:
-            conversation_id: Current conversation
-            response_context: Context from the just-completed response
-
         Returns:
             dict with {should_ask: bool, question: str or None, reason: str}
         """
-
-        # Check curiosity budget for this conversation
         recent_questions = self._get_recent_curiosity_count(conversation_id)
 
         if recent_questions >= self.max_curiosity_per_conversation:
@@ -133,7 +181,6 @@ class ProactiveCuriosityEngine:
                 'reason': 'curiosity_budget_exhausted'
             }
 
-        # Analyze context for curiosity triggers
         triggers = self._detect_curiosity_triggers(response_context)
 
         if not triggers:
@@ -143,13 +190,10 @@ class ProactiveCuriosityEngine:
                 'reason': 'no_curiosity_triggers'
             }
 
-        # Select best question based on triggers
         question = self._select_curious_question(triggers, response_context)
 
         if question:
-            # Log this curiosity expression
             self._log_curiosity(conversation_id, question, triggers)
-
             return {
                 'should_ask': True,
                 'question': question,
@@ -166,15 +210,20 @@ class ProactiveCuriosityEngine:
         """
         Detect what aspects of the context warrant curiosity.
 
-        Returns:
-            list of trigger dicts: [{type, data, priority}]
-        """
+        UPDATED February 21, 2026:
+        Added QUESTION_WORD_STOPWORDS filter for client name detection.
+        Previously "What", "How", "Where" etc. were being detected as client
+        names because they appear capitalized at the start of sentences.
 
+        Returns:
+            list of trigger dicts sorted by priority (highest first)
+        """
         triggers = []
-        user_request = context.get('user_request', '').lower()
+        user_request = context.get('user_request', '')
+        user_request_lower = user_request.lower()
 
         # Trigger 1: Schedule was designed
-        if any(word in user_request for word in ['schedule', 'dupont', 'panama', 'rotation']):
+        if any(word in user_request_lower for word in ['schedule', 'dupont', 'panama', 'rotation']):
             triggers.append({
                 'type': 'after_schedule_design',
                 'data': {},
@@ -182,17 +231,26 @@ class ProactiveCuriosityEngine:
             })
 
         # Trigger 2: Client mentioned
-        # Look for capitalized words that might be client names
-        potential_clients = re.findall(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b', context.get('user_request', ''))
-        if potential_clients and len(potential_clients[0]) > 3:
+        # FIXED: filter out question words and common stopwords before triggering
+        potential_clients = re.findall(
+            r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b',
+            user_request
+        )
+        valid_clients = [
+            c for c in potential_clients
+            if len(c) > 3
+            and c not in QUESTION_WORD_STOPWORDS
+            and c.split()[0] not in QUESTION_WORD_STOPWORDS  # Check first word of multi-word
+        ]
+        if valid_clients:
             triggers.append({
                 'type': 'after_client_mention',
-                'data': {'client': potential_clients[0]},
+                'data': {'client': valid_clients[0]},
                 'priority': 7
             })
 
         # Trigger 3: Problem was solved
-        if any(word in user_request for word in ['fix', 'problem', 'issue', 'error']):
+        if any(word in user_request_lower for word in ['fix', 'problem', 'issue', 'error']):
             triggers.append({
                 'type': 'after_problem_solved',
                 'data': {},
@@ -200,7 +258,7 @@ class ProactiveCuriosityEngine:
             })
 
         # Trigger 4: Numbers mentioned (employees, hours, etc.)
-        numbers = re.findall(r'(\d+)\s*(employees?|workers?|people|hours?|shifts?)', user_request)
+        numbers = re.findall(r'(\d+)\s*(employees?|workers?|people|hours?|shifts?)', user_request_lower)
         if numbers:
             triggers.append({
                 'type': 'after_numbers_mentioned',
@@ -210,7 +268,7 @@ class ProactiveCuriosityEngine:
 
         # Trigger 5: Industry mentioned
         industries = ['manufacturing', 'healthcare', 'mining', 'food', 'pharmaceutical', 'distribution']
-        mentioned_industries = [ind for ind in industries if ind in user_request]
+        mentioned_industries = [ind for ind in industries if ind in user_request_lower]
         if mentioned_industries:
             triggers.append({
                 'type': 'after_industry_mentioned',
@@ -218,35 +276,23 @@ class ProactiveCuriosityEngine:
                 'priority': 4
             })
 
-        # Sort by priority (highest first)
         triggers.sort(key=lambda x: x['priority'], reverse=True)
-
         return triggers
 
     def _select_curious_question(self, triggers, context):
-        """
-        Select the best curious question based on triggers.
-
-        Returns:
-            str: The question to ask, or None
-        """
-
+        """Select the best curious question based on triggers"""
         if not triggers:
-            # Use general curiosity as fallback
             return random.choice(self.curiosity_patterns['general_curiosity'])
 
-        # Use highest priority trigger
         top_trigger = triggers[0]
         trigger_type = top_trigger['type']
 
         if trigger_type not in self.curiosity_patterns:
             return None
 
-        # Get question template
         question_templates = self.curiosity_patterns[trigger_type]
         question_template = random.choice(question_templates)
 
-        # Fill in placeholders
         data = top_trigger.get('data', {})
         question = question_template.format(**data) if data else question_template
 
@@ -256,15 +302,12 @@ class ProactiveCuriosityEngine:
         """Count how many curious questions asked in this conversation"""
         try:
             db = get_db()
-
             count = db.execute('''
                 SELECT COUNT(*) as cnt FROM proactive_suggestions
                 WHERE conversation_id = ?
                 AND suggestion_type = 'curious_followup'
             ''', (conversation_id,)).fetchone()
-
             db.close()
-
             return count['cnt'] if count else 0
         except Exception as e:
             print(f"⚠️ Could not count curiosity: {e}")
@@ -274,14 +317,12 @@ class ProactiveCuriosityEngine:
         """Log that we asked a curious question"""
         try:
             db = get_db()
-
             db.execute('''
                 INSERT INTO proactive_suggestions
                 (conversation_id, suggestion_type, suggestion_text, reasoning)
                 VALUES (?, ?, ?, ?)
             ''', (conversation_id, 'curious_followup', question,
                   json.dumps({'triggers': [t['type'] for t in triggers]})))
-
             db.commit()
             db.close()
         except Exception as e:
@@ -291,7 +332,6 @@ class ProactiveCuriosityEngine:
         """Get statistics about curiosity behavior"""
         try:
             db = get_db()
-
             stats = db.execute('''
                 SELECT
                     COUNT(*) as total_questions,
@@ -300,9 +340,7 @@ class ProactiveCuriosityEngine:
                 FROM proactive_suggestions
                 WHERE suggestion_type = 'curious_followup'
             ''').fetchone()
-
             db.close()
-
             return dict(stats) if stats else {}
         except Exception as e:
             print(f"⚠️ Could not get curiosity stats: {e}")
