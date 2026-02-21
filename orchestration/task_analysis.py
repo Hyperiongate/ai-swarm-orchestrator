@@ -1,9 +1,21 @@
 """
 Task Analysis Module - WITH UNIFIED KNOWLEDGE BASE (Project Files + Knowledge Management)
 Created: January 21, 2026
-Last Updated: February 20, 2026 - WIRED RESEARCH AGENT + SPECIALIST ROUTING RULES
+Last Updated: February 21, 2026 - ADDED TIME-SENSITIVE OVERRIDE + DIAGNOSTIC PRINTS
 
 CHANGELOG:
+
+- February 21, 2026: ADDED TIME-SENSITIVE OVERRIDE + DIAGNOSTIC PRINTS
+  PROBLEM: Sonnet was answering "What did OSHA announce this week?" from KB at
+    90% confidence, never dispatching research_agent. KB data is static and
+    cannot contain current week's news.
+  FIX: After parsing Sonnet's JSON, detect time-sensitive keywords in user
+    request and force research_agent into specialists_needed regardless of what
+    Sonnet decided. Added unconditional DIAGNOSTIC print statements to confirm
+    this code block executes on every request and to reveal exactly what Sonnet
+    returned for specialists_needed.
+  IMPACT: Time-sensitive queries now always route to research_agent (Tavily)
+    for real-time web results. DIAGNOSTIC prints provide permanent observability.
 
 - February 20, 2026: WIRED RESEARCH AGENT INTO SPECIALIST DISPATCH + ROUTING RULES
   PROBLEM 1: research_agent.py (Tavily) was fully built and registered as its own
