@@ -1,9 +1,40 @@
 """
 Task Analysis Module - WITH UNIFIED KNOWLEDGE BASE (Project Files + Knowledge Management)
 Created: January 21, 2026
-Last Updated: February 20, 2026 - FIXED KNOWLEDGE DB PATH (Stress Test)
+Last Updated: February 20, 2026 - WIRED RESEARCH AGENT + SPECIALIST ROUTING RULES
 
 CHANGELOG:
+
+- February 20, 2026: WIRED RESEARCH AGENT INTO SPECIALIST DISPATCH + ROUTING RULES
+  PROBLEM 1: research_agent.py (Tavily) was fully built and registered as its own
+    route, but it was NEVER dispatched by Sonnet during normal conversations.
+    execute_specialist_task() had no entry for "research_agent" in its specialist_map,
+    so even if Sonnet tried to assign it, the call would silently fail with
+    "ERROR: Unknown specialist".
+  FIX 1: Added call_research_agent() wrapper function that calls
+    ResearchAgent.research_topic() and normalizes its output dict to the standard
+    {'content', 'usage', 'error'} format expected by execute_specialist_task().
+    Added "research_agent": call_research_agent to specialist_map.
+
+  PROBLEM 2: Sonnet had no explicit rules about WHEN to use which specialist.
+    Its routing prompt listed "gpt4, deepseek, gemini" as options but gave no
+    guidance about when each was appropriate - or that research_agent existed at all.
+    Result: Sonnet returned specialists_needed=[] on nearly every request.
+  FIX 2: Added SPECIALIST ROUTING RULES section to analyze_task_with_sonnet()
+    prompt. Sonnet now receives explicit rules:
+      - research_agent: current events, news, regulations, studies, anything
+                        requiring real-time web data beyond training cutoff
+      - gpt4:          document formatting, report writing, structured output
+      - deepseek:      code, calculations, data processing, technical analysis
+      - gemini:        multimodal tasks involving images or visual content
+      - opus:          complex multi-step strategy, high-stakes recommendations
+    Same rules added to handle_with_opus() for consistency.
+
+  PROBLEM 3: Sonnet's JSON response schema hint listed only the old specialists.
+    Updated the schema comment to include "research_agent" as a valid value.
+
+  NO other logic changed. All existing specialist calls are identical.
+  Backward compatible - existing calls unaffected.
 
 - February 20, 2026: FIXED KNOWLEDGE DB PATH IN search_knowledge_management_db()
   BUG: The function defaulted to 'swarm_intelligence.db' (local/ephemeral path).
@@ -45,6 +76,166 @@ import os
 from orchestration.ai_clients import call_claude_sonnet, call_claude_opus
 from database import get_db
 from config import DATABASE
+
+
+# ============================================================================
+# RESEARCH AGENT WRAPPER
+# Added February 20, 2026
+#
+# ResearchAgent.research_topic() returns:
+#   {'success', 'query', 'summary', 'results', 'result_count', 'topic', ...}
+#
+# execute_specialist_task() expects the callable to return:
+#   {'content', 'usage', 'error'}
+#
+# This wrapper normalizes the ResearchAgent output into that standard format
+# so it drops cleanly into the existing specialist_map without touching any
+# other part of execute_specialist_task().
+# ============================================================================
+
+def call_research_agent(prompt, max_tokens=4000):
+    """
+    Wrapper that calls ResearchAgent.research_topic() and normalizes the
+    result to the standard {'content', 'usage', 'error'} format.
+
+    The 'prompt' received here is the task_description from execute_specialist_task(),
+    which is the user's original request or the specialist sub-task assigned by Sonnet/Opus.
+
+    Returns dict with 'content', 'usage', 'error' (matching ai_clients.py format).
+    """
+    try:
+        from research_agent import get_research_agent
+        agent = get_research_agent()
+
+        if not agent.is_available:
+            return {
+                'content': "ERROR: Research Agent unavailable - TAVILY_API_KEY not configured",
+                'usage': {'input_tokens': 0, 'output_tokens': 0},
+                'error': True
+            }
+
+        result = agent.research_topic(topic=prompt, context="AI Swarm specialist task")
+
+        if not result.get('success'):
+            return {
+                'content': f"ERROR: Research Agent search failed: {result.get('error', 'Unknown error')}",
+                'usage': {'input_tokens': 0, 'output_tokens': 0},
+                'error': True
+            }
+
+        # Build a readable content string from the research results
+        parts = []
+
+        if result.get('summary'):
+            parts.append(f"**Research Summary:**\n{result['summary']}\n")
+
+        results_list = result.get('results', [])
+        if results_list:
+            parts.append(f"**Sources Found ({len(results_list)}):**\n")
+            for idx, r in enumerate(results_list, 1):
+                title = r.get('title', 'Untitled')
+                url = r.get('url', '')
+                content_snippet = r.get('content', '')[:300]
+                pub_date = r.get('published_date', '')
+                date_str = f" ({pub_date})" if pub_date else ""
+                parts.append(
+                    f"{idx}. **{title}**{date_str}\n"
+                    f"   URL: {url}\n"
+                    f"   {content_snippet}...\n"
+                )
+
+        content = "\n".join(parts) if parts else "No research results found."
+
+        return {
+            'content': content,
+            'usage': {'input_tokens': 0, 'output_tokens': 0},
+            'error': False
+        }
+
+    except ImportError:
+        return {
+            'content': "ERROR: research_agent module not found",
+            'usage': {'input_tokens': 0, 'output_tokens': 0},
+            'error': True
+        }
+    except Exception as e:
+        return {
+            'content': f"ERROR: Research Agent call failed: {str(e)}",
+            'usage': {'input_tokens': 0, 'output_tokens': 0},
+            'error': True
+        }
+
+
+# ============================================================================
+# SPECIALIST ROUTING RULES
+# Added February 20, 2026
+#
+# Single source of truth for routing rules, injected into both
+# analyze_task_with_sonnet() and handle_with_opus() so both orchestrators
+# know exactly when to use each specialist.
+# ============================================================================
+
+SPECIALIST_ROUTING_RULES = """
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPECIALIST ROUTING RULES - READ CAREFULLY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+You have access to these specialist AIs. Use them when the task genuinely
+benefits from their capability. Do NOT default to an empty list.
+
+SPECIALIST: research_agent (Tavily web search)
+  USE WHEN:
+  - User asks about current events, news, recent developments
+  - User asks about regulations, labor laws, OSHA updates (time-sensitive)
+  - User asks about research studies, published findings on shift work/fatigue
+  - User asks "what's happening in the industry" or competitor questions
+  - Any question where your training knowledge may be outdated
+  - User asks to "look up", "find", "research", or "search" something
+  EXAMPLES: "Any new OSHA fatigue regulations?", "What are the latest studies on
+    12-hour shifts?", "What are competitors doing?", "Look up..."
+
+SPECIALIST: gpt4 (OpenAI GPT-4 - document and report specialist)
+  USE WHEN:
+  - User asks for a formatted report, executive summary, or professional document
+  - Task requires creating structured multi-section written output
+  - User asks to "format", "write up", "draft", or "create a report"
+  - Complex document assembly from multiple inputs
+  EXAMPLES: "Write an executive summary of...", "Format this into a report",
+    "Draft a proposal for..."
+  NOTE: File analysis already goes to GPT-4 via Handler 9 - no need to assign
+    gpt4 here for tasks that involve uploaded files
+
+SPECIALIST: deepseek (DeepSeek - code and data specialist)
+  USE WHEN:
+  - User asks for data calculations, statistical analysis, or number crunching
+  - User asks to write, fix, or review code
+  - Task involves processing structured data (CSV, Excel formulas, SQL)
+  - Complex technical analysis requiring computational precision
+  EXAMPLES: "Calculate the cost savings from...", "Write a Python script to...",
+    "Analyze this data set..."
+
+SPECIALIST: gemini (Google Gemini - multimodal specialist)
+  USE WHEN:
+  - Task involves analyzing images or visual content
+  - User uploads an image and asks questions about it
+  - Task requires understanding charts, diagrams, or visual schedules
+  EXAMPLES: "What does this chart show?", "Analyze this image of our schedule board"
+
+ESCALATE TO OPUS (escalate_to_opus: true) WHEN:
+  - Request requires deep multi-step strategic planning
+  - High-stakes recommendation affecting many employees or large budget
+  - Complex change management planning across multiple phases
+  - Request involves significant organizational or political risk
+  - Task type is "complex" AND confidence is below 0.6
+  EXAMPLES: "Design a complete 5-year implementation roadmap",
+    "How do we manage union resistance to a full schedule overhaul?"
+
+FOR MOST STANDARD QUESTIONS: specialists_needed = [] and escalate_to_opus = false
+  Simple Q&A, explanations, typical schedule advice → handle with Sonnet directly.
+  Only assign specialists when they add genuine value.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+"""
 
 
 def get_learning_context():
@@ -311,6 +502,10 @@ def analyze_task_with_sonnet(user_request, knowledge_base=None, file_paths=None,
 
     Total: 77+ documents available for every request!
 
+    UPDATED February 20, 2026:
+    - Added SPECIALIST_ROUTING_RULES to prompt so Sonnet knows WHEN to use each AI
+    - Added "research_agent" as a valid specialist in the JSON schema hint
+
     Args:
         user_request (str): The user's request
         knowledge_base: Project knowledge base instance (optional)
@@ -330,6 +525,7 @@ def analyze_task_with_sonnet(user_request, knowledge_base=None, file_paths=None,
     learning_context = get_learning_context()
 
     # Build prompt with CAPABILITIES FIRST (so AI knows what it can do)
+    # UPDATED February 20, 2026: Added SPECIALIST_ROUTING_RULES block
     analysis_prompt = f"""{capabilities}
 
 You are the primary orchestrator in an AI swarm system for Shiftwork Solutions LLC.
@@ -367,7 +563,7 @@ You are a SENIOR CONSULTING PARTNER, not a marketing brochure. Follow these rule
    - Never oversell with ungrounded claims
 
 5. SPEAK LIKE A PARTNER
-   - "In my experience across 200+ projects..."
+   - "In my experience across hundreds of projects..."
    - "I've seen this work when..."
    - "The challenge you'll face is..."
    - "Let me look at what we learned from similar situations..."
@@ -379,6 +575,8 @@ You are a SENIOR CONSULTING PARTNER, not a marketing brochure. Follow these rule
 VIOLATION OF THESE RULES = LOSS OF CREDIBILITY
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+{SPECIALIST_ROUTING_RULES}
 
 {learning_context}
 
@@ -455,19 +653,21 @@ KNOWLEDGE BASE STATUS:
 ℹ️  No directly relevant knowledge found
 """
 
+    # UPDATED February 20, 2026: Added "research_agent" to valid specialists list
     analysis_prompt += """
 Analyze this request and determine:
 1. Task type (strategy, schedule_design, implementation, survey, content, code, analysis, complex)
 2. Your confidence (0.0-1.0)
-3. Required specialists (gpt4, deepseek, gemini, or "none")
-4. Escalate to Opus? (true/false)
+3. Required specialists - valid values: "research_agent", "gpt4", "deepseek", "gemini", or []
+   Use the SPECIALIST ROUTING RULES above to decide. Be specific - don't default to empty.
+4. Escalate to Opus? (true/false) - use the escalation rules above
 5. Reasoning
 
 Respond ONLY with valid JSON:
 {
     "task_type": "string",
     "confidence": 0.0-1.0,
-    "specialists_needed": ["ai_name", ...],
+    "specialists_needed": ["research_agent"|"gpt4"|"deepseek"|"gemini", ...],
     "escalate_to_opus": boolean,
     "reasoning": "string",
     "knowledge_applied": boolean
@@ -537,6 +737,9 @@ def handle_with_opus(user_request, sonnet_analysis, knowledge_base=None, file_pa
 
     NOW SEARCHES BOTH knowledge sources for complete context.
 
+    UPDATED February 20, 2026: Added SPECIALIST_ROUTING_RULES to Opus prompt
+    for consistency with Sonnet routing logic.
+
     Args:
         user_request (str): The user's request
         sonnet_analysis (dict): Sonnet's analysis results
@@ -554,6 +757,7 @@ def handle_with_opus(user_request, sonnet_analysis, knowledge_base=None, file_pa
     learning_context = get_learning_context()
 
     # Build prompt with CAPABILITIES FIRST
+    # UPDATED February 20, 2026: Added SPECIALIST_ROUTING_RULES block
     opus_prompt = f"""{capabilities}
 
 You are the strategic supervisor in the AI Swarm for Shiftwork Solutions LLC.
@@ -578,6 +782,8 @@ Ask questions: Don't assume - clarify before recommending
 SPEAK LIKE AN EXPERIENCED PARTNER, NOT A SALES BROCHURE.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+{SPECIALIST_ROUTING_RULES}
 
 {learning_context}
 
@@ -630,7 +836,8 @@ SONNET'S ANALYSIS:
 
 Provide strategic response with:
 1. Deep analysis (reference specific projects/documents when relevant)
-2. Specialist assignments
+2. Specialist assignments - valid values: "research_agent", "gpt4", "deepseek", "gemini"
+   Use the SPECIALIST ROUTING RULES above when assigning specialists.
 3. Expected workflow
 4. Learning for Sonnet
 5. Methodology applied
@@ -638,7 +845,7 @@ Provide strategic response with:
 Respond in JSON:
 {{
     "strategic_analysis": "string",
-    "specialist_assignments": [{{"ai": "name", "task": "description", "reason": "why"}}],
+    "specialist_assignments": [{{"ai": "research_agent"|"gpt4"|"deepseek"|"gemini", "task": "description", "reason": "why"}}],
     "workflow": ["step1", "step2"],
     "learning_for_sonnet": "pattern to learn",
     "methodology_applied": "principles used"
@@ -693,8 +900,14 @@ def execute_specialist_task(specialist_ai, task_description, knowledge_context="
     """
     Execute task with specialist AI.
 
+    UPDATED February 20, 2026: Added "research_agent" to specialist_map.
+    The call_research_agent() wrapper normalizes ResearchAgent output to the
+    standard {'content', 'usage', 'error'} format so it integrates cleanly.
+
     Args:
         specialist_ai (str): Name of the specialist AI to use
+                             Valid: "research_agent", "gpt4", "deepseek",
+                                   "gemini", "sonnet", "opus"
         task_description (str): Description of the task
         knowledge_context (str): Optional knowledge context
         file_paths (list): Optional list of attached file paths
@@ -706,40 +919,51 @@ def execute_specialist_task(specialist_ai, task_description, knowledge_context="
     from orchestration.system_capabilities import get_system_capabilities_prompt
     capabilities = get_system_capabilities_prompt()
 
+    # ================================================================
+    # UPDATED February 20, 2026: Added research_agent to specialist_map
+    # ================================================================
     specialist_map = {
+        "research_agent": call_research_agent,   # NEW - Tavily web search
         "gpt4": call_gpt4,
         "deepseek": call_deepseek,
         "gemini": call_gemini,
         "sonnet": call_claude_sonnet,
         "opus": call_claude_opus
     }
+    # ================================================================
 
     ai_function = specialist_map.get(specialist_ai.lower())
     if not ai_function:
         return {
             "specialist": specialist_ai,
-            "output": f"ERROR: Unknown specialist",
+            "output": f"ERROR: Unknown specialist '{specialist_ai}'. "
+                      f"Valid options: {', '.join(specialist_map.keys())}",
             "execution_time": 0,
             "success": False
         }
 
     # Build prompt with capabilities
-    full_prompt = f"{capabilities}\n\n"
+    # research_agent gets the raw task_description since call_research_agent()
+    # uses it as the topic for ResearchAgent.research_topic()
+    if specialist_ai.lower() == "research_agent":
+        full_prompt = task_description
+    else:
+        full_prompt = f"{capabilities}\n\n"
 
-    if knowledge_context:
-        full_prompt += f"{knowledge_context}\n\n"
+        if knowledge_context:
+            full_prompt += f"{knowledge_context}\n\n"
 
-    # Build file section for task description
-    file_section = ""
-    if file_contents:
-        file_section = f"\n\n📎 ATTACHED FILES:\n{file_contents}\n\n"
-    elif file_paths and len(file_paths) > 0:
-        file_section = f"\n\n📎 ATTACHED FILES ({len(file_paths)}):\n"
-        for fp in file_paths:
-            file_section += f"- {os.path.basename(fp)} (Path: {fp})\n"
-        file_section += "\n"
+        # Build file section for task description
+        file_section = ""
+        if file_contents:
+            file_section = f"\n\n📎 ATTACHED FILES:\n{file_contents}\n\n"
+        elif file_paths and len(file_paths) > 0:
+            file_section = f"\n\n📎 ATTACHED FILES ({len(file_paths)}):\n"
+            for fp in file_paths:
+                file_section += f"- {os.path.basename(fp)} (Path: {fp})\n"
+            file_section += "\n"
 
-    full_prompt += f"TASK: {task_description}{file_section}"
+        full_prompt += f"TASK: {task_description}{file_section}"
 
     start_time = time.time()
     api_response = ai_function(full_prompt)
