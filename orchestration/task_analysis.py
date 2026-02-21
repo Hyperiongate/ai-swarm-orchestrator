@@ -506,6 +506,13 @@ def analyze_task_with_sonnet(user_request, knowledge_base=None, file_paths=None,
     - Added SPECIALIST_ROUTING_RULES to prompt so Sonnet knows WHEN to use each AI
     - Added "research_agent" as a valid specialist in the JSON schema hint
 
+    UPDATED February 21, 2026:
+    - Added TIME-SENSITIVE OVERRIDE: after parsing Sonnet's JSON, detects time-
+      sensitive keywords in the user request and forces research_agent into
+      specialists_needed. Fixes: Sonnet was answering "What did OSHA announce
+      this week?" from KB at 90% confidence, never dispatching research_agent
+      even though KB data is static and cannot contain current week's news.
+
     Args:
         user_request (str): The user's request
         knowledge_base: Project knowledge base instance (optional)
@@ -708,6 +715,36 @@ Respond ONLY with valid JSON:
         analysis['knowledge_sources'] = kb_check['knowledge_sources']
         analysis['knowledge_confidence'] = kb_check['knowledge_confidence']
         analysis['files_attached'] = len(file_paths) if file_paths else 0
+
+        # ================================================================
+        # TIME-SENSITIVE OVERRIDE (Added February 21, 2026)
+        # PROBLEM: Sonnet was answering time-sensitive questions ("What did
+        #   OSHA announce this week?") from KB content at 90% confidence,
+        #   never dispatching research_agent even though KB data is static.
+        # FIX: After parsing Sonnet's JSON, detect time-sensitive keywords
+        #   in the user request and force research_agent into specialists_needed
+        #   regardless of what Sonnet decided. This bypasses Sonnet's routing
+        #   ONLY for requests where KB knowledge is structurally unsuitable
+        #   (current events, recent announcements, breaking news).
+        # ================================================================
+        TIME_SENSITIVE_KEYWORDS = [
+            'this week', 'this month', 'this year', 'today', 'yesterday',
+            'latest', 'recent', 'just announced', 'just released', 'new rule',
+            'new regulation', 'current', 'now', 'right now', 'breaking',
+            'announced', 'updated', '2025', '2026', 'last week', 'last month',
+            'what did', 'what has', 'what have', 'did osha', 'did dol',
+            'did congress', 'news on', 'update on', 'status of'
+        ]
+        request_lower_ts = user_request.lower()
+        is_time_sensitive = any(kw in request_lower_ts for kw in TIME_SENSITIVE_KEYWORDS)
+
+        if is_time_sensitive:
+            specialists = analysis.get('specialists_needed', [])
+            if 'research_agent' not in specialists:
+                specialists = ['research_agent'] + specialists
+                analysis['specialists_needed'] = specialists
+                print(f"⏰ TIME-SENSITIVE OVERRIDE: forced research_agent for: {user_request[:60]}")
+        # ================================================================
 
         # Boost confidence if strong knowledge match
         if kb_check['knowledge_confidence'] > 0.7:
