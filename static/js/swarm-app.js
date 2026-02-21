@@ -763,6 +763,9 @@ function switchMode(mode) {
     var manualsInfo = document.getElementById('manualsInfo');
     if (manualsInfo) manualsInfo.style.display = mode === 'manuals' ? 'block' : 'none';
     
+    var casestudiesInfo = document.getElementById('casestudiesInfo');
+    if (casestudiesInfo) casestudiesInfo.style.display = mode === 'casestudies' ? 'block' : 'none';
+    
     if (mode === 'project') loadSavedProjects();
     else if (mode === 'survey') loadQuestionBank();
     else if (mode === 'marketing') loadMarketingStatus();
