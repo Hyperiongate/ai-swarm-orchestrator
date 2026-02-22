@@ -1054,15 +1054,17 @@ except Exception as e:
 
 # ============================================================================
 # CASE STUDY GENERATOR BLUEPRINT (Added February 21, 2026)
+# TEMPORARILY DISABLED February 22, 2026 - debugging import error
 # ============================================================================
-try:
-    from routes.case_studies import case_studies_bp
-    app.register_blueprint(case_studies_bp)
-    print("✅ Case Study Generator API registered")
-except ImportError as e:
-    print(f"ℹ️  Case Study Generator routes not found: {e}")
-except Exception as e:
-    print(f"⚠️  Case Study Generator registration failed: {e}")
+# try:
+#     from routes.case_studies import case_studies_bp
+#     app.register_blueprint(case_studies_bp)
+#     print("✅ Case Study Generator API registered")
+# except ImportError as e:
+#     print(f"ℹ️  Case Study Generator routes not found: {e}")
+# except Exception as e:
+#     print(f"⚠️  Case Study Generator registration failed: {e}")
+print("⏸️  Case Study Generator temporarily disabled for debugging")
 
 # ============================================================================
 # BACKGROUND FILE PROCESSOR BLUEPRINT (Added February 5, 2026)
