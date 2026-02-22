@@ -1,19 +1,18 @@
 """
 AI SWARM ORCHESTRATOR - Main Application   
 Created: January 18, 2026
-Last Updated: February 22, 2026 - DIAGNOSTIC: stderr redirected to stdout
+Last Updated: February 22, 2026 - Re-enabled Case Study Generator; removed diagnostic lines
 
 CHANGELOG:
 
-- February 22, 2026: DIAGNOSTIC - stderr redirected to stdout
-  PROBLEM: Gunicorn worker crashes silently during import. Python writes the
-           crash traceback to stderr, but Render only captures stdout in its
-           log stream. Zero output appears in Render logs, making the crash
-           location impossible to identify.
-  FIX: Added sys.stderr = sys.stdout at the very top of the file (before any
-       imports) so the full traceback is visible in Render logs on next deploy.
-  This is a standard containerized app pattern. Zero risk to functionality.
-  Remove these 3 lines once the crash is identified and fixed.
+- February 22, 2026: RE-ENABLED Case Study Generator (routes/case_studies.py)
+  Was temporarily disabled during crash debugging. Root cause of crash was unrelated.
+  Generator re-enabled with full try/except protection as originally designed.
+  Also removed the 3-line stderr->stdout diagnostic added earlier today (no longer needed).
+
+- February 22, 2026: DIAGNOSTIC - stderr redirected to stdout (REMOVED)
+  Was added to expose silent crash tracebacks in Render logs. Crash resolved.
+  Diagnostic lines removed as no longer needed.
 
 - February 20, 2026: BUG FIX #1 - intelligence_bp name conflict (CRITICAL - CRASH ON STARTUP)
   PROBLEM: routes/intelligence.py and routes/phase1_intelligence.py both declare
@@ -96,21 +95,12 @@ ARCHITECTURE:
 - workflow_engine.py: Automation engine
 - integration_hub.py: External integrations
 - conversation_learning.py: Unified conversation learning (root level)
+- case_study_generator.py: AI-powered SEO-optimized case study generation
+- routes/case_studies.py: Case Study Generator API endpoints
 - app.py (this file): Bootstrap and initialization
 
 AUTHOR: Jim @ Shiftwork Solutions LLC
 """
-
-# =============================================================================
-# DIAGNOSTIC: Force crash tracebacks into Render log stream (Feb 22, 2026)
-# Python writes ImportError/crash tracebacks to stderr. Render captures stdout.
-# This redirect makes silent crashes visible in Render logs.
-# Remove these 3 lines once the crash location is identified and fixed.
-# =============================================================================
-import sys
-sys.stderr = sys.stdout
-print("🔍 DIAGNOSTIC MODE ACTIVE: stderr -> stdout (crash tracebacks now visible)")
-# =============================================================================
 
 from flask import Flask, render_template, jsonify
 from database import init_db
@@ -643,9 +633,16 @@ def health():
     except:
         project_management_status = 'not_installed'
 
+    case_studies_status = 'disabled'
+    try:
+        from case_study_generator import INDUSTRY_DISPLAY_NAMES
+        case_studies_status = 'enabled'
+    except:
+        case_studies_status = 'not_installed'
+
     return jsonify({
         'status': 'healthy',
-        'version': 'Sprint 3 Complete + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator + LinkedIn Poster + Bulletproof Projects + 100MB Upload Limit + Background KB Init + NameError Fix Feb18 + Blueprint Fix Feb20 + Diagnostic Feb22',
+        'version': 'Sprint 3 Complete + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator + LinkedIn Poster + Bulletproof Projects + 100MB Upload Limit + Background KB Init + NameError Fix Feb18 + Blueprint Fix Feb20 + Case Studies Feb21',
         'file_upload_limit': '100MB',
         'orchestrators': {
             'sonnet': 'configured' if ANTHROPIC_API_KEY else 'missing',
@@ -709,6 +706,17 @@ def health():
                 'project_summaries',
                 'checklists_milestones',
                 'auto_detection'
+            ]
+        },
+        'case_study_generator': {
+            'status': case_studies_status,
+            'features': [
+                'ai_generation',
+                'seo_optimized',
+                'ai_search_optimized',
+                'word_doc_download',
+                'saved_library',
+                '16_industries_supported'
             ]
         },
         'features': {
@@ -806,6 +814,13 @@ def health():
                 'search': project_management_status,
                 'checklists': project_management_status,
                 'milestones': project_management_status
+            },
+            'case_study_generator': {
+                'ai_generation': case_studies_status,
+                'seo_optimized': case_studies_status,
+                'word_doc_download': case_studies_status,
+                'saved_library': case_studies_status,
+                'industries': 16
             },
             'desktop_apps': {
                 'linkedin_poster': 'available',
@@ -1075,17 +1090,15 @@ except Exception as e:
 
 # ============================================================================
 # CASE STUDY GENERATOR BLUEPRINT (Added February 21, 2026)
-# TEMPORARILY DISABLED February 22, 2026 - debugging import error
 # ============================================================================
-# try:
-#     from routes.case_studies import case_studies_bp
-#     app.register_blueprint(case_studies_bp)
-#     print("✅ Case Study Generator API registered")
-# except ImportError as e:
-#     print(f"ℹ️  Case Study Generator routes not found: {e}")
-# except Exception as e:
-#     print(f"⚠️  Case Study Generator registration failed: {e}")
-print("⏸️  Case Study Generator temporarily disabled for debugging")
+try:
+    from routes.case_studies import case_studies_bp
+    app.register_blueprint(case_studies_bp)
+    print("✅ Case Study Generator API registered")
+except ImportError as e:
+    print(f"ℹ️  Case Study Generator routes not found: {e}")
+except Exception as e:
+    print(f"⚠️  Case Study Generator registration failed: {e}")
 
 # ============================================================================
 # BACKGROUND FILE PROCESSOR BLUEPRINT (Added February 5, 2026)
