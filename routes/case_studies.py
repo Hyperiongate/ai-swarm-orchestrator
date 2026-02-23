@@ -1,6 +1,6 @@
 """
 CASE STUDIES ROUTES - Flask API Endpoints
-Created: February 21, 2026
+Shiftwork Solutions LLC
 
 PURPOSE:
     API endpoints for the Case Study Generator feature.
@@ -8,29 +8,33 @@ PURPOSE:
     Shiftwork Solutions LLC website publishing.
 
 ENDPOINTS:
-    POST /api/case-studies/generate              - Generate a new case study + return content
-    GET  /api/case-studies/download/<id>          - Download case study as Word doc
-    GET  /api/case-studies/list                   - List all saved case studies
-    GET  /api/case-studies/<id>                   - Get a single case study
-    DELETE /api/case-studies/<id>                 - Delete a case study
-    GET  /api/case-studies/<id>/website-package   - Generate SEO title, meta description,
-                                                    URL slug, FAQs, and JSON-LD schema
-                                                    for direct website publishing
-    GET  /api/case-studies/status                 - Health check
+    POST   /api/case-studies/generate              - Generate a new case study
+    GET    /api/case-studies/download/<id>          - Download case study as Word doc
+    GET    /api/case-studies/list                   - List all saved case studies
+    GET    /api/case-studies/<id>                   - Get a single case study
+    DELETE /api/case-studies/<id>                   - Delete a case study
+    GET    /api/case-studies/<id>/website-package   - Generate SEO title, meta
+                                                      description, URL slug, FAQs,
+                                                      and JSON-LD schema for website
+    GET    /api/case-studies/status                 - Health check
 
 CHANGE LOG:
     February 21, 2026 - Initial creation.
     February 22, 2026 - Added GET /api/case-studies/<id>/website-package endpoint.
-                        Calls generate_website_ready_package() in case_study_generator.py
-                        and returns the full SEO + schema package as JSON.
+                        Calls generate_website_ready_package() in
+                        case_study_generator.py and returns the full SEO + schema
+                        package as JSON.
+    February 23, 2026 - Added 'logistics' industry to support new Logistics
+                        dropdown option in the UI. No route logic changes required
+                        since validation delegates to INDUSTRY_DISPLAY_NAMES in
+                        case_study_generator.py which now includes logistics.
 
 AUTHOR: Jim @ Shiftwork Solutions LLC
-LAST UPDATED: February 22, 2026
+LAST UPDATED: February 23, 2026
 """
 
 from flask import Blueprint, request, jsonify, send_file
 import io
-import json
 from datetime import datetime
 
 # ============================================================================
@@ -55,9 +59,9 @@ try:
     )
     CASE_STUDIES_AVAILABLE = True
     init_case_studies_table()
-    print("✅ Case Study Generator loaded")
+    print("[CaseStudies] Case Study Generator loaded successfully")
 except Exception as e:
-    print(f"⚠️  Case Study Generator failed to load: {e}")
+    print(f"[CaseStudies] WARNING - Failed to load Case Study Generator: {e}")
     CASE_STUDIES_AVAILABLE = False
 
 
@@ -74,6 +78,7 @@ def case_studies_status():
         'features': [
             'ai_generation',
             'seo_optimized',
+            'employee_engagement_narrative',
             'word_doc_download',
             'saved_library',
             'website_ready_package'
@@ -88,12 +93,12 @@ def case_studies_status():
 @case_studies_bp.route('/api/case-studies/generate', methods=['POST'])
 def generate():
     """
-    Generate a new case study.
+    Generate a new SEO and AI-search optimized case study.
 
-    Body:
-        industry: string (key from INDUSTRY_DISPLAY_NAMES)
-        problem:  string (description of client problem)
-        solution: string (description of solution applied)
+    Body (JSON):
+        industry: string  - industry key from INDUSTRY_DISPLAY_NAMES
+        problem:  string  - description of the client problem (min 20 chars)
+        solution: string  - description of the solution applied (min 20 chars)
 
     Returns:
         {
@@ -101,9 +106,10 @@ def generate():
             'id': 123,
             'title': 'Case Study Title',
             'content': '# Markdown content...',
-            'word_count': 1200,
-            'industry_display': 'Manufacturing',
-            'generated_at': '2026-02-21T...'
+            'word_count': 1100,
+            'industry': 'logistics',
+            'industry_display': 'Logistics',
+            'generated_at': '2026-02-23T...'
         }
     """
     if not CASE_STUDIES_AVAILABLE:
@@ -127,20 +133,19 @@ def generate():
         errors.append('Solution description must be at least 20 characters')
 
     if errors:
-        return jsonify({
-            'success': False,
-            'errors': errors
-        }), 400
+        return jsonify({'success': False, 'errors': errors}), 400
 
-    # Validate industry key
+    # Validate industry key against the authoritative list in case_study_generator.py
     if industry not in INDUSTRY_DISPLAY_NAMES:
         return jsonify({
             'success': False,
-            'error': f'Unknown industry: {industry}. Valid options: {list(INDUSTRY_DISPLAY_NAMES.keys())}'
+            'error': (
+                f'Unknown industry: {industry}. '
+                f'Valid options: {list(INDUSTRY_DISPLAY_NAMES.keys())}'
+            )
         }), 400
 
-    # Generate content
-    print(f"📝 Generating case study: {industry}")
+    print(f"[CaseStudies] Generating case study: industry={industry}")
     result = generate_case_study(industry, problem, solution)
 
     if not result['success']:
@@ -158,7 +163,7 @@ def generate():
         solution=solution
     )
 
-    print(f"✅ Case study saved: ID={study_id}, title={result['title']}")
+    print(f"[CaseStudies] Saved: ID={study_id}, title={result['title']}")
 
     return jsonify({
         'success': True,
@@ -182,10 +187,10 @@ def website_package(study_id):
     Generate a complete website publishing package for a saved case study.
 
     Makes a second AI call to produce SEO metadata and structured data:
-        - seo_title        : ≤60 character SEO-optimized page title
-        - meta_description : ≤160 character meta description tag content
+        - seo_title        : <=60 character SEO-optimized page title
+        - meta_description : <=160 character meta description tag content
         - url_slug         : clean hyphenated URL slug
-        - faqs             : list of 5 {question, answer} dicts for an FAQ section
+        - faqs             : list of 5 {question, answer} dicts for FAQ section
         - json_ld          : combined Article + FAQPage JSON-LD schema (dict)
         - json_ld_string   : JSON-LD formatted as indented string for <script> tag
 
@@ -194,7 +199,7 @@ def website_package(study_id):
             'success': true,
             'study_id': 123,
             'study_title': 'Original Case Study Title',
-            'industry_display': 'Paper & Packaging',
+            'industry_display': 'Logistics',
             'seo_title': '...',
             'meta_description': '...',
             'url_slug': '...',
@@ -210,17 +215,17 @@ def website_package(study_id):
     # Confirm the study exists before making an AI call
     study = get_case_study_by_id(study_id)
     if not study:
-        return jsonify({'success': False, 'error': f'Case study {study_id} not found'}), 404
+        return jsonify({
+            'success': False,
+            'error': f'Case study {study_id} not found'
+        }), 404
 
-    print(f"🌐 Generating website package for case study ID={study_id}: {study['title']}")
+    print(f"[CaseStudies] Generating website package for ID={study_id}: {study['title']}")
 
     result = generate_website_ready_package(study_id)
 
     if not result['success']:
-        import traceback
-        print(f"❌ Website package failed: {result.get('error')}")
-        if 'traceback' in result:
-            print(result['traceback'])
+        print(f"[CaseStudies] Website package failed: {result.get('error')}")
         return jsonify({
             'success': False,
             'error': result.get('error', 'Website package generation failed'),
@@ -249,9 +254,8 @@ def website_package(study_id):
 @case_studies_bp.route('/api/case-studies/download/<int:study_id>', methods=['GET'])
 def download(study_id):
     """
-    Download a saved case study as a Word document.
-
-    Returns: .docx file attachment
+    Download a saved case study as a Word document (.docx).
+    Returns a file attachment.
     """
     if not CASE_STUDIES_AVAILABLE:
         return jsonify({'success': False, 'error': 'Not available'}), 503
@@ -267,21 +271,26 @@ def download(study_id):
             industry=study['industry']
         )
 
-        # Build clean filename
-        safe_title = ''.join(c for c in study['title'] if c.isalnum() or c in (' ', '-', '_'))
+        # Build clean filename from title
+        safe_title = ''.join(
+            c for c in study['title'] if c.isalnum() or c in (' ', '-', '_')
+        )
         safe_title = safe_title[:60].strip().replace(' ', '_')
         filename = f"CaseStudy_{safe_title}_{datetime.now().strftime('%Y%m%d')}.docx"
 
         return send_file(
             io.BytesIO(docx_bytes),
-            mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            mimetype=(
+                'application/vnd.openxmlformats-officedocument'
+                '.wordprocessingml.document'
+            ),
             as_attachment=True,
             download_name=filename
         )
 
     except Exception as e:
         import traceback
-        print(f"❌ Download failed: {e}\n{traceback.format_exc()}")
+        print(f"[CaseStudies] Download failed: {e}\n{traceback.format_exc()}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -292,7 +301,7 @@ def download(study_id):
 @case_studies_bp.route('/api/case-studies/list', methods=['GET'])
 def list_studies():
     """
-    List all saved case studies.
+    List all saved case studies, newest first.
 
     Returns:
         {
@@ -306,7 +315,7 @@ def list_studies():
 
     studies = get_all_case_studies()
 
-    # Add display name to each
+    # Attach display name to each record
     for s in studies:
         s['industry_display'] = INDUSTRY_DISPLAY_NAMES.get(s['industry'], s['industry'])
 
@@ -324,9 +333,7 @@ def list_studies():
 @case_studies_bp.route('/api/case-studies/<int:study_id>', methods=['GET'])
 def get_study(study_id):
     """
-    Get a single case study by ID.
-
-    Returns full content including markdown.
+    Get a single case study by ID. Returns full content including markdown.
     """
     if not CASE_STUDIES_AVAILABLE:
         return jsonify({'success': False, 'error': 'Not available'}), 503
@@ -335,12 +342,11 @@ def get_study(study_id):
     if not study:
         return jsonify({'success': False, 'error': 'Not found'}), 404
 
-    study['industry_display'] = INDUSTRY_DISPLAY_NAMES.get(study['industry'], study['industry'])
+    study['industry_display'] = INDUSTRY_DISPLAY_NAMES.get(
+        study['industry'], study['industry']
+    )
 
-    return jsonify({
-        'success': True,
-        'case_study': study
-    })
+    return jsonify({'success': True, 'case_study': study})
 
 
 # ============================================================================
@@ -349,7 +355,7 @@ def get_study(study_id):
 
 @case_studies_bp.route('/api/case-studies/<int:study_id>', methods=['DELETE'])
 def delete_study(study_id):
-    """Delete a case study."""
+    """Delete a case study by ID."""
     if not CASE_STUDIES_AVAILABLE:
         return jsonify({'success': False, 'error': 'Not available'}), 503
 
