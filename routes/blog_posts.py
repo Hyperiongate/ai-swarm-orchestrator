@@ -55,10 +55,18 @@ try:
         BLOG_TOPICS
     )
     BLOG_POSTS_AVAILABLE = True
-    init_blog_posts_table()
+    
+    # Initialize table (safe - won't crash if already exists)
+    try:
+        init_blog_posts_table()
+    except Exception as table_error:
+        print(f"[BlogPosts] Table init warning (may already exist): {table_error}")
+    
     print("[BlogPosts] Blog Post Generator loaded successfully")
 except Exception as e:
     print(f"[BlogPosts] WARNING - Failed to load Blog Post Generator: {e}")
+    import traceback
+    print(f"[BlogPosts] Traceback: {traceback.format_exc()}")
     BLOG_POSTS_AVAILABLE = False
 
 
