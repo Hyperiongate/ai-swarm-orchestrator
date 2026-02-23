@@ -1,34 +1,68 @@
 """
 CASE STUDY GENERATOR - AI-Powered SEO & AI-Search Optimized Case Studies
-Created: February 21, 2026
+Shiftwork Solutions LLC
 
 PURPOSE:
-    Generates professional case studies for Shiftwork Solutions LLC optimized
-    for both traditional SEO (Google) and AI-powered search (ChatGPT, Perplexity,
-    Claude). Uses the AI Swarm orchestration layer for generation.
+    Generates professional case studies optimized for both traditional SEO
+    (Google) and AI-powered search (ChatGPT, Perplexity, Claude). The
+    employee engagement process - surveys, workforce input, change management
+    - is embedded as a non-negotiable narrative in every case study regardless
+    of the problem or solution described.
+
+TARGET AUDIENCE:
+    General Managers, Directors, HR Managers - people who own the workforce
+    problem, control the budget, and feel pressure from both above and below.
+    These readers are nervous about one thing above all else: workforce
+    resistance to schedule changes. Every case study addresses that fear
+    directly and shows how it was resolved.
+
+EMPLOYEE ENGAGEMENT NARRATIVE (always present):
+    - Workforce resistance is acknowledged as the primary risk
+    - Employee surveys surface real preferences, not assumed ones
+    - Workforce input is used to create genuine ownership of the new schedule
+    - Shop floor approachability and direct communication with employees
+    - Employees choose from schedule options rather than having them imposed
+    - The result: employees feel respected and the change sticks
 
 SEO/AI-SEARCH STRATEGY:
-    - Structured with clear H1/H2/H3 headers that AI models can parse
-    - Uses specific industry terminology and long-tail keywords naturally
-    - Includes quantifiable results (numbers, percentages) that AI models cite
-    - Problem/Solution/Result narrative structure that search engines reward
-    - Schema-ready content structure
-    - Natural keyword density without stuffing
+    - Title leads with result or pain point, never cleverness
+    - Primary keyword in title AND first sentence of opening paragraph
+    - Key result surfaced in first 50 words of The Results section
+    - Conservative, believable numbers - a GM nods, doesn't squint
+    - Structure is rigid and consistent for Google content-type recognition
+    - Quotable, attributable facts that AI models (Perplexity, ChatGPT) cite
+    - Dynamic closing section - unique per case study, no duplicate content
+    - FAQ section generated separately for AI search snippet capture
 
 INDUSTRIES SUPPORTED:
     Manufacturing, Pharmaceutical, Food Processing, Mining, Consumer Products,
     Beverage, Utilities, Paper & Packaging, Technology, Oil/Gas/Energy,
-    Chemicals, Automotive, Transportation, Healthcare, Government, Gaming
+    Chemicals, Automotive, Transportation, Logistics, Healthcare,
+    Government/Mint, Gaming & Hospitality, Other
 
 CHANGE LOG:
     February 21, 2026 - Initial creation. Core generation, DOCX export, DB CRUD.
-    February 22, 2026 - Added generate_website_ready_package(). Produces SEO title
-                        (≤60 chars), meta description (≤160 chars), URL slug,
-                        3-5 FAQ Q&A pairs, and combined Article+FAQPage JSON-LD
-                        schema markup for direct website publishing.
+    February 22, 2026 - Added generate_website_ready_package(). Produces SEO
+                        title (<=60 chars), meta description (<=160 chars), URL
+                        slug, 3-5 FAQ Q&A pairs, and combined Article+FAQPage
+                        JSON-LD schema markup for direct website publishing.
+    February 23, 2026 - MAJOR PROMPT REWRITE.
+                        * Audience now explicitly GM/Director/HR Manager
+                        * Employee engagement process baked in as non-negotiable
+                          (surveys, workforce input, change management, shop floor
+                          approachability) - appears in every case study regardless
+                          of what Jim describes
+                        * Title optimized for search intent not impressiveness
+                        * Key result surfaced in first 50 words of Results section
+                        * Numbers conservative and believable
+                        * Dynamic closing section (unique per case study) replaces
+                          identical boilerplate - eliminates duplicate content penalty
+                        * Added Logistics as standalone industry
+                        * Improved SEO keyword density in opening paragraph
+                        * AI-search quotable facts in Results section
 
 AUTHOR: Jim @ Shiftwork Solutions LLC
-LAST UPDATED: February 22, 2026
+LAST UPDATED: February 23, 2026
 """
 
 import os
@@ -37,7 +71,9 @@ from datetime import datetime
 
 # ============================================================================
 # INDUSTRY KEYWORD MAP
-# SEO keywords naturally woven into generated content
+# SEO keywords naturally woven into generated content.
+# Index 0 = primary keyword (used in title and first paragraph).
+# Indices 1-3 = secondary keywords (woven throughout).
 # ============================================================================
 INDUSTRY_SEO_KEYWORDS = {
     'manufacturing': [
@@ -101,9 +137,14 @@ INDUSTRY_SEO_KEYWORDS = {
         'auto manufacturing workforce optimization', 'vehicle production scheduling'
     ],
     'transportation': [
-        'transportation workforce scheduling', 'logistics shift management',
-        '24/7 transportation operations', 'fleet operations shift work',
-        'transportation workforce optimization', 'logistics workforce scheduling'
+        'transportation workforce scheduling', 'fleet operations shift management',
+        '24/7 transportation operations', 'driver shift scheduling',
+        'transportation workforce optimization', 'transit operations shift work'
+    ],
+    'logistics': [
+        'logistics shift scheduling', 'warehouse workforce management',
+        '24/7 distribution center operations', 'logistics workforce optimization',
+        'supply chain shift scheduling', 'distribution shift work'
     ],
     'healthcare': [
         'healthcare shift scheduling', 'hospital workforce management',
@@ -141,6 +182,7 @@ INDUSTRY_DISPLAY_NAMES = {
     'chemicals': 'Chemicals',
     'automotive': 'Automotive',
     'transportation': 'Transportation',
+    'logistics': 'Logistics',
     'healthcare': 'Healthcare',
     'government_mint': 'Government / Mint',
     'gaming_hospitality': 'Gaming & Hospitality',
@@ -151,65 +193,119 @@ INDUSTRY_DISPLAY_NAMES = {
 def get_case_study_prompt(industry: str, problem: str, solution: str) -> str:
     """
     Build the AI prompt for case study generation.
-    Instructs the AI to produce SEO and AI-search optimized content.
+
+    This prompt enforces:
+    1. Employee engagement narrative in every section (non-negotiable)
+    2. SEO and AI-search optimization throughout
+    3. Audience: General Managers, Directors, HR Managers
+    4. Conservative, believable numbers
+    5. Dynamic closing section unique to each case study
+    6. Key result in first 50 words of The Results section
     """
     industry_display = INDUSTRY_DISPLAY_NAMES.get(industry, 'Industrial Operations')
     keywords = INDUSTRY_SEO_KEYWORDS.get(industry, INDUSTRY_SEO_KEYWORDS['other'])
     primary_keyword = keywords[0] if keywords else 'shift scheduling'
     secondary_keywords = ', '.join(keywords[1:4]) if len(keywords) > 1 else ''
 
-    prompt = f"""You are a professional content writer specializing in workforce management consulting case studies. 
-Write a compelling, SEO-optimized case study for Shiftwork Solutions LLC based on the following:
+    prompt = f"""You are a professional content writer specializing in workforce management consulting case studies for Shiftwork Solutions LLC. Your writing is trusted by General Managers, Plant Directors, and HR Managers who are considering a schedule change but are worried about one thing above everything else: their workforce pushing back.
+
+Write a compelling, SEO-optimized case study based on the following:
 
 INDUSTRY: {industry_display}
 CLIENT PROBLEM: {problem}
 SOLUTION APPLIED: {solution}
 
-ABOUT SHIFTWORK SOLUTIONS LLC:
+===== ABOUT SHIFTWORK SOLUTIONS LLC =====
 - Specialized consulting firm with hundreds of completed 24/7 shift operations engagements
-- Core philosophy: the best shift schedules are ones employees actually choose
-- Methodology: employee surveys, data analysis, change management, workforce optimization
-- Typical engagement: 6 weeks, focused on continuous improvement
-- Industries served: manufacturing, pharmaceutical, food processing, mining, and more
-- Approach: never top-down mandates — always collaborative employee-centered design
+- Core philosophy: the best shift schedule is the one employees actually choose
+- Core process: employee surveys, data analysis, collaborative schedule design, change management
+- Typical engagement: 6 weeks
+- Industries: manufacturing, pharmaceutical, food processing, mining, logistics, and more
+- Unique value: we communicate directly with the workforce on the shop floor. We are approachable, present, and trusted by workers and management alike.
 
-SEO REQUIREMENTS (follow these exactly):
-1. Use "{primary_keyword}" as the primary keyword — include it naturally in the title and first paragraph
-2. Include these secondary keywords naturally throughout: {secondary_keywords}
-3. Use specific numbers and quantifiable results where plausible (estimate conservatively if needed)
-4. Structure for AI-search readability: clear headers, concise paragraphs, specific facts
-5. Write for both human readers AND AI models that will summarize this content
+===== THE MOST IMPORTANT RULE =====
+THE EMPLOYEE ENGAGEMENT STORY IS MANDATORY IN EVERY CASE STUDY.
 
-STRUCTURE TO FOLLOW (use these exact section headers):
-# [Compelling Title with Primary Keyword]
+No matter what problem Jim describes, no matter what solution was applied, every case study must clearly communicate the following:
+
+1. The client was nervous about workforce resistance to the schedule change
+2. Shiftwork Solutions surveyed the workforce to discover their real preferences, not assumed ones
+3. The survey results were interpreted carefully and used to design schedule options - not just filed away
+4. Employees were given meaningful input that shaped the final outcome - this created real ownership
+5. Shiftwork Solutions was visibly present and approachable on the shop floor throughout the engagement
+6. The workforce felt respected and included throughout the process
+7. The end result: employees accepted and in many cases appreciated the new schedule
+
+This story must appear naturally woven into The Challenge, Why Shiftwork Solutions, Our Approach, and The Results sections. It is not optional. It is the primary reason companies hire us.
+
+===== SEO AND AI SEARCH REQUIREMENTS =====
+1. TITLE: Use "{primary_keyword}" or a close variant. Lead with the RESULT or the PAIN POINT - never a clever phrase. Format preference: "[Specific Result or Problem]: [Primary Keyword]". Keep it under 70 characters.
+2. FIRST PARAGRAPH: Use "{primary_keyword}" naturally in the first sentence of The Challenge section.
+3. SECONDARY KEYWORDS: Weave these in naturally throughout the content: {secondary_keywords}
+4. THE RESULTS - KEY RESULT FIRST: The very first sentence of The Results section must state the single most important quantifiable outcome. Do not bury the lead.
+5. NUMBERS: All numbers must be conservative and believable. A General Manager reading this should nod, not squint. Use realistic ranges: 10-20% overtime reduction, $150K-$450K savings, turnover reduction of 15-25%. Never use implausibly high numbers.
+6. QUOTABLE FACTS: Include at least 3 specific, attributable facts that an AI search engine (Perplexity, ChatGPT, Claude) would cite when answering questions like "how to reduce shift schedule resistance" or "how to get employees to accept a new shift schedule."
+7. STRUCTURE: Use the exact section headers below. Consistent structure helps Google understand the content type and helps AI models parse it correctly.
+
+===== AUDIENCE VOICE =====
+Write for General Managers, Plant Directors, and HR Managers. These readers:
+- Feel pressure from executives to cut costs and from employees to maintain quality of life
+- Have seen schedule changes blow up before - they know the political risk
+- Want proof, not promises - specific numbers, not vague claims
+- Will share this with their VP or CHRO - it needs to hold up to scrutiny
+- Care about their employees wellbeing, not just the operational metrics
+
+Use language they actually use: "workforce resistance," "employee buy-in," "schedule transition," "overtime burden," "change management," "shift rotation," "workforce survey," "employee input," "schedule acceptance."
+
+===== STRUCTURE TO FOLLOW =====
+Use these EXACT section headers:
+
+# [Title: Result-led or Pain-point-led, primary keyword included, under 70 characters]
 
 ## The Challenge
-[2-3 paragraphs describing the specific operational problem. Be specific about pain points: overtime costs, employee morale, scheduling complexity, turnover. Include industry-specific context.]
+[2-3 paragraphs. Open with the primary keyword "{primary_keyword}" in the first sentence. Describe BOTH the operational problem AND the change management risk - the real fear that employees would resist a new schedule. Be specific about the pain points: what was failing, what management feared, what was at stake. This section should make a GM think: "that is exactly my situation."]
 
 ## Why Shiftwork Solutions LLC
-[1-2 paragraphs explaining why the client chose Shiftwork Solutions. Mention the employee-centered approach, decades of industry experience, proven methodology, and the normative database of hundreds of past client engagements for benchmarking.]
+[2 paragraphs. Explain why the client chose Shiftwork Solutions. Lead with the employee engagement methodology - specifically that we survey the workforce and use their input to drive the design. Then mention the normative database of hundreds of past client engagements, the industry experience, and the track record. The reader should understand clearly that we do not impose schedules - we facilitate employees choosing their own.]
 
 ## Our Approach
-[2-3 paragraphs describing the solution methodology. Include: initial assessment, employee survey process, data analysis, schedule design options presented to employees, implementation planning, change management support. Be specific about the process.]
+[3 paragraphs.
+  Paragraph 1: Initial assessment and data gathering - what we analyzed, what we measured, how we established a baseline.
+  Paragraph 2: The employee survey process - how we designed and administered it, how we communicated to the workforce that their input would actually be used, how we were present and approachable on the shop floor, and how survey results were interpreted and translated into real schedule options.
+  Paragraph 3: Schedule design and implementation planning - how employees reviewed options, how their preferences shaped the final recommendation, and how change management support ensured a smooth and accepted transition.]
 
 ## The Results
-[2-3 paragraphs with specific, quantifiable outcomes. Include metrics like: overtime reduction percentage, employee satisfaction improvement, turnover reduction, cost savings, productivity gains. Even if estimated, make them realistic and conservative.]
+[2-3 paragraphs. CRITICAL: The very first sentence must state the most important quantifiable result. Example: "Within six months of implementation, [Client] reduced overtime costs by 16 percent, saving an estimated $310,000 annually." Then expand on operational outcomes, financial outcomes, and - critically - workforce outcomes. Always include: employee satisfaction improvement, reduction in complaints or grievances, or supervisor feedback on workforce acceptance. The workforce outcome is what validates the entire approach and what this audience cares most about.]
 
 ## Key Takeaways
-[3-4 bullet points summarizing the most important lessons from this engagement. Make these specific and actionable — things other companies in this industry can learn from.]
+[4 bullet points. Each must be a specific, actionable lesson a GM could share in a leadership meeting. Requirements:
+  - At least one bullet must directly reference the employee engagement process as a key success factor
+  - At least one bullet must reference a specific quantifiable result from this case study
+  - At least one bullet must speak to the change management or workforce resistance dimension
+  - Make them useful and specific, not generic consulting speak]
 
 ## About Shiftwork Solutions LLC
-[1 short paragraph. Mention: hundreds of 24/7 operations engagements, employee-centered philosophy, industries served, approach of letting employees choose their schedules through survey-driven design.]
+[DYNAMIC CLOSING - THIS IS CRITICAL FOR SEO AND AI SEARCH.
+Do NOT write a generic boilerplate paragraph that will be identical across every case study. Instead, write 3 sentences that:
+  Sentence 1: Reference the SPECIFIC problem solved in this case study and the industry context. Make it clear this is about this engagement, not a generic company description.
+  Sentence 2: Connect it to Shiftwork Solutions broader experience with similar operations, referencing hundreds of past engagements.
+  Sentence 3: State the employee-centered philosophy - specifically that schedules are designed with workforce input, not imposed on the workforce, and what that delivers.
 
-WRITING STYLE:
-- Professional but accessible — readable by plant managers and HR directors
-- Specific and factual — avoid vague generalities
-- Confident but not boastful
-- Third person for the client, first person plural ("we", "our team") for Shiftwork Solutions
-- No client name — use "[Client]" as placeholder
-- Approximate headcount with ranges like "500+ employees" or "a team of 200"
+Example structure (do NOT copy this - write it fresh for the specific problem solved):
+"When [industry] operations face [specific problem from this study], the hidden risk is rarely the schedule itself - it is whether the workforce will accept it. Shiftwork Solutions LLC has guided hundreds of [industry] and continuous-operations facilities through exactly this kind of transition, using a structured process that gives employees a real voice in the outcome. The result is not just a better schedule on paper - it is a schedule the workforce chose, understands, and supports."
 
-OUTPUT: Return ONLY the case study content in markdown format. No preamble, no explanation, no JSON wrapper. Start directly with the # title."""
+Every case study must have a unique closing paragraph. No two closings should be the same.]
+
+===== WRITING STYLE =====
+- Professional but human - readable by a busy GM on a Tuesday afternoon
+- Specific and factual - no vague generalities like "significant improvement"
+- Confident but not boastful - let the results speak
+- Third person for the client, first person plural ("we," "our team") for Shiftwork Solutions
+- Use "[Client]" as placeholder for company name
+- Use ranges for headcount: "a workforce of 400+" or "more than 300 employees"
+- Never use "300+" to describe Shiftwork Solutions past engagements - always use "hundreds"
+
+OUTPUT: Return ONLY the case study content in markdown format. Start directly with the # title. No preamble, no explanation, no JSON wrapper."""
 
     return prompt
 
@@ -217,7 +313,12 @@ OUTPUT: Return ONLY the case study content in markdown format. No preamble, no e
 def get_website_package_prompt(title: str, content: str, industry: str) -> str:
     """
     Build the AI prompt for generating website-ready SEO metadata and schema markup.
-    Called after the case study is already generated.
+    Called after the case study is already generated and saved.
+
+    Optimized for:
+    - Traditional SEO (Google title/description/schema)
+    - AI search engines (Perplexity, ChatGPT FAQ snippet capture)
+    - Structured data (JSON-LD Article + FAQPage combined schema)
     """
     industry_display = INDUSTRY_DISPLAY_NAMES.get(industry, 'Industrial Operations')
     keywords = INDUSTRY_SEO_KEYWORDS.get(industry, INDUSTRY_SEO_KEYWORDS['other'])
@@ -232,7 +333,7 @@ PRIMARY KEYWORD: {primary_keyword}
 CASE STUDY CONTENT:
 {content}
 
-Generate the following elements. Return ONLY valid JSON — no markdown, no preamble, no explanation. The JSON must be parseable by Python's json.loads().
+Generate the following elements. Return ONLY valid JSON - no markdown, no preamble, no explanation. The JSON must be parseable by Python's json.loads().
 
 Return this exact JSON structure:
 {{
@@ -254,47 +355,61 @@ REQUIREMENTS FOR EACH FIELD:
 seo_title:
 - Maximum 60 characters including spaces
 - Must include the primary keyword "{primary_keyword}" or a close variant
-- Compelling and click-worthy
-- Format: "[Benefit/Result]: [Primary Keyword] | Shiftwork Solutions"
+- Lead with the result or pain point - never a clever phrase
+- Format preference: "[Specific Result]: [Primary Keyword]" or "[Pain Point] Solved: [Industry]"
 
 meta_description:
 - Maximum 160 characters including spaces
 - Include primary keyword naturally in first half
-- End with a soft call to action (e.g., "Learn how.")
-- Summarize the key result from the case study
+- Reference the most important quantifiable result from the case study
+- End with a soft call to action such as "See how." or "Learn how we did it."
 
 url_slug:
 - Lowercase, hyphen-separated, no special characters
 - 4-7 words maximum
 - Include primary keyword or close variant
-- Example format: "manufacturing-shift-scheduling-overtime-reduction"
+- Example: "logistics-shift-scheduling-overtime-reduction"
 
 faqs:
 - Exactly 5 FAQ pairs
-- Questions should be the kind real plant managers and HR directors search for
-- Answers should be 2-4 sentences, specific and helpful
+- Questions must be the kind a GM, Director, or HR Manager would actually type into Google or ask an AI chatbot
+- Two questions must reference the specific results from this case study
+- Two questions must address employee resistance or change management angle
+- One question must address why Shiftwork Solutions or how to choose a shift scheduling consultant
+- Answers must be 2-4 sentences, specific, and useful - not vague
 - Use industry terminology naturally
-- At least 2 questions should reference the specific results from this case study
-- Do NOT use generic questions like "What is shift scheduling?" — make them specific to this case study's problem and solution
+- Do NOT use generic questions like "What is shift scheduling?" - every question must be specific to this case study
 
 json_ld:
 - Combined Article + FAQPage schema as a single JSON-LD object
 - Use "@graph" array containing both schemas
-- Article schema: type="Article", headline=seo_title, description=meta_description, 
+- Article schema: "@type": "Article", headline=seo_title, description=meta_description,
   author={{"@type":"Organization","name":"Shiftwork Solutions LLC"}},
   publisher={{"@type":"Organization","name":"Shiftwork Solutions LLC","url":"https://shiftworksolutions.com"}},
-  url="https://shiftworksolutions.com/case-studies/[url_slug]"
+  url="https://shiftworksolutions.com/case-studies/[url_slug]",
   datePublished="{datetime.now().strftime('%Y-%m-%d')}"
-- FAQPage schema: type="FAQPage" with all 5 FAQ pairs as mainEntity
-- The entire json_ld value must itself be valid JSON (it will be serialized to a <script> tag)"""
+- FAQPage schema: "@type": "FAQPage" with all 5 FAQ pairs as mainEntity array
+- Each FAQ in mainEntity: {{"@type":"Question","name":"[question]","acceptedAnswer":{{"@type":"Answer","text":"[answer]"}}}}
+- The entire json_ld value must itself be valid JSON"""
 
     return prompt
 
 
 def generate_case_study(industry: str, problem: str, solution: str) -> dict:
     """
-    Generate a case study using the AI Swarm orchestration layer.
-    Returns dict with success, content, title, word_count.
+    Generate a case study using the Anthropic API.
+
+    Returns:
+        {
+            'success': True/False,
+            'content': str (markdown),
+            'title': str,
+            'word_count': int,
+            'industry': str,
+            'industry_display': str,
+            'generated_at': str (ISO),
+            'error': str (only on failure)
+        }
     """
     try:
         from config import ANTHROPIC_API_KEY, CLAUDE_SONNET_MODEL
@@ -323,15 +438,17 @@ def generate_case_study(industry: str, problem: str, solution: str) -> dict:
 
         content = message.content[0].text
 
-        # Extract title from first line
+        # Extract title from first # heading
         title = 'Case Study'
         lines = content.strip().split('\n')
         for line in lines:
-            if line.startswith('# '):
+            if line.startswith('# ') and not line.startswith('## '):
                 title = line.replace('# ', '').strip()
                 break
 
         word_count = len(content.split())
+
+        print(f"[CaseStudy] Generated: '{title}' ({word_count} words)")
 
         return {
             'success': True,
@@ -357,13 +474,13 @@ def generate_website_ready_package(study_id: int) -> dict:
     Generate a complete website publishing package for a saved case study.
 
     Makes a second AI call (separate from case study generation) to produce:
-      - seo_title      : ≤60 character SEO-optimized title
-      - meta_description: ≤160 character meta description
-      - url_slug       : clean URL slug for the page
-      - faqs           : list of 5 {question, answer} dicts
-      - json_ld        : combined Article + FAQPage JSON-LD schema dict
-      - json_ld_string : the json_ld serialized as an indented string for
-                         direct paste into a <script type="application/ld+json"> tag
+      - seo_title       : <=60 character SEO-optimized title
+      - meta_description: <=160 character meta description
+      - url_slug        : clean URL slug for the page
+      - faqs            : list of 5 {question, answer} dicts
+      - json_ld         : combined Article + FAQPage JSON-LD schema dict
+      - json_ld_string  : json_ld serialized as indented string for
+                          direct paste into <script type="application/ld+json">
 
     Returns:
         {
@@ -374,6 +491,9 @@ def generate_website_ready_package(study_id: int) -> dict:
             'faqs': [{'question': str, 'answer': str}, ...],
             'json_ld': dict,
             'json_ld_string': str,
+            'study_title': str,
+            'industry_display': str,
+            'generated_at': str,
             'error': str  (only on failure)
         }
     """
@@ -384,7 +504,6 @@ def generate_website_ready_package(study_id: int) -> dict:
         if not ANTHROPIC_API_KEY:
             return {'success': False, 'error': 'Anthropic API key not configured'}
 
-        # Fetch the saved case study
         study = get_case_study_by_id(study_id)
         if not study:
             return {'success': False, 'error': f'Case study ID {study_id} not found'}
@@ -416,10 +535,8 @@ def generate_website_ready_package(study_id: int) -> dict:
         # Strip markdown code fences if the model wrapped the JSON
         if raw_response.startswith('```'):
             lines = raw_response.split('\n')
-            # Remove first line (```json or ```) and last line (```)
             raw_response = '\n'.join(lines[1:-1]).strip()
 
-        # Parse JSON
         try:
             package = json.loads(raw_response)
         except json.JSONDecodeError as parse_err:
@@ -439,16 +556,15 @@ def generate_website_ready_package(study_id: int) -> dict:
                 'raw_response': raw_response[:500]
             }
 
-        # Enforce character limits (trim if AI exceeded them)
+        # Enforce character limits
         seo_title = str(package['seo_title'])[:60]
         meta_description = str(package['meta_description'])[:160]
         url_slug = str(package['url_slug']).lower().replace(' ', '-')
 
-        # Validate FAQs structure
+        # Validate and clean FAQs
         faqs = package.get('faqs', [])
         if not isinstance(faqs, list):
             faqs = []
-        # Ensure each FAQ has question and answer keys
         cleaned_faqs = []
         for faq in faqs:
             if isinstance(faq, dict) and 'question' in faq and 'answer' in faq:
@@ -457,11 +573,11 @@ def generate_website_ready_package(study_id: int) -> dict:
                     'answer': str(faq['answer'])
                 })
 
-        # Serialize JSON-LD to a formatted string for paste-ready output
+        # Serialize JSON-LD to formatted string for paste-ready output
         json_ld_dict = package.get('json_ld', {})
         json_ld_string = json.dumps(json_ld_dict, indent=2)
 
-        print(f"✅ Website package generated for study ID={study_id}: "
+        print(f"[CaseStudy] Website package generated for ID={study_id}: "
               f"title={len(seo_title)}ch, desc={len(meta_description)}ch, "
               f"faqs={len(cleaned_faqs)}, json_ld={len(json_ld_string)}ch")
 
@@ -496,8 +612,6 @@ def generate_case_study_docx(case_study_content: str, title: str, industry: str)
     from docx import Document
     from docx.shared import Pt, Inches, RGBColor
     from docx.enum.text import WD_ALIGN_PARAGRAPH
-    from docx.oxml.ns import qn
-    from docx.oxml import OxmlElement
     import re
 
     doc = Document()
@@ -516,21 +630,19 @@ def generate_case_study_docx(case_study_content: str, title: str, industry: str)
     style.font.name = 'Arial'
     style.font.size = Pt(11)
 
-    # Header style (H1)
     h1_style = doc.styles['Heading 1']
     h1_style.font.name = 'Arial'
     h1_style.font.size = Pt(18)
     h1_style.font.bold = True
-    h1_style.font.color.rgb = RGBColor(0x1A, 0x53, 0x7A)  # Dark blue
+    h1_style.font.color.rgb = RGBColor(0x1A, 0x53, 0x7A)
 
-    # Section style (H2)
     h2_style = doc.styles['Heading 2']
     h2_style.font.name = 'Arial'
     h2_style.font.size = Pt(14)
     h2_style.font.bold = True
-    h2_style.font.color.rgb = RGBColor(0x2E, 0x75, 0xB6)  # Medium blue
+    h2_style.font.color.rgb = RGBColor(0x2E, 0x75, 0xB6)
 
-    # ---- Header banner ----
+    # ---- Header ----
     header = doc.sections[0].header
     header_para = header.paragraphs[0]
     header_para.text = 'Shiftwork Solutions LLC  |  Case Study'
@@ -542,7 +654,9 @@ def generate_case_study_docx(case_study_content: str, title: str, industry: str)
     footer = doc.sections[0].footer
     footer_para = footer.paragraphs[0]
     industry_display = INDUSTRY_DISPLAY_NAMES.get(industry, 'Industrial Operations')
-    footer_para.text = f'© Shiftwork Solutions LLC  |  {industry_display}  |  shiftworksolutions.com'
+    footer_para.text = (
+        f'© Shiftwork Solutions LLC  |  {industry_display}  |  shiftworksolutions.com'
+    )
     footer_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
     footer_para.runs[0].font.size = Pt(9)
     footer_para.runs[0].font.color.rgb = RGBColor(0x88, 0x88, 0x88)
@@ -551,13 +665,12 @@ def generate_case_study_docx(case_study_content: str, title: str, industry: str)
     lines = case_study_content.strip().split('\n')
 
     def add_paragraph_with_formatting(doc, text, style_name='Normal'):
-        """Add paragraph, handling **bold** inline formatting."""
+        """Add paragraph handling **bold** inline formatting."""
         para = doc.add_paragraph(style=style_name)
-        # Split on bold markers
         parts = re.split(r'\*\*(.+?)\*\*', text)
         for i, part in enumerate(parts):
             run = para.add_run(part)
-            if i % 2 == 1:  # Odd indices are bold
+            if i % 2 == 1:
                 run.bold = True
         return para
 
@@ -565,43 +678,34 @@ def generate_case_study_docx(case_study_content: str, title: str, industry: str)
     while i < len(lines):
         line = lines[i].rstrip()
 
-        # H1
         if line.startswith('# ') and not line.startswith('## '):
             heading_text = line[2:].strip()
             para = doc.add_heading(heading_text, level=1)
             para.alignment = WD_ALIGN_PARAGRAPH.LEFT
-            # Add spacing after title
             doc.add_paragraph('')
 
-        # H2
         elif line.startswith('## '):
             heading_text = line[3:].strip()
             doc.add_heading(heading_text, level=2)
 
-        # H3
         elif line.startswith('### '):
             heading_text = line[4:].strip()
             doc.add_heading(heading_text, level=3)
 
-        # Bullet points
         elif line.startswith('- ') or line.startswith('* '):
             bullet_text = line[2:].strip()
-            para = add_paragraph_with_formatting(doc, bullet_text, 'List Bullet')
+            add_paragraph_with_formatting(doc, bullet_text, 'List Bullet')
 
-        # Numbered list
         elif re.match(r'^\d+\.\s', line):
             item_text = re.sub(r'^\d+\.\s', '', line).strip()
-            para = add_paragraph_with_formatting(doc, item_text, 'List Number')
+            add_paragraph_with_formatting(doc, item_text, 'List Number')
 
-        # Horizontal rule — skip
         elif line.startswith('---') or line.startswith('==='):
             pass
 
-        # Empty line — small spacing
         elif line == '':
             pass
 
-        # Regular paragraph
         else:
             if line.strip():
                 add_paragraph_with_formatting(doc, line.strip())
@@ -613,13 +717,13 @@ def generate_case_study_docx(case_study_content: str, title: str, industry: str)
     meta_para = doc.add_paragraph()
     meta_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = meta_para.add_run(
-        f'Generated by Shiftwork Solutions LLC AI System  |  {datetime.now().strftime("%B %d, %Y")}'
+        f'Generated by Shiftwork Solutions LLC AI System  |  '
+        f'{datetime.now().strftime("%B %d, %Y")}'
     )
     run.font.size = Pt(9)
     run.font.color.rgb = RGBColor(0xAA, 0xAA, 0xAA)
     run.italic = True
 
-    # ---- Save to bytes ----
     import io
     buffer = io.BytesIO()
     doc.save(buffer)
@@ -629,10 +733,7 @@ def generate_case_study_docx(case_study_content: str, title: str, industry: str)
 
 def save_case_study_to_db(industry: str, title: str, content: str,
                            problem: str, solution: str) -> int:
-    """
-    Save a generated case study to the database.
-    Returns the new record ID.
-    """
+    """Save a generated case study to the database. Returns the new record ID."""
     from database import get_db
     db = get_db()
     cursor = db.execute('''
@@ -686,10 +787,7 @@ def delete_case_study(study_id: int) -> bool:
 
 
 def init_case_studies_table():
-    """
-    Create the case_studies table if it doesn't exist.
-    Called at app startup.
-    """
+    """Create the case_studies table if it does not exist. Called at app startup."""
     from database import get_db
     db = get_db()
     db.execute('''
@@ -714,6 +812,6 @@ def init_case_studies_table():
     ''')
     db.commit()
     db.close()
-    print("  ✅ case_studies table ready")
+    print("  [CaseStudy] case_studies table ready")
 
 # I did no harm and this file is not truncated
