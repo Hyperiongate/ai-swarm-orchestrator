@@ -1,28 +1,40 @@
 """
 KNOWLEDGE INGESTION ROUTES
 Created: February 2, 2026
-Last Updated: February 4, 2026 - FIXED PowerPoint temp file handling
+Last Updated: February 22, 2026 - ADDED /export endpoint for direct knowledge download
+
+CHANGELOG:
+
+- February 22, 2026: ADDED /api/ingest/export (GET)
+  PROBLEM: The Download Knowledge button called /api/knowledge/export which depends on
+           knowledge_backup_system module that does not exist on the server. Flask returned
+           an HTML 404 page. JavaScript tried to parse that as JSON, producing:
+           "Unexpected token '<', '<!doctype'... is not valid JSON"
+  FIX: Added /api/ingest/export directly to this blueprint. Queries the existing
+       knowledge_extracts and learned_patterns tables (both confirmed working) and
+       streams a .json file directly to the browser using send_file() + BytesIO.
+       Zero new dependencies. knowledge_management.html updated to call this endpoint
+       via window.location.href (native browser download — no JSON parsing involved).
+
+- February 4, 2026: FIXED PowerPoint temp file handling
+  Must close temp file before python-pptx can open it. Added proper cleanup in finally block.
 
 Flask API endpoints for document ingestion system.
 Allows uploading documents, viewing knowledge base stats, browsing patterns.
 
 Part of "Shoulders of Giants" cumulative learning system.
 
-CRITICAL FIX - February 4, 2026:
-- Fixed temp file handling for PowerPoint uploads
-- Must close temp file before python-pptx can open it
-- Added proper cleanup in finally block
-
-Author: Jim @ Shiftwork Solutions LLC (managed by Claude Sonnet 4)
+Author: Jim @ Shiftwork Solutions LLC
 """
 
-from flask import Blueprint, request, jsonify, render_template
+from flask import Blueprint, request, jsonify, render_template, send_file
 from werkzeug.utils import secure_filename
 import os
 import sys
 import json
 from datetime import datetime
 import tempfile
+import io
 
 # Multiple import attempts with debugging
 try:
@@ -508,5 +520,150 @@ def get_extract_detail(extract_id):
             'error': f'Failed to get extract: {str(e)}'
         }), 500
 
+
+# ============================================================================
+# EXPORT ENDPOINT - Added February 22, 2026
+# ============================================================================
+# Replaces the broken /api/knowledge/export from knowledge_backup_routes.py
+# which depends on knowledge_backup_system — a module that does not exist on
+# the server. That missing module caused Flask to return an HTML 404 page,
+# which the JS tried to parse as JSON, producing the error:
+#   "Unexpected token '<', '<!doctype'... is not valid JSON"
+#
+# This endpoint uses only the existing SQLite tables already queried above.
+# Zero new dependencies. Returns a single .json file as a direct download.
+# knowledge_management.html calls this via window.location.href (GET) so the
+# browser handles the file download natively — no JSON parsing in JS,
+# making the HTML-as-JSON error structurally impossible.
+# ============================================================================
+@ingest_bp.route('/export', methods=['GET'])
+def export_knowledge():
+    """
+    Export the full knowledge base as a downloadable JSON file.
+
+    Returns a .json file attachment containing:
+    - All knowledge extracts (document metadata + extracted content)
+    - All learned patterns
+    - Recent ingestion log (last 500 entries)
+    - Summary statistics
+
+    Called via GET so the browser can trigger a native file download
+    using window.location.href — no fetch() or JSON parsing required.
+    """
+    try:
+        import sqlite3
+
+        ingestor = get_document_ingestor()
+        db = sqlite3.connect(ingestor.db_path)
+        db.row_factory = sqlite3.Row
+        cursor = db.cursor()
+
+        # ---- Knowledge extracts ----
+        cursor.execute('''
+            SELECT id, document_type, document_name, client, industry,
+                   project_type, extracted_at, file_size, extracted_data, metadata
+            FROM knowledge_extracts
+            ORDER BY extracted_at DESC
+        ''')
+        extracts = []
+        for row in cursor.fetchall():
+            extract = dict(row)
+            for field in ('extracted_data', 'metadata'):
+                try:
+                    extract[field] = json.loads(extract[field]) if extract.get(field) else {}
+                except Exception:
+                    extract[field] = {}
+            extracts.append(extract)
+
+        # ---- Learned patterns ----
+        patterns = []
+        try:
+            cursor.execute('''
+                SELECT id, pattern_type, pattern_name, pattern_data,
+                       confidence, supporting_documents, first_seen, last_updated, metadata
+                FROM learned_patterns
+                ORDER BY confidence DESC, supporting_documents DESC
+            ''')
+            for row in cursor.fetchall():
+                pattern = dict(row)
+                for field in ('pattern_data', 'metadata'):
+                    try:
+                        pattern[field] = json.loads(pattern[field]) if pattern.get(field) else {}
+                    except Exception:
+                        pattern[field] = {}
+                patterns.append(pattern)
+        except sqlite3.OperationalError:
+            # learned_patterns table may not exist yet — export empty list
+            pass
+
+        # ---- Ingestion log (last 500) ----
+        ingestion_log = []
+        try:
+            cursor.execute('''
+                SELECT id, document_name, document_type, status,
+                       patterns_extracted, insights_extracted, ingested_at
+                FROM ingestion_log
+                ORDER BY ingested_at DESC
+                LIMIT 500
+            ''')
+            ingestion_log = [dict(row) for row in cursor.fetchall()]
+        except sqlite3.OperationalError:
+            pass
+
+        db.close()
+
+        # ---- Build statistics breakdowns ----
+        by_doc_type = {}
+        by_industry = {}
+        for e in extracts:
+            dt = e.get('document_type') or 'unknown'
+            ind = e.get('industry') or 'unspecified'
+            by_doc_type[dt] = by_doc_type.get(dt, 0) + 1
+            by_industry[ind] = by_industry.get(ind, 0) + 1
+
+        # ---- Assemble export payload ----
+        export_payload = {
+            'export_metadata': {
+                'exported_at': datetime.now().isoformat(),
+                'system': 'Shiftwork Solutions AI Swarm - Knowledge Base',
+                'version': '1.0',
+                'total_extracts': len(extracts),
+                'total_patterns': len(patterns),
+                'total_ingestion_log_entries': len(ingestion_log)
+            },
+            'statistics': {
+                'total_documents': len(extracts),
+                'total_patterns': len(patterns),
+                'by_document_type': by_doc_type,
+                'by_industry': by_industry
+            },
+            'knowledge_extracts': extracts,
+            'learned_patterns': patterns,
+            'ingestion_log': ingestion_log
+        }
+
+        # ---- Stream as downloadable JSON file ----
+        json_bytes = json.dumps(export_payload, indent=2, default=str).encode('utf-8')
+        buffer = io.BytesIO(json_bytes)
+        buffer.seek(0)
+
+        filename = f"shiftwork_knowledge_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+
+        return send_file(
+            buffer,
+            mimetype='application/json',
+            as_attachment=True,
+            download_name=filename
+        )
+
+    except Exception as e:
+        import traceback
+        # Return JSON (not HTML) so any error is parseable by the frontend
+        return jsonify({
+            'success': False,
+            'error': f'Export failed: {str(e)}',
+            'traceback': traceback.format_exc()
+        }), 500
+# ============================================================================
 
 # I did no harm and this file is not truncated
