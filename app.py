@@ -70,44 +70,71 @@ except Exception as e:
 # AUTO-RUN ALL DATABASE MIGRATIONS (SPRINTS 2 & 3 + BLOG POSTS)
 # ============================================================================
 print("🔄 Running database migrations...")
+
+# Projects table migration (CRITICAL - runs first)
 try:
-    # Projects table migration (CRITICAL - must run FIRST)
     from migrate_projects_table import migrate_projects_table
     migrate_projects_table()
+except Exception as e:
+    print(f"ℹ️  Projects migration: {e}")
 
-    # Sprint 2 migrations
-    from upgrade_database_sprint2 import upgrade_database_sprint2
-    from add_resource_searches_table import add_resource_searches_table
-    from add_improvement_reports_table import add_improvement_reports_table
-    from add_conversation_context_table import add_conversation_context_table
-
-    upgrade_database_sprint2()
-    add_resource_searches_table()
-    add_improvement_reports_table()
-    print("✅ Sprint 2 migrations complete!")
-    add_conversation_context_table()
-    print("✅ Conversation context table added!")
-
-    # Sprint 3 migrations
-    from add_user_profiles_table import add_user_profiles_table
-    from add_workflow_tables import add_workflow_tables
-    from add_integration_logs_table import add_integration_logs_table
-
-    add_user_profiles_table()
-    add_workflow_tables()
-    add_integration_logs_table()
-    print("✅ Sprint 3 migrations complete!")
-    
-    # Blog Posts table migration (February 23, 2026)
-    # NOW INCLUDES: url_slug and meta_description for SEO
+# Blog Posts table migration (CRITICAL - for SEO optimization)
+try:
     from add_blog_posts_table import add_blog_posts_table
     add_blog_posts_table()
     print("✅ Blog Posts table migration complete!")
-
-except ImportError as e:
-    print(f"ℹ️  Some migrations not found: {e}")
 except Exception as e:
-    print(f"⚠️  Migration warning: {e}")
+    print(f"⚠️  Blog Posts migration failed: {e}")
+    import traceback
+    traceback.print_exc()
+
+# Sprint 2 migrations (safe to fail if files missing)
+try:
+    from upgrade_database_sprint2 import upgrade_database_sprint2
+    upgrade_database_sprint2()
+except Exception as e:
+    print(f"ℹ️  Sprint 2 core migration: {e}")
+
+try:
+    from add_resource_searches_table import add_resource_searches_table
+    add_resource_searches_table()
+except Exception as e:
+    print(f"ℹ️  Resource searches migration: {e}")
+
+try:
+    from add_improvement_reports_table import add_improvement_reports_table
+    add_improvement_reports_table()
+except Exception as e:
+    print(f"ℹ️  Improvement reports migration: {e}")
+
+try:
+    from add_conversation_context_table import add_conversation_context_table
+    add_conversation_context_table()
+    print("✅ Conversation context table added!")
+except Exception as e:
+    print(f"ℹ️  Conversation context migration: {e}")
+
+# Sprint 3 migrations (safe to fail if files missing)
+try:
+    from add_user_profiles_table import add_user_profiles_table
+    add_user_profiles_table()
+except Exception as e:
+    print(f"ℹ️  User profiles migration: {e}")
+
+try:
+    from add_workflow_tables import add_workflow_tables
+    add_workflow_tables()
+except Exception as e:
+    print(f"ℹ️  Workflow tables migration: {e}")
+
+try:
+    from add_integration_logs_table import add_integration_logs_table
+    add_integration_logs_table()
+except Exception as e:
+    print(f"ℹ️  Integration logs migration: {e}")
+
+print("✅ Database migrations complete!")
+
 # ============================================================================
 
 # ============================================================================
