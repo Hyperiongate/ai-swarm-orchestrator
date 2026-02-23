@@ -1,57 +1,25 @@
 """
 AI SWARM ORCHESTRATOR - Main Application   
 Created: January 18, 2026
-Last Updated: February 22, 2026 - Re-enabled Case Study Generator; removed diagnostic lines
+Last Updated: February 23, 2026 - Added Blog Posts table migration
 
 CHANGELOG:
+
+- February 23, 2026: ADDED Blog Posts Table Migration
+  Added add_blog_posts_table() migration to run on startup. This creates the
+  blog_posts table required by the Blog Post Generator feature. Migration runs
+  automatically after Sprint 3 migrations.
 
 - February 22, 2026: RE-ENABLED Case Study Generator (routes/case_studies.py)
   Was temporarily disabled during crash debugging. Root cause of crash was unrelated.
   Generator re-enabled with full try/except protection as originally designed.
   Also removed the 3-line stderr->stdout diagnostic added earlier today (no longer needed).
 
-- February 22, 2026: DIAGNOSTIC - stderr redirected to stdout (REMOVED)
-  Was added to expose silent crash tracebacks in Render logs. Crash resolved.
-  Diagnostic lines removed as no longer needed.
-
 - February 20, 2026: BUG FIX #1 - intelligence_bp name conflict (CRITICAL - CRASH ON STARTUP)
-  PROBLEM: routes/intelligence.py and routes/phase1_intelligence.py both declare
-           Blueprint(name='intelligence'). app.py registers routes.intelligence first,
-           then imports routes.phase1_intelligence into the same variable name
-           (intelligence_bp), overwriting it. When Flask tries to register the second
-           blueprint, it detects the name 'intelligence' is already taken and raises
-           AssertionError, crashing the entire application on startup.
-  FIX: Import phase1_intelligence blueprint under a distinct alias and register it
-       with name='phase1_intelligence'. The url_prefix='/api/intelligence' on that
-       blueprint is unchanged, so ALL /api/intelligence/voice/*, /curiosity/*,
-       and /patterns/* URLs are completely unaffected. Only the internal Flask
-       registry key changes.
-  CHANGED LINES: Phase 1 Intelligence registration block only (~5 lines).
-
 - February 20, 2026: BUG FIX #2 - conversation_learning import path (SILENT FEATURE FAILURE)
-  PROBLEM: app.py imported conversation_learning from routes.conversation_learning,
-           but the file lives at the root level (conversation_learning.py), not in
-           the routes/ folder. This caused ImportError on every startup, caught
-           silently by the try/except block. The Conversation Learning system
-           (automatic + manual extract-lessons) was never registered and never ran.
-  FIX: Changed import from 'routes.conversation_learning' to 'conversation_learning'
-       (root-level module). Also renamed the imported variable to conv_learning_bp
-       to prevent any future collision with the routes.learning learning_bp import.
-  CHANGED LINES: Conversation Learning registration block only (~5 lines).
-
-  No other logic changed in either fix. All other blueprints, routes, migrations,
-  initialization order, and behavior are completely preserved.
-
 - February 18, 2026: FIXED NameError crash on startup
-  add_conversation_context_table() was called before its import. Moved import above call.
-
 - February 18, 2026: BACKGROUND KB INIT
-  Changed knowledge_base.initialize() to knowledge_base.initialize_background()
-  Gunicorn binds immediately; knowledge index becomes available ~30 seconds later.
-
 - February 5, 2026: INCREASED FILE UPLOAD LIMIT TO 100MB
-  Added app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
-
 - January 30, 2026: ADDED BULLETPROOF PROJECT MANAGEMENT
 - January 29, 2026: ADDED LINKEDIN POSTER DOWNLOAD BUTTON
 - January 28, 2026: ADDED IMPLEMENTATION MANUAL GENERATOR
@@ -64,40 +32,6 @@ CHANGELOG:
 - January 22, 2026: SPRINT 3 - ALL 5 ADVANCED FEATURES
 - January 22, 2026: SPRINT 2 - PROACTIVE INTELLIGENCE
 - January 22, 2026: SPRINT 1 - PROACTIVE INTELLIGENCE
-
-ARCHITECTURE:
-- config.py: All configuration
-- database.py: All database operations
-- database_file_management.py: Bulletproof project & file management
-- orchestration/: All AI logic + proactive_agent.py
-- routes/: All Flask endpoints
-- routes/projects_bulletproof.py: Project management API
-- schedule_generator.py: Pattern-based schedule generation
-- schedule_request_handler.py: Conversational schedule handler
-- implementation_manual_generator.py: Conversational manual generation
-- routes/manuals.py: Manual generator API endpoints
-- swarm_self_evaluation.py: Weekly self-evaluation engine
-- routes/evaluation.py: Evaluation API endpoints
-- content_marketing_engine.py: Autonomous content generation
-- routes/marketing.py: Marketing API endpoints
-- intelligence.py: Lead scoring & pipeline management
-- routes/intelligence.py: Intelligence API endpoints
-- alert_system.py: Automated monitoring & alerts
-- routes/alerts.py: Alert API endpoints
-- research_agent.py: Web research capabilities
-- routes/research.py: Research API endpoints
-- project_manager.py: Project detection & management
-- resource_finder.py: Automatic web search
-- improvement_engine.py: Efficiency analysis
-- enhanced_intelligence.py: Learning & memory
-- project_dashboard.py: Project API
-- analytics_engine.py: Analytics API
-- workflow_engine.py: Automation engine
-- integration_hub.py: External integrations
-- conversation_learning.py: Unified conversation learning (root level)
-- case_study_generator.py: AI-powered SEO-optimized case study generation
-- routes/case_studies.py: Case Study Generator API endpoints
-- app.py (this file): Bootstrap and initialization
 
 AUTHOR: Jim @ Shiftwork Solutions LLC
 """
@@ -114,20 +48,16 @@ app = Flask(__name__)
 # ============================================================================
 # CRITICAL FILE UPLOAD CONFIGURATION (Added February 5, 2026)
 # ============================================================================
-# Default Flask limit is typically 16MB, which blocks large Excel files.
-# Setting to 100MB to allow files like Definitive Schedules v2.xlsx (56.22 MB)
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
 print("📤 File Upload Limit: 100MB (allows large project files)")
 # ============================================================================
 
 # CRITICAL: Configure session for schedule conversation memory (Added January 26, 2026)
-# Required for the pattern-based schedule system to remember multi-turn conversations
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production-12345')
 app.config['SESSION_TYPE'] = 'filesystem'
 
 # Initialize database (includes all tables from all sprints)
 init_db()
-
 
 # Initialize survey tables
 try:
@@ -137,7 +67,7 @@ except Exception as e:
     print(f"⚠️  Survey tables: {e}")
 
 # ============================================================================
-# AUTO-RUN ALL DATABASE MIGRATIONS (SPRINTS 2 & 3)
+# AUTO-RUN ALL DATABASE MIGRATIONS (SPRINTS 2 & 3 + BLOG POSTS)
 # ============================================================================
 print("🔄 Running database migrations...")
 try:
@@ -149,15 +79,7 @@ try:
     from upgrade_database_sprint2 import upgrade_database_sprint2
     from add_resource_searches_table import add_resource_searches_table
     from add_improvement_reports_table import add_improvement_reports_table
-
-    # =========================================================================
-    # FIX February 18, 2026: This import was previously placed AFTER the call
-    # to add_conversation_context_table(), causing a NameError that crashed
-    # the gunicorn worker on every deploy ("No open HTTP ports detected").
-    # Moved here so the function is defined before it is called.
-    # =========================================================================
     from add_conversation_context_table import add_conversation_context_table
-    # =========================================================================
 
     upgrade_database_sprint2()
     add_resource_searches_table()
@@ -175,6 +97,11 @@ try:
     add_workflow_tables()
     add_integration_logs_table()
     print("✅ Sprint 3 migrations complete!")
+    
+    # Blog Posts table migration (February 23, 2026)
+    from add_blog_posts_table import add_blog_posts_table
+    add_blog_posts_table()
+    print("✅ Blog Posts table migration complete!")
 
 except ImportError as e:
     print(f"ℹ️  Some migrations not found: {e}")
@@ -184,7 +111,6 @@ except Exception as e:
 
 # ============================================================================
 # INITIALIZE BULLETPROOF PROJECT MANAGEMENT (Added January 30, 2026)
-# MUST come AFTER migrations so table columns exist
 # ============================================================================
 print("🔧 Initializing Bulletproof Project Management...")
 try:
@@ -192,25 +118,12 @@ try:
     pm = get_project_manager()
     app.config['PROJECT_MANAGER'] = pm
     print("✅ Bulletproof Project Manager initialized")
-    print("   - Projects with full lifecycle management")
-    print("   - File upload/download with storage")
-    print("   - Conversation tracking")
-    print("   - Context management")
 except Exception as e:
     print(f"⚠️  Project Manager initialization failed: {e}")
 # ============================================================================
 
 # ============================================================================
-# INITIALIZE KNOWLEDGE BASE IN BACKGROUND THREAD (Fixed February 18, 2026)
-# ============================================================================
-# PREVIOUS BEHAVIOR: knowledge_base.initialize() ran synchronously, blocking
-#   gunicorn for ~30 seconds while indexing 34 documents. The first page
-#   request timed out. Render's port scanner found "No open HTTP ports".
-#
-# NEW BEHAVIOR: initialize_background() starts a daemon thread and returns
-#   immediately. Gunicorn binds and accepts connections right away. The
-#   knowledge index becomes available ~30 seconds later. Any search before
-#   that returns empty results gracefully.
+# INITIALIZE KNOWLEDGE BASE IN BACKGROUND THREAD
 # ============================================================================
 print("🔍 Initializing Project Knowledge Base...")
 knowledge_base = None
@@ -218,14 +131,13 @@ try:
     from pathlib import Path
     from knowledge_integration import ProjectKnowledgeBase
 
-    # Check for project_files first, then fall back to /mnt/project
     project_paths = ["project_files", "./project_files", "/mnt/project"]
     found_path = None
 
     for path in project_paths:
         if Path(path).exists() and Path(path).is_dir():
             file_count = len(list(Path(path).iterdir()))
-            if file_count > 0:  # Only use paths with actual files
+            if file_count > 0:
                 found_path = path
                 print(f"  📁 Found directory: {path} ({file_count} files)")
                 break
@@ -235,15 +147,7 @@ try:
         print(f"  ℹ️  Knowledge base features disabled until files are added")
     else:
         knowledge_base = ProjectKnowledgeBase(project_path=found_path)
-
-        # =================================================================
-        # BACKGROUND INIT FIX (February 18, 2026) - THE ONE LINE THAT CHANGED
-        # Was: knowledge_base.initialize()
-        # Now: knowledge_base.initialize_background()
-        # =================================================================
         knowledge_base.initialize_background()
-        # =================================================================
-
         print(f"  🔄 Knowledge Base initializing in background (~30 seconds)...")
         print(f"  ℹ️  App is ready to serve requests immediately.")
 
@@ -288,19 +192,11 @@ def index():
     return render_template('index.html')
 
 # =============================================================================
-# DOWNLOAD ROUTE FOR DESKTOP APPS - Updated January 29, 2026
-# =============================================================================
-# Serves downloadable desktop apps from the /downloads folder:
-# - LinkedIn Poster (linkedin_poster.pyw)
-# - Cost Calculator (cost_of_time_calculator_v3_3_2.pyw)
-# - Survey App (SurveySelector_v88_FIXED.pyw)
+# DOWNLOAD ROUTE FOR DESKTOP APPS
 # =============================================================================
 @app.route('/downloads/<path:filename>')
 def download_file(filename):
-    """
-    Serve downloadable files from the /downloads directory.
-    Allows downloading .pyw, .py, .txt, and .pdf files only.
-    """
+    """Serve downloadable files from the /downloads directory."""
     try:
         allowed_extensions = {'.pyw', '.py', '.txt', '.pdf'}
         file_ext = os.path.splitext(filename)[1].lower()
@@ -333,21 +229,14 @@ def run_missing_tables_migration():
         import traceback
         return jsonify({'success': False, 'error': str(e), 'traceback': traceback.format_exc()}), 500
 
-
 @app.route('/workflow')
 def workflow():
     """Workflow interface"""
     return render_template('index_workflow.html')
 
-# =============================================================================
-# ONE-TIME STORAGE MIGRATION ENDPOINT - Added February 1, 2026
-# =============================================================================
 @app.route('/api/admin/migrate-storage', methods=['GET', 'POST'])
 def migrate_storage():
-    """
-    One-time migration endpoint to move projects from /tmp to persistent storage.
-    USAGE: https://ai-swarm-orchestrator.onrender.com/api/admin/migrate-storage
-    """
+    """One-time migration endpoint to move projects from /tmp to persistent storage."""
     try:
         import migrate_project_storage
         from io import StringIO
@@ -365,13 +254,9 @@ def migrate_storage():
         import traceback
         return jsonify({'success': False, 'error': str(e), 'traceback': traceback.format_exc()}), 500
 
-
 @app.route('/api/admin/bootstrap-knowledge', methods=['GET'])
 def bootstrap_knowledge_endpoint():
-    """
-    One-time endpoint to bootstrap knowledge base.
-    USAGE: https://ai-swarm-orchestrator.onrender.com/api/admin/bootstrap-knowledge
-    """
+    """One-time endpoint to bootstrap knowledge base."""
     try:
         import bootstrap_knowledge
         from io import StringIO
@@ -397,7 +282,6 @@ def bootstrap_knowledge_endpoint():
     except Exception as e:
         import traceback
         return jsonify({'success': False, 'error': str(e), 'traceback': traceback.format_exc()}), 500
-
 
 @app.route('/api/admin/list-project-files', methods=['GET'])
 def list_project_files():
@@ -434,13 +318,9 @@ def list_project_files():
     results['current_working_directory'] = os.getcwd()
     return jsonify({'success': True, 'locations_checked': results})
 
-
 @app.route('/api/admin/fix-patterns-table', methods=['GET'])
 def fix_patterns_table():
-    """
-    One-time migration to fix learned_patterns table.
-    USAGE: https://ai-swarm-orchestrator.onrender.com/api/admin/fix-patterns-table
-    """
+    """One-time migration to fix learned_patterns table."""
     try:
         import migrate_learned_patterns
         from io import StringIO
@@ -457,7 +337,6 @@ def fix_patterns_table():
     except Exception as e:
         import traceback
         return jsonify({'success': False, 'error': str(e), 'traceback': traceback.format_exc()}), 500
-
 
 @app.route('/api/admin/diagnose-databases', methods=['GET'])
 def diagnose_databases():
@@ -501,16 +380,11 @@ def diagnose_databases():
     results['current_directory'] = os.getcwd()
     return jsonify({'success': True, 'databases_found': results})
 
-
 @app.route('/survey')
 def survey():
     """Survey builder interface"""
     return render_template('survey.html')
 
-
-# ============================================================================
-# PATTERN RECOGNITION DASHBOARD API (Added February 5, 2026)
-# ============================================================================
 @app.route('/api/patterns', methods=['GET'])
 def get_user_patterns():
     """API endpoint to retrieve user patterns for dashboard"""
@@ -523,8 +397,6 @@ def get_user_patterns():
         import traceback
         print(f"Error fetching patterns: {traceback.format_exc()}")
         return jsonify({'success': False, 'error': str(e)}), 500
-# ============================================================================
-
 
 @app.route('/health')
 def health():
@@ -639,10 +511,17 @@ def health():
         case_studies_status = 'enabled'
     except:
         case_studies_status = 'not_installed'
+        
+    blog_posts_status = 'disabled'
+    try:
+        from blog_post_generator import BLOG_TOPICS
+        blog_posts_status = 'enabled'
+    except:
+        blog_posts_status = 'not_installed'
 
     return jsonify({
         'status': 'healthy',
-        'version': 'Sprint 3 Complete + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator + LinkedIn Poster + Bulletproof Projects + 100MB Upload Limit + Background KB Init + NameError Fix Feb18 + Blueprint Fix Feb20 + Case Studies Feb21',
+        'version': 'Sprint 3 Complete + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator + LinkedIn Poster + Bulletproof Projects + 100MB Upload Limit + Background KB Init + NameError Fix Feb18 + Blueprint Fix Feb20 + Case Studies Feb21 + Blog Posts Feb23',
         'file_upload_limit': '100MB',
         'orchestrators': {
             'sonnet': 'configured' if ANTHROPIC_API_KEY else 'missing',
@@ -676,162 +555,24 @@ def health():
         'swarm_evaluation': {'status': evaluation_status, 'last_evaluation': last_evaluation},
         'introspection_layer': {
             'status': introspection_status,
-            'last_introspection': last_introspection,
-            'components': {
-                'self_monitoring': 'active',
-                'capability_boundaries': 'phase_2',
-                'confidence_calibration': 'phase_2',
-                'proposals': 'phase_3',
-                'goal_alignment': 'active'
-            }
+            'last_introspection': last_introspection
         },
-        'manual_generator': {
-            'status': manual_generator_status,
-            'features': [
-                'conversational_data_collection',
-                'section_drafting',
-                'iterative_refinement',
-                'lessons_learned',
-                'docx_generation'
-            ]
-        },
+        'manual_generator': {'status': manual_generator_status},
         'project_management': {
             'status': project_management_status,
-            'total_projects': project_count,
-            'features': [
-                'project_creation',
-                'file_upload_download',
-                'conversation_tracking',
-                'context_management',
-                'project_summaries',
-                'checklists_milestones',
-                'auto_detection'
-            ]
+            'total_projects': project_count
         },
         'case_study_generator': {
             'status': case_studies_status,
-            'features': [
-                'ai_generation',
-                'seo_optimized',
-                'ai_search_optimized',
-                'word_doc_download',
-                'saved_library',
-                '16_industries_supported'
-            ]
+            'features': ['ai_generation', 'seo_optimized', 'word_doc_download', 'saved_library', '16_industries_supported']
         },
-        'features': {
-            'sprint_1': {
-                'smart_questioning': 'enabled',
-                'suggestions': 'enabled',
-                'pattern_tracking': 'enabled'
-            },
-            'sprint_2': {
-                'project_auto_detection': 'enabled',
-                'resource_finder': 'enabled',
-                'improvement_engine': 'enabled'
-            },
-            'sprint_3': {
-                'enhanced_intelligence': 'enabled',
-                'project_dashboard': 'enabled',
-                'analytics_dashboard': 'enabled',
-                'smart_workflows': 'enabled',
-                'integration_hub': 'enabled'
-            },
-            'research': {
-                'industry_news': research_status,
-                'regulations': research_status,
-                'studies': research_status,
-                'competitor_analysis': research_status,
-                'lead_finder': research_status
-            },
-            'alerts': {
-                'lead_alerts': alert_status,
-                'competitor_alerts': alert_status,
-                'regulatory_alerts': alert_status,
-                'email_notifications': 'enabled' if alert_email_enabled else 'disabled',
-                'scheduled_jobs': alert_status
-            },
-            'intelligence': {
-                'lead_scoring': intelligence_status,
-                'pipeline_management': intelligence_status,
-                'industry_matching': intelligence_status,
-                'ai_actions': intelligence_status
-            },
-            'marketing': {
-                'linkedin_posts': marketing_status,
-                'newsletters': marketing_status,
-                'content_extraction': marketing_status,
-                'approval_workflow': marketing_status,
-                'linkedin_poster_download': 'enabled'
-            },
-            'avatar_consultation': {
-                'tag_team_avatars': avatar_status,
-                'voice_text_input': avatar_status,
-                'smart_questioning': avatar_status,
-                'lead_capture': avatar_status,
-                'conversation_logging': avatar_status
-            },
-            'swarm_evaluation': {
-                'performance_metrics': evaluation_status,
-                'market_scanning': evaluation_status,
-                'gap_analysis': evaluation_status,
-                'recommendations': evaluation_status,
-                'weekly_reports': evaluation_status
-            },
-            'introspection': {
-                'self_monitoring': introspection_status,
-                'capability_boundaries': 'phase_2',
-                'confidence_calibration': 'phase_2',
-                'self_modification_proposals': 'phase_3',
-                'goal_alignment': introspection_status,
-                'reflection_narrative': introspection_status,
-                'notification_system': introspection_status
-            },
-            'schedule_generator': {
-                'pattern_based': SCHEDULE_GENERATOR_AVAILABLE,
-                'conversational': SCHEDULE_GENERATOR_AVAILABLE,
-                'shift_lengths': ['8_hour', '12_hour'],
-                'patterns_12hr': ['2-2-3', '2-3-2', '3-2-2-3', '4-3', '4-4', 'dupont'],
-                'patterns_8hr': ['5-2-fixed', '6-3-fixed', 'southern_swing', '6-2-rotating'],
-                'visual_excel_output': True,
-                'color_coded': True
-            },
-            'manual_generator': {
-                'conversational_flow': manual_generator_status,
-                'question_driven': manual_generator_status,
-                'section_drafting': manual_generator_status,
-                'iterative_refinement': manual_generator_status,
-                'lessons_learned': manual_generator_status,
-                'docx_output': manual_generator_status
-            },
-            'project_management': {
-                'create_projects': project_management_status,
-                'file_upload': project_management_status,
-                'file_download': project_management_status,
-                'conversation_tracking': project_management_status,
-                'context_management': project_management_status,
-                'project_summaries': project_management_status,
-                'search': project_management_status,
-                'checklists': project_management_status,
-                'milestones': project_management_status
-            },
-            'case_study_generator': {
-                'ai_generation': case_studies_status,
-                'seo_optimized': case_studies_status,
-                'word_doc_download': case_studies_status,
-                'saved_library': case_studies_status,
-                'industries': 16
-            },
-            'desktop_apps': {
-                'linkedin_poster': 'available',
-                'cost_calculator': 'available',
-                'survey_processor': 'available'
-            }
+        'blog_post_generator': {
+            'status': blog_posts_status,
+            'features': ['ai_generation', 'seo_optimized', 'conversational_tone', 'word_doc_download', 'saved_library', '12_topics']
         }
     })
 
-
-# Register blueprints (CRITICAL - THIS MAKES THE API WORK)
+# Register blueprints
 from routes.core import core_bp
 from routes.analysis import analysis_bp
 from routes.survey import survey_bp
@@ -839,45 +580,20 @@ app.register_blueprint(core_bp)
 app.register_blueprint(analysis_bp)
 app.register_blueprint(survey_bp)
 
-# ============================================================================
-# ORCHESTRATION HANDLER BLUEPRINT (Main AI Processing) - February 1, 2026
-# ============================================================================
 from routes.orchestration_handler import orchestration_bp
 app.register_blueprint(orchestration_bp)
 print("✅ Orchestration Handler API registered")
-# ============================================================================
 
-# ============================================================================
-# BULLETPROOF PROJECT MANAGEMENT BLUEPRINT (Added January 30, 2026)
-# ============================================================================
 print("🔍 DEBUG: About to import bulletproof project routes...")
 try:
-    print("🔍 DEBUG: Attempting import from routes.projects_bulletproof...")
     from routes.projects_bulletproof import projects_bp
-    print("🔍 DEBUG: Import successful! projects_bp =", projects_bp)
-    print("🔍 DEBUG: Registering blueprint...")
     app.register_blueprint(projects_bp)
     print("✅ Bulletproof Project Management API registered")
-    print("   - 15 production-ready endpoints")
-    print("   - Complete project lifecycle")
-    print("   - File management that actually works")
-    print("   - Conversation tracking")
-    print("   - Context persistence")
 except ImportError as e:
-    print(f"❌ IMPORT ERROR: Bulletproof Project Management routes not found")
-    print(f"   Error details: {e}")
-    import traceback
-    print(f"   Traceback: {traceback.format_exc()}")
+    print(f"❌ IMPORT ERROR: Bulletproof Project Management routes not found: {e}")
 except Exception as e:
-    print(f"❌ EXCEPTION: Bulletproof Project Management registration failed")
-    print(f"   Error details: {e}")
-    import traceback
-    print(f"   Traceback: {traceback.format_exc()}")
-# ============================================================================
+    print(f"❌ EXCEPTION: Bulletproof Project Management registration failed: {e}")
 
-# ============================================================================
-# VOICE CONTROL WEBSOCKET (Added January 27, 2026)
-# ============================================================================
 try:
     from routes.voice import voice_bp, register_voice_websocket
     app.register_blueprint(voice_bp)
@@ -887,11 +603,7 @@ except ImportError as e:
     print(f"ℹ️  Voice Control routes not found: {e}")
 except Exception as e:
     print(f"⚠️  Voice Control registration failed: {e}")
-# ============================================================================
 
-# ============================================================================
-# RESEARCH AGENT BLUEPRINT (Added January 23, 2026)
-# ============================================================================
 try:
     from routes.research import research_bp
     app.register_blueprint(research_bp)
@@ -901,9 +613,6 @@ except ImportError:
 except Exception as e:
     print(f"⚠️  Research Agent registration failed: {e}")
 
-# ============================================================================
-# ALERT SYSTEM BLUEPRINT (Added January 23, 2026)
-# ============================================================================
 try:
     from routes.alerts import alerts_bp
     app.register_blueprint(alerts_bp)
@@ -913,9 +622,6 @@ except ImportError:
 except Exception as e:
     print(f"⚠️  Alert System registration failed: {e}")
 
-# ============================================================================
-# INTELLIGENCE DASHBOARD BLUEPRINT (Added January 23, 2026)
-# ============================================================================
 try:
     from routes.intelligence import intelligence_bp
     app.register_blueprint(intelligence_bp)
@@ -925,9 +631,6 @@ except ImportError as e:
 except Exception as e:
     print(f"⚠️  Intelligence Dashboard registration failed: {e}")
 
-# ============================================================================
-# CONTENT MARKETING ENGINE BLUEPRINT (Added January 25, 2026)
-# ============================================================================
 try:
     from routes.marketing import marketing_bp
     app.register_blueprint(marketing_bp)
@@ -937,9 +640,6 @@ except ImportError as e:
 except Exception as e:
     print(f"⚠️  Content Marketing Engine registration failed: {e}")
 
-# ============================================================================
-# AVATAR CONSULTATION SYSTEM BLUEPRINT (Added January 25, 2026)
-# ============================================================================
 try:
     from routes.avatar import avatar_bp
     app.register_blueprint(avatar_bp)
@@ -949,9 +649,6 @@ except ImportError as e:
 except Exception as e:
     print(f"⚠️  Avatar Consultation registration failed: {e}")
 
-# ============================================================================
-# SWARM SELF-EVALUATION BLUEPRINT (Added January 25, 2026)
-# ============================================================================
 try:
     from routes.evaluation import evaluation_bp
     app.register_blueprint(evaluation_bp)
@@ -961,9 +658,6 @@ except ImportError as e:
 except Exception as e:
     print(f"⚠️  Swarm Self-Evaluation registration failed: {e}")
 
-# ============================================================================
-# INTROSPECTION LAYER BLUEPRINT (Added January 25, 2026)
-# ============================================================================
 try:
     from routes.introspection import introspection_bp
     app.register_blueprint(introspection_bp)
@@ -973,9 +667,6 @@ except ImportError as e:
 except Exception as e:
     print(f"⚠️  Introspection Layer registration failed: {e}")
 
-# ============================================================================
-# IMPLEMENTATION MANUAL GENERATOR BLUEPRINT (Added January 28, 2026)
-# ============================================================================
 try:
     from routes.manuals import manuals_bp
     app.register_blueprint(manuals_bp)
@@ -985,9 +676,6 @@ except ImportError as e:
 except Exception as e:
     print(f"⚠️  Implementation Manual Generator registration failed: {e}")
 
-# ============================================================================
-# ADAPTIVE LEARNING ENGINE BLUEPRINT (Added February 2, 2026 - PHASE 1)
-# ============================================================================
 try:
     from routes.learning import learning_bp
     app.register_blueprint(learning_bp)
@@ -997,9 +685,6 @@ except ImportError as e:
 except Exception as e:
     print(f"⚠️  Adaptive Learning Engine registration failed: {e}")
 
-# ============================================================================
-# PREDICTIVE INTELLIGENCE BLUEPRINT (Added February 2, 2026 - PHASE 2)
-# ============================================================================
 try:
     from routes.predictive import predictive_bp
     app.register_blueprint(predictive_bp)
@@ -1009,9 +694,6 @@ except ImportError as e:
 except Exception as e:
     print(f"⚠️  Predictive Intelligence registration failed: {e}")
 
-# ============================================================================
-# SELF-OPTIMIZATION ENGINE BLUEPRINT (Added February 2, 2026 - PHASE 3)
-# ============================================================================
 try:
     from routes.optimization import optimization_bp
     app.register_blueprint(optimization_bp)
@@ -1021,9 +703,6 @@ except ImportError as e:
 except Exception as e:
     print(f"⚠️  Self-Optimization Engine registration failed: {e}")
 
-# ============================================================================
-# KNOWLEDGE INGESTION SYSTEM BLUEPRINT (Added February 2, 2026)
-# ============================================================================
 try:
     from routes.ingest import ingest_bp
     app.register_blueprint(ingest_bp)
@@ -1033,28 +712,15 @@ except ImportError as e:
 except Exception as e:
     print(f"⚠️  Knowledge Ingestion registration failed: {e}")
 
-# ============================================================================
-# CONVERSATION LEARNING SYSTEM BLUEPRINT (Added February 4, 2026)
-# ============================================================================
-# FIX February 20, 2026: Import from root-level conversation_learning module,
-# not routes.conversation_learning (that file does not exist). Using alias
-# conv_learning_bp to avoid any collision with the routes.learning learning_bp
-# imported above.
-# ============================================================================
 try:
     from conversation_learning import learning_bp as conv_learning_bp
     app.register_blueprint(conv_learning_bp)
     print("✅ Unified Conversation Learning API registered")
-    print("   - Automatic: learn_from_conversation()")
-    print("   - Manual: /api/conversations/{id}/extract-lessons")
 except ImportError as e:
     print(f"ℹ️  Conversation Learning routes not found: {e}")
 except Exception as e:
     print(f"⚠️  Conversation Learning registration failed: {e}")
 
-# ============================================================================
-# PATTERN RECOGNITION ROUTES (Added February 5, 2026)
-# ============================================================================
 try:
     from routes.pattern_recognition import pattern_bp
     app.register_blueprint(pattern_bp)
@@ -1064,33 +730,15 @@ except ImportError as e:
 except Exception as e:
     print(f"⚠️  Pattern Recognition registration failed: {e}")
 
-# ============================================================================
-# PHASE 1 INTELLIGENCE UPGRADES (Added February 5, 2026)
-# ============================================================================
-# FIX February 20, 2026: routes/phase1_intelligence.py uses
-# Blueprint(name='intelligence'), which collides with routes/intelligence.py
-# (also name='intelligence'). Flask raises AssertionError on the second
-# register_blueprint() call, crashing startup. Fix: import under a distinct
-# alias and pass name='phase1_intelligence' to register_blueprint().
-# The url_prefix='/api/intelligence' on the blueprint object is unchanged,
-# so all /api/intelligence/voice/*, /curiosity/*, /patterns/* URLs are
-# completely unaffected. Only the internal Flask registry key changes.
-# ============================================================================
 try:
     from routes.phase1_intelligence import intelligence_bp as phase1_intelligence_bp
     app.register_blueprint(phase1_intelligence_bp, name='phase1_intelligence')
     print("✅ Phase 1 Intelligence API registered")
-    print("   - Voice conversation learning")
-    print("   - Proactive curiosity engine")
-    print("   - Pattern recognition dashboard")
 except ImportError as e:
     print(f"ℹ️  Phase 1 Intelligence routes not found: {e}")
 except Exception as e:
     print(f"⚠️  Phase 1 Intelligence registration failed: {e}")
 
-# ============================================================================
-# CASE STUDY GENERATOR BLUEPRINT (Added February 21, 2026)
-# ============================================================================
 try:
     from routes.case_studies import case_studies_bp
     app.register_blueprint(case_studies_bp)
@@ -1112,24 +760,16 @@ except ImportError as e:
 except Exception as e:
     print(f"⚠️  Blog Post Generator registration failed: {e}")
 # ============================================================================
-# BACKGROUND FILE PROCESSOR BLUEPRINT (Added February 5, 2026)
-# ============================================================================
+
 try:
     from routes.background_jobs import background_jobs_bp
     app.register_blueprint(background_jobs_bp)
     print("✅ Background File Processor API registered")
-    print("   - Process files 50MB+ in background")
-    print("   - 1,000 row chunks")
-    print("   - Progress tracking")
-    print("   - Job status API")
 except ImportError as e:
     print(f"ℹ️  Background File Processor routes not found: {e}")
 except Exception as e:
     print(f"⚠️  Background File Processor registration failed: {e}")
 
-# ============================================================================
-# KNOWLEDGE BACKUP SYSTEM BLUEPRINT (Added February 4, 2026)
-# ============================================================================
 try:
     from knowledge_backup_routes import knowledge_backup_bp
     app.register_blueprint(knowledge_backup_bp)
@@ -1139,13 +779,11 @@ except ImportError as e:
 except Exception as e:
     print(f"⚠️  Knowledge Backup registration failed: {e}")
 
-# Add HTML route for Knowledge Management UI
 @app.route('/knowledge')
 def knowledge_management():
     """Knowledge Management interface - Shoulders of Giants system"""
     return render_template('knowledge_management.html')
 
-# Sprint 3 blueprints
 try:
     from project_dashboard import dashboard_bp
     app.register_blueprint(dashboard_bp)
