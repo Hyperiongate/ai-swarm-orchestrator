@@ -5,6 +5,14 @@ Shiftwork Solutions LLC
 =============================================================================
 CHANGE LOG:
 
+- February 23, 2026: ADDED BLOG POST GENERATOR MODE SUPPORT
+  * Added blogpostsModeBtn toggle in switchMode()
+  * Added blogpostsInfo panel show/hide in switchMode()
+  * Added checkBlogPostsStatus() call in switchMode() mode handler
+  * Added 'blogposts' placeholder text in switchMode() placeholders object
+  * Added 'blogposts' quick actions in updateQuickActions()
+  All four additions follow the exact same pattern as casestudies mode.
+
 - February 18, 2026: FIXED AUTO-REFRESH AND PROGRESS INDICATOR
   * Fixed refreshConversationMessages() - was comparing DOM count to server
     count which was unreliable. Now uses lastKnownMessageCount variable that
@@ -744,6 +752,10 @@ function switchMode(mode) {
     
     var casestudiesBtn = document.getElementById('casestudiesModeBtn');
     if (casestudiesBtn) casestudiesBtn.classList.toggle('active', mode === 'casestudies');
+
+    // ADDED February 23, 2026: Blog Post Generator button toggle
+    var blogpostsBtn = document.getElementById('blogpostsModeBtn');
+    if (blogpostsBtn) blogpostsBtn.classList.toggle('active', mode === 'blogposts');
     
     document.getElementById('projectInfo').style.display = mode === 'project' ? 'block' : 'none';
     document.getElementById('calculatorInfo').style.display = mode === 'calculator' ? 'block' : 'none';
@@ -765,6 +777,10 @@ function switchMode(mode) {
     
     var casestudiesInfo = document.getElementById('casestudiesInfo');
     if (casestudiesInfo) casestudiesInfo.style.display = mode === 'casestudies' ? 'block' : 'none';
+
+    // ADDED February 23, 2026: Blog Post Generator panel show/hide
+    var blogpostsInfo = document.getElementById('blogpostsInfo');
+    if (blogpostsInfo) blogpostsInfo.style.display = mode === 'blogposts' ? 'block' : 'none';
     
     if (mode === 'project') loadSavedProjects();
     else if (mode === 'survey') loadQuestionBank();
@@ -775,6 +791,8 @@ function switchMode(mode) {
     else if (mode === 'pipeline' && typeof checkPipelineStatus === 'function') checkPipelineStatus();
     else if (mode === 'manuals' && typeof checkManualsStatus === 'function') checkManualsStatus();
     else if (mode === 'casestudies' && typeof checkCaseStudiesStatus === 'function') checkCaseStudiesStatus();
+    // ADDED February 23, 2026: Blog Post Generator status check on mode switch
+    else if (mode === 'blogposts' && typeof checkBlogPostsStatus === 'function') checkBlogPostsStatus();
     
     updateQuickActions();
     
@@ -790,7 +808,9 @@ function switchMode(mode) {
         'alerts': "Type your request... (e.g., 'Add ABC Manufacturing to monitored clients')",
         'pipeline': "Type your request... (e.g., 'Show me high priority leads')",
         'manuals': "Type your request... (e.g., 'Create implementation manual for Acme Manufacturing')",
-        'casestudies': "Select industry, problem, and solution in the panel to generate a case study"
+        'casestudies': "Select industry, problem, and solution in the panel to generate a case study",
+        // ADDED February 23, 2026: Blog Post Generator placeholder
+        'blogposts': "Select a topic in the panel to generate a blog post"
     };
     input.placeholder = placeholders[mode] || placeholders['quick'];
 }
@@ -824,6 +844,9 @@ function updateQuickActions() {
             '<li onclick="quickAction(\'Continue my manual for [client name]\')">📝 Continue</li>',
         'casestudies': '<li onclick="if(typeof generateCaseStudy===\'function\')generateCaseStudy()">✍️ New Study</li>' +
             '<li onclick="if(typeof loadSavedCaseStudies===\'function\')loadSavedCaseStudies()">📚 Refresh Library</li>',
+        // ADDED February 23, 2026: Blog Post Generator quick actions
+        'blogposts': '<li onclick="if(typeof generateBlogPost===\'function\')generateBlogPost()">✍️ New Post</li>' +
+            '<li onclick="if(typeof loadSavedBlogPosts===\'function\')loadSavedBlogPosts()">📚 Refresh Library</li>',
         'default': '<li onclick="quickAction(\'data collection\')">📋 Data Collection Doc</li>' +
             '<li onclick="quickAction(\'proposal\')">📄 Create Proposal</li>' +
             '<li onclick="quickAction(\'analyze files\')">📊 Analyze Files</li>' +
@@ -2011,7 +2034,7 @@ function initializeApp() {
     
     setInterval(function() { loadStats(); loadDocuments(); }, 30000);
     
-    console.log('🚀 AI Swarm Interface initialized - Auto-refresh fixed - February 18, 2026');
+    console.log('🚀 AI Swarm Interface initialized - Blog Posts mode added - February 23, 2026');
 }
 
 if (document.readyState === 'loading') {
