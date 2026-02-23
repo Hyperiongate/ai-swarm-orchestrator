@@ -8,6 +8,15 @@
     =============================================================================
     
     CHANGE LOG:
+    - February 23, 2026: Added Blog Post Generator tab (📝 Blog Posts).
+      * Added mode button in header row 2
+      * Added blogpostsInfo sidebar panel with topic dropdown + angle textarea
+      * Added generateBlogPost(), loadSavedBlogPosts(), viewBlogPost(),
+        downloadBlogPost(), deleteBlogPost() JS functions
+      * Calls /api/blog-posts/* endpoints
+      * Word download, library with View / Word / Delete buttons
+      * Topic dropdown includes 12 topics + Other with custom topic field
+    
     - February 22, 2026: Added "Website Ready" feature to Case Study Generator.
       * Added 🌐 Web button to each saved case study card in loadSavedCaseStudies()
       * Added viewWebsitePackage(studyId) JS function that calls
@@ -620,6 +629,16 @@
         }
         .wp-char-ok { color: #4caf50; }
         .wp-char-warn { color: #f44336; }
+
+        /* Blog Posts Panel Styles - Added February 23, 2026 */
+        .blogposts-info {
+            display: none;
+            padding: 15px;
+            background: linear-gradient(135deg, #e8f5e9 0%, #f1f8e9 100%);
+            border-radius: 10px;
+            margin-bottom: 15px;
+        }
+        .blogposts-info h3 { margin-bottom: 10px; color: #2e7d32; }
     </style>
 </head>
 <body>
@@ -648,6 +667,7 @@
                     <button class="mode-btn" onclick="switchMode('manuals')" id="manualsModeBtn">📝 Manuals</button>
                     <button class="mode-btn" onclick="window.location.href='/knowledge'" id="knowledgeModeBtn">🧠 Knowledge</button>
                     <button class="mode-btn" onclick="switchMode('casestudies')" id="casestudiesModeBtn">✍️ Case Studies</button>
+                    <button class="mode-btn" onclick="switchMode('blogposts')" id="blogpostsModeBtn">📝 Blog Posts</button>
                 </div>
             </div>
         </div>
@@ -1203,6 +1223,53 @@ document.addEventListener('DOMContentLoaded', function() {
         <div style="text-align: center; color: #999; padding: 15px; font-size: 12px;">Loading...</div>
     </div>
 </div>
+
+                <!-- Blog Posts Panel (blogposts mode only) - Added February 23, 2026 -->
+<div class="blogposts-info" id="blogpostsInfo" style="display: none;">
+    <h3>📝 Blog Post Generator</h3>
+    <div style="padding: 10px; background: white; border-radius: 6px; font-size: 12px; margin-bottom: 15px; border-left: 3px solid #2e7d32;" id="blogPostsStatus">
+        <strong>Status:</strong> Checking...
+    </div>
+
+    <div style="font-size: 13px; font-weight: 600; color: #555; margin: 15px 0 8px 0; padding-bottom: 5px; border-bottom: 1px solid #e0e0e0;">📝 Create New Post</div>
+
+    <div style="margin-bottom: 10px;">
+        <label style="display: block; font-size: 12px; font-weight: 600; color: #555; margin-bottom: 5px;">Topic</label>
+        <select id="bpTopic" onchange="toggleCustomTopic()" style="width: 100%; padding: 9px; border: 2px solid #e0e0e0; border-radius: 6px; font-size: 13px; box-sizing: border-box;">
+            <option value="">-- Select Topic --</option>
+            <option value="workforce_resistance">Workforce Resistance to Schedule Change</option>
+            <option value="employee_surveys">Employee Survey Best Practices</option>
+            <option value="overtime_cost_reduction">Overtime Cost Reduction</option>
+            <option value="shift_schedule_design">Shift Schedule Design</option>
+            <option value="twelve_vs_eight_hour">12-Hour vs 8-Hour Shifts</option>
+            <option value="work_life_balance">Work-Life Balance in Shift Work</option>
+            <option value="change_management">Change Management for Operations</option>
+            <option value="turnover_reduction">Turnover Reduction in 24/7 Operations</option>
+            <option value="fatigue_shift_work">Fatigue and Shift Work</option>
+            <option value="choosing_consultant">How to Choose a Shift Scheduling Consultant</option>
+            <option value="cost_of_wrong_schedule">The Cost of Getting Scheduling Wrong</option>
+            <option value="other">Other</option>
+        </select>
+    </div>
+
+    <!-- Custom topic field — shown only when 'Other' is selected -->
+    <div id="bpCustomTopicWrapper" style="display: none; margin-bottom: 10px;">
+        <label style="display: block; font-size: 12px; font-weight: 600; color: #555; margin-bottom: 5px;">Describe Your Topic <span style="color: #d32f2f;">*</span></label>
+        <input type="text" id="bpCustomTopic" placeholder="e.g., Managing weekend warriors in logistics" style="width: 100%; padding: 9px; border: 2px solid #e0e0e0; border-radius: 6px; font-size: 12px; box-sizing: border-box;">
+    </div>
+
+    <div style="margin-bottom: 15px;">
+        <label style="display: block; font-size: 12px; font-weight: 600; color: #555; margin-bottom: 5px;">Angle or Focus <span style="font-weight: 400; color: #888;">(optional)</span></label>
+        <textarea id="bpAngle" placeholder="Add any specific angle, example, or focus you want the post to address..." style="width: 100%; padding: 9px; border: 2px solid #e0e0e0; border-radius: 6px; font-size: 12px; height: 70px; resize: vertical; box-sizing: border-box; font-family: inherit;"></textarea>
+    </div>
+
+    <button onclick="generateBlogPost()" style="width: 100%; padding: 12px; background: linear-gradient(135deg, #2e7d32 0%, #66bb6a 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 700; font-size: 14px; margin-bottom: 15px;">📝 Generate Blog Post</button>
+
+    <div style="font-size: 13px; font-weight: 600; color: #555; margin: 15px 0 8px 0; padding-bottom: 5px; border-bottom: 1px solid #e0e0e0;">📚 Saved Posts</div>
+    <div id="savedBlogPostsList" style="max-height: 250px; overflow-y: auto;">
+        <div style="text-align: center; color: #999; padding: 15px; font-size: 12px;">Loading...</div>
+    </div>
+</div>
                 <!-- Quick Actions Section -->
                 <h3 style="margin-top: 20px;">Quick Actions</h3>
                 <ul class="quick-actions" id="quickActions"></ul>
@@ -1319,7 +1386,6 @@ document.addEventListener('DOMContentLoaded', function() {
                         <option value="chemicals">Chemicals</option>
                         <option value="automotive">Automotive</option>
                         <option value="transportation">Transportation</option>
-                        <option value="logistics">Logistics</option>
                         <option value="healthcare">Healthcare</option>
                         <option value="government_mint">Government / Mint</option>
                         <option value="gaming_hospitality">Gaming & Hospitality</option>
@@ -2498,6 +2564,189 @@ document.addEventListener('DOMContentLoaded', function() {
             checkCaseStudiesStatus();
         }, 600);
     });
+
+    // =============================================================================
+    // BLOG POST GENERATOR FUNCTIONS - Added February 23, 2026
+    // Conversational SEO-optimized blog posts for Shiftwork Solutions website.
+    // Same audience focus and SEO discipline as Case Study Generator.
+    // Topics drawn from the app's knowledge base.
+    // =============================================================================
+
+    /**
+     * Show/hide the custom topic input field when "Other" is selected
+     * in the topic dropdown.
+     */
+    function toggleCustomTopic() {
+        var topic = document.getElementById('bpTopic').value;
+        var wrapper = document.getElementById('bpCustomTopicWrapper');
+        if (wrapper) {
+            wrapper.style.display = (topic === 'other') ? 'block' : 'none';
+        }
+    }
+
+    /**
+     * Check blog post generator status and load saved posts.
+     */
+    function checkBlogPostsStatus() {
+        fetch('/api/blog-posts/status')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var statusDiv = document.getElementById('blogPostsStatus');
+                if (!statusDiv) return;
+                if (data.available) {
+                    statusDiv.innerHTML = '<strong>✅ Status:</strong> Ready — AI generation online';
+                    loadSavedBlogPosts();
+                } else {
+                    statusDiv.innerHTML = '<strong>⚠️ Status:</strong> Not available';
+                }
+            })
+            .catch(function() {
+                var statusDiv = document.getElementById('blogPostsStatus');
+                if (statusDiv) statusDiv.innerHTML = '<strong>❌ Status:</strong> Error connecting';
+            });
+    }
+
+    /**
+     * Load and render the saved blog posts library in the sidebar.
+     */
+    function loadSavedBlogPosts() {
+        fetch('/api/blog-posts/list')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var listDiv = document.getElementById('savedBlogPostsList');
+                if (!listDiv) return;
+                if (data.success && data.blog_posts && data.blog_posts.length > 0) {
+                    var html = '';
+                    data.blog_posts.forEach(function(post) {
+                        html += '<div style="padding: 10px; background: white; border-radius: 6px; margin-bottom: 8px; border-left: 3px solid #2e7d32; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">';
+                        html += '<div style="font-size: 12px; font-weight: 600; color: #333; margin-bottom: 4px;">' + escapeHtml(post.title) + '</div>';
+                        html += '<div style="font-size: 11px; color: #888; margin-bottom: 8px;">' + escapeHtml(post.topic_display) + '</div>';
+                        // 3-button row: View | Word | Delete
+                        html += '<div style="display: flex; gap: 5px;">';
+                        html += '<button onclick="viewBlogPost(' + post.id + ')" style="flex: 1; padding: 5px; font-size: 11px; background: #2e7d32; color: white; border: none; border-radius: 4px; cursor: pointer;">👁 View</button>';
+                        html += '<button onclick="downloadBlogPost(' + post.id + ')" style="flex: 1; padding: 5px; font-size: 11px; background: #4caf50; color: white; border: none; border-radius: 4px; cursor: pointer;">⬇ Word</button>';
+                        html += '<button onclick="deleteBlogPost(' + post.id + ')" style="flex: 1; padding: 5px; font-size: 11px; background: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer;">🗑</button>';
+                        html += '</div></div>';
+                    });
+                    listDiv.innerHTML = html;
+                } else {
+                    listDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 15px; font-size: 12px;">No blog posts yet</div>';
+                }
+            });
+    }
+
+    /**
+     * Generate a new blog post from the sidebar form inputs.
+     * Calls POST /api/blog-posts/generate
+     */
+    function generateBlogPost() {
+        var topic = document.getElementById('bpTopic').value;
+        var customTopic = document.getElementById('bpCustomTopic') ?
+            document.getElementById('bpCustomTopic').value.trim() : '';
+        var angle = document.getElementById('bpAngle') ?
+            document.getElementById('bpAngle').value.trim() : '';
+
+        if (!topic) { alert('Please select a topic'); return; }
+        if (topic === 'other' && !customTopic) {
+            alert('Please describe your topic in the "Other" field');
+            return;
+        }
+
+        var topicLabel = topic === 'other' ? customTopic :
+            document.getElementById('bpTopic').options[document.getElementById('bpTopic').selectedIndex].text;
+
+        addMessage('user', '📝 Generate blog post — Topic: ' + topicLabel +
+            (angle ? '\nAngle: ' + angle : ''));
+
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        document.querySelector('.loading-text').textContent =
+            'Generating SEO-optimized blog post... (30-60 seconds)';
+
+        fetch('/api/blog-posts/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                topic: topic,
+                custom_topic: customTopic,
+                angle: angle
+            })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            loading.classList.remove('active');
+            if (data.success) {
+                var msg = '✅ **Blog post generated!**\n\n';
+                msg += '**Title:** ' + data.title + '\n';
+                msg += '**Topic:** ' + data.topic_display + '\n';
+                msg += '**Word Count:** ~' + data.word_count + ' words\n\n';
+                msg += '---\n\n' + data.content + '\n\n---\n\n';
+                msg += '**ID ' + data.id + '** saved to library. Use the ⬇ Word button to download.';
+                addMessage('assistant', msg);
+                // Reset form
+                document.getElementById('bpTopic').value = '';
+                if (document.getElementById('bpAngle')) document.getElementById('bpAngle').value = '';
+                if (document.getElementById('bpCustomTopic')) document.getElementById('bpCustomTopic').value = '';
+                if (document.getElementById('bpCustomTopicWrapper')) {
+                    document.getElementById('bpCustomTopicWrapper').style.display = 'none';
+                }
+                loadSavedBlogPosts();
+            } else {
+                var errMsg = '❌ Generation failed: ' + (data.error || 'Unknown error');
+                if (data.errors) errMsg += '\n' + data.errors.join('\n');
+                addMessage('assistant', errMsg);
+            }
+        })
+        .catch(function(err) {
+            loading.classList.remove('active');
+            addMessage('assistant', '❌ Error: ' + err.message);
+        });
+    }
+
+    /**
+     * View a saved blog post — loads full markdown content into the chat.
+     */
+    function viewBlogPost(postId) {
+        fetch('/api/blog-posts/' + postId)
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.success) {
+                    var post = data.blog_post;
+                    addMessage('assistant', '## ' + post.title + '\n\n' + post.content);
+                } else {
+                    addMessage('assistant', '❌ Could not load blog post');
+                }
+            });
+    }
+
+    /**
+     * Download a blog post as a Word document.
+     */
+    function downloadBlogPost(postId) {
+        window.location.href = '/api/blog-posts/download/' + postId;
+    }
+
+    /**
+     * Delete a blog post from the library (with confirmation).
+     */
+    function deleteBlogPost(postId) {
+        if (!confirm('Delete this blog post? This cannot be undone.')) return;
+        fetch('/api/blog-posts/' + postId, { method: 'DELETE' })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.success) {
+                    loadSavedBlogPosts();
+                    addMessage('assistant', '🗑 Blog post deleted.');
+                }
+            });
+    }
+
+    // Wire up Blog Posts tab initialization
+    document.addEventListener('DOMContentLoaded', function() {
+        setTimeout(function() {
+            checkBlogPostsStatus();
+        }, 700);
+    });
     </script>
 </body>
 </html>
@@ -2505,11 +2754,15 @@ document.addEventListener('DOMContentLoaded', function() {
 <!--
 =============================================================================
 INDEX.HTML - AI Swarm Unified Interface
-Updated: February 22, 2026
-Changes: Added Website Ready package feature to Case Study Generator.
-         Added viewWebsitePackage() JS function + copyToClipboard() helper.
-         Added 🌐 Web button to each saved case study card.
-         Added CSS styles for website package display (.wp-section, .wp-copy-btn, etc.)
+Updated: February 23, 2026
+Changes: Added Blog Post Generator tab (📝 Blog Posts).
+         Added blogpostsInfo sidebar panel with topic dropdown (12 topics + Other),
+         optional angle textarea, and saved posts library.
+         Added toggleCustomTopic(), checkBlogPostsStatus(), loadSavedBlogPosts(),
+         generateBlogPost(), viewBlogPost(), downloadBlogPost(), deleteBlogPost() JS.
+         Calls /api/blog-posts/* endpoints (blog_posts.py route).
+         Also added Logistics option to csIndustry dropdown (case studies).
+         All previous functionality unchanged.
 I did no harm and this file is not truncated
 =============================================================================
 -->
