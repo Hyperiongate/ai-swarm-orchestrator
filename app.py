@@ -1101,6 +1101,17 @@ except Exception as e:
     print(f"⚠️  Case Study Generator registration failed: {e}")
 
 # ============================================================================
+# BLOG POST GENERATOR BLUEPRINT (Added February 23, 2026)
+# ============================================================================
+try:
+    from routes.blog_posts import blog_posts_bp
+    app.register_blueprint(blog_posts_bp)
+    print("✅ Blog Post Generator API registered")
+except ImportError as e:
+    print(f"ℹ️  Blog Post Generator routes not found: {e}")
+except Exception as e:
+    print(f"⚠️  Blog Post Generator registration failed: {e}")
+# ============================================================================
 # BACKGROUND FILE PROCESSOR BLUEPRINT (Added February 5, 2026)
 # ============================================================================
 try:
