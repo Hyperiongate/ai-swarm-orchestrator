@@ -8,15 +8,24 @@ PURPOSE:
     Shiftwork Solutions LLC website publishing.
 
 ENDPOINTS:
-    POST /api/case-studies/generate     - Generate a new case study + return content
-    GET  /api/case-studies/download/<id> - Download case study as Word doc
-    GET  /api/case-studies/list          - List all saved case studies
-    GET  /api/case-studies/<id>          - Get a single case study
-    DELETE /api/case-studies/<id>        - Delete a case study
-    GET  /api/case-studies/status        - Health check
+    POST /api/case-studies/generate              - Generate a new case study + return content
+    GET  /api/case-studies/download/<id>          - Download case study as Word doc
+    GET  /api/case-studies/list                   - List all saved case studies
+    GET  /api/case-studies/<id>                   - Get a single case study
+    DELETE /api/case-studies/<id>                 - Delete a case study
+    GET  /api/case-studies/<id>/website-package   - Generate SEO title, meta description,
+                                                    URL slug, FAQs, and JSON-LD schema
+                                                    for direct website publishing
+    GET  /api/case-studies/status                 - Health check
+
+CHANGE LOG:
+    February 21, 2026 - Initial creation.
+    February 22, 2026 - Added GET /api/case-studies/<id>/website-package endpoint.
+                        Calls generate_website_ready_package() in case_study_generator.py
+                        and returns the full SEO + schema package as JSON.
 
 AUTHOR: Jim @ Shiftwork Solutions LLC
-LAST UPDATED: February 21, 2026
+LAST UPDATED: February 22, 2026
 """
 
 from flask import Blueprint, request, jsonify, send_file
@@ -36,6 +45,7 @@ try:
     from case_study_generator import (
         generate_case_study,
         generate_case_study_docx,
+        generate_website_ready_package,
         save_case_study_to_db,
         get_all_case_studies,
         get_case_study_by_id,
@@ -65,7 +75,8 @@ def case_studies_status():
             'ai_generation',
             'seo_optimized',
             'word_doc_download',
-            'saved_library'
+            'saved_library',
+            'website_ready_package'
         ]
     })
 
@@ -158,6 +169,76 @@ def generate():
         'industry': industry,
         'industry_display': result['industry_display'],
         'generated_at': result['generated_at']
+    })
+
+
+# ============================================================================
+# WEBSITE READY PACKAGE
+# ============================================================================
+
+@case_studies_bp.route('/api/case-studies/<int:study_id>/website-package', methods=['GET'])
+def website_package(study_id):
+    """
+    Generate a complete website publishing package for a saved case study.
+
+    Makes a second AI call to produce SEO metadata and structured data:
+        - seo_title        : ≤60 character SEO-optimized page title
+        - meta_description : ≤160 character meta description tag content
+        - url_slug         : clean hyphenated URL slug
+        - faqs             : list of 5 {question, answer} dicts for an FAQ section
+        - json_ld          : combined Article + FAQPage JSON-LD schema (dict)
+        - json_ld_string   : JSON-LD formatted as indented string for <script> tag
+
+    Returns:
+        {
+            'success': true,
+            'study_id': 123,
+            'study_title': 'Original Case Study Title',
+            'industry_display': 'Paper & Packaging',
+            'seo_title': '...',
+            'meta_description': '...',
+            'url_slug': '...',
+            'faqs': [...],
+            'json_ld': {...},
+            'json_ld_string': '...',
+            'generated_at': '...'
+        }
+    """
+    if not CASE_STUDIES_AVAILABLE:
+        return jsonify({'success': False, 'error': 'Not available'}), 503
+
+    # Confirm the study exists before making an AI call
+    study = get_case_study_by_id(study_id)
+    if not study:
+        return jsonify({'success': False, 'error': f'Case study {study_id} not found'}), 404
+
+    print(f"🌐 Generating website package for case study ID={study_id}: {study['title']}")
+
+    result = generate_website_ready_package(study_id)
+
+    if not result['success']:
+        import traceback
+        print(f"❌ Website package failed: {result.get('error')}")
+        if 'traceback' in result:
+            print(result['traceback'])
+        return jsonify({
+            'success': False,
+            'error': result.get('error', 'Website package generation failed'),
+            'raw_response': result.get('raw_response', '')
+        }), 500
+
+    return jsonify({
+        'success': True,
+        'study_id': study_id,
+        'study_title': result.get('study_title', study['title']),
+        'industry_display': result.get('industry_display', ''),
+        'seo_title': result['seo_title'],
+        'meta_description': result['meta_description'],
+        'url_slug': result['url_slug'],
+        'faqs': result['faqs'],
+        'json_ld': result['json_ld'],
+        'json_ld_string': result['json_ld_string'],
+        'generated_at': result.get('generated_at', datetime.now().isoformat())
     })
 
 
