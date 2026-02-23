@@ -42,7 +42,7 @@
             opacity: 0.9;
         }
 
-        /* NEW: Navigation buttons in header */
+        /* Navigation buttons in header */
         .header-nav {
             position: absolute;
             top: 0;
@@ -75,6 +75,12 @@
 
         .nav-btn:active {
             transform: translateY(0);
+        }
+
+        .nav-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
         }
 
         .stats-grid {
@@ -258,14 +264,8 @@
         }
 
         @keyframes slideIn {
-            from {
-                opacity: 0;
-                transform: translateY(-10px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
+            from { opacity: 0; transform: translateY(-10px); }
+            to   { opacity: 1; transform: translateY(0); }
         }
 
         .alert-success {
@@ -402,40 +402,23 @@
         }
 
         @keyframes spin {
-            0% { transform: rotate(0deg); }
+            0%   { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
 
         /* Responsive */
         @media (max-width: 768px) {
-            .main-grid {
-                grid-template-columns: 1fr;
-            }
-
-            .stats-grid {
-                grid-template-columns: 1fr;
-            }
-
-            .header h1 {
-                font-size: 1.8em;
-            }
-
-            .card {
-                padding: 20px;
-            }
-
-            .header-nav {
-                position: static;
-                justify-content: center;
-                margin-top: 20px;
-            }
+            .main-grid    { grid-template-columns: 1fr; }
+            .stats-grid   { grid-template-columns: 1fr; }
+            .header h1    { font-size: 1.8em; }
+            .card         { padding: 20px; }
+            .header-nav   { position: static; justify-content: center; margin-top: 20px; }
         }
 
         /* Celebration Effect */
         .celebration {
             position: fixed;
-            top: 50%;
-            left: 50%;
+            top: 50%; left: 50%;
             transform: translate(-50%, -50%);
             background: white;
             padding: 40px;
@@ -448,33 +431,15 @@
         }
 
         @keyframes popIn {
-            0% {
-                opacity: 0;
-                transform: translate(-50%, -50%) scale(0.5);
-            }
-            100% {
-                opacity: 1;
-                transform: translate(-50%, -50%) scale(1);
-            }
+            0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.5); }
+            100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
         }
 
-        .celebration h2 {
-            color: #667eea;
-            font-size: 2em;
-            margin-bottom: 10px;
-        }
-
-        .celebration .icon {
-            font-size: 5em;
-            margin-bottom: 20px;
-        }
+        .celebration h2   { color: #667eea; font-size: 2em; margin-bottom: 10px; }
+        .celebration .icon { font-size: 5em; margin-bottom: 20px; }
 
         .overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
             background: rgba(0,0,0,0.5);
             z-index: 999;
             display: none;
@@ -484,12 +449,10 @@
 <body>
     <div class="container">
         <div class="header">
-            <!-- NEW: Navigation Buttons -->
+            <!-- Navigation Buttons -->
             <div class="header-nav">
-                <a href="/" class="nav-btn">
-                    ← Back to Main
-                </a>
-                <button class="nav-btn" onclick="downloadKnowledge()">
+                <a href="/" class="nav-btn">← Back to Main</a>
+                <button class="nav-btn" id="downloadBtn" onclick="downloadKnowledge(this)">
                     📥 Download Knowledge
                 </button>
             </div>
@@ -527,10 +490,10 @@
             <!-- Upload Section -->
             <div class="card">
                 <h2>📤 Upload Document</h2>
-                
+
                 <div class="alert alert-success" id="successAlert"></div>
-                <div class="alert alert-error" id="errorAlert"></div>
-                
+                <div class="alert alert-error"   id="errorAlert"></div>
+
                 <div class="upload-zone" id="uploadZone">
                     <div class="upload-icon">📄</div>
                     <h3>Drag & Drop Document</h3>
@@ -538,7 +501,8 @@
                     <button class="btn" type="button" onclick="document.getElementById('fileInput').click()">
                         Choose File
                     </button>
-                    <input type="file" id="fileInput" class="file-input" accept=".txt,.md,.pdf,.docx,.doc,.xlsx,.xls,.csv,.json,.pptx,.ppt">
+                    <input type="file" id="fileInput" class="file-input"
+                           accept=".txt,.md,.pdf,.docx,.doc,.xlsx,.xls,.csv,.json,.pptx,.ppt">
                 </div>
 
                 <div class="progress" id="uploadProgress">
@@ -610,7 +574,7 @@
     </div>
 
     <!-- Celebration Overlay -->
-    <div class="overlay" id="overlay"></div>
+    <div class="overlay"     id="overlay"></div>
     <div class="celebration" id="celebration">
         <div class="icon">🎉</div>
         <h2>Knowledge Extracted!</h2>
@@ -630,54 +594,36 @@
             setupFormSubmit();
         });
 
-        // FIXED: Download Knowledge Function - February 4, 2026
-        async function downloadKnowledge() {
-            try {
-                const button = event.currentTarget; // FIXED: Use currentTarget instead of event.target
-                const originalText = button.innerHTML;
-                button.disabled = true;
-                button.innerHTML = '⏳ Preparing download...';
+        // ====================================================================
+        // DOWNLOAD KNOWLEDGE - Fixed February 22, 2026
+        // ====================================================================
+        // ROOT CAUSE OF ORIGINAL ERROR:
+        //   Called /api/knowledge/export (POST) via fetch().
+        //   knowledge_backup_system module missing → Flask returned HTML 404.
+        //   JS tried to call .json() on the HTML response → error:
+        //   "Unexpected token '<', '<!doctype'... is not valid JSON"
+        //
+        // FIX:
+        //   1. New /api/ingest/export (GET) endpoint added to routes/ingest.py.
+        //      Uses only existing SQLite tables — zero new dependencies.
+        //      Returns a .json file as a streaming attachment.
+        //   2. Download triggered via window.location.href instead of fetch().
+        //      The browser handles the file download natively.
+        //      No JSON parsing in JS → the HTML-as-JSON error is impossible.
+        // ====================================================================
+        function downloadKnowledge(btn) {
+            btn.disabled = true;
+            btn.innerHTML = '⏳ Preparing download...';
 
-                const response = await fetch('/api/knowledge/export', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        format: 'all'  // Export all formats (JSON, Markdown, CSV)
-                    })
-                });
+            // Trigger native browser file download.
+            // The server streams the .json file as Content-Disposition: attachment.
+            window.location.href = '/api/ingest/export';
 
-                const data = await response.json();
-
-                if (data.success) {
-                    // Download each file
-                    if (data.exports && data.exports.length > 0) {
-                        data.exports.forEach((exportFile, index) => {
-                            setTimeout(() => {
-                                window.open(exportFile.download_url, '_blank');
-                            }, index * 500);  // Stagger downloads by 500ms
-                        });
-
-                        showSuccess(`Downloaded ${data.exports.length} knowledge backup files!`);
-                    } else {
-                        showError('No files to download');
-                    }
-                } else {
-                    showError(data.error || 'Download failed');
-                }
-
-                button.disabled = false;
-                button.innerHTML = originalText;
-
-            } catch (error) {
-                console.error('Download error:', error);
-                showError('Download failed: ' + error.message);
-                if (event && event.currentTarget) {
-                    event.currentTarget.disabled = false;
-                    event.currentTarget.innerHTML = '📥 Download Knowledge';
-                }
-            }
+            // Re-enable button after 3 seconds (download is handled by browser)
+            setTimeout(function() {
+                btn.disabled = false;
+                btn.innerHTML = '📥 Download Knowledge';
+            }, 3000);
         }
 
         // Load statistics
@@ -685,14 +631,14 @@
             try {
                 const response = await fetch('/api/ingest/status');
                 const data = await response.json();
-                
+
                 if (data.success) {
                     const stats = data.stats;
-                    document.getElementById('totalDocs').textContent = stats.total_extracts;
+                    document.getElementById('totalDocs').textContent     = stats.total_extracts;
                     document.getElementById('totalPatterns').textContent = stats.total_patterns;
-                    
+
                     const byType = stats.by_document_type || {};
-                    document.getElementById('implDocs').textContent = byType.implementation_manual || 0;
+                    document.getElementById('implDocs').textContent   = byType.implementation_manual || 0;
                     document.getElementById('lessonDocs').textContent = byType.lessons_learned || 0;
                 }
             } catch (error) {
@@ -705,20 +651,20 @@
             try {
                 const response = await fetch('/api/ingest/history?limit=10');
                 const data = await response.json();
-                
+
                 if (data.success) {
                     const historyList = document.getElementById('historyList');
-                    
+
                     if (data.history.length === 0) {
-                        historyList.innerHTML = '<p style="text-align: center; color: #999; padding: 40px;">No documents ingested yet</p>';
+                        historyList.innerHTML = '<p style="text-align:center;color:#999;padding:40px;">No documents ingested yet</p>';
                         return;
                     }
-                    
+
                     historyList.innerHTML = data.history.map(item => `
                         <div class="history-item">
                             <div class="title">${item.document_name}</div>
                             <div class="meta">
-                                ${item.document_type} • ${new Date(item.ingested_at).toLocaleString()}
+                                ${item.document_type} &bull; ${new Date(item.ingested_at).toLocaleString()}
                             </div>
                             <div class="stats">
                                 <span class="stat-badge">📊 ${item.patterns_extracted} patterns</span>
@@ -737,15 +683,15 @@
             try {
                 const response = await fetch('/api/ingest/patterns?limit=20');
                 const data = await response.json();
-                
+
                 if (data.success) {
                     const patternsList = document.getElementById('patternsList');
-                    
+
                     if (data.patterns.length === 0) {
-                        patternsList.innerHTML = '<p style="text-align: center; color: #999; padding: 40px;">No patterns learned yet</p>';
+                        patternsList.innerHTML = '<p style="text-align:center;color:#999;padding:40px;">No patterns learned yet</p>';
                         return;
                     }
-                    
+
                     patternsList.innerHTML = data.patterns.map(pattern => `
                         <div class="pattern-item">
                             <div class="pattern-header">
@@ -753,7 +699,7 @@
                                 <span class="pattern-type">${pattern.pattern_type}</span>
                             </div>
                             <div class="confidence-bar">
-                                <div class="confidence-fill" style="width: ${pattern.confidence * 100}%"></div>
+                                <div class="confidence-fill" style="width:${pattern.confidence * 100}%"></div>
                             </div>
                             <div class="pattern-meta">
                                 <span>💪 Confidence: ${(pattern.confidence * 100).toFixed(1)}%</span>
@@ -770,35 +716,18 @@
         // Setup drag and drop
         function setupDragDrop() {
             const uploadZone = document.getElementById('uploadZone');
-            const fileInput = document.getElementById('fileInput');
+            const fileInput  = document.getElementById('fileInput');
 
-            uploadZone.addEventListener('click', () => {
-                fileInput.click();
-            });
-
-            uploadZone.addEventListener('dragover', (e) => {
-                e.preventDefault();
-                uploadZone.classList.add('dragover');
-            });
-
-            uploadZone.addEventListener('dragleave', () => {
-                uploadZone.classList.remove('dragover');
-            });
-
+            uploadZone.addEventListener('click',     () => fileInput.click());
+            uploadZone.addEventListener('dragover',  (e) => { e.preventDefault(); uploadZone.classList.add('dragover'); });
+            uploadZone.addEventListener('dragleave', ()  => uploadZone.classList.remove('dragover'));
             uploadZone.addEventListener('drop', (e) => {
                 e.preventDefault();
                 uploadZone.classList.remove('dragover');
-                
-                const files = e.dataTransfer.files;
-                if (files.length > 0) {
-                    handleFileSelect(files[0]);
-                }
+                if (e.dataTransfer.files.length > 0) handleFileSelect(e.dataTransfer.files[0]);
             });
-
             fileInput.addEventListener('change', (e) => {
-                if (e.target.files.length > 0) {
-                    handleFileSelect(e.target.files[0]);
-                }
+                if (e.target.files.length > 0) handleFileSelect(e.target.files[0]);
             });
         }
 
@@ -806,15 +735,14 @@
         function handleFileSelect(file) {
             selectedFile = file;
             const uploadZone = document.getElementById('uploadZone');
-            
-            // Show file type
+
             let fileTypeIcon = '📄';
             const ext = file.name.split('.').pop().toLowerCase();
-            if (ext === 'pptx' || ext === 'ppt') fileTypeIcon = '📊';
+            if (ext === 'pptx' || ext === 'ppt')   fileTypeIcon = '📊';
             else if (ext === 'xlsx' || ext === 'xls') fileTypeIcon = '📈';
-            else if (ext === 'pdf') fileTypeIcon = '📕';
+            else if (ext === 'pdf')                   fileTypeIcon = '📕';
             else if (ext === 'docx' || ext === 'doc') fileTypeIcon = '📝';
-            
+
             uploadZone.innerHTML = `
                 <div class="upload-icon">${fileTypeIcon}</div>
                 <h3>${file.name}</h3>
@@ -827,22 +755,11 @@
 
         // Setup form submission
         function setupFormSubmit() {
-            const form = document.getElementById('uploadForm');
-            
-            form.addEventListener('submit', async (e) => {
+            document.getElementById('uploadForm').addEventListener('submit', async (e) => {
                 e.preventDefault();
-                
-                if (!selectedFile) {
-                    showError('Please select a file first');
-                    return;
-                }
-
+                if (!selectedFile) { showError('Please select a file first'); return; }
                 const documentType = document.getElementById('documentType').value;
-                if (!documentType) {
-                    showError('Please select a document type');
-                    return;
-                }
-
+                if (!documentType) { showError('Please select a document type'); return; }
                 await uploadDocument();
             });
         }
@@ -850,41 +767,33 @@
         // Upload document
         async function uploadDocument() {
             const formData = new FormData();
-            formData.append('file', selectedFile);
+            formData.append('file',          selectedFile);
             formData.append('document_type', document.getElementById('documentType').value);
-            formData.append('client', document.getElementById('clientName').value);
-            formData.append('industry', document.getElementById('industry').value);
+            formData.append('client',        document.getElementById('clientName').value);
+            formData.append('industry',      document.getElementById('industry').value);
 
-            // Show progress
-            document.getElementById('spinner').style.display = 'block';
-            document.getElementById('submitBtn').disabled = true;
+            document.getElementById('spinner').style.display      = 'block';
+            document.getElementById('submitBtn').disabled          = true;
             document.getElementById('uploadProgress').style.display = 'block';
 
-            // Animate progress bar
             let progress = 0;
             const progressInterval = setInterval(() => {
                 progress += 5;
-                if (progress <= 90) {
-                    document.getElementById('progressBar').style.width = progress + '%';
-                }
+                if (progress <= 90) document.getElementById('progressBar').style.width = progress + '%';
             }, 100);
 
             try {
-                const response = await fetch('/api/ingest/document', {
-                    method: 'POST',
-                    body: formData
-                });
-
+                const response = await fetch('/api/ingest/document', { method: 'POST', body: formData });
                 const data = await response.json();
 
                 clearInterval(progressInterval);
                 document.getElementById('progressBar').style.width = '100%';
 
                 setTimeout(() => {
-                    document.getElementById('spinner').style.display = 'none';
-                    document.getElementById('submitBtn').disabled = false;
+                    document.getElementById('spinner').style.display       = 'none';
+                    document.getElementById('submitBtn').disabled           = false;
                     document.getElementById('uploadProgress').style.display = 'none';
-                    document.getElementById('progressBar').style.width = '0%';
+                    document.getElementById('progressBar').style.width      = '0%';
 
                     if (data.success) {
                         showSuccess(data.message);
@@ -900,8 +809,8 @@
 
             } catch (error) {
                 clearInterval(progressInterval);
-                document.getElementById('spinner').style.display = 'none';
-                document.getElementById('submitBtn').disabled = false;
+                document.getElementById('spinner').style.display       = 'none';
+                document.getElementById('submitBtn').disabled           = false;
                 document.getElementById('uploadProgress').style.display = 'none';
                 showError('Upload failed: ' + error.message);
             }
@@ -909,48 +818,37 @@
 
         // Show celebration
         function showCelebration(data) {
-            const message = `
+            document.getElementById('celebrationMessage').innerHTML = `
                 ✅ ${data.patterns_extracted} patterns extracted<br>
                 💡 ${data.insights_extracted} insights captured<br>
                 📊 Knowledge base now has ${data.total_patterns} patterns!
             `;
-            
-            document.getElementById('celebrationMessage').innerHTML = message;
-            document.getElementById('overlay').style.display = 'block';
+            document.getElementById('overlay').style.display     = 'block';
             document.getElementById('celebration').style.display = 'block';
-
             setTimeout(() => {
-                document.getElementById('overlay').style.display = 'none';
+                document.getElementById('overlay').style.display     = 'none';
                 document.getElementById('celebration').style.display = 'none';
             }, 3000);
         }
 
-        // Show success alert
         function showSuccess(message) {
             const alert = document.getElementById('successAlert');
             alert.textContent = message;
             alert.style.display = 'block';
-            setTimeout(() => {
-                alert.style.display = 'none';
-            }, 5000);
+            setTimeout(() => alert.style.display = 'none', 5000);
         }
 
-        // Show error alert
         function showError(message) {
             const alert = document.getElementById('errorAlert');
             alert.textContent = message;
             alert.style.display = 'block';
-            setTimeout(() => {
-                alert.style.display = 'none';
-            }, 5000);
+            setTimeout(() => alert.style.display = 'none', 5000);
         }
 
-        // Reset form
         function resetForm() {
             selectedFile = null;
             document.getElementById('uploadForm').reset();
-            const uploadZone = document.getElementById('uploadZone');
-            uploadZone.innerHTML = `
+            document.getElementById('uploadZone').innerHTML = `
                 <div class="upload-icon">📄</div>
                 <h3>Drag & Drop Document</h3>
                 <p>Supports: Word (.docx, .doc), Excel (.xlsx, .xls), PDF, PowerPoint (.pptx, .ppt), Text, Markdown, CSV, JSON</p>
@@ -963,21 +861,23 @@
 </body>
 </html>
 
-<!-- 
-Last Updated: February 4, 2026
-Changes: 
-- FIXED JavaScript error in downloadKnowledge() function (line 37)
-  * Changed event.target to event.currentTarget to properly reference button
-  * Added originalText variable to restore button text
-  * Added better error handling
-- Added PowerPoint file type support messaging
-- Added file type icons for better UX
-- Improved error messages for PowerPoint files
+<!--
+Last Updated: February 22, 2026
 
-CRITICAL FIX: The null reference error was caused by using event.target instead of 
-event.currentTarget. When clicking the button, event.target could be the text node 
-inside the button, not the button itself. event.currentTarget always refers to the 
-element that the event listener is attached to (the button).
+CHANGES - February 22, 2026:
+  FIXED Download Knowledge button
+  Previous: Called /api/knowledge/export (POST) via fetch() + response.json()
+            knowledge_backup_system module missing on server
+            Flask returned HTML 404 page
+            JS error: "Unexpected token '<', '<!doctype'... is not valid JSON"
+  Fixed:   window.location.href = '/api/ingest/export' (GET, native download)
+            New endpoint in routes/ingest.py — uses existing tables only
+            Browser handles file download natively — no JSON parsing possible
 
-I did no harm and this file is not truncated 
+CHANGES - February 4, 2026:
+  Added PowerPoint file type support messaging
+  Added file type icons for better UX
+  Fixed JavaScript null reference in original downloadKnowledge()
+
+I did no harm and this file is not truncated
 -->
