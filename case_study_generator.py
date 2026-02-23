@@ -20,8 +20,15 @@ INDUSTRIES SUPPORTED:
     Beverage, Utilities, Paper & Packaging, Technology, Oil/Gas/Energy,
     Chemicals, Automotive, Transportation, Healthcare, Government, Gaming
 
+CHANGE LOG:
+    February 21, 2026 - Initial creation. Core generation, DOCX export, DB CRUD.
+    February 22, 2026 - Added generate_website_ready_package(). Produces SEO title
+                        (≤60 chars), meta description (≤160 chars), URL slug,
+                        3-5 FAQ Q&A pairs, and combined Article+FAQPage JSON-LD
+                        schema markup for direct website publishing.
+
 AUTHOR: Jim @ Shiftwork Solutions LLC
-LAST UPDATED: February 21, 2026
+LAST UPDATED: February 22, 2026
 """
 
 import os
@@ -207,6 +214,83 @@ OUTPUT: Return ONLY the case study content in markdown format. No preamble, no e
     return prompt
 
 
+def get_website_package_prompt(title: str, content: str, industry: str) -> str:
+    """
+    Build the AI prompt for generating website-ready SEO metadata and schema markup.
+    Called after the case study is already generated.
+    """
+    industry_display = INDUSTRY_DISPLAY_NAMES.get(industry, 'Industrial Operations')
+    keywords = INDUSTRY_SEO_KEYWORDS.get(industry, INDUSTRY_SEO_KEYWORDS['other'])
+    primary_keyword = keywords[0] if keywords else 'shift scheduling'
+
+    prompt = f"""You are an SEO specialist and structured data expert. Based on the following case study for Shiftwork Solutions LLC, generate a complete website publishing package.
+
+CASE STUDY TITLE: {title}
+INDUSTRY: {industry_display}
+PRIMARY KEYWORD: {primary_keyword}
+
+CASE STUDY CONTENT:
+{content}
+
+Generate the following elements. Return ONLY valid JSON — no markdown, no preamble, no explanation. The JSON must be parseable by Python's json.loads().
+
+Return this exact JSON structure:
+{{
+  "seo_title": "...",
+  "meta_description": "...",
+  "url_slug": "...",
+  "faqs": [
+    {{"question": "...", "answer": "..."}},
+    {{"question": "...", "answer": "..."}},
+    {{"question": "...", "answer": "..."}},
+    {{"question": "...", "answer": "..."}},
+    {{"question": "...", "answer": "..."}}
+  ],
+  "json_ld": {{}}
+}}
+
+REQUIREMENTS FOR EACH FIELD:
+
+seo_title:
+- Maximum 60 characters including spaces
+- Must include the primary keyword "{primary_keyword}" or a close variant
+- Compelling and click-worthy
+- Format: "[Benefit/Result]: [Primary Keyword] | Shiftwork Solutions"
+
+meta_description:
+- Maximum 160 characters including spaces
+- Include primary keyword naturally in first half
+- End with a soft call to action (e.g., "Learn how.")
+- Summarize the key result from the case study
+
+url_slug:
+- Lowercase, hyphen-separated, no special characters
+- 4-7 words maximum
+- Include primary keyword or close variant
+- Example format: "manufacturing-shift-scheduling-overtime-reduction"
+
+faqs:
+- Exactly 5 FAQ pairs
+- Questions should be the kind real plant managers and HR directors search for
+- Answers should be 2-4 sentences, specific and helpful
+- Use industry terminology naturally
+- At least 2 questions should reference the specific results from this case study
+- Do NOT use generic questions like "What is shift scheduling?" — make them specific to this case study's problem and solution
+
+json_ld:
+- Combined Article + FAQPage schema as a single JSON-LD object
+- Use "@graph" array containing both schemas
+- Article schema: type="Article", headline=seo_title, description=meta_description, 
+  author={{"@type":"Organization","name":"Shiftwork Solutions LLC"}},
+  publisher={{"@type":"Organization","name":"Shiftwork Solutions LLC","url":"https://shiftworksolutions.com"}},
+  url="https://shiftworksolutions.com/case-studies/[url_slug]"
+  datePublished="{datetime.now().strftime('%Y-%m-%d')}"
+- FAQPage schema: type="FAQPage" with all 5 FAQ pairs as mainEntity
+- The entire json_ld value must itself be valid JSON (it will be serialized to a <script> tag)"""
+
+    return prompt
+
+
 def generate_case_study(industry: str, problem: str, solution: str) -> dict:
     """
     Generate a case study using the AI Swarm orchestration layer.
@@ -255,6 +339,141 @@ def generate_case_study(industry: str, problem: str, solution: str) -> dict:
             'title': title,
             'word_count': word_count,
             'industry': industry,
+            'industry_display': INDUSTRY_DISPLAY_NAMES.get(industry, industry),
+            'generated_at': datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        import traceback
+        return {
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }
+
+
+def generate_website_ready_package(study_id: int) -> dict:
+    """
+    Generate a complete website publishing package for a saved case study.
+
+    Makes a second AI call (separate from case study generation) to produce:
+      - seo_title      : ≤60 character SEO-optimized title
+      - meta_description: ≤160 character meta description
+      - url_slug       : clean URL slug for the page
+      - faqs           : list of 5 {question, answer} dicts
+      - json_ld        : combined Article + FAQPage JSON-LD schema dict
+      - json_ld_string : the json_ld serialized as an indented string for
+                         direct paste into a <script type="application/ld+json"> tag
+
+    Returns:
+        {
+            'success': True/False,
+            'seo_title': str,
+            'meta_description': str,
+            'url_slug': str,
+            'faqs': [{'question': str, 'answer': str}, ...],
+            'json_ld': dict,
+            'json_ld_string': str,
+            'error': str  (only on failure)
+        }
+    """
+    try:
+        from config import ANTHROPIC_API_KEY, CLAUDE_SONNET_MODEL
+        import anthropic
+
+        if not ANTHROPIC_API_KEY:
+            return {'success': False, 'error': 'Anthropic API key not configured'}
+
+        # Fetch the saved case study
+        study = get_case_study_by_id(study_id)
+        if not study:
+            return {'success': False, 'error': f'Case study ID {study_id} not found'}
+
+        title = study.get('title', '')
+        content = study.get('content', '')
+        industry = study.get('industry', 'other')
+
+        if not content:
+            return {'success': False, 'error': 'Case study has no content'}
+
+        prompt = get_website_package_prompt(title, content, industry)
+
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+        message = client.messages.create(
+            model=CLAUDE_SONNET_MODEL,
+            max_tokens=3000,
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        )
+
+        raw_response = message.content[0].text.strip()
+
+        # Strip markdown code fences if the model wrapped the JSON
+        if raw_response.startswith('```'):
+            lines = raw_response.split('\n')
+            # Remove first line (```json or ```) and last line (```)
+            raw_response = '\n'.join(lines[1:-1]).strip()
+
+        # Parse JSON
+        try:
+            package = json.loads(raw_response)
+        except json.JSONDecodeError as parse_err:
+            return {
+                'success': False,
+                'error': f'AI returned invalid JSON: {str(parse_err)}',
+                'raw_response': raw_response[:500]
+            }
+
+        # Validate required fields
+        required_fields = ['seo_title', 'meta_description', 'url_slug', 'faqs', 'json_ld']
+        missing = [f for f in required_fields if f not in package]
+        if missing:
+            return {
+                'success': False,
+                'error': f'AI response missing fields: {missing}',
+                'raw_response': raw_response[:500]
+            }
+
+        # Enforce character limits (trim if AI exceeded them)
+        seo_title = str(package['seo_title'])[:60]
+        meta_description = str(package['meta_description'])[:160]
+        url_slug = str(package['url_slug']).lower().replace(' ', '-')
+
+        # Validate FAQs structure
+        faqs = package.get('faqs', [])
+        if not isinstance(faqs, list):
+            faqs = []
+        # Ensure each FAQ has question and answer keys
+        cleaned_faqs = []
+        for faq in faqs:
+            if isinstance(faq, dict) and 'question' in faq and 'answer' in faq:
+                cleaned_faqs.append({
+                    'question': str(faq['question']),
+                    'answer': str(faq['answer'])
+                })
+
+        # Serialize JSON-LD to a formatted string for paste-ready output
+        json_ld_dict = package.get('json_ld', {})
+        json_ld_string = json.dumps(json_ld_dict, indent=2)
+
+        print(f"✅ Website package generated for study ID={study_id}: "
+              f"title={len(seo_title)}ch, desc={len(meta_description)}ch, "
+              f"faqs={len(cleaned_faqs)}, json_ld={len(json_ld_string)}ch")
+
+        return {
+            'success': True,
+            'seo_title': seo_title,
+            'meta_description': meta_description,
+            'url_slug': url_slug,
+            'faqs': cleaned_faqs,
+            'json_ld': json_ld_dict,
+            'json_ld_string': json_ld_string,
+            'study_title': title,
             'industry_display': INDUSTRY_DISPLAY_NAMES.get(industry, industry),
             'generated_at': datetime.now().isoformat()
         }
