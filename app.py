@@ -102,6 +102,11 @@ try:
     from add_blog_posts_table import add_blog_posts_table
     add_blog_posts_table()
     print("✅ Blog Posts table migration complete!")
+    
+    # Blog Posts SEO enhancement (February 23, 2026)
+    from add_seo_to_blog_posts import add_seo_to_blog_posts
+    add_seo_to_blog_posts()
+    print("✅ Blog Posts SEO enhancement complete!")
 
 except ImportError as e:
     print(f"ℹ️  Some migrations not found: {e}")
