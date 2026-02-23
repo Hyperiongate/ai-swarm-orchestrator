@@ -8,6 +8,13 @@
     =============================================================================
     
     CHANGE LOG:
+    - February 22, 2026: Added "Website Ready" feature to Case Study Generator.
+      * Added 🌐 Web button to each saved case study card in loadSavedCaseStudies()
+      * Added viewWebsitePackage(studyId) JS function that calls
+        GET /api/case-studies/<id>/website-package and displays results with
+        individual copy-to-clipboard buttons for: SEO Title, Meta Description,
+        URL Slug, each FAQ pair, and JSON-LD schema block.
+    
     - January 24, 2026: FIXED Industry Input - Changed from free-text prompt to 
       dropdown selection in addNewLead() function. Added modal dialog for lead 
       entry with proper industry dropdown matching the 16 industries in the 
@@ -530,6 +537,89 @@
     transform: translateY(-1px);
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
+
+        /* Website Package Display Styles - Added February 22, 2026 */
+        .wp-section {
+            background: white;
+            border-radius: 8px;
+            padding: 14px;
+            margin-bottom: 14px;
+            border-left: 4px solid #667eea;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+        }
+        .wp-section-label {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #667eea;
+            margin-bottom: 6px;
+        }
+        .wp-section-content {
+            font-size: 13px;
+            color: #333;
+            line-height: 1.5;
+            word-break: break-word;
+        }
+        .wp-copy-btn {
+            margin-top: 8px;
+            padding: 5px 12px;
+            font-size: 11px;
+            font-weight: 600;
+            background: #f0f0f0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+            color: #555;
+        }
+        .wp-copy-btn:hover {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+        .wp-copy-btn.copied {
+            background: #4caf50;
+            color: white;
+            border-color: #4caf50;
+        }
+        .wp-faq-item {
+            padding: 10px;
+            background: #f9f9f9;
+            border-radius: 6px;
+            margin-bottom: 8px;
+        }
+        .wp-faq-q {
+            font-size: 12px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 4px;
+        }
+        .wp-faq-a {
+            font-size: 12px;
+            color: #555;
+            line-height: 1.4;
+        }
+        .wp-jsonld-block {
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 12px;
+            border-radius: 6px;
+            white-space: pre-wrap;
+            word-break: break-all;
+            max-height: 200px;
+            overflow-y: auto;
+            line-height: 1.4;
+        }
+        .wp-char-count {
+            font-size: 10px;
+            color: #999;
+            margin-top: 3px;
+        }
+        .wp-char-ok { color: #4caf50; }
+        .wp-char-warn { color: #f44336; }
     </style>
 </head>
 <body>
@@ -562,8 +652,6 @@
             </div>
         </div>
 
-<!-- I did no harm and this file is not truncated -->
-        
         <!-- MAIN GRID LAYOUT -->
         <div class="main-grid">
             
@@ -645,11 +733,6 @@
                     <label>Phase</label>
                     <span id="projectPhase"><div class="phase-indicator">Not started</div></span>
                     <button onclick="startNewProject()" style="width: 100%; padding: 10px; margin-top: 10px; background: #667eea; color: white; border: none; border-radius: 8px; cursor: pointer;">+ New Project</button>
-                    <!-- ============================================================================
-     CLOUD LINK INPUT - Add this BEFORE the FILE BROWSER section (before line 487)
-     Date: February 5, 2026
-     Location: In the "Project Info Panel" section, after the "New Project" button
-     ============================================================================ -->
 
 <!-- CLOUD LINK INPUT FOR LARGE FILES -->
 <div class="cloud-link-section" style="margin-top: 20px; padding: 15px; background: linear-gradient(135deg, #e3f2fd 0%, #f3e5f5 100%); border-radius: 10px; border: 2px solid #2196f3;">
@@ -802,9 +885,6 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 </script>
 
-<!-- ============================================================================
-     END CLOUD LINK INPUT
-     ============================================================================ -->
                     <!-- FILE BROWSER - Added January 31, 2026 -->
 <div class="file-browser-panel" style="margin-top: 20px;">
     <div class="file-browser-header" style="display: flex; justify-content: space-between; align-items: center; padding: 15px; background: #f5f5f5; border-radius: 8px 8px 0 0;">
@@ -838,7 +918,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 <!-- Marketing Info Panel (marketing mode only) -->
                 <div class="marketing-info" id="marketingInfo" style="display: none;">
                     <h3 style="margin-bottom: 10px;">Marketing Hub</h3>
-                                    <!-- NEW: LinkedIn Poster Desktop App Section - Added January 29, 2026 -->
+                    <!-- LinkedIn Poster Desktop App Section - Added January 29, 2026 -->
                 <div style="background: #e3f2fd; padding: 12px; border-radius: 8px; margin-bottom: 15px; border-left: 3px solid #0077b5;">
                     <h4 style="font-size: 13px; margin-bottom: 8px; color: #0077b5; font-weight: 600;">📱 LinkedIn Poster Tool</h4>
                     <p style="font-size: 11px; color: #666; margin-bottom: 10px; line-height: 1.4;">
@@ -866,11 +946,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 </div>
                 
                 <!-- Calculator Panel (calculator mode only) -->
-                <!-- Calculator Panel (calculator mode only) -->
                 <div class="calculator-info" id="calculatorInfo" style="display: none;">
                     <h3 style="margin-bottom: 10px;">💰 Cost Calculator</h3>
                     
-                    <!-- NEW: Desktop App Section -->
+                    <!-- Desktop App Section -->
                     <div style="background: #f0f7ff; padding: 12px; border-radius: 8px; margin-bottom: 15px; border-left: 3px solid #667eea;">
                         <h4 style="font-size: 13px; margin-bottom: 8px; color: #667eea; font-weight: 600;">📊 Desktop Calculator</h4>
                         <p style="font-size: 11px; color: #666; margin-bottom: 10px; line-height: 1.4;">
@@ -886,21 +965,18 @@ document.addEventListener('DOMContentLoaded', function() {
                         </p>
                     </div>
                     
-                    <!-- EXISTING: Quick Calculations (unchanged) -->
+                    <!-- Quick Calculations -->
                     <h4 style="font-size: 14px; margin-bottom: 8px;">⚡ Quick Calculations</h4>
                     <button onclick="calculateOvertimeCost()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer;">💰 Overtime Cost</button>
                     <button onclick="compareHireVsOT()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #764ba2; color: white; border: none; border-radius: 6px; cursor: pointer;">👥 Hire vs OT</button>
                     <button onclick="scheduleImpact()" style="width: 100%; padding: 8px; background: #0077b5; color: white; border: none; border-radius: 6px; cursor: pointer;">📊 Schedule Impact</button>
                 </div>
-
-<!-- I did no harm and this file is not truncated -->
                 
-                <!-- Survey Panel (survey mode only) -->
                 <!-- Survey Panel (survey mode only) -->
                 <div class="survey-info" id="surveyInfo" style="display: none;">
                     <h3 style="margin-bottom: 10px;">📋 Survey Builder</h3>
                     
-                    <!-- NEW: Desktop App Section -->
+                    <!-- Desktop App Section -->
                     <div style="background: #f0fff4; padding: 12px; border-radius: 8px; margin-bottom: 15px; border-left: 3px solid #4caf50;">
                         <h4 style="font-size: 13px; margin-bottom: 8px; color: #4caf50; font-weight: 600;">📊 Survey Processing App</h4>
                         <p style="font-size: 11px; color: #666; margin-bottom: 10px; line-height: 1.4;">
@@ -916,20 +992,18 @@ document.addEventListener('DOMContentLoaded', function() {
                         </p>
                     </div>
                     
-                    <!-- EXISTING: Question Bank (unchanged) -->
+                    <!-- Question Bank -->
                     <div style="font-size: 12px; margin-bottom: 15px;">
                         <div style="font-weight: 600; margin-bottom: 5px;">Question Bank:</div>
                         <div id="questionBankStatus" style="padding: 10px; background: #f0f0f0; border-radius: 6px;">Loading...</div>
                     </div>
                     
-                    <!-- EXISTING: Quick Actions (unchanged) -->
+                    <!-- Quick Actions -->
                     <h4 style="font-size: 14px; margin-bottom: 8px;">⚡ Quick Actions</h4>
                     <a href="/survey" style="display: block; width: 100%; padding: 8px; margin-bottom: 8px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer; text-align: center; text-decoration: none; font-weight: 600;">➕ Create Survey</a>
                     <button onclick="viewSurveyResults()" style="width: 100%; padding: 8px; margin-bottom: 8px; background: #0077b5; color: white; border: none; border-radius: 6px; cursor: pointer;">📊 View Results</button>
                     <button onclick="exportSurveyData()" style="width: 100%; padding: 8px; background: #764ba2; color: white; border: none; border-radius: 6px; cursor: pointer;">📤 Export Data</button>
                 </div>
-
-<!-- I did no harm and this file is not truncated -->
                 
                 <!-- Opportunities Panel (opportunities mode only) -->
                 <div class="opportunities-info" id="opportunitiesInfo" style="display: none;">
@@ -1043,7 +1117,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     </div>
                 </div>
 
-                                <!-- Implementation Manual Generator Panel - NEW January 28, 2026 -->
+                <!-- Implementation Manual Generator Panel - NEW January 28, 2026 -->
                 <div class="manuals-info" id="manualsInfo" style="display: none;">
                     <h3>📝 Manual Generator</h3>
                     <div class="manuals-status" id="manualsStatus">
@@ -1077,6 +1151,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         <div style="text-align: center; color: #999; padding: 20px;">Loading...</div>
                     </div>
                 </div>
+
                 <!-- Case Studies Panel (casestudies mode only) -->
 <div class="casestudies-info" id="casestudiesInfo" style="display: none;">
     <h3>✍️ Case Study Generator</h3>
@@ -1906,165 +1981,122 @@ document.addEventListener('DOMContentLoaded', function() {
             checkPipelineStatus();
         }, 500);
     });
-   // =============================================================================
-// IMPLEMENTATION MANUAL GENERATOR FUNCTIONS - Added January 28, 2026
-// =============================================================================
 
-var currentManualId = null;
+    // =============================================================================
+    // IMPLEMENTATION MANUAL GENERATOR FUNCTIONS - Added January 28, 2026
+    // =============================================================================
 
-function checkManualsStatus() {
-    fetch('/api/manuals/status')
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            var statusDiv = document.getElementById('manualsStatus');
-            if (data.available) {
-                statusDiv.innerHTML = '<strong>✅ Status:</strong> Online - Conversational manual generation ready';
-                statusDiv.className = 'manuals-status';
-                loadManualsSummary();
-                loadRecentManuals();
-            } else {
-                statusDiv.innerHTML = '<strong>⚠️ Status:</strong> Not available';
+    var currentManualId = null;
+
+    function checkManualsStatus() {
+        fetch('/api/manuals/status')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var statusDiv = document.getElementById('manualsStatus');
+                if (data.available) {
+                    statusDiv.innerHTML = '<strong>✅ Status:</strong> Online - Conversational manual generation ready';
+                    statusDiv.className = 'manuals-status';
+                    loadManualsSummary();
+                    loadRecentManuals();
+                } else {
+                    statusDiv.innerHTML = '<strong>⚠️ Status:</strong> Not available';
+                    statusDiv.className = 'manuals-status error';
+                }
+            })
+            .catch(function(err) {
+                var statusDiv = document.getElementById('manualsStatus');
+                statusDiv.innerHTML = '<strong>❌ Status:</strong> Error connecting';
                 statusDiv.className = 'manuals-status error';
-            }
-        })
-        .catch(function(err) {
-            var statusDiv = document.getElementById('manualsStatus');
-            statusDiv.innerHTML = '<strong>❌ Status:</strong> Error connecting';
-            statusDiv.className = 'manuals-status error';
-        });
-}
+            });
+    }
 
-function loadManualsSummary() {
-    fetch('/api/manuals/dashboard')
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            if (data.success) {
-                var active = (data.status_counts.gathering_info || 0) + (data.status_counts.drafting || 0) + (data.status_counts.reviewing || 0);
-                var drafting = data.status_counts.drafting || 0;
-                var complete = data.status_counts.complete || 0;
-                
-                document.getElementById('activeManualsCount').textContent = active;
-                document.getElementById('draftingCount').textContent = drafting;
-                document.getElementById('completeCount').textContent = complete;
-            }
-        });
-}
-
-function loadRecentManuals() {
-    fetch('/api/manuals/list?status=all&limit=5')
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            var listDiv = document.getElementById('recentManualsList');
-            if (data.success && data.manuals && data.manuals.length > 0) {
-                var html = '';
-                data.manuals.forEach(function(manual) {
-                    var statusName = manual.project_status.replace(/_/g, ' ');
-                    var statusColor = getManualStatusColor(manual.project_status);
+    function loadManualsSummary() {
+        fetch('/api/manuals/dashboard')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.success) {
+                    var active = (data.status_counts.gathering_info || 0) + (data.status_counts.drafting || 0) + (data.status_counts.reviewing || 0);
+                    var drafting = data.status_counts.drafting || 0;
+                    var complete = data.status_counts.complete || 0;
                     
-                    html += '<div class="manual-card" onclick="continueManual(' + manual.id + ')" style="border-left-color: ' + statusColor + ';">';
-                    html += '<div class="manual-card-client">' + escapeHtml(manual.client_name) + '</div>';
-                    html += '<span class="manual-card-status" style="background: ' + statusColor + '20; color: ' + statusColor + ';">' + statusName + '</span>';
-                    html += '</div>';
-                });
-                listDiv.innerHTML = html;
-            } else {
-                listDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No manual projects yet</div>';
-            }
-        });
-}
+                    document.getElementById('activeManualsCount').textContent = active;
+                    document.getElementById('draftingCount').textContent = drafting;
+                    document.getElementById('completeCount').textContent = complete;
+                }
+            });
+    }
 
-function getManualStatusColor(status) {
-    var colors = {
-        'gathering_info': '#2196f3',
-        'ready_to_draft': '#ff9800',
-        'drafting': '#9c27b0',
-        'reviewing': '#f44336',
-        'ready_to_finalize': '#4caf50',
-        'complete': '#607d8b'
-    };
-    return colors[status] || '#667eea';
-}
+    function loadRecentManuals() {
+        fetch('/api/manuals/list?status=all&limit=5')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var listDiv = document.getElementById('recentManualsList');
+                if (data.success && data.manuals && data.manuals.length > 0) {
+                    var html = '';
+                    data.manuals.forEach(function(manual) {
+                        var statusName = manual.project_status.replace(/_/g, ' ');
+                        var statusColor = getManualStatusColor(manual.project_status);
+                        
+                        html += '<div class="manual-card" onclick="continueManual(' + manual.id + ')" style="border-left-color: ' + statusColor + ';">';
+                        html += '<div class="manual-card-client">' + escapeHtml(manual.client_name) + '</div>';
+                        html += '<span class="manual-card-status" style="background: ' + statusColor + '20; color: ' + statusColor + ';">' + statusName + '</span>';
+                        html += '</div>';
+                    });
+                    listDiv.innerHTML = html;
+                } else {
+                    listDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No manual projects yet</div>';
+                }
+            });
+    }
 
-function startNewManual() {
-    var clientName = prompt('What is the client name?', '');
-    if (!clientName) return;
-    
-    var facilityName = prompt('What is the facility/plant name? (optional)', '');
-    
-    addMessage('user', '📝 Create implementation manual for ' + clientName);
-    
-    var loading = document.getElementById('loadingIndicator');
-    loading.classList.add('active');
-    document.querySelector('.loading-text').textContent = 'Starting new manual project...';
-    
-    fetch('/api/manuals/start', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-            client_name: clientName,
-            facility_name: facilityName || null
+    function getManualStatusColor(status) {
+        var colors = {
+            'gathering_info': '#2196f3',
+            'ready_to_draft': '#ff9800',
+            'drafting': '#9c27b0',
+            'reviewing': '#f44336',
+            'ready_to_finalize': '#4caf50',
+            'complete': '#607d8b'
+        };
+        return colors[status] || '#667eea';
+    }
+
+    function startNewManual() {
+        var clientName = prompt('What is the client name?', '');
+        if (!clientName) return;
+        
+        var facilityName = prompt('What is the facility/plant name? (optional)', '');
+        
+        addMessage('user', '📝 Create implementation manual for ' + clientName);
+        
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        document.querySelector('.loading-text').textContent = 'Starting new manual project...';
+        
+        fetch('/api/manuals/start', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                client_name: clientName,
+                facility_name: facilityName || null
+            })
         })
-    })
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-        loading.classList.remove('active');
-        if (data.success) {
-            currentManualId = data.manual_id;
-            
-            var msg = '✅ **Manual project started for ' + clientName + '!**\n\n';
-            msg += 'I need to ask you some questions to gather the information for the manual.\n\n';
-            
-            if (data.next_question) {
-                msg += '**Question:** ' + data.next_question.question;
-            }
-            
-            addMessage('assistant', msg);
-            loadManualsSummary();
-            loadRecentManuals();
-        } else {
-            addMessage('assistant', '❌ Error: ' + data.error);
-        }
-    })
-    .catch(function(err) {
-        loading.classList.remove('active');
-        addMessage('assistant', '❌ Error: ' + err.message);
-    });
-}
-
-function continueManual(manualId) {
-    currentManualId = manualId;
-    
-    addMessage('user', '📝 Continue Manual Project #' + manualId);
-    
-    var loading = document.getElementById('loadingIndicator');
-    loading.classList.add('active');
-    
-    fetch('/api/manuals/' + manualId)
         .then(function(r) { return r.json(); })
         .then(function(data) {
             loading.classList.remove('active');
             if (data.success) {
-                var manual = data.manual;
-                var msg = '📝 **' + manual.client_name + ' Implementation Manual**\n\n';
-                msg += '**Status:** ' + manual.project_status.replace(/_/g, ' ') + '\n';
-                msg += '**Progress:** ' + data.section_status.approved_sections + '/' + data.section_status.total_sections + ' sections approved\n\n';
+                currentManualId = data.manual_id;
+                
+                var msg = '✅ **Manual project started for ' + clientName + '!**\n\n';
+                msg += 'I need to ask you some questions to gather the information for the manual.\n\n';
                 
                 if (data.next_question) {
-                    msg += '**Next Question:** ' + data.next_question.question + '\n\n';
-                    msg += 'Just type your answer, or say "skip" to move on.';
-                } else if (manual.project_status === 'ready_to_draft') {
-                    msg += '✅ All information collected!\n\n';
-                    msg += 'Ready to generate draft sections. Say "generate [section name]" or "start drafting".';
-                } else if (manual.project_status === 'drafting') {
-                    msg += 'Currently working on sections.\n\n';
-                    msg += 'Sections completed: ' + data.section_status.drafted_sections + '/' + data.section_status.total_sections + '\n\n';
-                    msg += 'Say "continue drafting" to work on the next section.';
-                } else if (manual.project_status === 'ready_to_finalize') {
-                    msg += '🎉 All sections approved!\n\n';
-                    msg += 'Ready to generate the final Word document. Say "finalize manual".';
+                    msg += '**Question:** ' + data.next_question.question;
                 }
                 
                 addMessage('assistant', msg);
+                loadManualsSummary();
+                loadRecentManuals();
             } else {
                 addMessage('assistant', '❌ Error: ' + data.error);
             }
@@ -2073,211 +2105,409 @@ function continueManual(manualId) {
             loading.classList.remove('active');
             addMessage('assistant', '❌ Error: ' + err.message);
         });
-}
+    }
 
-function viewAllManuals() {
-    addMessage('user', '👁️ View All Manual Projects');
-    
-    var loading = document.getElementById('loadingIndicator');
-    loading.classList.add('active');
-    
-    fetch('/api/manuals/list?status=all&limit=50')
+    function continueManual(manualId) {
+        currentManualId = manualId;
+        
+        addMessage('user', '📝 Continue Manual Project #' + manualId);
+        
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        
+        fetch('/api/manuals/' + manualId)
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                loading.classList.remove('active');
+                if (data.success) {
+                    var manual = data.manual;
+                    var msg = '📝 **' + manual.client_name + ' Implementation Manual**\n\n';
+                    msg += '**Status:** ' + manual.project_status.replace(/_/g, ' ') + '\n';
+                    msg += '**Progress:** ' + data.section_status.approved_sections + '/' + data.section_status.total_sections + ' sections approved\n\n';
+                    
+                    if (data.next_question) {
+                        msg += '**Next Question:** ' + data.next_question.question + '\n\n';
+                        msg += 'Just type your answer, or say "skip" to move on.';
+                    } else if (manual.project_status === 'ready_to_draft') {
+                        msg += '✅ All information collected!\n\n';
+                        msg += 'Ready to generate draft sections. Say "generate [section name]" or "start drafting".';
+                    } else if (manual.project_status === 'drafting') {
+                        msg += 'Currently working on sections.\n\n';
+                        msg += 'Sections completed: ' + data.section_status.drafted_sections + '/' + data.section_status.total_sections + '\n\n';
+                        msg += 'Say "continue drafting" to work on the next section.';
+                    } else if (manual.project_status === 'ready_to_finalize') {
+                        msg += '🎉 All sections approved!\n\n';
+                        msg += 'Ready to generate the final Word document. Say "finalize manual".';
+                    }
+                    
+                    addMessage('assistant', msg);
+                } else {
+                    addMessage('assistant', '❌ Error: ' + data.error);
+                }
+            })
+            .catch(function(err) {
+                loading.classList.remove('active');
+                addMessage('assistant', '❌ Error: ' + err.message);
+            });
+    }
+
+    function viewAllManuals() {
+        addMessage('user', '👁️ View All Manual Projects');
+        
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        
+        fetch('/api/manuals/list?status=all&limit=50')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                loading.classList.remove('active');
+                if (data.success) {
+                    var msg = '# 📝 All Manual Projects\n\n';
+                    
+                    if (data.manuals && data.manuals.length > 0) {
+                        data.manuals.forEach(function(manual) {
+                            msg += '### ' + manual.client_name;
+                            if (manual.facility_name) msg += ' - ' + manual.facility_name;
+                            msg += '\n';
+                            msg += '- **Status:** ' + manual.project_status.replace(/_/g, ' ') + '\n';
+                            msg += '- **ID:** ' + manual.id + ' (Click to continue)\n\n';
+                        });
+                    } else {
+                        msg += 'No manual projects found.';
+                    }
+                    
+                    addMessage('assistant', msg);
+                }
+            });
+    }
+
+    function viewLessons() {
+        addMessage('user', '💡 View Lessons Learned');
+        
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        
+        fetch('/api/manuals/lessons')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                loading.classList.remove('active');
+                if (data.success) {
+                    var msg = '# 💡 Lessons Learned\n\n';
+                    
+                    if (data.lessons && data.lessons.length > 0) {
+                        data.lessons.forEach(function(lesson) {
+                            msg += '### ' + lesson.lesson_category + '\n';
+                            msg += lesson.lesson_text + '\n';
+                            if (lesson.industry) msg += '_Industry: ' + lesson.industry + '_\n';
+                            msg += '\n';
+                        });
+                    } else {
+                        msg += 'No lessons recorded yet. As you create manuals, the system will learn and remember best practices.';
+                    }
+                    
+                    addMessage('assistant', msg);
+                }
+            });
+    }
+
+    // Initialize manual generator on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        setTimeout(function() {
+            checkManualsStatus();
+        }, 500);
+    });
+
+    // =============================================================================
+    // CASE STUDY GENERATOR FUNCTIONS - Added February 21, 2026
+    // Updated February 22, 2026 - Added viewWebsitePackage() and 🌐 Web button
+    // =============================================================================
+
+    function checkCaseStudiesStatus() {
+        fetch('/api/case-studies/status')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var statusDiv = document.getElementById('caseStudiesStatus');
+                if (data.available) {
+                    statusDiv.innerHTML = '<strong>✅ Status:</strong> Ready — AI generation online';
+                    loadSavedCaseStudies();
+                } else {
+                    statusDiv.innerHTML = '<strong>⚠️ Status:</strong> Not available';
+                }
+            })
+            .catch(function() {
+                var statusDiv = document.getElementById('caseStudiesStatus');
+                if (statusDiv) statusDiv.innerHTML = '<strong>❌ Status:</strong> Error connecting';
+            });
+    }
+
+    function loadSavedCaseStudies() {
+        fetch('/api/case-studies/list')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var listDiv = document.getElementById('savedCaseStudiesList');
+                if (!listDiv) return;
+                if (data.success && data.case_studies && data.case_studies.length > 0) {
+                    var html = '';
+                    data.case_studies.forEach(function(study) {
+                        html += '<div style="padding: 10px; background: white; border-radius: 6px; margin-bottom: 8px; border-left: 3px solid #667eea; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">';
+                        html += '<div style="font-size: 12px; font-weight: 600; color: #333; margin-bottom: 4px;">' + escapeHtml(study.title) + '</div>';
+                        html += '<div style="font-size: 11px; color: #888; margin-bottom: 8px;">' + (study.industry_display || study.industry) + '</div>';
+                        // ---- 4-button row: View | Word | Web | Delete ----
+                        html += '<div style="display: flex; gap: 5px;">';
+                        html += '<button onclick="viewCaseStudy(' + study.id + ')" style="flex: 1; padding: 5px; font-size: 11px; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer;">👁 View</button>';
+                        html += '<button onclick="downloadCaseStudy(' + study.id + ')" style="flex: 1; padding: 5px; font-size: 11px; background: #4caf50; color: white; border: none; border-radius: 4px; cursor: pointer;">⬇ Word</button>';
+                        html += '<button onclick="viewWebsitePackage(' + study.id + ')" style="flex: 1; padding: 5px; font-size: 11px; background: #1976d2; color: white; border: none; border-radius: 4px; cursor: pointer;" title="Generate SEO title, meta description, URL slug, FAQs, and JSON-LD schema for website publishing">🌐 Web</button>';
+                        html += '<button onclick="deleteCaseStudy(' + study.id + ')" style="flex: 1; padding: 5px; font-size: 11px; background: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer;">🗑</button>';
+                        html += '</div></div>';
+                    });
+                    listDiv.innerHTML = html;
+                } else {
+                    listDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 15px; font-size: 12px;">No case studies yet</div>';
+                }
+            });
+    }
+
+    function generateCaseStudy() {
+        var industry = document.getElementById('csIndustry').value;
+        var problem = document.getElementById('csProblem').value.trim();
+        var solution = document.getElementById('csSolution').value.trim();
+
+        if (!industry) { alert('Please select an industry'); return; }
+        if (!problem || problem.length < 20) { alert('Please describe the problem (at least 20 characters)'); return; }
+        if (!solution || solution.length < 20) { alert('Please describe the solution (at least 20 characters)'); return; }
+
+        addMessage('user', '✍️ Generate case study — Industry: ' + industry + '\nProblem: ' + problem + '\nSolution: ' + solution);
+
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        document.querySelector('.loading-text').textContent = 'Generating SEO-optimized case study... (30-60 seconds)';
+
+        fetch('/api/case-studies/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ industry: industry, problem: problem, solution: solution })
+        })
         .then(function(r) { return r.json(); })
         .then(function(data) {
             loading.classList.remove('active');
             if (data.success) {
-                var msg = '# 📝 All Manual Projects\n\n';
-                
-                if (data.manuals && data.manuals.length > 0) {
-                    data.manuals.forEach(function(manual) {
-                        msg += '### ' + manual.client_name;
-                        if (manual.facility_name) msg += ' - ' + manual.facility_name;
-                        msg += '\n';
-                        msg += '- **Status:** ' + manual.project_status.replace(/_/g, ' ') + '\n';
-                        msg += '- **ID:** ' + manual.id + ' (Click to continue)\n\n';
-                    });
-                } else {
-                    msg += 'No manual projects found.';
-                }
-                
+                var msg = '✅ **Case study generated!**\n\n';
+                msg += '**Title:** ' + data.title + '\n';
+                msg += '**Industry:** ' + data.industry_display + '\n';
+                msg += '**Word Count:** ~' + data.word_count + ' words\n\n';
+                msg += '---\n\n' + data.content + '\n\n---\n\n';
+                msg += '**ID ' + data.id + '** saved to library. Use the ⬇ Word button to download, or 🌐 Web for website publishing package.';
                 addMessage('assistant', msg);
-            }
-        });
-}
-
-function viewLessons() {
-    addMessage('user', '💡 View Lessons Learned');
-    
-    var loading = document.getElementById('loadingIndicator');
-    loading.classList.add('active');
-    
-    fetch('/api/manuals/lessons')
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            loading.classList.remove('active');
-            if (data.success) {
-                var msg = '# 💡 Lessons Learned\n\n';
-                
-                if (data.lessons && data.lessons.length > 0) {
-                    data.lessons.forEach(function(lesson) {
-                        msg += '### ' + lesson.lesson_category + '\n';
-                        msg += lesson.lesson_text + '\n';
-                        if (lesson.industry) msg += '_Industry: ' + lesson.industry + '_\n';
-                        msg += '\n';
-                    });
-                } else {
-                    msg += 'No lessons recorded yet. As you create manuals, the system will learn and remember best practices.';
-                }
-                
-                addMessage('assistant', msg);
-            }
-        });
-}
-
-// Initialize manual generator on page load
-document.addEventListener('DOMContentLoaded', function() {
-    setTimeout(function() {
-        checkManualsStatus();
-    }, 500);
-});     
-        // =============================================================================
-// CASE STUDY GENERATOR FUNCTIONS - Added February 21, 2026
-// =============================================================================
-
-function checkCaseStudiesStatus() {
-    fetch('/api/case-studies/status')
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            var statusDiv = document.getElementById('caseStudiesStatus');
-            if (data.available) {
-                statusDiv.innerHTML = '<strong>✅ Status:</strong> Ready — AI generation online';
+                document.getElementById('csProblem').value = '';
+                document.getElementById('csSolution').value = '';
+                document.getElementById('csIndustry').value = '';
                 loadSavedCaseStudies();
             } else {
-                statusDiv.innerHTML = '<strong>⚠️ Status:</strong> Not available';
+                var errMsg = '❌ Generation failed: ' + (data.error || 'Unknown error');
+                if (data.errors) errMsg += '\n' + data.errors.join('\n');
+                addMessage('assistant', errMsg);
             }
         })
-        .catch(function() {
-            var statusDiv = document.getElementById('caseStudiesStatus');
-            if (statusDiv) statusDiv.innerHTML = '<strong>❌ Status:</strong> Error connecting';
+        .catch(function(err) {
+            loading.classList.remove('active');
+            addMessage('assistant', '❌ Error: ' + err.message);
         });
-}
+    }
 
-function loadSavedCaseStudies() {
-    fetch('/api/case-studies/list')
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            var listDiv = document.getElementById('savedCaseStudiesList');
-            if (!listDiv) return;
-            if (data.success && data.case_studies && data.case_studies.length > 0) {
-                var html = '';
-                data.case_studies.forEach(function(study) {
-                    html += '<div style="padding: 10px; background: white; border-radius: 6px; margin-bottom: 8px; border-left: 3px solid #667eea; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">';
-                    html += '<div style="font-size: 12px; font-weight: 600; color: #333; margin-bottom: 4px;">' + escapeHtml(study.title) + '</div>';
-                    html += '<div style="font-size: 11px; color: #888; margin-bottom: 8px;">' + (study.industry_display || study.industry) + '</div>';
-                    html += '<div style="display: flex; gap: 5px;">';
-                    html += '<button onclick="viewCaseStudy(' + study.id + ')" style="flex: 1; padding: 5px; font-size: 11px; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer;">👁 View</button>';
-                    html += '<button onclick="downloadCaseStudy(' + study.id + ')" style="flex: 1; padding: 5px; font-size: 11px; background: #4caf50; color: white; border: none; border-radius: 4px; cursor: pointer;">⬇ Word</button>';
-                    html += '<button onclick="deleteCaseStudy(' + study.id + ')" style="flex: 1; padding: 5px; font-size: 11px; background: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer;">🗑</button>';
-                    html += '</div></div>';
-                });
-                listDiv.innerHTML = html;
-            } else {
-                listDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 15px; font-size: 12px;">No case studies yet</div>';
+    function viewCaseStudy(studyId) {
+        fetch('/api/case-studies/' + studyId)
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.success) {
+                    var study = data.case_study;
+                    addMessage('assistant', '## ' + study.title + '\n\n' + study.content);
+                } else {
+                    addMessage('assistant', '❌ Could not load case study');
+                }
+            });
+    }
+
+    function downloadCaseStudy(studyId) {
+        window.location.href = '/api/case-studies/download/' + studyId;
+    }
+
+    function deleteCaseStudy(studyId) {
+        if (!confirm('Delete this case study? This cannot be undone.')) return;
+        fetch('/api/case-studies/' + studyId, { method: 'DELETE' })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.success) {
+                    loadSavedCaseStudies();
+                    addMessage('assistant', '🗑 Case study deleted.');
+                }
+            });
+    }
+
+    // =============================================================================
+    // WEBSITE READY PACKAGE - Added February 22, 2026
+    // Generates SEO title, meta description, URL slug, FAQs, and JSON-LD
+    // for direct website publishing
+    // =============================================================================
+
+    /**
+     * Copy text to clipboard and briefly toggle the button to "Copied!" state.
+     * @param {string} text  - The text to copy
+     * @param {string} btnId - The id of the copy button element
+     */
+    function copyToClipboard(text, btnId) {
+        navigator.clipboard.writeText(text).then(function() {
+            var btn = document.getElementById(btnId);
+            if (btn) {
+                var original = btn.textContent;
+                btn.textContent = '✅ Copied!';
+                btn.classList.add('copied');
+                setTimeout(function() {
+                    btn.textContent = original;
+                    btn.classList.remove('copied');
+                }, 2000);
+            }
+        }).catch(function() {
+            // Fallback for browsers without Clipboard API
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+            var btn = document.getElementById(btnId);
+            if (btn) {
+                var original = btn.textContent;
+                btn.textContent = '✅ Copied!';
+                btn.classList.add('copied');
+                setTimeout(function() {
+                    btn.textContent = original;
+                    btn.classList.remove('copied');
+                }, 2000);
             }
         });
-}
+    }
 
-function generateCaseStudy() {
-    var industry = document.getElementById('csIndustry').value;
-    var problem = document.getElementById('csProblem').value.trim();
-    var solution = document.getElementById('csSolution').value.trim();
+    /**
+     * Fetch and display the Website Ready Package for a case study.
+     * Calls GET /api/case-studies/<studyId>/website-package
+     * Displays results in the main conversation area with copy buttons.
+     */
+    function viewWebsitePackage(studyId) {
+        addMessage('user', '🌐 Generate Website Ready Package for Case Study #' + studyId);
 
-    if (!industry) { alert('Please select an industry'); return; }
-    if (!problem || problem.length < 20) { alert('Please describe the problem (at least 20 characters)'); return; }
-    if (!solution || solution.length < 20) { alert('Please describe the solution (at least 20 characters)'); return; }
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+        document.querySelector('.loading-text').textContent = 'Generating SEO metadata and schema markup... (15-30 seconds)';
 
-    addMessage('user', '✍️ Generate case study — Industry: ' + industry + '\nProblem: ' + problem + '\nSolution: ' + solution);
+        fetch('/api/case-studies/' + studyId + '/website-package')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                loading.classList.remove('active');
 
-    var loading = document.getElementById('loadingIndicator');
-    loading.classList.add('active');
-    document.querySelector('.loading-text').textContent = 'Generating SEO-optimized case study... (30-60 seconds)';
+                if (!data.success) {
+                    addMessage('assistant', '❌ Website package failed: ' + (data.error || 'Unknown error'));
+                    return;
+                }
 
-    fetch('/api/case-studies/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ industry: industry, problem: problem, solution: solution })
-    })
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-        loading.classList.remove('active');
-        if (data.success) {
-            var msg = '✅ **Case study generated!**\n\n';
-            msg += '**Title:** ' + data.title + '\n';
-            msg += '**Industry:** ' + data.industry_display + '\n';
-            msg += '**Word Count:** ~' + data.word_count + ' words\n\n';
-            msg += '---\n\n' + data.content + '\n\n---\n\n';
-            msg += '**ID ' + data.id + '** saved to library. Use the Word button to download.';
-            addMessage('assistant', msg);
-            document.getElementById('csProblem').value = '';
-            document.getElementById('csSolution').value = '';
-            document.getElementById('csIndustry').value = '';
-            loadSavedCaseStudies();
-        } else {
-            var errMsg = '❌ Generation failed: ' + (data.error || 'Unknown error');
-            if (data.errors) errMsg += '\n' + data.errors.join('\n');
-            addMessage('assistant', errMsg);
-        }
-    })
-    .catch(function(err) {
-        loading.classList.remove('active');
-        addMessage('assistant', '❌ Error: ' + err.message);
+                // ---- Build the display HTML ----
+                // Each section has a label, content, and a copy button with a unique id.
+                var titleLen = data.seo_title.length;
+                var descLen = data.meta_description.length;
+                var titleCountClass = titleLen <= 60 ? 'wp-char-ok' : 'wp-char-warn';
+                var descCountClass = descLen <= 160 ? 'wp-char-ok' : 'wp-char-warn';
+
+                var uid = 'wp' + studyId + '_' + Date.now(); // unique prefix to avoid id collisions
+
+                var html = '<h3>🌐 Website Ready Package</h3>';
+                html += '<p style="font-size: 12px; color: #888; margin-bottom: 16px;">';
+                html += escapeHtml(data.study_title) + ' — ' + escapeHtml(data.industry_display);
+                html += '</p>';
+
+                // SEO Title
+                html += '<div class="wp-section">';
+                html += '<div class="wp-section-label">SEO Page Title</div>';
+                html += '<div class="wp-section-content" id="' + uid + '_title">' + escapeHtml(data.seo_title) + '</div>';
+                html += '<div class="wp-char-count"><span class="' + titleCountClass + '">' + titleLen + ' characters</span> (max 60)</div>';
+                html += '<button class="wp-copy-btn" id="' + uid + '_copytitle" onclick="copyToClipboard(document.getElementById(\'' + uid + '_title\').textContent, \'' + uid + '_copytitle\')">📋 Copy Title</button>';
+                html += '</div>';
+
+                // Meta Description
+                html += '<div class="wp-section">';
+                html += '<div class="wp-section-label">Meta Description</div>';
+                html += '<div class="wp-section-content" id="' + uid + '_desc">' + escapeHtml(data.meta_description) + '</div>';
+                html += '<div class="wp-char-count"><span class="' + descCountClass + '">' + descLen + ' characters</span> (max 160)</div>';
+                html += '<button class="wp-copy-btn" id="' + uid + '_copydesc" onclick="copyToClipboard(document.getElementById(\'' + uid + '_desc\').textContent, \'' + uid + '_copydesc\')">📋 Copy Description</button>';
+                html += '</div>';
+
+                // URL Slug
+                html += '<div class="wp-section">';
+                html += '<div class="wp-section-label">URL Slug</div>';
+                html += '<div class="wp-section-content" id="' + uid + '_slug" style="font-family: monospace; font-size: 13px; background: #f5f5f5; padding: 6px 10px; border-radius: 4px;">' + escapeHtml(data.url_slug) + '</div>';
+                html += '<button class="wp-copy-btn" id="' + uid + '_copyslug" onclick="copyToClipboard(document.getElementById(\'' + uid + '_slug\').textContent.trim(), \'' + uid + '_copyslug\')">📋 Copy Slug</button>';
+                html += '</div>';
+
+                // FAQs
+                if (data.faqs && data.faqs.length > 0) {
+                    html += '<div class="wp-section">';
+                    html += '<div class="wp-section-label">FAQ Section (' + data.faqs.length + ' questions)</div>';
+
+                    data.faqs.forEach(function(faq, idx) {
+                        var faqId = uid + '_faq' + idx;
+                        // Store Q+A as a hidden span for copy
+                        var faqText = 'Q: ' + faq.question + '\nA: ' + faq.answer;
+                        html += '<div class="wp-faq-item">';
+                        html += '<div class="wp-faq-q">Q: ' + escapeHtml(faq.question) + '</div>';
+                        html += '<div class="wp-faq-a">A: ' + escapeHtml(faq.answer) + '</div>';
+                        html += '<span id="' + faqId + '" style="display:none;">' + escapeHtml(faqText) + '</span>';
+                        html += '<button class="wp-copy-btn" id="' + faqId + '_btn" onclick="copyToClipboard(document.getElementById(\'' + faqId + '\').textContent, \'' + faqId + '_btn\')">📋 Copy Q&amp;A</button>';
+                        html += '</div>';
+                    });
+
+                    // Copy-all FAQs button
+                    var allFaqs = data.faqs.map(function(f, i) { return 'Q' + (i+1) + ': ' + f.question + '\nA: ' + f.answer; }).join('\n\n');
+                    html += '<span id="' + uid + '_allfaqs" style="display:none;">' + escapeHtml(allFaqs) + '</span>';
+                    html += '<button class="wp-copy-btn" id="' + uid + '_copyallfaqs" style="margin-top: 6px; width: 100%;" onclick="copyToClipboard(document.getElementById(\'' + uid + '_allfaqs\').textContent, \'' + uid + '_copyallfaqs\')">📋 Copy All FAQs</button>';
+                    html += '</div>';
+                }
+
+                // JSON-LD Schema
+                html += '<div class="wp-section">';
+                html += '<div class="wp-section-label">JSON-LD Schema Markup</div>';
+                html += '<div style="font-size: 11px; color: #888; margin-bottom: 6px;">Paste inside a &lt;script type="application/ld+json"&gt; tag in your page &lt;head&gt;</div>';
+                html += '<div class="wp-jsonld-block" id="' + uid + '_jsonld">' + escapeHtml(data.json_ld_string) + '</div>';
+                html += '<button class="wp-copy-btn" id="' + uid + '_copyjsonld" style="margin-top: 8px; width: 100%;" onclick="copyToClipboard(document.getElementById(\'' + uid + '_jsonld\').textContent, \'' + uid + '_copyjsonld\')">📋 Copy JSON-LD</button>';
+                html += '</div>';
+
+                html += '<p style="font-size: 11px; color: #aaa; margin-top: 10px;">Generated ' + data.generated_at + '</p>';
+
+                addMessage('assistant', html, null, 'casestudies');
+            })
+            .catch(function(err) {
+                loading.classList.remove('active');
+                addMessage('assistant', '❌ Error fetching website package: ' + err.message);
+            });
+    }
+
+    // Wire up Case Studies tab initialization
+    document.addEventListener('DOMContentLoaded', function() {
+        setTimeout(function() {
+            checkCaseStudiesStatus();
+        }, 600);
     });
-}
-
-function viewCaseStudy(studyId) {
-    fetch('/api/case-studies/' + studyId)
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            if (data.success) {
-                var study = data.case_study;
-                addMessage('assistant', '## ' + study.title + '\n\n' + study.content);
-            } else {
-                addMessage('assistant', '❌ Could not load case study');
-            }
-        });
-}
-
-function downloadCaseStudy(studyId) {
-    window.location.href = '/api/case-studies/download/' + studyId;
-}
-
-function deleteCaseStudy(studyId) {
-    if (!confirm('Delete this case study? This cannot be undone.')) return;
-    fetch('/api/case-studies/' + studyId, { method: 'DELETE' })
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            if (data.success) {
-                loadSavedCaseStudies();
-                addMessage('assistant', '🗑 Case study deleted.');
-            }
-        });
-}
-
-// Wire up Case Studies tab initialization
-document.addEventListener('DOMContentLoaded', function() {
-    setTimeout(function() {
-        checkCaseStudiesStatus();
-    }, 600);
-});
     </script>
 </body>
 </html>
 
-<!-- 
+<!--
 =============================================================================
 INDEX.HTML - AI Swarm Unified Interface
-Updated: January 24, 2026
-Changes: Added modal-based Add Lead form with industry dropdown to prevent typos
-I did no harm and this file is not truncated 
+Updated: February 22, 2026
+Changes: Added Website Ready package feature to Case Study Generator.
+         Added viewWebsitePackage() JS function + copyToClipboard() helper.
+         Added 🌐 Web button to each saved case study card.
+         Added CSS styles for website package display (.wp-section, .wp-copy-btn, etc.)
+I did no harm and this file is not truncated
 =============================================================================
 -->
