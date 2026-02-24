@@ -79,10 +79,16 @@ except Exception as e:
     print(f"ℹ️  Projects migration: {e}")
 
 # Blog Posts table migration (CRITICAL - for SEO optimization)
+print("🔍 DEBUG: About to attempt blog_posts migration import...")
 try:
     from add_blog_posts_table import add_blog_posts_table
+    print("🔍 DEBUG: Import successful, calling function...")
     add_blog_posts_table()
     print("✅ Blog Posts table migration complete!")
+except ImportError as ie:
+    print(f"❌ Blog Posts migration IMPORT ERROR: {ie}")
+    import traceback
+    traceback.print_exc()
 except Exception as e:
     print(f"⚠️  Blog Posts migration failed: {e}")
     import traceback
