@@ -2609,31 +2609,53 @@ document.addEventListener('DOMContentLoaded', function() {
     /**
      * Load and render the saved blog posts library in the sidebar.
      */
-    function loadSavedBlogPosts() {
-        fetch('/api/blog-posts/list')
-            .then(function(r) { return r.json(); })
-            .then(function(data) {
-                var listDiv = document.getElementById('savedBlogPostsList');
-                if (!listDiv) return;
-                if (data.success && data.blog_posts && data.blog_posts.length > 0) {
-                    var html = '';
-                    data.blog_posts.forEach(function(post) {
-                        html += '<div style="padding: 10px; background: white; border-radius: 6px; margin-bottom: 8px; border-left: 3px solid #2e7d32; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">';
-                        html += '<div style="font-size: 12px; font-weight: 600; color: #333; margin-bottom: 4px;">' + escapeHtml(post.title) + '</div>';
-                        html += '<div style="font-size: 11px; color: #888; margin-bottom: 8px;">' + escapeHtml(post.topic_display) + '</div>';
-                        // 3-button row: View | Word | Delete
-                        html += '<div style="display: flex; gap: 5px;">';
-                        html += '<button onclick="viewBlogPost(' + post.id + ')" style="flex: 1; padding: 5px; font-size: 11px; background: #2e7d32; color: white; border: none; border-radius: 4px; cursor: pointer;">👁 View</button>';
-                        html += '<button onclick="downloadBlogPost(' + post.id + ')" style="flex: 1; padding: 5px; font-size: 11px; background: #4caf50; color: white; border: none; border-radius: 4px; cursor: pointer;">⬇ Word</button>';
-                        html += '<button onclick="deleteBlogPost(' + post.id + ')" style="flex: 1; padding: 5px; font-size: 11px; background: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer;">🗑</button>';
-                        html += '</div></div>';
-                    });
-                    listDiv.innerHTML = html;
-                } else {
-                    listDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 15px; font-size: 12px;">No blog posts yet</div>';
-                }
-            });
-    }
+    /**
+ * Load and render the saved blog posts library in the sidebar.
+ * UPDATED February 25, 2026: Now displays URL slug and meta description
+ */
+function loadSavedBlogPosts() {
+    fetch('/api/blog-posts/list')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var listDiv = document.getElementById('savedBlogPostsList');
+            if (!listDiv) return;
+            if (data.success && data.blog_posts && data.blog_posts.length > 0) {
+                var html = '';
+                data.blog_posts.forEach(function(post) {
+                    html += '<div style="padding: 10px; background: white; border-radius: 6px; margin-bottom: 8px; border-left: 3px solid #2e7d32; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">';
+                    
+                    // Title
+                    html += '<div style="font-size: 12px; font-weight: 600; color: #333; margin-bottom: 4px;">' + escapeHtml(post.title) + '</div>';
+                    
+                    // Topic
+                    html += '<div style="font-size: 11px; color: #888; margin-bottom: 4px;">' + escapeHtml(post.topic_display) + '</div>';
+                    
+                    // URL Slug (NEW - February 25, 2026)
+                    if (post.url_slug) {
+                        html += '<div style="font-size: 10px; color: #2e7d32; background: #e8f5e9; padding: 3px 6px; border-radius: 3px; margin-bottom: 4px; font-family: monospace;">🔗 ' + escapeHtml(post.url_slug) + '</div>';
+                    }
+                    
+                    // Meta Description (NEW - February 25, 2026)
+                    if (post.meta_description) {
+                        var truncatedDesc = post.meta_description.length > 60 
+                            ? post.meta_description.substring(0, 60) + '...' 
+                            : post.meta_description;
+                        html += '<div style="font-size: 10px; color: #666; font-style: italic; margin-bottom: 8px;" title="' + escapeHtml(post.meta_description) + '">💬 ' + escapeHtml(truncatedDesc) + '</div>';
+                    }
+                    
+                    // 3-button row: View | Word | Delete
+                    html += '<div style="display: flex; gap: 5px;">';
+                    html += '<button onclick="viewBlogPost(' + post.id + ')" style="flex: 1; padding: 5px; font-size: 11px; background: #2e7d32; color: white; border: none; border-radius: 4px; cursor: pointer;">👁 View</button>';
+                    html += '<button onclick="downloadBlogPost(' + post.id + ')" style="flex: 1; padding: 5px; font-size: 11px; background: #4caf50; color: white; border: none; border-radius: 4px; cursor: pointer;">⬇ Word</button>';
+                    html += '<button onclick="deleteBlogPost(' + post.id + ')" style="flex: 1; padding: 5px; font-size: 11px; background: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer;">🗑</button>';
+                    html += '</div></div>';
+                });
+                listDiv.innerHTML = html;
+            } else {
+                listDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 15px; font-size: 12px;">No blog posts yet</div>';
+            }
+        });
+}
 
     /**
      * Generate a new blog post from the sidebar form inputs.
