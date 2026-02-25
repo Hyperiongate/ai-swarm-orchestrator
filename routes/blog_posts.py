@@ -39,16 +39,12 @@ try:
         get_all_blog_posts,
         get_blog_post_by_id,
         delete_blog_post,
-        init_blog_posts_table,
         BLOG_TOPICS
     )
     BLOG_POSTS_AVAILABLE = True
     
-    # Initialize table (safe - won't crash if already exists)
-    try:
-        init_blog_posts_table()
-    except Exception as table_error:
-        print(f"[BlogPosts] Table init warning (may already exist): {table_error}")
+    # NOTE: Table initialization is handled by app.py migrations
+    # Do NOT call init_blog_posts_table() here
     
     print("[BlogPosts] Blog Post Generator loaded successfully with SEO enhancement")
 except Exception as e:
