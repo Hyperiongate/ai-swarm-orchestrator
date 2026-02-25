@@ -1,6 +1,6 @@
 """
 BLOG POST GENERATOR - AI-Powered SEO & AI-Search Optimized Blog Posts
-Shiftwork Solutions LLC
+Shiftwork Solutions LLC  
 
 PURPOSE:
     Generates conversational, SEO-optimized blog posts for Shiftwork Solutions
