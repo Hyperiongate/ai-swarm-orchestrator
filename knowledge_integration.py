@@ -1,42 +1,43 @@
 """
 SWARM PROJECT KNOWLEDGE INTEGRATION MODULE - ENHANCED
 Created: January 19, 2026
-Last Updated: February 19, 2026 - ADDED index_single_file() FOR LIVE KB UPDATES
+Last Updated: February 25, 2026 - SAFETY GUARD + DIAGNOSTIC IMPROVEMENTS
 
 CHANGELOG:
 
+- February 25, 2026: SAFETY GUARD + DIAGNOSTIC IMPROVEMENTS
+  * PROBLEM: After database deletion, _index_all_documents() starts with
+    DELETE FROM knowledge_documents. If /mnt/project resolves to 0 files
+    for any reason (path issue, Render mount timing, etc.), the DELETE runs
+    but nothing gets re-inserted — leaving the KB silently empty with no
+    clear error message. The app continues to run appearing healthy.
+  * FIX 1: SAFETY GUARD - _index_all_documents() now counts files BEFORE
+    deleting. If 0 files are found, it aborts immediately and logs a clear
+    CRITICAL error. Existing DB records are preserved. This prevents a bad
+    path from silently wiping a populated KB.
+  * FIX 2: STARTUP SUMMARY - After indexing, logs a clear summary showing
+    exactly how many documents were indexed and from which path. Makes
+    post-deploy verification trivial by reading Render logs.
+  * FIX 3: get_index_status() method added — returns path, file count,
+    document count, ready state. Used by /api/admin/kb-diagnose endpoint
+    in app.py to give real-time KB health info without reading Render logs.
+  * NOTE: The knowledge_extracts and learned_patterns tables managed by
+    document_ingestion_engine.py are SEPARATE from this module's
+    knowledge_documents table. If those were lost when the DB was deleted,
+    they must be re-uploaded through the Knowledge Management UI. This
+    module only manages the auto-indexed project files from GitHub.
+
 - February 19, 2026 (Session 2): ADDED index_single_file() FOR LIVE KB UPDATES
-  * PROBLEM: Files uploaded through the app UI were analyzed on-demand but never
-    added to the knowledge base index. They had no lasting value beyond the single
-    conversation in which they were uploaded. The KB only contained files from the
-    GitHub project_files/ folder, indexed at startup.
-  * FIX: Added public method index_single_file(file_path) that indexes any file
-    into the live KB immediately after upload. Uses all existing private methods
-    (_extract_content, _extract_metadata, _extract_semantic_keywords) so behavior
-    is identical to startup indexing. Also updates self.document_terms and
-    self.global_term_frequency in memory so TF-IDF scoring stays accurate for
-    all future searches without requiring a restart.
-  * Uses INSERT OR REPLACE so re-uploading the same filename updates the record.
-  * Wrapped in full error handling - KB failure never breaks an upload.
+  * Files uploaded through the UI are now indexed into the live KB immediately.
+  * Uses INSERT OR REPLACE so re-uploading updates existing records.
   * Called from routes/handlers/file_handler.py after every successful file save.
-  * Returns dict with success bool, filename, and word_count for logging.
 
 - February 19, 2026 (Session 1): TOKENIZER AND SEARCH FIXES
-  * PROBLEM 1: _tokenize() used regex r'\b[a-z]+\b' which only matched pure
-    alphabetic words. All numeric shiftwork terms were invisible to the indexer:
-    20/60/20, 2-2-3, 24/7, 12-hour, 8-hour, 70/70, etc.
-  * FIX 1: New regex r'[a-z0-9]+(?:[-/][a-z0-9]+)*' captures alphanumeric
-    tokens including hyphens and slashes.
-  * PROBLEM 2: _wait_for_ready() timeout was 2 seconds - requests in first 28
-    seconds of startup returned empty results silently.
-  * FIX 2: get_context_for_task() timeout increased to 15 seconds.
-  * PROBLEM 3: _extract_smart_excerpt() excerpts always fell back to first 100
-    words because numeric terms never matched query_terms.
-  * FIX 3: Excerpt word comparison now normalizes using same tokenizer logic.
-  * PROBLEM 4: max_context default of 5000 chars truncated useful content.
-  * FIX 4: Increased max_context default to 8000.
-  * PROBLEM 5: _extract_keywords() missing numeric shiftwork terms.
-  * FIX 5: Added 20/60/20, 2-2-3, 24/7, 12-hour, 8-hour, 10-hour, 70/70.
+  * Fixed _tokenize() to capture numeric shiftwork terms: 20/60/20, 2-2-3, 24/7
+  * Increased _wait_for_ready() timeout to 15 seconds
+  * Improved _extract_smart_excerpt() to find numeric terms in excerpts
+  * Increased max_context default to 8000 characters
+  * Added numeric shiftwork terms to _extract_keywords()
 
 - February 18, 2026: BACKGROUND THREADING FIX
   * Added initialize_background() - gunicorn starts instantly, KB indexes in ~30s
@@ -57,6 +58,13 @@ PURPOSE:
 Integrates the entire Shiftwork Solutions project knowledge base into the AI Swarm,
 giving it access to hundreds of facilities worth of expertise, templates, frameworks,
 and methodologies.
+
+IMPORTANT - TWO SEPARATE KNOWLEDGE SYSTEMS:
+1. THIS MODULE (knowledge_documents table): Auto-indexes GitHub project files from
+   /mnt/project at startup. Self-healing — rebuilds from GitHub files on every deploy.
+2. document_ingestion_engine.py (knowledge_extracts + learned_patterns tables):
+   Stores manually uploaded documents. NOT self-healing — data is lost if DB is
+   deleted and must be re-uploaded through the Knowledge Management UI.
 
 AUTHOR: Jim @ Shiftwork Solutions LLC
 """
@@ -108,6 +116,7 @@ class EnhancedProjectKnowledgeBase:
     6. Background initialization (February 18, 2026) - gunicorn starts instantly
     7. Fixed tokenizer (February 19, 2026) - numeric terms now indexed correctly
     8. Live file indexing (February 19, 2026) - uploaded files join the KB index
+    9. Safety guard (February 25, 2026) - zero-file path never wipes populated KB
     """
 
     def __init__(self, project_path="/mnt/project", db_path="swarm_intelligence.db"):
@@ -122,6 +131,11 @@ class EnhancedProjectKnowledgeBase:
         self._initialization_complete = threading.Event()
         self._db_lock = threading.Lock()
         self._init_thread = None
+
+        # Diagnostic tracking (Added February 25, 2026)
+        self._source_path_used = None
+        self._files_found_at_init = 0
+        self._init_error = None
 
     # =========================================================================
     # BACKGROUND INITIALIZATION (Added February 18, 2026)
@@ -151,6 +165,7 @@ class EnhancedProjectKnowledgeBase:
         try:
             self.initialize()
         except Exception as e:
+            self._init_error = str(e)
             print(f"Background knowledge base initialization failed: {e}")
             import traceback
             print(traceback.format_exc())
@@ -192,10 +207,22 @@ class EnhancedProjectKnowledgeBase:
 
         self._initialization_complete.set()
 
-        print(f"ENHANCED Knowledge Base Ready:")
-        print(f"   {len(self.knowledge_index)} documents indexed")
-        print(f"   {len(self.global_term_frequency)} unique terms")
-        print(f"   Semantic search enabled")
+        doc_count = len(self.knowledge_index)
+        term_count = len(self.global_term_frequency)
+
+        # Clear startup summary for post-deploy log verification
+        print("=" * 60)
+        print("KNOWLEDGE BASE INITIALIZATION COMPLETE")
+        print(f"  Source path  : {self._source_path_used or self.project_path}")
+        print(f"  Files found  : {self._files_found_at_init}")
+        print(f"  Docs indexed : {doc_count}")
+        print(f"  Unique terms : {term_count}")
+        if self._init_error:
+            print(f"  ERROR        : {self._init_error}")
+        if doc_count == 0:
+            print("  WARNING: Zero documents in index — KB searches will return empty.")
+            print("  Check that /mnt/project is mounted and contains your GitHub files.")
+        print("=" * 60)
 
     def _create_knowledge_table(self):
         """Create enhanced knowledge_documents table with citation tracking"""
@@ -295,91 +322,214 @@ class EnhancedProjectKnowledgeBase:
         return tf * idf
 
     def _index_all_documents(self):
-        """Extract and index all documents from the project knowledge base"""
+        """
+        Extract and index all documents from the project knowledge base.
+
+        SAFETY GUARD (Added February 25, 2026):
+        Before deleting existing records, this method counts the files available
+        at the source path. If zero files are found, it aborts immediately and
+        preserves any existing records in the database. This prevents a bad
+        path resolution or timing issue on Render from silently wiping a
+        populated knowledge base.
+        """
+        self._source_path_used = str(self.project_path)
+
         if not self.project_path.exists():
-            print(f"Project path not found: {self.project_path}")
+            self._init_error = f"Project path does not exist: {self.project_path}"
+            print(f"  CRITICAL: {self._init_error}")
+            print(f"  Existing knowledge_documents records preserved.")
             return
+
+        # Count available files BEFORE touching the database
+        available_files = [f for f in self.project_path.iterdir() if f.is_file()]
+        self._files_found_at_init = len(available_files)
+
+        if self._files_found_at_init == 0:
+            self._init_error = (
+                f"SAFETY GUARD TRIGGERED: Zero files found at {self.project_path}. "
+                f"Aborting index — existing knowledge_documents records preserved."
+            )
+            print(f"  CRITICAL: {self._init_error}")
+            print(f"  This may indicate a Render mount issue or incorrect path.")
+            print(f"  Check /api/admin/kb-diagnose for current KB state.")
+            return
+
+        print(f"  Found {self._files_found_at_init} files at {self.project_path} — proceeding with indexing.")
 
         with self._db_lock:
             db = sqlite3.connect(self.db_path, check_same_thread=False)
 
+            # Safe to delete now — we confirmed files exist to replace them
             db.execute('DELETE FROM knowledge_documents')
             db.commit()
 
-            for file_path in self.project_path.iterdir():
-                if file_path.is_file():
-                    try:
-                        content = self._extract_content(file_path)
-                        if content:
-                            metadata = self._extract_metadata(file_path, content)
-                            semantic_keywords = self._extract_semantic_keywords(content)
+            indexed_count = 0
+            error_count = 0
 
-                            db.execute('''
-                                INSERT INTO knowledge_documents
-                                (filename, file_type, title, content, keywords, category,
-                                 word_count, metadata, semantic_keywords)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            ''', (
-                                file_path.name,
-                                file_path.suffix,
-                                metadata['title'],
-                                content[:50000],
-                                metadata['keywords'],
-                                metadata['category'],
-                                metadata['word_count'],
-                                json.dumps(metadata),
-                                ', '.join(semantic_keywords[:50])
-                            ))
+            for file_path in available_files:
+                try:
+                    content = self._extract_content(file_path)
+                    if content:
+                        metadata = self._extract_metadata(file_path, content)
+                        semantic_keywords = self._extract_semantic_keywords(content)
 
-                            self.knowledge_index[file_path.name] = {
-                                'content': content,
-                                'metadata': metadata,
-                                'semantic_keywords': semantic_keywords
-                            }
+                        db.execute('''
+                            INSERT INTO knowledge_documents
+                            (filename, file_type, title, content, keywords, category,
+                             word_count, metadata, semantic_keywords)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', (
+                            file_path.name,
+                            file_path.suffix,
+                            metadata['title'],
+                            content[:50000],
+                            metadata['keywords'],
+                            metadata['category'],
+                            metadata['word_count'],
+                            json.dumps(metadata),
+                            ', '.join(semantic_keywords[:50])
+                        ))
 
-                            print(f"  Indexed: {file_path.name} ({metadata['word_count']} words)")
+                        self.knowledge_index[file_path.name] = {
+                            'content': content,
+                            'metadata': metadata,
+                            'semantic_keywords': semantic_keywords
+                        }
 
-                    except Exception as e:
-                        error_msg = str(e)
-                        if "File is not a zip file" in error_msg or "not a zip file" in error_msg.lower():
-                            try:
-                                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                                    content = f.read()
-                                    if content:
-                                        metadata = self._extract_metadata(file_path, content)
-                                        semantic_keywords = self._extract_semantic_keywords(content)
+                        indexed_count += 1
+                        print(f"  Indexed: {file_path.name} ({metadata['word_count']} words)")
 
-                                        db.execute('''
-                                            INSERT INTO knowledge_documents
-                                            (filename, file_type, title, content, keywords, category,
-                                             word_count, metadata, semantic_keywords)
-                                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                        ''', (
-                                            file_path.name,
-                                            file_path.suffix,
-                                            metadata['title'],
-                                            content[:50000],
-                                            metadata['keywords'],
-                                            metadata['category'],
-                                            metadata['word_count'],
-                                            json.dumps(metadata),
-                                            ', '.join(semantic_keywords[:50])
-                                        ))
-                                        self.knowledge_index[file_path.name] = {
-                                            'content': content,
-                                            'metadata': metadata,
-                                            'semantic_keywords': semantic_keywords
-                                        }
-                                        print(f"  Indexed: {file_path.name} ({metadata['word_count']} words) [as text]")
-                            except Exception:
-                                pass
-                        elif "EOF marker not found" in error_msg:
-                            pass
-                        else:
-                            print(f"  Error indexing {file_path.name}: {e}")
+                except Exception as e:
+                    error_msg = str(e)
+                    if "File is not a zip file" in error_msg or "not a zip file" in error_msg.lower():
+                        # Fallback: try reading as plain text
+                        try:
+                            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                                content = f.read()
+                                if content:
+                                    metadata = self._extract_metadata(file_path, content)
+                                    semantic_keywords = self._extract_semantic_keywords(content)
+
+                                    db.execute('''
+                                        INSERT INTO knowledge_documents
+                                        (filename, file_type, title, content, keywords, category,
+                                         word_count, metadata, semantic_keywords)
+                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                    ''', (
+                                        file_path.name,
+                                        file_path.suffix,
+                                        metadata['title'],
+                                        content[:50000],
+                                        metadata['keywords'],
+                                        metadata['category'],
+                                        metadata['word_count'],
+                                        json.dumps(metadata),
+                                        ', '.join(semantic_keywords[:50])
+                                    ))
+                                    self.knowledge_index[file_path.name] = {
+                                        'content': content,
+                                        'metadata': metadata,
+                                        'semantic_keywords': semantic_keywords
+                                    }
+                                    indexed_count += 1
+                                    print(f"  Indexed: {file_path.name} ({metadata['word_count']} words) [as text]")
+                        except Exception:
+                            error_count += 1
+                    elif "EOF marker not found" in error_msg:
+                        error_count += 1
+                    else:
+                        print(f"  Error indexing {file_path.name}: {e}")
+                        error_count += 1
 
             db.commit()
             db.close()
+
+            print(f"  Indexing complete: {indexed_count} indexed, {error_count} errors")
+
+    # =========================================================================
+    # DIAGNOSTIC METHOD (Added February 25, 2026)
+    # =========================================================================
+
+    def get_index_status(self):
+        """
+        Return current knowledge base status for the /api/admin/kb-diagnose endpoint.
+
+        Provides real-time visibility into what the KB actually contains,
+        what path it loaded from, and whether initialization succeeded.
+        Allows post-deploy verification without reading Render logs.
+
+        Returns:
+            dict with full diagnostic information
+        """
+        # Count records currently in DB
+        db_doc_count = 0
+        db_error = None
+        db_files = []
+        try:
+            with self._db_lock:
+                db = sqlite3.connect(self.db_path, check_same_thread=False)
+                row = db.execute(
+                    'SELECT COUNT(*) FROM knowledge_documents'
+                ).fetchone()
+                db_doc_count = row[0] if row else 0
+
+                # List the actual filenames in DB
+                rows = db.execute(
+                    'SELECT filename, word_count, category FROM knowledge_documents ORDER BY filename'
+                ).fetchall()
+                db_files = [
+                    {'filename': r[0], 'word_count': r[1], 'category': r[2]}
+                    for r in rows
+                ]
+                db.close()
+        except Exception as e:
+            db_error = str(e)
+
+        return {
+            'is_ready': self.is_ready,
+            'initialization_complete': self.is_ready,
+            'init_error': self._init_error,
+            'source_path': self._source_path_used or str(self.project_path),
+            'source_path_exists': self.project_path.exists(),
+            'files_found_at_init': self._files_found_at_init,
+            'documents_in_memory': len(self.knowledge_index),
+            'unique_terms_in_memory': len(self.global_term_frequency),
+            'documents_in_database': db_doc_count,
+            'database_error': db_error,
+            'database_files': db_files,
+            'memory_filenames': sorted(list(self.knowledge_index.keys())),
+            'safety_guard_triggered': (
+                self._files_found_at_init == 0 and self._init_error is not None
+            ),
+            'diagnosis': self._generate_diagnosis(db_doc_count)
+        }
+
+    def _generate_diagnosis(self, db_doc_count):
+        """Generate a plain-English diagnosis of KB health."""
+        if not self.is_ready:
+            return "KB is still initializing — wait 30 seconds and retry."
+        if self._init_error and 'SAFETY GUARD' in (self._init_error or ''):
+            return (
+                "SAFETY GUARD TRIGGERED: Zero files found at source path. "
+                "KB was NOT wiped. Check Render environment — /mnt/project may not "
+                "be mounted correctly. Existing DB records are intact."
+            )
+        if self._init_error:
+            return f"Initialization error: {self._init_error}"
+        if len(self.knowledge_index) == 0 and db_doc_count == 0:
+            return (
+                "KB is empty. Source path was accessible but contained no indexable files. "
+                "Verify /mnt/project is populated in Render."
+            )
+        if len(self.knowledge_index) == 0 and db_doc_count > 0:
+            return (
+                f"WARNING: Memory index is empty but DB has {db_doc_count} records. "
+                "This should not happen — may indicate a threading issue."
+            )
+        return (
+            f"KB is healthy. {len(self.knowledge_index)} documents indexed from "
+            f"{self._source_path_used}."
+        )
 
     # =========================================================================
     # LIVE FILE INDEXING (Added February 19, 2026)
@@ -472,8 +622,8 @@ class EnhancedProjectKnowledgeBase:
             }
 
             # ----------------------------------------------------------------
-            # 3. Update in-memory TF-IDF structures so scoring stays accurate
-            # If the file already existed, remove its old term counts first
+            # 3. Update in-memory TF-IDF structures so scoring stays accurate.
+            # If the file already existed, remove its old term counts first.
             # ----------------------------------------------------------------
             if file_path.name in self.document_terms:
                 old_terms = self.document_terms[file_path.name]
