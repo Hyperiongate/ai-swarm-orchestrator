@@ -1,10 +1,25 @@
 """
 Knowledge Backup API Routes
 Created: February 4, 2026
-Last Updated: February 4, 2026
+Last Updated: February 26, 2026 - FIXED: Use KNOWLEDGE_DB_PATH via updated backup system
 
-Flask routes for exporting and backing up learned knowledge.
-Provides manual and automated backup capabilities.
+CHANGELOG:
+- February 26, 2026: FIXED DB Path Reference
+  * PROBLEM: get_statistics() was reading SWARM_DB_PATH env var, which pointed to
+    swarm_intelligence.db (the operational database). The knowledge extracts live
+    in KNOWLEDGE_DB_PATH (a separate persistent database). This meant the statistics
+    endpoint was always looking in the wrong database.
+  * FIX: Removed explicit db_path arguments from all standalone function calls.
+    The updated knowledge_backup_system.py standalone functions now default to
+    reading KNOWLEDGE_DB_PATH themselves, matching DocumentIngestor behavior.
+    This ensures all three systems (ingestor, backup, routes) always use the same DB.
+  * No route signatures changed — API contract with frontend is unchanged.
+
+- February 4, 2026: Original file created
+  * GET  /api/knowledge/statistics - Get knowledge base statistics
+  * POST /api/knowledge/export - Export knowledge (format: json/markdown/csv/all)
+  * GET  /api/knowledge/backup/latest - Get latest backup info
+  * POST /api/knowledge/backup/run - Run manual backup now
 
 ENDPOINTS:
 - GET  /api/knowledge/statistics - Get knowledge base statistics
@@ -15,7 +30,7 @@ ENDPOINTS:
 Author: Jim @ Shiftwork Solutions LLC
 """
 
-from flask import Blueprint, request, jsonify, send_file
+from flask import Blueprint, request, jsonify
 from knowledge_backup_system import (
     KnowledgeBackupSystem,
     backup_knowledge_all_formats,
@@ -35,32 +50,27 @@ knowledge_backup_bp = Blueprint('knowledge_backup', __name__)
 def get_statistics():
     """
     Get statistics about the knowledge base.
-    
+
+    FIXED February 26, 2026: No longer passes SWARM_DB_PATH — the backup system
+    now reads KNOWLEDGE_DB_PATH automatically, matching the ingestor.
+
     Returns:
     {
         "success": true,
-        "total_items": 127,
-        "by_category": {
-            "client_preference": 45,
-            "best_practice": 32,
-            "industry_insight": 28,
-            "warning": 22
-        },
-        "by_source": {
-            "conversation_learning": 98,
-            "manual_entry": 29
-        },
-        "date_range": {
-            "oldest": "2026-02-01 10:30:00",
-            "newest": "2026-02-04 15:45:00"
-        },
-        "average_confidence": 0.85
+        "total_documents": 12,
+        "total_learned_patterns": 45,
+        "by_document_type": { "implementation_manual": 5, "lessons_learned": 3 },
+        "by_client": { "Andersen": 2, "unknown": 10 },
+        "by_industry": { "Manufacturing": 4, "unknown": 8 },
+        "date_range": { "oldest": "...", "newest": "..." },
+        "average_pattern_confidence": 0.82,
+        "recent_ingestions": [...]
     }
     """
     try:
-        db_path = os.environ.get('SWARM_DB_PATH', 'swarm_intelligence.db')
-        stats = get_knowledge_statistics(db_path)
-        
+        # Pass None - backup system reads KNOWLEDGE_DB_PATH env var automatically
+        stats = get_knowledge_statistics(None)
+
         if stats['success']:
             return jsonify(stats), 200
         else:
@@ -68,7 +78,7 @@ def get_statistics():
                 'success': False,
                 'error': stats.get('error', 'Unknown error')
             }), 500
-            
+
     except Exception as e:
         return jsonify({
             'success': False,
@@ -80,12 +90,12 @@ def get_statistics():
 def export_knowledge():
     """
     Export knowledge to specified format.
-    
+
     Request Body:
     {
         "format": "json" | "markdown" | "csv" | "all"
     }
-    
+
     Returns:
     - For single format: Download link to file
     - For "all": Multiple download links
@@ -93,22 +103,19 @@ def export_knowledge():
     try:
         data = request.json or {}
         export_format = data.get('format', 'json').lower()
-        
-        db_path = os.environ.get('SWARM_DB_PATH', 'swarm_intelligence.db')
+
+        # Pass None - backup system reads KNOWLEDGE_DB_PATH env var automatically
         output_dir = '/tmp'
-        
+
         if export_format == 'all':
-            # Export all formats
-            results = backup_knowledge_all_formats(db_path, output_dir)
-            
-            # Save files to database for download
+            results = backup_knowledge_all_formats(None, output_dir)
+
             file_ids = []
             for export_result in results['exports']:
                 if export_result.get('success'):
                     file_path = export_result['output_path']
                     filename = os.path.basename(file_path)
-                    
-                    # Save to generated documents (so user can download)
+
                     from database import save_generated_document
                     doc_id = save_generated_document(
                         filename=filename,
@@ -123,7 +130,7 @@ def export_knowledge():
                         description=f"Exported {export_result['items_exported']} knowledge items",
                         category='backup'
                     )
-                    
+
                     file_ids.append({
                         'format': export_result['format'],
                         'document_id': doc_id,
@@ -131,32 +138,31 @@ def export_knowledge():
                         'items_count': export_result['items_exported'],
                         'file_size_kb': export_result['file_size_kb']
                     })
-            
+
             return jsonify({
                 'success': True,
                 'exports': file_ids,
                 'timestamp': results['timestamp']
             }), 200
-            
+
         else:
             # Export single format
             if export_format == 'json':
-                result = export_knowledge_json(db_path)
-            elif export_format == 'markdown' or export_format == 'md':
-                result = export_knowledge_markdown(db_path)
+                result = export_knowledge_json(None)
+            elif export_format in ('markdown', 'md'):
+                result = export_knowledge_markdown(None)
             elif export_format == 'csv':
-                result = export_knowledge_csv(db_path)
+                result = export_knowledge_csv(None)
             else:
                 return jsonify({
                     'success': False,
                     'error': f"Invalid format: {export_format}. Use: json, markdown, csv, or all"
                 }), 400
-            
+
             if result['success']:
                 file_path = result['output_path']
                 filename = os.path.basename(file_path)
-                
-                # Save to generated documents
+
                 from database import save_generated_document
                 doc_id = save_generated_document(
                     filename=filename,
@@ -171,7 +177,7 @@ def export_knowledge():
                     description=f"Exported {result['items_exported']} knowledge items",
                     category='backup'
                 )
-                
+
                 return jsonify({
                     'success': True,
                     'format': result['format'],
@@ -185,7 +191,7 @@ def export_knowledge():
                     'success': False,
                     'error': result.get('error', 'Export failed')
                 }), 500
-                
+
     except Exception as e:
         return jsonify({
             'success': False,
@@ -197,21 +203,53 @@ def export_knowledge():
 def run_manual_backup():
     """
     Run a manual backup now (all formats).
-    
+
     Returns:
     {
         "success": true,
-        "backup_id": "20260204_153045",
-        "files_created": 3,
-        "download_urls": [...]
+        "exports": [...],
+        "timestamp": "20260226_143022"
     }
     """
     try:
-        # This just calls the export with "all" format
-        data = {'format': 'all'}
-        request.json = data
-        return export_knowledge()
-        
+        results = backup_knowledge_all_formats(None, '/tmp')
+
+        file_ids = []
+        for export_result in results['exports']:
+            if export_result.get('success'):
+                file_path = export_result['output_path']
+                filename = os.path.basename(file_path)
+
+                from database import save_generated_document
+                doc_id = save_generated_document(
+                    filename=filename,
+                    original_name=f"Knowledge Backup - {export_result['format'].upper()}",
+                    document_type=export_result['format'],
+                    file_path=file_path,
+                    file_size=export_result['file_size_bytes'],
+                    task_id=None,
+                    conversation_id=None,
+                    project_id=None,
+                    title=f"Knowledge Base Backup ({export_result['format'].upper()})",
+                    description=f"Exported {export_result['items_exported']} knowledge items",
+                    category='backup'
+                )
+
+                file_ids.append({
+                    'format': export_result['format'],
+                    'document_id': doc_id,
+                    'download_url': f"/api/generated-documents/{doc_id}/download",
+                    'items_count': export_result['items_exported'],
+                    'file_size_kb': export_result['file_size_kb']
+                })
+
+        return jsonify({
+            'success': True,
+            'exports': file_ids,
+            'timestamp': results['timestamp'],
+            'summary': results.get('summary', {})
+        }), 200
+
     except Exception as e:
         return jsonify({
             'success': False,
@@ -223,15 +261,18 @@ def run_manual_backup():
 def get_latest_backup():
     """
     Get info about the most recent backup files.
-    
+
     Returns:
     {
         "success": true,
         "latest_backups": [
             {
-                "filename": "knowledge_backup_20260204_153045.json",
-                "created": "2026-02-04 15:30:45",
-                "size_kb": 256
+                "document_id": 42,
+                "filename": "knowledge_backup_20260226_143022.json",
+                "title": "Knowledge Base Backup (JSON)",
+                "created_at": "2026-02-26 14:30:22",
+                "file_size_kb": 18.4,
+                "download_url": "/api/generated-documents/42/download"
             },
             ...
         ]
@@ -239,7 +280,7 @@ def get_latest_backup():
     """
     try:
         from database import get_db
-        
+
         db = get_db()
         cursor = db.execute('''
             SELECT id, filename, original_name, created_at, file_size
@@ -248,7 +289,7 @@ def get_latest_backup():
             ORDER BY created_at DESC
             LIMIT 10
         ''')
-        
+
         backups = []
         for row in cursor.fetchall():
             backups.append({
@@ -257,18 +298,18 @@ def get_latest_backup():
                 'title': row['original_name'],
                 'created_at': row['created_at'],
                 'file_size_bytes': row['file_size'],
-                'file_size_kb': round(row['file_size'] / 1024, 2),
+                'file_size_kb': round((row['file_size'] or 0) / 1024, 2),
                 'download_url': f"/api/generated-documents/{row['id']}/download"
             })
-        
+
         db.close()
-        
+
         return jsonify({
             'success': True,
             'total_found': len(backups),
             'latest_backups': backups
         }), 200
-        
+
     except Exception as e:
         return jsonify({
             'success': False,
