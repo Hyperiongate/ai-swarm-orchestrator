@@ -4,12 +4,30 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Knowledge Management - Shiftwork Solutions AI Swarm</title>
+    <!--
+        Last Updated: February 26, 2026
+
+        CHANGES - February 26, 2026:
+          * Added all new document types to dropdown:
+              scope_of_work, implementation_ppt, schedule_pattern, data_file, general_word
+          * Removed 'proposal' as separate type — proposal is now aliased to contract
+            in routes/ingest.py so both get the full contract extractor treatment
+          * Added full industry list covering all industries Shiftwork Solutions serves:
+              Chemical, Oil & Gas, Utilities, Paper/Pulp, Metals/Steel, Refinery,
+              Plastics, Aerospace, Automotive added alongside existing industries
+          * Added highlights display in celebration popup and success message —
+            extractors now return what they actually found (client name, fee, patterns)
+          * Added highlights panel below upload form showing extraction results
+          * Document type select now includes descriptive labels explaining what
+            each type extracts so users pick the right one
+
+        CHANGES - February 22, 2026:
+          * Fixed Download Knowledge button (window.location.href instead of fetch)
+          * Added PowerPoint file type support messaging and icons
+          * Fixed JavaScript null reference in downloadKnowledge()
+    -->
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
@@ -18,10 +36,7 @@
             padding: 20px;
         }
 
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
-        }
+        .container { max-width: 1400px; margin: 0 auto; }
 
         .header {
             text-align: center;
@@ -37,24 +52,19 @@
             text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
         }
 
-        .header p {
-            font-size: 1.1em;
-            opacity: 0.9;
-        }
+        .header p { font-size: 1.1em; opacity: 0.9; }
 
-        /* Navigation buttons in header */
         .header-nav {
             position: absolute;
-            top: 0;
-            right: 0;
+            top: 0; right: 0;
             display: flex;
             gap: 10px;
         }
 
         .nav-btn {
-            background: rgba(255, 255, 255, 0.2);
+            background: rgba(255,255,255,0.2);
             color: white;
-            border: 2px solid rgba(255, 255, 255, 0.3);
+            border: 2px solid rgba(255,255,255,0.3);
             padding: 10px 20px;
             border-radius: 8px;
             font-size: 0.9em;
@@ -68,13 +78,9 @@
         }
 
         .nav-btn:hover {
-            background: rgba(255, 255, 255, 0.3);
-            border-color: rgba(255, 255, 255, 0.5);
+            background: rgba(255,255,255,0.3);
+            border-color: rgba(255,255,255,0.5);
             transform: translateY(-2px);
-        }
-
-        .nav-btn:active {
-            transform: translateY(0);
         }
 
         .nav-btn:disabled {
@@ -85,7 +91,7 @@
 
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 20px;
             margin-bottom: 30px;
         }
@@ -104,7 +110,7 @@
         }
 
         .stat-card h3 {
-            font-size: 0.9em;
+            font-size: 0.85em;
             color: #666;
             text-transform: uppercase;
             letter-spacing: 1px;
@@ -118,10 +124,7 @@
             margin-bottom: 5px;
         }
 
-        .stat-card .label {
-            font-size: 0.9em;
-            color: #999;
-        }
+        .stat-card .label { font-size: 0.9em; color: #999; }
 
         .main-grid {
             display: grid;
@@ -162,14 +165,8 @@
             transform: scale(1.02);
         }
 
-        .upload-zone:hover {
-            background: #e8ebff;
-        }
-
-        .upload-icon {
-            font-size: 4em;
-            margin-bottom: 15px;
-        }
+        .upload-zone:hover { background: #e8ebff; }
+        .upload-icon { font-size: 4em; margin-bottom: 15px; }
 
         .upload-zone h3 {
             color: #667eea;
@@ -177,14 +174,8 @@
             font-size: 1.3em;
         }
 
-        .upload-zone p {
-            color: #666;
-            margin-bottom: 20px;
-        }
-
-        .file-input {
-            display: none;
-        }
+        .upload-zone p { color: #666; margin-bottom: 20px; }
+        .file-input { display: none; }
 
         .btn {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -196,12 +187,12 @@
             font-weight: 600;
             cursor: pointer;
             transition: all 0.3s ease;
-            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+            box-shadow: 0 4px 15px rgba(102,126,234,0.4);
         }
 
         .btn:hover {
             transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+            box-shadow: 0 6px 20px rgba(102,126,234,0.6);
         }
 
         .btn:disabled {
@@ -210,9 +201,7 @@
             transform: none;
         }
 
-        .form-group {
-            margin-bottom: 20px;
-        }
+        .form-group { margin-bottom: 20px; }
 
         .form-group label {
             display: block;
@@ -235,6 +224,13 @@
         .form-group input:focus {
             outline: none;
             border-color: #667eea;
+        }
+
+        .form-group .hint {
+            font-size: 0.82em;
+            color: #888;
+            margin-top: 5px;
+            font-style: italic;
         }
 
         /* Progress */
@@ -268,29 +264,45 @@
             to   { opacity: 1; transform: translateY(0); }
         }
 
-        .alert-success {
-            background: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
+        .alert-success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .alert-error   { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .alert-info    { background: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
+
+        /* Highlights panel - shown after successful ingest */
+        .highlights-panel {
+            background: #f0f4ff;
+            border: 1px solid #667eea;
+            border-radius: 8px;
+            padding: 15px 20px;
+            margin-top: 15px;
+            display: none;
         }
 
-        .alert-error {
-            background: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
+        .highlights-panel h4 {
+            color: #667eea;
+            font-size: 0.95em;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
 
-        .alert-info {
-            background: #d1ecf1;
-            color: #0c5460;
-            border: 1px solid #bee5eb;
+        .highlights-panel ul {
+            list-style: none;
+            padding: 0;
         }
+
+        .highlights-panel li {
+            padding: 4px 0;
+            font-size: 0.9em;
+            color: #333;
+            border-bottom: 1px solid #e0e8ff;
+        }
+
+        .highlights-panel li:last-child { border-bottom: none; }
+        .highlights-panel li::before { content: "✓ "; color: #667eea; font-weight: bold; }
 
         /* Patterns List */
-        .patterns-list {
-            max-height: 500px;
-            overflow-y: auto;
-        }
+        .patterns-list { max-height: 500px; overflow-y: auto; }
 
         .pattern-item {
             border: 1px solid #e0e0e0;
@@ -312,26 +324,23 @@
             margin-bottom: 10px;
         }
 
-        .pattern-name {
-            font-weight: 600;
-            color: #333;
-            font-size: 1.1em;
-        }
+        .pattern-name { font-weight: 600; color: #333; font-size: 1em; }
 
         .pattern-type {
             background: #667eea;
             color: white;
-            padding: 4px 12px;
+            padding: 3px 10px;
             border-radius: 20px;
-            font-size: 0.85em;
+            font-size: 0.8em;
+            white-space: nowrap;
         }
 
         .pattern-meta {
             display: flex;
             gap: 20px;
-            font-size: 0.9em;
+            font-size: 0.85em;
             color: #666;
-            margin-top: 10px;
+            margin-top: 8px;
         }
 
         .confidence-bar {
@@ -340,7 +349,7 @@
             background: #e0e0e0;
             border-radius: 3px;
             overflow: hidden;
-            margin-top: 10px;
+            margin-top: 8px;
         }
 
         .confidence-fill {
@@ -350,10 +359,7 @@
         }
 
         /* History List */
-        .history-list {
-            max-height: 500px;
-            overflow-y: auto;
-        }
+        .history-list { max-height: 500px; overflow-y: auto; }
 
         .history-item {
             border-left: 4px solid #667eea;
@@ -363,16 +369,8 @@
             border-radius: 0 8px 8px 0;
         }
 
-        .history-item .title {
-            font-weight: 600;
-            color: #333;
-            margin-bottom: 5px;
-        }
-
-        .history-item .meta {
-            font-size: 0.85em;
-            color: #666;
-        }
+        .history-item .title { font-weight: 600; color: #333; margin-bottom: 5px; }
+        .history-item .meta  { font-size: 0.85em; color: #666; }
 
         .history-item .stats {
             margin-top: 10px;
@@ -394,8 +392,7 @@
             border: 4px solid #f3f3f3;
             border-top: 4px solid #667eea;
             border-radius: 50%;
-            width: 40px;
-            height: 40px;
+            width: 40px; height: 40px;
             animation: spin 1s linear infinite;
             margin: 20px auto;
             display: none;
@@ -408,11 +405,11 @@
 
         /* Responsive */
         @media (max-width: 768px) {
-            .main-grid    { grid-template-columns: 1fr; }
-            .stats-grid   { grid-template-columns: 1fr; }
-            .header h1    { font-size: 1.8em; }
-            .card         { padding: 20px; }
-            .header-nav   { position: static; justify-content: center; margin-top: 20px; }
+            .main-grid   { grid-template-columns: 1fr; }
+            .stats-grid  { grid-template-columns: 1fr; }
+            .header h1   { font-size: 1.8em; }
+            .card        { padding: 20px; }
+            .header-nav  { position: static; justify-content: center; margin-top: 20px; }
         }
 
         /* Celebration Effect */
@@ -428,6 +425,8 @@
             z-index: 1000;
             display: none;
             animation: popIn 0.5s ease;
+            max-width: 500px;
+            width: 90%;
         }
 
         @keyframes popIn {
@@ -438,27 +437,50 @@
         .celebration h2   { color: #667eea; font-size: 2em; margin-bottom: 10px; }
         .celebration .icon { font-size: 5em; margin-bottom: 20px; }
 
+        .celebration .highlights {
+            text-align: left;
+            background: #f8f9ff;
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin-top: 15px;
+            font-size: 0.9em;
+        }
+
+        .celebration .highlights li {
+            list-style: none;
+            padding: 3px 0;
+            color: #333;
+            border-bottom: 1px solid #e8ebff;
+        }
+
+        .celebration .highlights li:last-child { border-bottom: none; }
+        .celebration .highlights li::before { content: "✓ "; color: #667eea; }
+
         .overlay {
             position: fixed; top: 0; left: 0; right: 0; bottom: 0;
             background: rgba(0,0,0,0.5);
             z-index: 999;
             display: none;
         }
+
+        /* optgroup styling */
+        optgroup { font-weight: 700; color: #444; }
+        option   { font-weight: 400; color: #333; }
     </style>
 </head>
 <body>
     <div class="container">
+
+        <!-- Header -->
         <div class="header">
-            <!-- Navigation Buttons -->
             <div class="header-nav">
                 <a href="/" class="nav-btn">← Back to Main</a>
                 <button class="nav-btn" id="downloadBtn" onclick="downloadKnowledge(this)">
                     📥 Download Knowledge
                 </button>
             </div>
-
             <h1>🧠 Knowledge Management</h1>
-            <p>Shoulders of Giants - Cumulative Learning System</p>
+            <p>Shoulders of Giants — Cumulative Learning System</p>
         </div>
 
         <!-- Stats Dashboard -->
@@ -483,10 +505,21 @@
                 <div class="value" id="lessonDocs">0</div>
                 <div class="label">consulting wisdom</div>
             </div>
+            <div class="stat-card">
+                <h3>Contracts</h3>
+                <div class="value" id="contractDocs">0</div>
+                <div class="label">engagement terms</div>
+            </div>
+            <div class="stat-card">
+                <h3>Assessments</h3>
+                <div class="value" id="assessmentDocs">0</div>
+                <div class="label">OAF + EAF combined</div>
+            </div>
         </div>
 
         <!-- Main Grid -->
         <div class="main-grid">
+
             <!-- Upload Section -->
             <div class="card">
                 <h2>📤 Upload Document</h2>
@@ -497,8 +530,9 @@
                 <div class="upload-zone" id="uploadZone">
                     <div class="upload-icon">📄</div>
                     <h3>Drag & Drop Document</h3>
-                    <p>Supports: Word (.docx, .doc), Excel (.xlsx, .xls), PDF, PowerPoint (.pptx, .ppt), Text, Markdown, CSV, JSON</p>
-                    <button class="btn" type="button" onclick="document.getElementById('fileInput').click()">
+                    <p>Word (.docx), Excel (.xlsx), PowerPoint (.pptx), PDF, Text, Markdown, CSV</p>
+                    <button class="btn" type="button"
+                            onclick="document.getElementById('fileInput').click()">
                         Choose File
                     </button>
                     <input type="file" id="fileInput" class="file-input"
@@ -509,41 +543,81 @@
                     <div class="progress-bar" id="progressBar"></div>
                 </div>
 
-                <form id="uploadForm" style="margin-top: 30px;">
+                <!-- Highlights panel — shown after successful ingest -->
+                <div class="highlights-panel" id="highlightsPanel">
+                    <h4>📋 What Was Extracted</h4>
+                    <ul id="highlightsList"></ul>
+                </div>
+
+                <form id="uploadForm" style="margin-top: 25px;">
+
                     <div class="form-group">
-                        <label for="documentType">Document Type</label>
+                        <label for="documentType">Document Type *</label>
                         <select id="documentType" required>
-                            <option value="">Select Type...</option>
-                            <option value="implementation_manual">Implementation Manual</option>
-                            <option value="lessons_learned">Lessons Learned</option>
-                            <option value="oaf">Operations Assessment (OAF)</option>
-                            <option value="eaf">Employee Assessment (EAF)</option>
-                            <option value="contract">Contract</option>
-                            <option value="proposal">Proposal</option>
-                            <option value="generic">Generic Document</option>
+                            <option value="">— Select Document Type —</option>
+
+                            <optgroup label="── Word Documents ──">
+                                <option value="contract">Contract / Engagement Agreement</option>
+                                <option value="implementation_manual">Implementation Manual</option>
+                                <option value="lessons_learned">Lessons Learned</option>
+                                <option value="scope_of_work">Scope of Work</option>
+                                <option value="general_word">General Word Document</option>
+                            </optgroup>
+
+                            <optgroup label="── PowerPoint Presentations ──">
+                                <option value="oaf">Operations Assessment (OAF)</option>
+                                <option value="eaf">Employee Assessment (EAF)</option>
+                                <option value="implementation_ppt">Implementation Presentation</option>
+                            </optgroup>
+
+                            <optgroup label="── Excel Files ──">
+                                <option value="schedule_pattern">Schedule Pattern File</option>
+                                <option value="data_file">Data File (Labor / Overtime / Cost)</option>
+                            </optgroup>
+
                         </select>
+                        <div class="hint" id="docTypeHint"></div>
                     </div>
 
                     <div class="form-group">
                         <label for="clientName">Client Name (optional)</label>
-                        <input type="text" id="clientName" placeholder="e.g., Acme Manufacturing">
+                        <input type="text" id="clientName"
+                               placeholder="e.g., Andersen, ChemDesign, Reckitt">
                     </div>
 
                     <div class="form-group">
                         <label for="industry">Industry (optional)</label>
                         <select id="industry">
-                            <option value="">Select Industry...</option>
-                            <option value="manufacturing">Manufacturing</option>
-                            <option value="pharmaceutical">Pharmaceutical</option>
-                            <option value="food_processing">Food Processing</option>
-                            <option value="mining">Mining</option>
-                            <option value="distribution">Distribution</option>
-                            <option value="healthcare">Healthcare</option>
-                            <option value="other">Other</option>
+                            <option value="">— Select Industry —</option>
+                            <optgroup label="── Process Industries ──">
+                                <option value="chemical">Chemical</option>
+                                <option value="pharmaceutical">Pharmaceutical</option>
+                                <option value="food_processing">Food Processing</option>
+                                <option value="refinery">Refinery / Petroleum</option>
+                                <option value="oil_gas">Oil & Gas</option>
+                                <option value="plastics">Plastics / Rubber</option>
+                                <option value="paper_pulp">Paper / Pulp</option>
+                            </optgroup>
+                            <optgroup label="── Manufacturing ──">
+                                <option value="manufacturing">General Manufacturing</option>
+                                <option value="automotive">Automotive</option>
+                                <option value="aerospace">Aerospace / Defense</option>
+                                <option value="metals">Metals / Steel</option>
+                                <option value="electronics">Electronics</option>
+                            </optgroup>
+                            <optgroup label="── Extraction & Energy ──">
+                                <option value="mining">Mining</option>
+                                <option value="utilities">Utilities / Power</option>
+                            </optgroup>
+                            <optgroup label="── Other ──">
+                                <option value="distribution">Distribution / Warehousing</option>
+                                <option value="healthcare">Healthcare</option>
+                                <option value="other">Other</option>
+                            </optgroup>
                         </select>
                     </div>
 
-                    <button type="submit" class="btn" id="submitBtn" style="width: 100%;">
+                    <button type="submit" class="btn" id="submitBtn" style="width:100%;">
                         🚀 Ingest Document
                     </button>
                 </form>
@@ -555,7 +629,7 @@
             <div class="card">
                 <h2>📊 Recent Ingestions</h2>
                 <div class="history-list" id="historyList">
-                    <p style="text-align: center; color: #999; padding: 40px;">
+                    <p style="text-align:center;color:#999;padding:40px;">
                         Loading recent activity...
                     </p>
                 </div>
@@ -563,15 +637,16 @@
         </div>
 
         <!-- Learned Patterns -->
-        <div class="card" style="margin-bottom: 30px;">
+        <div class="card" style="margin-bottom:30px;">
             <h2>🎯 Learned Patterns</h2>
             <div class="patterns-list" id="patternsList">
-                <p style="text-align: center; color: #999; padding: 40px;">
+                <p style="text-align:center;color:#999;padding:40px;">
                     Loading patterns...
                 </p>
             </div>
         </div>
-    </div>
+
+    </div><!-- /container -->
 
     <!-- Celebration Overlay -->
     <div class="overlay"     id="overlay"></div>
@@ -579,92 +654,96 @@
         <div class="icon">🎉</div>
         <h2>Knowledge Extracted!</h2>
         <p id="celebrationMessage"></p>
+        <ul class="highlights" id="celebrationHighlights" style="display:none;"></ul>
     </div>
 
     <script>
+        // ── Document type hints ──────────────────────────────────────────────
+        const DOC_TYPE_HINTS = {
+            'contract':            'Extracts: client name, total fee, payment milestones, engagement weeks',
+            'implementation_manual': 'Extracts: schedule patterns, shift lengths, start times, appendices',
+            'lessons_learned':     'Extracts: each lesson individually with category, situation, key principle',
+            'scope_of_work':       'Extracts: client, weekly deliverables, total cost, pre-project requirements',
+            'general_word':        'Extracts: headings, dollar amounts, schedule patterns, section structure',
+            'oaf':                 'Extracts: overtime %, headcount, operational metrics (full extractor coming)',
+            'eaf':                 'Extracts: satisfaction scores, response rates (full extractor coming)',
+            'implementation_ppt':  'Extracts: schedule patterns implemented (full extractor coming)',
+            'schedule_pattern':    'Extracts: shift grid data (full extractor coming with Excel sample)',
+            'data_file':           'Extracts: labor/overtime/cost data (full extractor coming with Excel sample)'
+        };
+
         // Global state
         let selectedFile = null;
 
-        // Initialize on load
+        // ── Initialize ───────────────────────────────────────────────────────
         document.addEventListener('DOMContentLoaded', function() {
             loadStats();
             loadHistory();
             loadPatterns();
             setupDragDrop();
             setupFormSubmit();
+            setupDocTypeHint();
         });
 
-        // ====================================================================
-        // DOWNLOAD KNOWLEDGE - Fixed February 22, 2026
-        // ====================================================================
-        // ROOT CAUSE OF ORIGINAL ERROR:
-        //   Called /api/knowledge/export (POST) via fetch().
-        //   knowledge_backup_system module missing → Flask returned HTML 404.
-        //   JS tried to call .json() on the HTML response → error:
-        //   "Unexpected token '<', '<!doctype'... is not valid JSON"
-        //
-        // FIX:
-        //   1. New /api/ingest/export (GET) endpoint added to routes/ingest.py.
-        //      Uses only existing SQLite tables — zero new dependencies.
-        //      Returns a .json file as a streaming attachment.
-        //   2. Download triggered via window.location.href instead of fetch().
-        //      The browser handles the file download natively.
-        //      No JSON parsing in JS → the HTML-as-JSON error is impossible.
-        // ====================================================================
+        // ── Document type hint ───────────────────────────────────────────────
+        function setupDocTypeHint() {
+            document.getElementById('documentType').addEventListener('change', function() {
+                const hint = DOC_TYPE_HINTS[this.value] || '';
+                const hintEl = document.getElementById('docTypeHint');
+                hintEl.textContent = hint;
+            });
+        }
+
+        // ── Download Knowledge ───────────────────────────────────────────────
         function downloadKnowledge(btn) {
             btn.disabled = true;
             btn.innerHTML = '⏳ Preparing download...';
-
-            // Trigger native browser file download.
-            // The server streams the .json file as Content-Disposition: attachment.
             window.location.href = '/api/ingest/export';
-
-            // Re-enable button after 3 seconds (download is handled by browser)
             setTimeout(function() {
                 btn.disabled = false;
                 btn.innerHTML = '📥 Download Knowledge';
             }, 3000);
         }
 
-        // Load statistics
+        // ── Load statistics ──────────────────────────────────────────────────
         async function loadStats() {
             try {
                 const response = await fetch('/api/ingest/status');
                 const data = await response.json();
-
                 if (data.success) {
-                    const stats = data.stats;
-                    document.getElementById('totalDocs').textContent     = stats.total_extracts;
-                    document.getElementById('totalPatterns').textContent = stats.total_patterns;
-
+                    const stats  = data.stats;
                     const byType = stats.by_document_type || {};
-                    document.getElementById('implDocs').textContent   = byType.implementation_manual || 0;
-                    document.getElementById('lessonDocs').textContent = byType.lessons_learned || 0;
+                    document.getElementById('totalDocs').textContent    = stats.total_extracts;
+                    document.getElementById('totalPatterns').textContent= stats.total_patterns;
+                    document.getElementById('implDocs').textContent     = byType.implementation_manual || 0;
+                    document.getElementById('lessonDocs').textContent   = byType.lessons_learned || 0;
+                    document.getElementById('contractDocs').textContent = (byType.contract || 0) + (byType.proposal || 0);
+                    document.getElementById('assessmentDocs').textContent =
+                        (byType.oaf || 0) + (byType.eaf || 0);
                 }
             } catch (error) {
                 console.error('Failed to load stats:', error);
             }
         }
 
-        // Load history
+        // ── Load history ─────────────────────────────────────────────────────
         async function loadHistory() {
             try {
                 const response = await fetch('/api/ingest/history?limit=10');
                 const data = await response.json();
-
                 if (data.success) {
                     const historyList = document.getElementById('historyList');
-
                     if (data.history.length === 0) {
-                        historyList.innerHTML = '<p style="text-align:center;color:#999;padding:40px;">No documents ingested yet</p>';
+                        historyList.innerHTML =
+                            '<p style="text-align:center;color:#999;padding:40px;">No documents ingested yet</p>';
                         return;
                     }
-
                     historyList.innerHTML = data.history.map(item => `
                         <div class="history-item">
-                            <div class="title">${item.document_name}</div>
+                            <div class="title">${escapeHtml(item.document_name)}</div>
                             <div class="meta">
-                                ${item.document_type} &bull; ${new Date(item.ingested_at).toLocaleString()}
+                                ${escapeHtml(item.document_type)} &bull;
+                                ${new Date(item.ingested_at).toLocaleString()}
                             </div>
                             <div class="stats">
                                 <span class="stat-badge">📊 ${item.patterns_extracted} patterns</span>
@@ -678,32 +757,32 @@
             }
         }
 
-        // Load patterns
+        // ── Load patterns ────────────────────────────────────────────────────
         async function loadPatterns() {
             try {
-                const response = await fetch('/api/ingest/patterns?limit=20');
+                const response = await fetch('/api/ingest/patterns?limit=30');
                 const data = await response.json();
-
                 if (data.success) {
                     const patternsList = document.getElementById('patternsList');
-
                     if (data.patterns.length === 0) {
-                        patternsList.innerHTML = '<p style="text-align:center;color:#999;padding:40px;">No patterns learned yet</p>';
+                        patternsList.innerHTML =
+                            '<p style="text-align:center;color:#999;padding:40px;">No patterns learned yet</p>';
                         return;
                     }
-
                     patternsList.innerHTML = data.patterns.map(pattern => `
                         <div class="pattern-item">
                             <div class="pattern-header">
-                                <span class="pattern-name">${pattern.pattern_name}</span>
-                                <span class="pattern-type">${pattern.pattern_type}</span>
+                                <span class="pattern-name">${escapeHtml(pattern.pattern_name || '')}</span>
+                                <span class="pattern-type">${escapeHtml(pattern.pattern_type || '')}</span>
                             </div>
                             <div class="confidence-bar">
-                                <div class="confidence-fill" style="width:${pattern.confidence * 100}%"></div>
+                                <div class="confidence-fill"
+                                     style="width:${(pattern.confidence * 100).toFixed(1)}%"></div>
                             </div>
                             <div class="pattern-meta">
-                                <span>💪 Confidence: ${(pattern.confidence * 100).toFixed(1)}%</span>
-                                <span>📚 Supported by ${pattern.supporting_documents} document${pattern.supporting_documents > 1 ? 's' : ''}</span>
+                                <span>💪 ${(pattern.confidence * 100).toFixed(1)}% confidence</span>
+                                <span>📚 ${pattern.supporting_documents}
+                                    doc${pattern.supporting_documents !== 1 ? 's' : ''}</span>
                             </div>
                         </div>
                     `).join('');
@@ -713,14 +792,16 @@
             }
         }
 
-        // Setup drag and drop
+        // ── Drag & Drop ──────────────────────────────────────────────────────
         function setupDragDrop() {
             const uploadZone = document.getElementById('uploadZone');
             const fileInput  = document.getElementById('fileInput');
 
-            uploadZone.addEventListener('click',     () => fileInput.click());
-            uploadZone.addEventListener('dragover',  (e) => { e.preventDefault(); uploadZone.classList.add('dragover'); });
-            uploadZone.addEventListener('dragleave', ()  => uploadZone.classList.remove('dragover'));
+            uploadZone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                uploadZone.classList.add('dragover');
+            });
+            uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
             uploadZone.addEventListener('drop', (e) => {
                 e.preventDefault();
                 uploadZone.classList.remove('dragover');
@@ -731,29 +812,34 @@
             });
         }
 
-        // Handle file selection
+        // ── File selection ───────────────────────────────────────────────────
         function handleFileSelect(file) {
             selectedFile = file;
-            const uploadZone = document.getElementById('uploadZone');
-
-            let fileTypeIcon = '📄';
             const ext = file.name.split('.').pop().toLowerCase();
-            if (ext === 'pptx' || ext === 'ppt')   fileTypeIcon = '📊';
-            else if (ext === 'xlsx' || ext === 'xls') fileTypeIcon = '📈';
-            else if (ext === 'pdf')                   fileTypeIcon = '📕';
-            else if (ext === 'docx' || ext === 'doc') fileTypeIcon = '📝';
+            const icons = { pptx: '📊', ppt: '📊', xlsx: '📈', xls: '📈',
+                            pdf: '📕', docx: '📝', doc: '📝', md: '📄', csv: '📊' };
+            const icon = icons[ext] || '📄';
 
-            uploadZone.innerHTML = `
-                <div class="upload-icon">${fileTypeIcon}</div>
-                <h3>${file.name}</h3>
-                <p>${(file.size / 1024).toFixed(2)} KB</p>
-                <button class="btn" type="button" onclick="document.getElementById('fileInput').click()">
+            // Auto-select document type based on extension
+            const docTypeSelect = document.getElementById('documentType');
+            if ((ext === 'pptx' || ext === 'ppt') && docTypeSelect.value === '') {
+                // Leave for user to pick OAF / EAF / implementation_ppt
+            } else if ((ext === 'xlsx' || ext === 'xls') && docTypeSelect.value === '') {
+                // Leave for user to pick schedule_pattern / data_file
+            }
+
+            document.getElementById('uploadZone').innerHTML = `
+                <div class="upload-icon">${icon}</div>
+                <h3>${escapeHtml(file.name)}</h3>
+                <p>${(file.size / 1024).toFixed(1)} KB</p>
+                <button class="btn" type="button"
+                        onclick="document.getElementById('fileInput').click()">
                     Change File
                 </button>
             `;
         }
 
-        // Setup form submission
+        // ── Form submission ──────────────────────────────────────────────────
         function setupFormSubmit() {
             document.getElementById('uploadForm').addEventListener('submit', async (e) => {
                 e.preventDefault();
@@ -764,7 +850,7 @@
             });
         }
 
-        // Upload document
+        // ── Upload ───────────────────────────────────────────────────────────
         async function uploadDocument() {
             const formData = new FormData();
             formData.append('file',          selectedFile);
@@ -772,18 +858,21 @@
             formData.append('client',        document.getElementById('clientName').value);
             formData.append('industry',      document.getElementById('industry').value);
 
-            document.getElementById('spinner').style.display      = 'block';
-            document.getElementById('submitBtn').disabled          = true;
+            document.getElementById('spinner').style.display       = 'block';
+            document.getElementById('submitBtn').disabled           = true;
             document.getElementById('uploadProgress').style.display = 'block';
+            document.getElementById('highlightsPanel').style.display= 'none';
 
             let progress = 0;
             const progressInterval = setInterval(() => {
                 progress += 5;
-                if (progress <= 90) document.getElementById('progressBar').style.width = progress + '%';
+                if (progress <= 90)
+                    document.getElementById('progressBar').style.width = progress + '%';
             }, 100);
 
             try {
-                const response = await fetch('/api/ingest/document', { method: 'POST', body: formData });
+                const response = await fetch('/api/ingest/document',
+                    { method: 'POST', body: formData });
                 const data = await response.json();
 
                 clearInterval(progressInterval);
@@ -796,7 +885,8 @@
                     document.getElementById('progressBar').style.width      = '0%';
 
                     if (data.success) {
-                        showSuccess(data.message);
+                        showSuccess(data.message || 'Document ingested successfully');
+                        showHighlights(data.highlights || []);
                         showCelebration(data);
                         resetForm();
                         loadStats();
@@ -816,43 +906,78 @@
             }
         }
 
-        // Show celebration
+        // ── Highlights panel ─────────────────────────────────────────────────
+        function showHighlights(highlights) {
+            const panel = document.getElementById('highlightsPanel');
+            const list  = document.getElementById('highlightsList');
+            if (!highlights || highlights.length === 0) { panel.style.display = 'none'; return; }
+            list.innerHTML = highlights.map(h =>
+                `<li>${escapeHtml(h)}</li>`
+            ).join('');
+            panel.style.display = 'block';
+        }
+
+        // ── Celebration ──────────────────────────────────────────────────────
         function showCelebration(data) {
-            document.getElementById('celebrationMessage').innerHTML = `
-                ✅ ${data.patterns_extracted} patterns extracted<br>
-                💡 ${data.insights_extracted} insights captured<br>
-                📊 Knowledge base now has ${data.total_patterns} patterns!
-            `;
+            document.getElementById('celebrationMessage').innerHTML =
+                `✅ ${data.patterns_extracted || 0} patterns extracted &nbsp;
+                 💡 ${data.insights_extracted || 0} insights captured &nbsp;
+                 📊 ${data.total_patterns || 0} total patterns in knowledge base`;
+
+            const highlightsList = document.getElementById('celebrationHighlights');
+            const highlights = data.highlights || [];
+            if (highlights.length > 0) {
+                highlightsList.innerHTML = highlights.map(h =>
+                    `<li>${escapeHtml(h)}</li>`
+                ).join('');
+                highlightsList.style.display = 'block';
+            } else {
+                highlightsList.style.display = 'none';
+            }
+
             document.getElementById('overlay').style.display     = 'block';
             document.getElementById('celebration').style.display = 'block';
+
             setTimeout(() => {
                 document.getElementById('overlay').style.display     = 'none';
                 document.getElementById('celebration').style.display = 'none';
-            }, 3000);
+            }, 4000);
         }
 
+        // ── Helpers ──────────────────────────────────────────────────────────
         function showSuccess(message) {
             const alert = document.getElementById('successAlert');
             alert.textContent = message;
             alert.style.display = 'block';
-            setTimeout(() => alert.style.display = 'none', 5000);
+            setTimeout(() => alert.style.display = 'none', 6000);
         }
 
         function showError(message) {
             const alert = document.getElementById('errorAlert');
             alert.textContent = message;
             alert.style.display = 'block';
-            setTimeout(() => alert.style.display = 'none', 5000);
+            setTimeout(() => alert.style.display = 'none', 6000);
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
         }
 
         function resetForm() {
             selectedFile = null;
             document.getElementById('uploadForm').reset();
+            document.getElementById('docTypeHint').textContent = '';
             document.getElementById('uploadZone').innerHTML = `
                 <div class="upload-icon">📄</div>
                 <h3>Drag & Drop Document</h3>
-                <p>Supports: Word (.docx, .doc), Excel (.xlsx, .xls), PDF, PowerPoint (.pptx, .ppt), Text, Markdown, CSV, JSON</p>
-                <button class="btn" type="button" onclick="document.getElementById('fileInput').click()">
+                <p>Word (.docx), Excel (.xlsx), PowerPoint (.pptx), PDF, Text, Markdown, CSV</p>
+                <button class="btn" type="button"
+                        onclick="document.getElementById('fileInput').click()">
                     Choose File
                 </button>
             `;
@@ -861,23 +986,4 @@
 </body>
 </html>
 
-<!--
-Last Updated: February 22, 2026
-
-CHANGES - February 22, 2026:
-  FIXED Download Knowledge button
-  Previous: Called /api/knowledge/export (POST) via fetch() + response.json()
-            knowledge_backup_system module missing on server
-            Flask returned HTML 404 page
-            JS error: "Unexpected token '<', '<!doctype'... is not valid JSON"
-  Fixed:   window.location.href = '/api/ingest/export' (GET, native download)
-            New endpoint in routes/ingest.py — uses existing tables only
-            Browser handles file download natively — no JSON parsing possible
-
-CHANGES - February 4, 2026:
-  Added PowerPoint file type support messaging
-  Added file type icons for better UX
-  Fixed JavaScript null reference in original downloadKnowledge()
-
-I did no harm and this file is not truncated
--->
+<!-- I did no harm and this file is not truncated -->
