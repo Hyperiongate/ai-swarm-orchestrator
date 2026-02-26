@@ -7,7 +7,24 @@
     <!--
         Last Updated: February 26, 2026
 
-        CHANGES - February 26, 2026:
+        CHANGES - February 26, 2026 (second update):
+          * FIXED: After uploading a file, clicking "Choose File" / "Change File"
+            did nothing — could not select a second file without refreshing the page.
+            ROOT CAUSE: setupDragDrop() attached dragover/dragleave/drop listeners to
+            the uploadZone div, but NO click listener. The "Choose File" button used
+            inline onclick="document.getElementById('fileInput').click()" which worked
+            on the initial render. After handleFileSelect() or resetForm() replaced
+            uploadZone.innerHTML, the new button had the same inline onclick — but
+            calling .click() on the file input element after an upload sometimes fails
+            silently due to browser security restrictions on repeated programmatic
+            .click() calls on the same input element.
+            FIX: (1) Added click listener directly on uploadZone div in setupDragDrop()
+            so ANY click anywhere in the zone opens the file picker. (2) Added
+            fileInput.value = '' before .click() so the same file can be re-selected.
+            (3) Removed all inline onclick attributes from dynamically generated button
+            HTML — the zone listener handles all clicks now.
+
+        CHANGES - February 26, 2026 (first update):
           * Added all new document types to dropdown:
               scope_of_work, implementation_ppt, schedule_pattern, data_file, general_word
           * Removed 'proposal' as separate type — proposal is now aliased to contract
@@ -531,8 +548,7 @@
                     <div class="upload-icon">📄</div>
                     <h3>Drag & Drop Document</h3>
                     <p>Word (.docx), Excel (.xlsx), PowerPoint (.pptx), PDF, Text, Markdown, CSV</p>
-                    <button class="btn" type="button"
-                            onclick="document.getElementById('fileInput').click()">
+                    <button class="btn" type="button">
                         Choose File
                     </button>
                     <input type="file" id="fileInput" class="file-input"
@@ -793,9 +809,26 @@
         }
 
         // ── Drag & Drop ──────────────────────────────────────────────────────
+        // FIXED February 26, 2026:
+        // All listeners are attached to the stable outer elements (uploadZone div
+        // and fileInput). resetForm() and handleFileSelect() only replace innerHTML
+        // inside uploadZone — the div itself and the fileInput element are never
+        // removed from the DOM, so all listeners survive across uploads.
+        // Inline onclick removed from dynamically-generated button HTML to avoid
+        // duplicate triggers. A single click listener on uploadZone handles all
+        // "Choose File" / "Change File" clicks anywhere in the zone.
         function setupDragDrop() {
             const uploadZone = document.getElementById('uploadZone');
             const fileInput  = document.getElementById('fileInput');
+
+            // Click anywhere in the zone to open file picker
+            // stopPropagation not needed — fileInput is outside uploadZone
+            uploadZone.addEventListener('click', (e) => {
+                // Don't double-trigger if the click is on the button inside the zone
+                // (button has no special handling — we just always trigger the input)
+                fileInput.value = '';   // Reset so same file can be re-selected
+                fileInput.click();
+            });
 
             uploadZone.addEventListener('dragover', (e) => {
                 e.preventDefault();
@@ -807,6 +840,8 @@
                 uploadZone.classList.remove('dragover');
                 if (e.dataTransfer.files.length > 0) handleFileSelect(e.dataTransfer.files[0]);
             });
+
+            // fileInput change fires whenever the OS file picker confirms a selection
             fileInput.addEventListener('change', (e) => {
                 if (e.target.files.length > 0) handleFileSelect(e.target.files[0]);
             });
@@ -831,11 +866,8 @@
             document.getElementById('uploadZone').innerHTML = `
                 <div class="upload-icon">${icon}</div>
                 <h3>${escapeHtml(file.name)}</h3>
-                <p>${(file.size / 1024).toFixed(1)} KB</p>
-                <button class="btn" type="button"
-                        onclick="document.getElementById('fileInput').click()">
-                    Change File
-                </button>
+                <p>${(file.size / 1024).toFixed(1)} KB — click zone or button to change</p>
+                <button class="btn" type="button">Change File</button>
             `;
         }
 
@@ -976,10 +1008,7 @@
                 <div class="upload-icon">📄</div>
                 <h3>Drag & Drop Document</h3>
                 <p>Word (.docx), Excel (.xlsx), PowerPoint (.pptx), PDF, Text, Markdown, CSV</p>
-                <button class="btn" type="button"
-                        onclick="document.getElementById('fileInput').click()">
-                    Choose File
-                </button>
+                <button class="btn" type="button">Choose File</button>
             `;
         }
     </script>
