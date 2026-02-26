@@ -1,9 +1,16 @@
 """
 AI SWARM ORCHESTRATOR - Main Application   
 Created: January 18, 2026
-Last Updated: February 23, 2026 - Added Blog Posts table migration
+Last Updated: February 25, 2026 - ADDED /api/admin/kb-diagnose ENDPOINT
 
 CHANGELOG:
+
+- February 25, 2026: ADDED /api/admin/kb-diagnose ENDPOINT
+  Added a real-time diagnostic endpoint that calls knowledge_base.get_index_status()
+  to show exactly what the KB loaded, from which path, how many files it found,
+  and whether the safety guard triggered. Use this after every deploy to confirm
+  the KB initialized correctly without reading Render logs line by line.
+  Visit: /api/admin/kb-diagnose in browser after deploy.
 
 - February 23, 2026: ADDED Blog Posts Table Migration
   Added add_blog_posts_table() migration to run on startup. This creates the
@@ -352,6 +359,44 @@ def list_project_files():
     results['current_working_directory'] = os.getcwd()
     return jsonify({'success': True, 'locations_checked': results})
 
+# ============================================================================
+# KB DIAGNOSE ENDPOINT (Added February 25, 2026)
+# ============================================================================
+@app.route('/api/admin/kb-diagnose', methods=['GET'])
+def kb_diagnose():
+    """
+    Real-time knowledge base diagnostic endpoint.
+
+    Shows exactly what the KB loaded, from which path, how many files were
+    found, whether the safety guard triggered, and what's currently in the
+    database. Use this after every deploy to confirm KB health without
+    reading Render logs line by line.
+
+    Usage: Visit /api/admin/kb-diagnose in browser after deploy.
+    """
+    if knowledge_base is None:
+        return jsonify({
+            'success': False,
+            'error': 'Knowledge base object was never created. Check startup logs.',
+            'knowledge_base_initialized': False
+        }), 503
+
+    try:
+        status = knowledge_base.get_index_status()
+        return jsonify({
+            'success': True,
+            'knowledge_base_initialized': True,
+            **status
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+# ============================================================================
+
 @app.route('/api/admin/fix-patterns-table', methods=['GET'])
 def fix_patterns_table():
     """One-time migration to fix learned_patterns table."""
@@ -555,7 +600,7 @@ def health():
 
     return jsonify({
         'status': 'healthy',
-        'version': 'Sprint 3 Complete + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator + LinkedIn Poster + Bulletproof Projects + 100MB Upload Limit + Background KB Init + NameError Fix Feb18 + Blueprint Fix Feb20 + Case Studies Feb21 + Blog Posts Feb23',
+        'version': 'Sprint 3 Complete + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator + LinkedIn Poster + Bulletproof Projects + 100MB Upload Limit + Background KB Init + NameError Fix Feb18 + Blueprint Fix Feb20 + Case Studies Feb21 + Blog Posts Feb23 + KB Safety Guard + KB Diagnose Feb25',
         'file_upload_limit': '100MB',
         'orchestrators': {
             'sonnet': 'configured' if ANTHROPIC_API_KEY else 'missing',
@@ -569,7 +614,8 @@ def health():
         'knowledge_base': {
             'status': kb_status,
             'documents_indexed': kb_doc_count,
-            'initialization_complete': kb_ready
+            'initialization_complete': kb_ready,
+            'diagnose_url': '/api/admin/kb-diagnose'
         },
         'schedule_generator': {
             'status': 'enabled' if SCHEDULE_GENERATOR_AVAILABLE else 'disabled',
