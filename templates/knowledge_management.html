@@ -9,12 +9,12 @@
 
         CHANGES - February 26, 2026 (second update):
           * FIXED: After uploading a file, clicking "Choose File" / "Change File"
-            did nothing — could not select a second file without refreshing the page.
+            did nothing - could not select a second file without refreshing the page.
             ROOT CAUSE: setupDragDrop() attached dragover/dragleave/drop listeners to
             the uploadZone div, but NO click listener. The "Choose File" button used
             inline onclick="document.getElementById('fileInput').click()" which worked
             on the initial render. After handleFileSelect() or resetForm() replaced
-            uploadZone.innerHTML, the new button had the same inline onclick — but
+            uploadZone.innerHTML, the new button had the same inline onclick - but
             calling .click() on the file input element after an upload sometimes fails
             silently due to browser security restrictions on repeated programmatic
             .click() calls on the same input element.
@@ -22,17 +22,17 @@
             so ANY click anywhere in the zone opens the file picker. (2) Added
             fileInput.value = '' before .click() so the same file can be re-selected.
             (3) Removed all inline onclick attributes from dynamically generated button
-            HTML — the zone listener handles all clicks now.
+            HTML - the zone listener handles all clicks now.
 
         CHANGES - February 26, 2026 (first update):
           * Added all new document types to dropdown:
               scope_of_work, implementation_ppt, schedule_pattern, data_file, general_word
-          * Removed 'proposal' as separate type — proposal is now aliased to contract
+          * Removed 'proposal' as separate type - proposal is now aliased to contract
             in routes/ingest.py so both get the full contract extractor treatment
           * Added full industry list covering all industries Shiftwork Solutions serves:
               Chemical, Oil & Gas, Utilities, Paper/Pulp, Metals/Steel, Refinery,
               Plastics, Aerospace, Automotive added alongside existing industries
-          * Added highlights display in celebration popup and success message —
+          * Added highlights display in celebration popup and success message -
             extractors now return what they actually found (client name, fee, patterns)
           * Added highlights panel below upload form showing extraction results
           * Document type select now includes descriptive labels explaining what
@@ -497,7 +497,7 @@
                 </button>
             </div>
             <h1>🧠 Knowledge Management</h1>
-            <p>Shoulders of Giants — Cumulative Learning System</p>
+            <p>Shoulders of Giants - Cumulative Learning System</p>
         </div>
 
         <!-- Stats Dashboard -->
@@ -559,7 +559,7 @@
                     <div class="progress-bar" id="progressBar"></div>
                 </div>
 
-                <!-- Highlights panel — shown after successful ingest -->
+                <!-- Highlights panel - shown after successful ingest -->
                 <div class="highlights-panel" id="highlightsPanel">
                     <h4>📋 What Was Extracted</h4>
                     <ul id="highlightsList"></ul>
@@ -570,9 +570,9 @@
                     <div class="form-group">
                         <label for="documentType">Document Type *</label>
                         <select id="documentType" required>
-                            <option value="">— Select Document Type —</option>
+                            <option value="">- Select Document Type -</option>
 
-                            <optgroup label="── Word Documents ──">
+                            <optgroup label="-- Word Documents --">
                                 <option value="contract">Contract / Engagement Agreement</option>
                                 <option value="implementation_manual">Implementation Manual</option>
                                 <option value="lessons_learned">Lessons Learned</option>
@@ -580,13 +580,13 @@
                                 <option value="general_word">General Word Document</option>
                             </optgroup>
 
-                            <optgroup label="── PowerPoint Presentations ──">
+                            <optgroup label="-- PowerPoint Presentations --">
                                 <option value="oaf">Operations Assessment (OAF)</option>
                                 <option value="eaf">Employee Assessment (EAF)</option>
                                 <option value="implementation_ppt">Implementation Presentation</option>
                             </optgroup>
 
-                            <optgroup label="── Excel Files ──">
+                            <optgroup label="-- Excel Files --">
                                 <option value="schedule_pattern">Schedule Pattern File</option>
                                 <option value="data_file">Data File (Labor / Overtime / Cost)</option>
                             </optgroup>
@@ -604,8 +604,8 @@
                     <div class="form-group">
                         <label for="industry">Industry (optional)</label>
                         <select id="industry">
-                            <option value="">— Select Industry —</option>
-                            <optgroup label="── Process Industries ──">
+                            <option value="">- Select Industry -</option>
+                            <optgroup label="-- Process Industries --">
                                 <option value="chemical">Chemical</option>
                                 <option value="pharmaceutical">Pharmaceutical</option>
                                 <option value="food_processing">Food Processing</option>
@@ -614,18 +614,18 @@
                                 <option value="plastics">Plastics / Rubber</option>
                                 <option value="paper_pulp">Paper / Pulp</option>
                             </optgroup>
-                            <optgroup label="── Manufacturing ──">
+                            <optgroup label="-- Manufacturing --">
                                 <option value="manufacturing">General Manufacturing</option>
                                 <option value="automotive">Automotive</option>
                                 <option value="aerospace">Aerospace / Defense</option>
                                 <option value="metals">Metals / Steel</option>
                                 <option value="electronics">Electronics</option>
                             </optgroup>
-                            <optgroup label="── Extraction & Energy ──">
+                            <optgroup label="-- Extraction & Energy --">
                                 <option value="mining">Mining</option>
                                 <option value="utilities">Utilities / Power</option>
                             </optgroup>
-                            <optgroup label="── Other ──">
+                            <optgroup label="-- Other --">
                                 <option value="distribution">Distribution / Warehousing</option>
                                 <option value="healthcare">Healthcare</option>
                                 <option value="other">Other</option>
@@ -674,7 +674,7 @@
     </div>
 
     <script>
-        // ── Document type hints ──────────────────────────────────────────────
+        // -- Document type hints --
         const DOC_TYPE_HINTS = {
             'contract':            'Extracts: client name, total fee, payment milestones, engagement weeks',
             'implementation_manual': 'Extracts: schedule patterns, shift lengths, start times, appendices',
@@ -691,7 +691,7 @@
         // Global state
         let selectedFile = null;
 
-        // ── Initialize ───────────────────────────────────────────────────────
+        // -- Initialize --
         document.addEventListener('DOMContentLoaded', function() {
             loadStats();
             loadHistory();
@@ -701,7 +701,7 @@
             setupDocTypeHint();
         });
 
-        // ── Document type hint ───────────────────────────────────────────────
+        // -- Document type hint --
         function setupDocTypeHint() {
             document.getElementById('documentType').addEventListener('change', function() {
                 const hint = DOC_TYPE_HINTS[this.value] || '';
@@ -710,10 +710,10 @@
             });
         }
 
-        // ── Download Knowledge ───────────────────────────────────────────────
+        // -- Download Knowledge --
         function downloadKnowledge(btn) {
             btn.disabled = true;
-            btn.innerHTML = '⏳ Preparing download...';
+            btn.innerHTML = 'Preparing download...';
             window.location.href = '/api/ingest/export';
             setTimeout(function() {
                 btn.disabled = false;
@@ -721,7 +721,7 @@
             }, 3000);
         }
 
-        // ── Load statistics ──────────────────────────────────────────────────
+        // -- Load statistics --
         async function loadStats() {
             try {
                 const response = await fetch('/api/ingest/status');
@@ -742,7 +742,7 @@
             }
         }
 
-        // ── Load history ─────────────────────────────────────────────────────
+        // -- Load history --
         async function loadHistory() {
             try {
                 const response = await fetch('/api/ingest/history?limit=10');
@@ -773,7 +773,7 @@
             }
         }
 
-        // ── Load patterns ────────────────────────────────────────────────────
+        // -- Load patterns --
         async function loadPatterns() {
             try {
                 const response = await fetch('/api/ingest/patterns?limit=30');
@@ -808,11 +808,11 @@
             }
         }
 
-        // ── Drag & Drop ──────────────────────────────────────────────────────
+        // -- Drag & Drop --
         // FIXED February 26, 2026:
         // All listeners are attached to the stable outer elements (uploadZone div
         // and fileInput). resetForm() and handleFileSelect() only replace innerHTML
-        // inside uploadZone — the div itself and the fileInput element are never
+        // inside uploadZone - the div itself and the fileInput element are never
         // removed from the DOM, so all listeners survive across uploads.
         // Inline onclick removed from dynamically-generated button HTML to avoid
         // duplicate triggers. A single click listener on uploadZone handles all
@@ -822,10 +822,10 @@
             const fileInput  = document.getElementById('fileInput');
 
             // Click anywhere in the zone to open file picker
-            // stopPropagation not needed — fileInput is outside uploadZone
+            // stopPropagation not needed - fileInput is outside uploadZone
             uploadZone.addEventListener('click', (e) => {
                 // Don't double-trigger if the click is on the button inside the zone
-                // (button has no special handling — we just always trigger the input)
+                // (button has no special handling - we just always trigger the input)
                 fileInput.value = '';   // Reset so same file can be re-selected
                 fileInput.click();
             });
@@ -847,7 +847,7 @@
             });
         }
 
-        // ── File selection ───────────────────────────────────────────────────
+        // -- File selection --
         function handleFileSelect(file) {
             selectedFile = file;
             const ext = file.name.split('.').pop().toLowerCase();
@@ -866,12 +866,12 @@
             document.getElementById('uploadZone').innerHTML = `
                 <div class="upload-icon">${icon}</div>
                 <h3>${escapeHtml(file.name)}</h3>
-                <p>${(file.size / 1024).toFixed(1)} KB — click zone or button to change</p>
+                <p>${(file.size / 1024).toFixed(1)} KB - click zone or button to change</p>
                 <button class="btn" type="button">Change File</button>
             `;
         }
 
-        // ── Form submission ──────────────────────────────────────────────────
+        // -- Form submission --
         function setupFormSubmit() {
             document.getElementById('uploadForm').addEventListener('submit', async (e) => {
                 e.preventDefault();
@@ -882,7 +882,7 @@
             });
         }
 
-        // ── Upload ───────────────────────────────────────────────────────────
+        // -- Upload --
         async function uploadDocument() {
             const formData = new FormData();
             formData.append('file',          selectedFile);
@@ -938,7 +938,7 @@
             }
         }
 
-        // ── Highlights panel ─────────────────────────────────────────────────
+        // -- Highlights panel --
         function showHighlights(highlights) {
             const panel = document.getElementById('highlightsPanel');
             const list  = document.getElementById('highlightsList');
@@ -949,10 +949,10 @@
             panel.style.display = 'block';
         }
 
-        // ── Celebration ──────────────────────────────────────────────────────
+        // -- Celebration --
         function showCelebration(data) {
             document.getElementById('celebrationMessage').innerHTML =
-                `✅ ${data.patterns_extracted || 0} patterns extracted &nbsp;
+                `${data.patterns_extracted || 0} patterns extracted &nbsp;
                  💡 ${data.insights_extracted || 0} insights captured &nbsp;
                  📊 ${data.total_patterns || 0} total patterns in knowledge base`;
 
@@ -976,7 +976,7 @@
             }, 4000);
         }
 
-        // ── Helpers ──────────────────────────────────────────────────────────
+        // -- Helpers --
         function showSuccess(message) {
             const alert = document.getElementById('successAlert');
             alert.textContent = message;
