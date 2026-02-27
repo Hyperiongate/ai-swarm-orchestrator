@@ -1,9 +1,27 @@
 """
 KNOWLEDGE INGESTION ROUTES
 Created: February 2, 2026
-Last Updated: February 26, 2026 - UPDATED PPTX and Excel routes to pass file_bytes
+Last Updated: February 27, 2026 - FIXED DOCX extraction (was reading raw bytes as UTF-8)
 
 CHANGELOG:
+
+- February 27, 2026: FIXED DOCX content extraction
+  * PROBLEM: The 'else' branch (all non-PPTX, non-Excel files, including .docx) was
+    doing `content = file.read().decode('utf-8', errors='ignore')` — reading the raw
+    .docx zip bytes as UTF-8 text. This produces garbled binary output. The engine
+    received nonsense and extracted nothing useful. Only stray percentage digits and
+    dollar amounts survived because they appear as recognizable ASCII even in garbage.
+    Lessons learned docs extracted 0 lessons. Pillar docs extracted only percentages.
+  * SOLUTION: Added _extract_docx_structured() helper using python-docx. Reads each
+    paragraph's style name (Heading1, Heading2, BodyText, etc.), bold state, and
+    text. Produces a structured JSON string that the engine extractors can parse
+    properly. Also produces a clean plain-text version as fallback.
+  * Two content strings passed for DOCX:
+    - content: structured JSON list [{style, bold, text}, ...] for engine extractors
+    - metadata['plain_text']: clean paragraph text joined by newlines for any regex
+      fallbacks in older extractors that still need text matching
+  * All PPTX and Excel paths unchanged.
+  * PDF and plain text paths unchanged.
 
 - February 26, 2026 (Session 2): UPDATED PPTX and Excel routes to pass file_bytes
   * PROBLEM: PPTX route was using python-pptx to extract text and passing that string
@@ -93,6 +111,76 @@ def allowed_file(filename):
            filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
+def _extract_docx_structured(file_bytes: bytes) -> dict:
+    """
+    Extract structured paragraph data from a .docx file using python-docx.
+
+    Returns a dict with:
+        'paragraphs': list of {style, bold, text} dicts — for engine extractors
+        'plain_text': clean newline-joined text — for regex fallbacks
+        'error': None or error string if python-docx fails
+
+    Why this matters:
+        Raw .docx files are zip archives. Reading the bytes as UTF-8 text produces
+        garbled binary that looks like: PK\x03\x04\x14\x00\x06\x00...
+        python-docx properly parses the XML inside and returns real text with
+        formatting metadata (style name, bold state) that the engine extractors
+        need to identify headings, lessons, key principles, and section structure.
+
+    Style names in typical Shiftwork Solutions docs:
+        'Heading1'      — major section headings  (## equivalent)
+        'Heading2'      — subsection headings      (### equivalent)
+        'BodyText'      — formatted body paragraph
+        'FirstParagraph'— first paragraph of section (some Pillar docs)
+        'ListParagraph' — bullet list items
+        ''              — default/normal paragraph
+    """
+    result = {'paragraphs': [], 'plain_text': '', 'error': None}
+    try:
+        from docx import Document
+        import io as _io
+
+        doc = Document(_io.BytesIO(file_bytes))
+        paragraphs = []
+        plain_lines = []
+
+        for para in doc.paragraphs:
+            text = para.text.strip()
+            if not text:
+                continue
+
+            # Get style name (normalize: remove spaces, e.g. "Heading 1" -> "Heading1")
+            style_name = ''
+            if para.style and para.style.name:
+                style_name = para.style.name.replace(' ', '')
+
+            # Determine bold: True if ALL non-empty runs are bold, or if paragraph
+            # style name contains 'heading' (headings are bold by definition)
+            runs_with_text = [r for r in para.runs if r.text.strip()]
+            is_bold = False
+            if runs_with_text:
+                is_bold = all(r.bold for r in runs_with_text)
+            if 'heading' in style_name.lower():
+                is_bold = True
+
+            paragraphs.append({
+                'style': style_name,
+                'bold': is_bold,
+                'text': text
+            })
+            plain_lines.append(text)
+
+        result['paragraphs'] = paragraphs
+        result['plain_text'] = '\n'.join(plain_lines)
+
+    except ImportError:
+        result['error'] = 'python-docx not available'
+    except Exception as e:
+        result['error'] = str(e)
+
+    return result
+
+
 @ingest_bp.route('/document', methods=['POST'])
 def ingest_document():
     """
@@ -108,6 +196,13 @@ def ingest_document():
 
     Returns:
         JSON with ingestion results including highlights from extraction.
+
+    DOCX handling (updated February 27, 2026):
+        File bytes passed to _extract_docx_structured() which uses python-docx
+        to parse paragraphs with style names and bold metadata. The structured
+        paragraph list is serialized as JSON and passed as 'content' to the engine.
+        A plain-text version is stored in metadata['plain_text'] for regex fallbacks.
+        file_bytes also passed so engine can use it if needed.
 
     PPTX handling (updated February 26, 2026):
         File bytes are passed directly to the engine so chart XML can be
@@ -216,7 +311,35 @@ def ingest_document():
             )
             return jsonify(result), 200 if result['success'] else 400
 
-        # ---- All other file types: text/Markdown content path (unchanged) ----
+        # ---- DOCX: use python-docx for proper structured extraction ----
+        elif filename_lower.endswith(('.docx', '.doc')):
+            file_bytes = file.read()
+
+            docx_data = _extract_docx_structured(file_bytes)
+
+            if docx_data['error'] and not docx_data['paragraphs']:
+                # python-docx completely failed — fall back to raw decode (old behavior)
+                # This is a last resort; at least something is extracted
+                content = file_bytes.decode('utf-8', errors='ignore')
+                metadata['docx_extraction_error'] = docx_data['error']
+            else:
+                # Pass structured paragraph data as JSON string so engine extractors
+                # can read style names, bold flags, and text without re-parsing XML
+                content = json.dumps(docx_data['paragraphs'], ensure_ascii=False)
+                metadata['plain_text'] = docx_data['plain_text'][:5000]
+                if docx_data['error']:
+                    metadata['docx_partial_error'] = docx_data['error']
+
+            result = ingest_document_content(
+                ingestor=get_document_ingestor(),
+                content=content,
+                document_type=document_type,
+                metadata=metadata,
+                file_bytes=file_bytes
+            )
+            return jsonify(result), 200 if result['success'] else 400
+
+        # ---- PDF and plain text: decode and pass as string ----
         else:
             content = file.read().decode('utf-8', errors='ignore')
             ingestor = get_document_ingestor()
@@ -236,14 +359,17 @@ def ingest_document_content(ingestor, content, document_type, metadata, file_byt
     """
     Helper function to ingest document content.
 
-    UPDATED February 26, 2026:
+    UPDATED February 27, 2026:
+    - DOCX files now pass structured JSON paragraph list as content.
     - Accepts optional file_bytes kwarg and passes it through to ingest_document()
       so PPTX and Excel can use structured extraction.
     - 'proposal' is aliased to 'contract' (same document structure, same extractor).
 
     Args:
         ingestor:       DocumentIngestor instance
-        content:        Document text/Markdown string
+        content:        For DOCX: JSON list of {style, bold, text} dicts.
+                        For PPTX: slide text string (or empty).
+                        For others: plain text string.
         document_type:  Document type string
         metadata:       Dict with document_name, client, industry, etc.
         file_bytes:     Optional raw bytes for PPTX/Excel structured extraction
@@ -506,7 +632,7 @@ def get_extract_detail(extract_id):
 
 
 # ============================================================================
-# EXPORT ENDPOINT — Added February 22, 2026, unchanged February 26, 2026
+# EXPORT ENDPOINT — Added February 22, 2026, unchanged February 27, 2026
 # ============================================================================
 @ingest_bp.route('/export', methods=['GET'])
 def export_knowledge():
