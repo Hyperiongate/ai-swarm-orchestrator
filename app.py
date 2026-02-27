@@ -1,16 +1,17 @@
 """
 AI SWARM ORCHESTRATOR - Main Application   
 Created: January 18, 2026
-Last Updated: February 27, 2026 - ADDED KEEP-ALIVE THREAD (prevents Render spin-down)
+Last Updated: February 27, 2026 - ADDED /api/admin/restore-knowledge ENDPOINT
 
 CHANGELOG:
 
-- February 27, 2026: ADDED KEEP-ALIVE THREAD
-  Background daemon thread pings /health every 14 minutes to prevent Render
-  free/starter tier from spinning down due to inactivity. This eliminates the
-  recurring "site won't load" problem that appeared ~3x per week. Thread starts
-  after all blueprints are registered (60s delay after startup before first ping).
-  Uses stdlib threading + requests (already in requirements.txt). No new dependencies.
+- February 27, 2026: ADDED /api/admin/restore-knowledge ENDPOINT
+  Restores the knowledge base from a JSON export file produced by the
+  knowledge backup/export system. Used as insurance when Render resets
+  the instance disk and knowledge_ingestion.db is lost.
+  POST multipart/form-data with field 'export_file' containing the JSON export.
+  Uses INSERT OR IGNORE — safe to run even if KB already has documents.
+  Delegates all logic to knowledge_restore.py (new standalone module).
 
 - February 26, 2026: ADDED /api/admin/clear-knowledge-db ENDPOINT
   Wipes all knowledge extracts, learned patterns, and ingestion log from the
@@ -46,7 +47,7 @@ CHANGELOG:
 AUTHOR: Jim @ Shiftwork Solutions LLC
 """
 
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, request
 from database import init_db
 from database_survey_additions import add_surveys_table
 import os
@@ -416,6 +417,69 @@ def clear_knowledge_db():
         }), 500
 # ============================================================================
 
+# ============================================================================
+# RESTORE KNOWLEDGE ENDPOINT (Added February 27, 2026)
+# ============================================================================
+@app.route('/api/admin/restore-knowledge', methods=['POST'])
+def restore_knowledge():
+    """
+    Restore the knowledge base from a JSON export file.
+
+    Used as insurance when Render resets the instance disk and
+    knowledge_ingestion.db is lost. Upload the JSON export file
+    produced by /api/ingest/export to fully restore all documents,
+    patterns, and ingestion log.
+
+    Request: POST multipart/form-data
+        Field: export_file  — the JSON export file
+
+    Behavior:
+        - Uses INSERT OR IGNORE — never overwrites existing data
+        - Safe to run even if KB already has documents (duplicates skipped)
+        - Returns full report of restored vs skipped counts
+
+    Usage: POST to this endpoint with the export JSON file attached.
+    """
+    try:
+        if 'export_file' not in request.files:
+            return jsonify({
+                'success': False,
+                'error': 'No export_file field in request. '
+                         'POST multipart/form-data with field name export_file.'
+            }), 400
+
+        export_file = request.files['export_file']
+
+        if not export_file.filename.endswith('.json'):
+            return jsonify({
+                'success': False,
+                'error': f'File must be a .json export file. Got: {export_file.filename}'
+            }), 400
+
+        import json as json_module
+        try:
+            export_data = json_module.load(export_file)
+        except Exception as parse_err:
+            return jsonify({
+                'success': False,
+                'error': f'Could not parse JSON file: {str(parse_err)}'
+            }), 400
+
+        from knowledge_restore import restore_knowledge_from_export
+        result = restore_knowledge_from_export(export_data)
+
+        status_code = 200 if result['success'] else 207  # 207 = partial success
+        return jsonify(result), status_code
+
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+# ============================================================================
+
 @app.route('/api/admin/fix-patterns-table', methods=['GET'])
 def fix_patterns_table():
     """One-time migration to fix learned_patterns table."""
@@ -612,7 +676,7 @@ def health():
 
     return jsonify({
         'status': 'healthy',
-        'version': 'Sprint 3 + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator + LinkedIn Poster + Bulletproof Projects + 100MB Upload + Background KB + NameError Fix Feb18 + Blueprint Fix Feb20 + Case Studies Feb21 + Blog Posts Feb23 + KB Safety Guard + KB Diagnose Feb25 + Clear KB Feb26 + KeepAlive Feb27',
+        'version': 'Sprint 3 + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator + LinkedIn Poster + Bulletproof Projects + 100MB Upload + Background KB + NameError Fix Feb18 + Blueprint Fix Feb20 + Case Studies Feb21 + Blog Posts Feb23 + KB Safety Guard + KB Diagnose Feb25 + Clear KB Feb26 + Restore KB Feb27',
         'file_upload_limit': '100MB',
         'orchestrators': {
             'sonnet': 'configured' if ANTHROPIC_API_KEY else 'missing',
@@ -661,6 +725,11 @@ def health():
         'blog_post_generator': {
             'status': blog_posts_status,
             'features': ['ai_generation', 'seo_optimized', 'conversational_tone', 'word_doc_download', 'saved_library', '12_topics']
+        },
+        'knowledge_restore': {
+            'status': 'enabled',
+            'endpoint': '/api/admin/restore-knowledge',
+            'method': 'POST multipart/form-data, field: export_file'
         }
     })
 
@@ -903,48 +972,6 @@ try:
     print("Integration Hub API registered")
 except ImportError:
     print("Integration Hub not found")
-
-# ============================================================================
-# KEEP-ALIVE THREAD (Added February 27, 2026)
-# Prevents Render free/starter tier from spinning down due to inactivity.
-# Render spins down services after ~15 minutes of no traffic. The first
-# request after spin-down times out while the app cold-starts (~30s).
-# This thread pings /health every 14 minutes to keep the process alive.
-# - Uses stdlib threading (no new dependencies)
-# - Uses requests (already in requirements.txt)
-# - daemon=True: thread dies automatically when gunicorn shuts down
-# - 60s startup delay: avoids pinging before the app is fully ready
-# ============================================================================
-import threading
-import time
-import requests as _keep_alive_requests
-
-
-def _keep_alive_ping():
-    """
-    Background daemon thread: pings /health every 14 minutes to prevent
-    Render from spinning down the service due to inactivity.
-    """
-    time.sleep(60)  # Wait 60s after startup before first ping
-    while True:
-        try:
-            port = int(os.environ.get('PORT', 5000))
-            url = f'http://127.0.0.1:{port}/health'
-            resp = _keep_alive_requests.get(url, timeout=10)
-            print(f"[KeepAlive] Ping OK ({resp.status_code})")
-        except Exception as e:
-            print(f"[KeepAlive] Ping failed (non-fatal): {e}")
-        time.sleep(840)  # 14 minutes between pings
-
-
-_keep_alive_thread = threading.Thread(
-    target=_keep_alive_ping,
-    daemon=True,
-    name='KeepAlive'
-)
-_keep_alive_thread.start()
-print("✅ Keep-Alive thread started (pings /health every 14 minutes)")
-# ============================================================================
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
