@@ -7,6 +7,20 @@
     <!--
         Last Updated: February 26, 2026
 
+        CHANGES - February 26, 2026 (third update):
+          * REMOVED: Mandatory "Document Type" dropdown.
+            The backend (routes/ingest.py) already defaults document_type to 'generic'
+            when absent, and the ingestion engine (document_ingestion_engine.py) auto-
+            detects the correct extractor from filename hints and file content signals.
+            Forcing the user to pick a type was redundant and error-prone.
+          * Removed: DOC_TYPE_HINTS object (no longer needed without dropdown)
+          * Removed: setupDocTypeHint() function and its DOMContentLoaded call
+          * Removed: documentType required validation in setupFormSubmit()
+          * Removed: document_type from formData in uploadDocument() — backend defaults
+            to 'generic' which triggers auto-detection in the engine
+          * Kept: Client Name and Industry fields (still useful metadata for queries)
+          * Kept: All upload, drag-drop, celebration, highlights, history, patterns logic
+
         CHANGES - February 26, 2026 (second update):
           * FIXED: After uploading a file, clicking "Choose File" / "Change File"
             did nothing - could not select a second file without refreshing the page.
@@ -35,8 +49,6 @@
           * Added highlights display in celebration popup and success message -
             extractors now return what they actually found (client name, fee, patterns)
           * Added highlights panel below upload form showing extraction results
-          * Document type select now includes descriptive labels explaining what
-            each type extracts so users pick the right one
 
         CHANGES - February 22, 2026:
           * Fixed Download Knowledge button (window.location.href instead of fetch)
@@ -241,13 +253,6 @@
         .form-group input:focus {
             outline: none;
             border-color: #667eea;
-        }
-
-        .form-group .hint {
-            font-size: 0.82em;
-            color: #888;
-            margin-top: 5px;
-            font-style: italic;
         }
 
         /* Progress */
@@ -568,34 +573,6 @@
                 <form id="uploadForm" style="margin-top: 25px;">
 
                     <div class="form-group">
-                        <label for="documentType">Document Type *</label>
-                        <select id="documentType" required>
-                            <option value="">- Select Document Type -</option>
-
-                            <optgroup label="-- Word Documents --">
-                                <option value="contract">Contract / Engagement Agreement</option>
-                                <option value="implementation_manual">Implementation Manual</option>
-                                <option value="lessons_learned">Lessons Learned</option>
-                                <option value="scope_of_work">Scope of Work</option>
-                                <option value="general_word">General Word Document</option>
-                            </optgroup>
-
-                            <optgroup label="-- PowerPoint Presentations --">
-                                <option value="oaf">Operations Assessment (OAF)</option>
-                                <option value="eaf">Employee Assessment (EAF)</option>
-                                <option value="implementation_ppt">Implementation Presentation</option>
-                            </optgroup>
-
-                            <optgroup label="-- Excel Files --">
-                                <option value="schedule_pattern">Schedule Pattern File</option>
-                                <option value="data_file">Data File (Labor / Overtime / Cost)</option>
-                            </optgroup>
-
-                        </select>
-                        <div class="hint" id="docTypeHint"></div>
-                    </div>
-
-                    <div class="form-group">
                         <label for="clientName">Client Name (optional)</label>
                         <input type="text" id="clientName"
                                placeholder="e.g., Andersen, ChemDesign, Reckitt">
@@ -674,20 +651,6 @@
     </div>
 
     <script>
-        // -- Document type hints --
-        const DOC_TYPE_HINTS = {
-            'contract':            'Extracts: client name, total fee, payment milestones, engagement weeks',
-            'implementation_manual': 'Extracts: schedule patterns, shift lengths, start times, appendices',
-            'lessons_learned':     'Extracts: each lesson individually with category, situation, key principle',
-            'scope_of_work':       'Extracts: client, weekly deliverables, total cost, pre-project requirements',
-            'general_word':        'Extracts: headings, dollar amounts, schedule patterns, section structure',
-            'oaf':                 'Extracts: overtime %, headcount, operational metrics (full extractor coming)',
-            'eaf':                 'Extracts: satisfaction scores, response rates (full extractor coming)',
-            'implementation_ppt':  'Extracts: schedule patterns implemented (full extractor coming)',
-            'schedule_pattern':    'Extracts: shift grid data (full extractor coming with Excel sample)',
-            'data_file':           'Extracts: labor/overtime/cost data (full extractor coming with Excel sample)'
-        };
-
         // Global state
         let selectedFile = null;
 
@@ -698,17 +661,7 @@
             loadPatterns();
             setupDragDrop();
             setupFormSubmit();
-            setupDocTypeHint();
         });
-
-        // -- Document type hint --
-        function setupDocTypeHint() {
-            document.getElementById('documentType').addEventListener('change', function() {
-                const hint = DOC_TYPE_HINTS[this.value] || '';
-                const hintEl = document.getElementById('docTypeHint');
-                hintEl.textContent = hint;
-            });
-        }
 
         // -- Download Knowledge --
         function downloadKnowledge(btn) {
@@ -729,11 +682,11 @@
                 if (data.success) {
                     const stats  = data.stats;
                     const byType = stats.by_document_type || {};
-                    document.getElementById('totalDocs').textContent    = stats.total_extracts;
-                    document.getElementById('totalPatterns').textContent= stats.total_patterns;
-                    document.getElementById('implDocs').textContent     = byType.implementation_manual || 0;
-                    document.getElementById('lessonDocs').textContent   = byType.lessons_learned || 0;
-                    document.getElementById('contractDocs').textContent = (byType.contract || 0) + (byType.proposal || 0);
+                    document.getElementById('totalDocs').textContent     = stats.total_extracts;
+                    document.getElementById('totalPatterns').textContent  = stats.total_patterns;
+                    document.getElementById('implDocs').textContent      = byType.implementation_manual || 0;
+                    document.getElementById('lessonDocs').textContent    = byType.lessons_learned || 0;
+                    document.getElementById('contractDocs').textContent  = (byType.contract || 0) + (byType.proposal || 0);
                     document.getElementById('assessmentDocs').textContent =
                         (byType.oaf || 0) + (byType.eaf || 0);
                 }
@@ -809,23 +762,16 @@
         }
 
         // -- Drag & Drop --
-        // FIXED February 26, 2026:
-        // All listeners are attached to the stable outer elements (uploadZone div
-        // and fileInput). resetForm() and handleFileSelect() only replace innerHTML
-        // inside uploadZone - the div itself and the fileInput element are never
-        // removed from the DOM, so all listeners survive across uploads.
-        // Inline onclick removed from dynamically-generated button HTML to avoid
-        // duplicate triggers. A single click listener on uploadZone handles all
-        // "Choose File" / "Change File" clicks anywhere in the zone.
+        // All listeners attached to stable outer elements (uploadZone div and fileInput).
+        // resetForm() and handleFileSelect() only replace innerHTML inside uploadZone -
+        // the div itself and the fileInput element are never removed from the DOM,
+        // so all listeners survive across uploads.
         function setupDragDrop() {
             const uploadZone = document.getElementById('uploadZone');
             const fileInput  = document.getElementById('fileInput');
 
             // Click anywhere in the zone to open file picker
-            // stopPropagation not needed - fileInput is outside uploadZone
             uploadZone.addEventListener('click', (e) => {
-                // Don't double-trigger if the click is on the button inside the zone
-                // (button has no special handling - we just always trigger the input)
                 fileInput.value = '';   // Reset so same file can be re-selected
                 fileInput.click();
             });
@@ -855,29 +801,21 @@
                             pdf: '📕', docx: '📝', doc: '📝', md: '📄', csv: '📊' };
             const icon = icons[ext] || '📄';
 
-            // Auto-select document type based on extension
-            const docTypeSelect = document.getElementById('documentType');
-            if ((ext === 'pptx' || ext === 'ppt') && docTypeSelect.value === '') {
-                // Leave for user to pick OAF / EAF / implementation_ppt
-            } else if ((ext === 'xlsx' || ext === 'xls') && docTypeSelect.value === '') {
-                // Leave for user to pick schedule_pattern / data_file
-            }
-
             document.getElementById('uploadZone').innerHTML = `
                 <div class="upload-icon">${icon}</div>
                 <h3>${escapeHtml(file.name)}</h3>
-                <p>${(file.size / 1024).toFixed(1)} KB - click zone or button to change</p>
+                <p>${(file.size / 1024).toFixed(1)} KB — click zone or button to change</p>
                 <button class="btn" type="button">Change File</button>
             `;
         }
 
         // -- Form submission --
+        // Document type is no longer required — the engine auto-detects from filename
+        // and content. Only a file is required to submit.
         function setupFormSubmit() {
             document.getElementById('uploadForm').addEventListener('submit', async (e) => {
                 e.preventDefault();
                 if (!selectedFile) { showError('Please select a file first'); return; }
-                const documentType = document.getElementById('documentType').value;
-                if (!documentType) { showError('Please select a document type'); return; }
                 await uploadDocument();
             });
         }
@@ -885,15 +823,16 @@
         // -- Upload --
         async function uploadDocument() {
             const formData = new FormData();
-            formData.append('file',          selectedFile);
-            formData.append('document_type', document.getElementById('documentType').value);
-            formData.append('client',        document.getElementById('clientName').value);
-            formData.append('industry',      document.getElementById('industry').value);
+            formData.append('file',     selectedFile);
+            formData.append('client',   document.getElementById('clientName').value);
+            formData.append('industry', document.getElementById('industry').value);
+            // document_type intentionally omitted — backend defaults to 'generic'
+            // which triggers auto-detection in document_ingestion_engine.py
 
-            document.getElementById('spinner').style.display       = 'block';
-            document.getElementById('submitBtn').disabled           = true;
-            document.getElementById('uploadProgress').style.display = 'block';
-            document.getElementById('highlightsPanel').style.display= 'none';
+            document.getElementById('spinner').style.display        = 'block';
+            document.getElementById('submitBtn').disabled            = true;
+            document.getElementById('uploadProgress').style.display  = 'block';
+            document.getElementById('highlightsPanel').style.display = 'none';
 
             let progress = 0;
             const progressInterval = setInterval(() => {
@@ -911,10 +850,10 @@
                 document.getElementById('progressBar').style.width = '100%';
 
                 setTimeout(() => {
-                    document.getElementById('spinner').style.display       = 'none';
-                    document.getElementById('submitBtn').disabled           = false;
-                    document.getElementById('uploadProgress').style.display = 'none';
-                    document.getElementById('progressBar').style.width      = '0%';
+                    document.getElementById('spinner').style.display        = 'none';
+                    document.getElementById('submitBtn').disabled            = false;
+                    document.getElementById('uploadProgress').style.display  = 'none';
+                    document.getElementById('progressBar').style.width       = '0%';
 
                     if (data.success) {
                         showSuccess(data.message || 'Document ingested successfully');
@@ -931,9 +870,9 @@
 
             } catch (error) {
                 clearInterval(progressInterval);
-                document.getElementById('spinner').style.display       = 'none';
-                document.getElementById('submitBtn').disabled           = false;
-                document.getElementById('uploadProgress').style.display = 'none';
+                document.getElementById('spinner').style.display        = 'none';
+                document.getElementById('submitBtn').disabled            = false;
+                document.getElementById('uploadProgress').style.display  = 'none';
                 showError('Upload failed: ' + error.message);
             }
         }
@@ -1003,7 +942,6 @@
         function resetForm() {
             selectedFile = null;
             document.getElementById('uploadForm').reset();
-            document.getElementById('docTypeHint').textContent = '';
             document.getElementById('uploadZone').innerHTML = `
                 <div class="upload-icon">📄</div>
                 <h3>Drag & Drop Document</h3>
