@@ -763,4 +763,70 @@ def export_knowledge():
         }), 500
 # ============================================================================
 
+
+# ============================================================================
+# CLEAR ENDPOINT — Added February 27, 2026
+# ============================================================================
+@ingest_bp.route('/clear', methods=['POST'])
+def clear_knowledge_base():
+    """
+    Clear all knowledge extracts, learned patterns, and ingestion log.
+
+    Added February 27, 2026:
+    Allows wiping the knowledge base so documents can be re-ingested with
+    improved extractors without stale/garbled data from previous ingestions.
+
+    Does NOT delete the database file itself — only truncates the three tables:
+        - knowledge_extracts
+        - learned_patterns
+        - ingestion_log
+
+    Requires JSON body: { "confirm": "CLEAR" }
+    This prevents accidental clears from browser refreshes or stray requests.
+
+    Returns:
+        JSON with counts of deleted rows per table.
+    """
+    try:
+        import sqlite3
+
+        body = request.get_json(silent=True) or {}
+        if body.get('confirm') != 'CLEAR':
+            return jsonify({
+                'success': False,
+                'error': 'Must send { "confirm": "CLEAR" } in request body'
+            }), 400
+
+        ingestor = get_document_ingestor()
+        db = sqlite3.connect(ingestor.db_path)
+        cursor = db.cursor()
+
+        counts = {}
+
+        for table in ('knowledge_extracts', 'learned_patterns', 'ingestion_log'):
+            try:
+                cursor.execute(f'SELECT COUNT(*) FROM {table}')
+                counts[table] = cursor.fetchone()[0]
+                cursor.execute(f'DELETE FROM {table}')
+            except sqlite3.OperationalError:
+                counts[table] = 0  # Table doesn't exist yet
+
+        db.commit()
+        db.close()
+
+        return jsonify({
+            'success': True,
+            'message': 'Knowledge base cleared successfully',
+            'deleted': counts
+        }), 200
+
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'success': False,
+            'error': f'Clear failed: {str(e)}',
+            'traceback': traceback.format_exc()
+        }), 500
+# ============================================================================
+
 # I did no harm and this file is not truncated
