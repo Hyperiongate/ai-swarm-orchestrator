@@ -1,103 +1,64 @@
 """
 DOCUMENT INGESTION ENGINE
 Created: February 2, 2026
-Last Updated: February 27, 2026 - FIXED DOCX extractors (lessons_learned, general_word, OAF)
+Last Updated: February 27, 2026 - FIXED 5 extraction bugs found in live data review
 
 CHANGELOG:
-- February 27, 2026: FIXED DOCX extractors — lessons_learned, general_word, OAF slide text
-  * ROOT CAUSE OF ALL FAILURES: ingest.py was reading .docx files with
-    file.read().decode('utf-8', errors='ignore'), producing garbled binary output.
-    The engine received nonsense; only stray ASCII digits (%, $) survived.
-    This is now fixed in ingest.py which uses python-docx for DOCX files.
-    The engine now receives a JSON list of {style, bold, text} dicts as 'content'
-    for all .docx files. All extractors updated to consume this structured format.
 
-  * _extract_from_lessons_learned(): complete rewrite
-    - OLD: looked for '### Lesson #N' Markdown headers (never present in real files)
-    - NEW: parses {style, bold, text} paragraph list from ingest.py
-    - Detects lessons by Heading2 style + numbered pattern (e.g. "1. The Goldilocks Shift")
-    - Falls back to plain-bold + numbered detection for docs without heading styles
-    - Captures: lesson title, lesson number, key rules (bold paragraphs), body text,
-      and all subheadings within each lesson
-    - Backward compatible: if content is not valid JSON, falls back to old Markdown parsing
+- February 27, 2026 (Session 3): FIXED 5 extraction bugs found by analyzing live export
 
-  * _extract_general_word_doc(): major enhancement
-    - OLD: scraped only percentages, dollar amounts, schedule patterns
-    - NEW: parses {style, bold, text} paragraph list from ingest.py
-    - Extracts: doc title, all section headings, body text per section,
-      bold insights (key principles), quoted insights (Jim/Dan attribution lines),
-      schedule patterns referenced, financial figures
-    - Builds consulting_insight patterns for sections with substantial content
-    - Backward compatible: if content is not valid JSON, uses old regex approach
+  BUG 1 — LESSONS LEARNED: key_principle always empty
+    ROOT CAUSE: The extractor populated key_principle only from bold_rules[0]. But
+    real .docx lesson files (10_Hour_Shift_Lessons_Learned.docx etc.) don't mark
+    body text as bold — the lesson body IS the key principle. bold_rules was always [].
+    FIX: After parsing each lesson, if bold_rules is empty, set key_principle and
+    situation from the first substantial body_paragraph instead. Also added scan for
+    paragraphs beginning with known rule-starter phrases ('The key', 'Companies must',
+    'Workers', 'Before', 'The schedule') as alternative bold_rules candidates.
 
-  * _extract_from_oaf_pptx(): added slide text fallback
-    - OLD: only extracted data from HTML table (a:tbl) elements; returned 0 when no tables
-    - NEW: when no tables found, extracts narrative content from slide text paragraphs
-    - Captures cost comparison data from Cost of Time slides (fully loaded cost, hours)
-    - Captures key principles from narrative slides (overtime, staffing recommendations)
-    - Returns 0 patterns only when BOTH tables AND meaningful text are absent
+  BUG 2 — AUTO-DETECT: 'engagement' alone triggered 'contract' document type
+    ROOT CAUSE: _detect_document_type() in ingest.py (and mirrored in JS) matched
+    'engagement' as a contract signal. Pillar_7_Employee_Engagement_DRAFT.docx was
+    ingested as a contract, extracting only 1 pattern (an interest rate clause).
+    FIX: Removed 'engagement' from the contract detection keywords. Contract now
+    requires 'contract' OR 'agreement' explicitly in the filename. 'engagement' alone
+    maps to general_word. (Fix applied in ingest.py and knowledge_management.html.)
 
-- February 26, 2026 (Session 2): ADDED full PPTX and Excel extractors
-  * PROBLEM: PowerPoint and Excel extractors were stub placeholders (TODO).
-    PPTX route used python-pptx which reads slide TEXT only — completely missing
-    chart data embedded as chart XML in the zip structure. Survey results stored
-    as bar/pie/column charts were invisible to the system.
-    Excel route converted cells to flat text, losing all numeric structure.
-  * SOLUTION: Both file types now pass file_bytes directly to new structured
-    extractors that operate on the raw file bytes rather than pre-converted text.
-  *
-  * PPTX EXTRACTORS (_extract_from_survey_pptx, _extract_from_oaf_pptx):
-    - Reads .pptx as zip archive (no python-pptx dependency for chart data)
-    - Builds slide-to-chart map from _rels files
-    - Extracts chart XML from ppt/charts/*.xml
-    - Parses <c:ser> series blocks with category/value arrays
-    - Separates "Average Shiftworker" series (norms) from client series
-    - Stores each question as individual survey_norm and survey_client_result patterns
-    - _detect_pptx_subtype() auto-detects survey vs OAF from slide text signals
-    - OAF extractor reads slide tables (a:tbl/a:tr/a:tc), extracts operational metrics
-  *
-  * EXCEL EXTRACTOR (_extract_from_excel):
-    - Multi-sheet aware: processes every sheet individually
-    - Per-sheet type detection: cost_model, schedule_pattern, schedule_staffing,
-      historical_data, general
-    - cost_model: scenario names from row 1 cols J-O, labels from col I, two-block layout
-    - schedule_pattern: detects "Week" header rows, extracts shift-code grids,
-      groups into rotation cycles
-    - schedule_staffing: extracts crew names, shift assignments, headcount rows
-    - historical_data: stores summary stats only (skips raw date-value rows)
-  *
-  * BACKWARD COMPATIBILITY: All existing string-based extractors (contract,
-    implementation_manual, lessons_learned, scope_of_work, general_word, etc.)
-    are completely unchanged. New extractors are additive only. The ingest_document()
-    method gains an optional file_bytes kwarg; if absent, behavior is identical
-    to before.
+  BUG 3 — GENERAL WORD: Pillar 1 heading captured as datestamp metadata line
+    ROOT CAUSE: Pillar 1 docx starts with a bold line '1/26/2026, Claude (Sonnet 4.5)
+    2/2/2026' which was not caught by METADATA_RE. It became the doc_title and the
+    first section heading, causing all content to fall under a garbage heading.
+    FIX: Expanded METADATA_RE to filter date-like patterns (\d{1,2}/\d{1,2}/\d{4}),
+    'Claude (', and 'Sonnet' at the start of a line.
 
-- February 26, 2026 (Session 1): COMPLETE REWRITE - Real Knowledge Extraction
-  * CONTRACT EXTRACTOR: client, total fee, payment schedule, weeks, interest rate.
-  * IMPLEMENTATION MANUAL EXTRACTOR: schedule patterns, shift lengths, start times,
-    facility context, appendices, employee selection process.
-  * LESSONS LEARNED EXTRACTOR: all 19 lessons parsed individually with title,
-    category, situation, key principle, real examples, full text.
-  * SCOPE OF WORK EXTRACTOR: client, weekly deliverables, cost, pre-project data.
-  * GENERAL WORD DOC: bold headings, dollar amounts, schedule patterns, percentages.
+  BUG 4 — GENERAL WORD: First heading paragraph lost after doc_title capture
+    ROOT CAUSE: After capturing doc_title, the code did 'continue', skipping the
+    paragraph entirely. If a document's first heading is also a real section (which
+    is common), that section and all its content was lost. Pillar 2 only extracted
+    1 section (Introduction) instead of ~10 because of this.
+    FIX: After setting doc_title, do NOT continue. Fall through to the normal
+    heading/section-start logic so the paragraph serves as both title and section.
 
-- February 3, 2026: CRITICAL FIX - Use KNOWLEDGE_DB_PATH env var for persistent storage
-- February 2, 2026: Original file created
+  BUG 5 — GENERAL WORD: key_principles always empty in section_content insights
+    ROOT CAUSE: key_principles was populated only from bold_insights (bold=True
+    paragraphs). Most Pillar docs don't use bold for principles — the content is in
+    regular body paragraphs. key_principles was always [].
+    FIX: When building section_content insights, include the first 3 body paragraphs
+    as 'body_content' alongside bold_insights. Also store full_body (all paragraphs)
+    in consulting_insight patterns so AI queries can retrieve complete section text.
 
-SUPPORTED DOCUMENT TYPES (all functional):
-  Word Documents (text/Markdown format on server):
-    - contract
-    - implementation_manual
-    - lessons_learned
-    - scope_of_work
-    - general_word (fallback)
+- February 27, 2026 (Session 1/2): FIXED DOCX extractors — lessons_learned,
+  general_word, OAF slide text. See prior changelog for details.
 
-  PowerPoint (file_bytes required):
-    - survey_pptx / eaf   -> per-question chart data, normative vs client series
-    - oaf                 -> slide tables, operational metrics, FTE scenarios
+- February 26, 2026: ADDED full PPTX and Excel extractors.
+- February 3, 2026: CRITICAL FIX - Use KNOWLEDGE_DB_PATH env var.
+- February 2, 2026: Original file created.
 
-  Excel (file_bytes required):
-    - excel               -> auto-detects sheet types, extracts all structured data
+SUPPORTED DOCUMENT TYPES:
+  Word Documents: contract, implementation_manual, lessons_learned,
+                  scope_of_work, general_word
+  PowerPoint (file_bytes): survey_pptx/eaf, oaf, implementation_ppt
+  Excel (file_bytes): excel, schedule_pattern, data_file
 
 Author: Jim @ Shiftwork Solutions LLC (managed by Claude Sonnet 4)
 """
@@ -113,7 +74,6 @@ from typing import Dict, List, Any, Optional
 import sqlite3
 
 
-# All known schedule pattern names for detection across document types
 KNOWN_SCHEDULE_PATTERNS = [
     '2-2-3', '2-3-2', '4-3', '4/3', 'DuPont', 'Panama', 'Pitman',
     '3-on-3-off', 'Continental', '5-2-5-3', '5&2', '5/2', 'Rotating 8',
@@ -121,22 +81,27 @@ KNOWN_SCHEDULE_PATTERNS = [
     'fixed days off', 'rotating', 'every other weekend'
 ]
 
-# Dollar amount pattern for Markdown-escaped files (Pandoc converts $ to \$)
 DOLLAR_PATTERN = re.compile(r'\\{1,2}\$([0-9,]+)')
-
-# Engagement week pattern
 WEEK_PATTERN = re.compile(r'Week\s+(\d+)', re.IGNORECASE)
 
-# Valid shift codes for schedule grids
 SHIFT_CODE_SET = {
     'D12', 'N12', 'D11', 'N11', 'D10', 'N10', 'D8', 'N8', 'E8', 'S8',
     'd12', 'n12', 'd11', 'n11', 'd10', 'n10', 'd8', 'n8', 'e8', 's8',
     'OFF', 'off', 'D', 'N', 'E', 'O'
 }
 
+# Rule-starter phrases that indicate a key principle even without bold formatting
+# Used in _extract_from_lessons_learned to find principles in plain body text
+RULE_STARTER_PHRASES = (
+    'the key', 'companies must', 'workers must', 'before implementing',
+    'the schedule must', 'the rule', 'this means', 'the critical',
+    'employees must', 'management must', 'the most important',
+    'always ', 'never ', 'the bottom line', 'in practice',
+    'the fundamental', 'the real issue', 'the primary'
+)
+
 
 def _is_shift_code(v) -> bool:
-    """Return True if a cell value looks like a shift code"""
     if v is None:
         return False
     sv = str(v).strip()
@@ -150,15 +115,9 @@ def _is_shift_code(v) -> bool:
 class DocumentIngestor:
     """
     Ingests documents and extracts knowledge permanently to database.
-
-    Supports:
-    - Word docs via text/Markdown content (existing path, unchanged)
-    - PowerPoint via file_bytes (new: chart XML extraction from zip)
-    - Excel via file_bytes (new: multi-sheet structured extraction)
     """
 
     def __init__(self, db_path=None):
-        # CRITICAL: Use environment variable for persistent storage
         if db_path is None:
             db_path = os.environ.get('KNOWLEDGE_DB_PATH', 'swarm_intelligence.db')
         self.db_path = db_path
@@ -166,7 +125,6 @@ class DocumentIngestor:
         self._ensure_tables()
 
     def _ensure_tables(self):
-        """Create knowledge persistence tables if they don't exist"""
         db = sqlite3.connect(self.db_path)
         cursor = db.cursor()
 
@@ -226,20 +184,15 @@ class DocumentIngestor:
         Ingest a document and extract knowledge.
 
         Args:
-            content:       Full document text (Markdown) — for Word doc path
-            document_type: One of: contract, implementation_manual, lessons_learned,
+            content:       Full document text or JSON paragraph list (for Word docs)
+            document_type: contract, implementation_manual, lessons_learned,
                            scope_of_work, general_word, survey_pptx, oaf, eaf, excel
-            metadata:      Optional dict with client, industry, project_type, document_name
-            file_bytes:    Raw file bytes — required for PPTX and Excel; takes priority
-                           over content string for those types.
-
-        Returns:
-            Ingestion result dict with counts, highlights, and status message
+            metadata:      dict with client, industry, project_type, document_name
+            file_bytes:    Raw bytes — required for PPTX and Excel
         """
         metadata = metadata or {}
         document_name = metadata.get('document_name', 'Untitled')
 
-        # Deduplicate via content/bytes hash
         hash_source = file_bytes if file_bytes is not None else (content or '').encode()
         content_hash = hashlib.md5(hash_source).hexdigest()
 
@@ -256,29 +209,20 @@ class DocumentIngestor:
         db.close()
 
         # ---- Route to correct extractor ----
-
         if file_bytes is not None and document_type in ('survey_pptx', 'eaf'):
             extracted = self._extract_from_survey_pptx(file_bytes, metadata)
-
         elif file_bytes is not None and document_type == 'oaf':
             extracted = self._extract_from_oaf_pptx(file_bytes, metadata)
-
         elif file_bytes is not None and document_type in ('excel', 'schedule_pattern', 'data_file'):
             extracted = self._extract_from_excel(file_bytes, metadata)
-
-        # Auto-detect PPTX subtype when document_type not explicitly set
         elif file_bytes is not None and document_name.lower().endswith(('.pptx', '.ppt')):
             subtype = self._detect_pptx_subtype(file_bytes)
             if subtype == 'oaf':
                 extracted = self._extract_from_oaf_pptx(file_bytes, metadata)
             else:
                 extracted = self._extract_from_survey_pptx(file_bytes, metadata)
-
-        # Auto-detect Excel
         elif file_bytes is not None and document_name.lower().endswith(('.xlsx', '.xls')):
             extracted = self._extract_from_excel(file_bytes, metadata)
-
-        # Word doc / text paths (original, unchanged)
         elif document_type == 'contract':
             extracted = self._extract_from_contract(content or '', metadata)
         elif document_type == 'implementation_manual':
@@ -292,14 +236,12 @@ class DocumentIngestor:
         else:
             extracted = self._extract_general_word_doc(content or '', metadata)
 
-        # Auto-detect client from content if not in metadata
         if not metadata.get('client') and content:
             detected_client = self._detect_client(content, extracted)
             if detected_client:
                 metadata['client'] = detected_client
                 extracted['detected_client'] = detected_client
 
-        # Store to database
         self._store_extraction(
             document_type=document_type,
             document_name=document_name,
@@ -341,14 +283,10 @@ class DocumentIngestor:
         }
 
     # =========================================================================
-    # POWERPOINT EXTRACTORS
+    # POWERPOINT EXTRACTORS (unchanged from Session 1/2)
     # =========================================================================
 
     def _detect_pptx_subtype(self, file_bytes: bytes) -> str:
-        """
-        Auto-detect whether a PPTX is a survey results deck or OAF/operations deck.
-        Reads first 5 slides for signal words. Returns 'oaf' or 'survey'.
-        """
         try:
             with zipfile.ZipFile(io.BytesIO(file_bytes), 'r') as z:
                 all_files = z.namelist()
@@ -361,7 +299,6 @@ class DocumentIngestor:
                     xml = z.read(sf).decode('utf-8', errors='replace')
                     texts = re.findall(r'<a:t[^>]*>([^<]+)</a:t>', xml)
                     text_sample += ' '.join(texts)
-
             text_lower = text_sample.lower()
             oaf_signals = ['operations assessment', 'overtime', 'absenteeism',
                            'productivity', 'fte', 'headcount', 'staffing', 'turnover']
@@ -373,10 +310,6 @@ class DocumentIngestor:
             return 'survey'
 
     def _get_slide_question(self, slide_xml: str) -> Optional[str]:
-        """
-        Extract the survey question text from a slide's XML.
-        Returns the first long text string that looks like a survey question.
-        """
         raw_texts = [
             t.strip()
             for t in re.findall(r'<a:t[^>]*>([^<]+)</a:t>', slide_xml)
@@ -394,10 +327,6 @@ class DocumentIngestor:
         return None
 
     def _get_chart_series(self, chart_xml: str) -> List[Dict]:
-        """
-        Parse chart XML and return list of series dicts.
-        Each dict has keys: series (name), categories (list), values (list).
-        """
         results = []
         for ser in re.findall(r'<c:ser>(.*?)</c:ser>', chart_xml, re.DOTALL):
             title_m = re.search(r'<c:tx>.*?<c:v>([^<]+)</c:v>', ser, re.DOTALL)
@@ -410,26 +339,12 @@ class DocumentIngestor:
         return results
 
     def _extract_from_survey_pptx(self, file_bytes: bytes, metadata: Dict) -> Dict:
-        """
-        Extract knowledge from Employee Assessment (EAF / survey results) PowerPoint.
-
-        Reads the .pptx zip directly to access embedded chart XML — python-pptx
-        reads slide TEXT only and completely misses chart data. This extractor:
-        - Builds a slide-number → chart-file mapping from _rels files
-        - For each slide: finds the survey question from slide text
-        - Extracts chart series from ppt/charts/*.xml
-        - Separates "Average Shiftworker" (normative) series from client series
-        - Stores each question as individual patterns:
-            survey_norm: normative distribution for that question
-            survey_client_result: client-specific distribution
-        """
         extracted = {
             'patterns': [],
             'insights': [],
             'highlights': [],
             'document_category': 'survey_pptx'
         }
-
         client = metadata.get('client', 'unknown')
         questions_processed = 0
         norms_found = 0
@@ -438,13 +353,10 @@ class DocumentIngestor:
         try:
             with zipfile.ZipFile(io.BytesIO(file_bytes), 'r') as z:
                 all_files = z.namelist()
-
                 slide_files = sorted(
                     [f for f in all_files if re.match(r'ppt/slides/slide\d+\.xml$', f)],
                     key=lambda x: int(re.search(r'slide(\d+)', x).group(1))
                 )
-
-                # Build slide-number -> chart-file list from .rels
                 slide_chart_map: Dict[int, List[str]] = {}
                 for rf in [f for f in all_files
                            if re.match(r'ppt/slides/_rels/slide\d+\.xml\.rels$', f)]:
@@ -460,8 +372,6 @@ class DocumentIngestor:
                         question = self._get_slide_question(slide_xml)
                         if not question:
                             continue
-
-                        # Gather all chart series for this slide
                         all_series: List[Dict] = []
                         for cf in slide_chart_map.get(slide_num, []):
                             chart_path = f'ppt/charts/{cf}'
@@ -471,11 +381,8 @@ class DocumentIngestor:
                                     all_series.extend(self._get_chart_series(chart_xml))
                                 except Exception:
                                     pass
-
-                        # Separate norm series from client series
                         norm_dist: Dict[str, float] = {}
                         client_dist: Dict[str, float] = {}
-
                         for ser in all_series:
                             dist: Dict[str, float] = {}
                             for cat, val in zip(ser['categories'], ser['values']):
@@ -483,18 +390,14 @@ class DocumentIngestor:
                                     dist[cat] = round(float(val), 2)
                                 except (ValueError, TypeError):
                                     pass
-
                             if 'Average Shiftworker' in ser['series']:
                                 norm_dist = dist
                             elif ser['series']:
                                 client_dist.update(dist)
-
                         if not norm_dist and not client_dist:
                             continue
-
                         questions_processed += 1
                         q_slug = re.sub(r'[^a-z0-9]', '_', question.lower())[:60].strip('_')
-
                         if client_dist:
                             extracted['patterns'].append({
                                 'type': 'survey_client_result',
@@ -507,7 +410,6 @@ class DocumentIngestor:
                                 },
                                 'confidence': 0.95
                             })
-
                         if norm_dist:
                             norms_found += 1
                             extracted['patterns'].append({
@@ -520,11 +422,9 @@ class DocumentIngestor:
                                 },
                                 'confidence': 0.98
                             })
-
                     except Exception:
                         errors_encountered += 1
                         continue
-
         except Exception as zip_err:
             extracted['highlights'].append(f"Error reading PPTX: {str(zip_err)}")
             return extracted
@@ -536,45 +436,24 @@ class DocumentIngestor:
             'normative_questions': norms_found,
             'slide_errors': errors_encountered
         })
-
         extracted['highlights'].append(f"Survey Questions Extracted: {questions_processed}")
         extracted['highlights'].append(f"Normative Benchmarks: {norms_found}")
         if client and client != 'unknown':
             extracted['highlights'].append(f"Client: {client}")
-
         return extracted
 
     def _extract_from_oaf_pptx(self, file_bytes: bytes, metadata: Dict) -> Dict:
-        """
-        Extract knowledge from Operations Assessment / Analysis (OAF) PowerPoint.
-
-        Updated February 27, 2026:
-        - ADDED slide text extraction fallback when no tables present.
-          The OAF.pptx used by Shiftwork Solutions contains cost comparison data
-          and operational principles in slide text paragraphs, not tables.
-          Previously the extractor returned 0 patterns when tables were absent.
-          Now captures: Cost of Time comparisons, key overtime principles, next steps.
-
-        Primary extraction paths (in priority order):
-          1. Slide tables (a:tbl/a:tr/a:tc) — structured grids of operational data
-          2. Slide narrative text — Cost of Time slides, key principles, recommendations
-          3. Per-slide regex patterns — overtime %, absenteeism %, headcount
-
-        Returns patterns for: operational_metrics, cost_comparison, consulting_principles
-        """
         extracted = {
             'patterns': [],
             'insights': [],
             'highlights': [],
             'document_category': 'oaf'
         }
-
         client = metadata.get('client', 'unknown')
         metrics: Dict[str, Any] = {}
         tables_found = 0
-        slide_narratives = []    # Meaningful text collected across slides
-        cost_comparisons = []   # Cost of Time slide data
-        key_principles = []     # Operational insight paragraphs
+        cost_comparisons = []
+        key_principles = []
 
         try:
             with zipfile.ZipFile(io.BytesIO(file_bytes), 'r') as z:
@@ -583,7 +462,6 @@ class DocumentIngestor:
                     [f for f in all_files if re.match(r'ppt/slides/slide\d+\.xml$', f)],
                     key=lambda x: int(re.search(r'slide(\d+)', x).group(1))
                 )
-
                 for slide_num, sf in enumerate(slide_files, 1):
                     try:
                         slide_xml = z.read(sf).decode('utf-8', errors='replace')
@@ -593,8 +471,6 @@ class DocumentIngestor:
                             if t.strip()
                         ]
                         slide_text = ' '.join(raw_texts)
-
-                        # ---- 1. Extract tables ----
                         for tbl in re.findall(r'<a:tbl>(.*?)</a:tbl>', slide_xml, re.DOTALL):
                             rows_xml = re.findall(r'<a:tr>(.*?)</a:tr>', tbl, re.DOTALL)
                             table_data = []
@@ -616,11 +492,8 @@ class DocumentIngestor:
                                     'data': table_data,
                                     'client': client
                                 })
-
-                        # ---- 2. Cost of Time slide detection ----
                         slide_lower = slide_text.lower()
                         if 'cost of' in slide_lower and 'time' in slide_lower:
-                            # Extract fully loaded cost per hour values
                             cost_matches = re.findall(
                                 r'fully loaded cost per hour[:\s\t]+\$?([\d,]+\.?\d*)',
                                 slide_text, re.IGNORECASE
@@ -630,77 +503,50 @@ class DocumentIngestor:
                                 slide_text, re.IGNORECASE
                             )
                             annual_hours = re.findall(
-                                r'([\d,]+)\s*annual pay hours',
-                                slide_text, re.IGNORECASE
+                                r'([\d,]+)\s*annual pay hours', slide_text, re.IGNORECASE
                             )
                             days_off = re.findall(
-                                r'(\d+)\s*days off per year',
-                                slide_text, re.IGNORECASE
+                                r'(\d+)\s*days off per year', slide_text, re.IGNORECASE
                             )
                             if cost_matches or hours_matches:
                                 cost_comparisons.append({
                                     'slide': slide_num,
-                                    'cost_per_hour': [
-                                        float(c.replace(',', '')) for c in cost_matches
-                                    ],
-                                    'productive_hours': [
-                                        int(h.replace(',', '')) for h in hours_matches
-                                    ],
-                                    'annual_pay_hours': [
-                                        int(h.replace(',', '')) for h in annual_hours
-                                    ],
+                                    'cost_per_hour': [float(c.replace(',', '')) for c in cost_matches],
+                                    'productive_hours': [int(h.replace(',', '')) for h in hours_matches],
+                                    'annual_pay_hours': [int(h.replace(',', '')) for h in annual_hours],
                                     'days_off_per_year': [int(d) for d in days_off],
                                     'raw_text': slide_text[:400]
                                 })
-
-                        # ---- 3. Key operational principles (narrative slides) ----
-                        # Slides with substantive paragraphs (>80 chars, not just slide numbers)
                         long_texts = [t for t in raw_texts if len(t) > 80]
                         if long_texts:
-                            slide_narratives.extend(long_texts)
-                            # Flag slides with explicit "rule" or key insight text
                             for t in long_texts:
                                 if any(kw in t.lower() for kw in [
                                     'overtime', 'staffing', 'cost', 'schedule',
                                     'employees', 'workforce', 'straight time'
                                 ]):
-                                    key_principles.append({
-                                        'slide': slide_num,
-                                        'text': t[:400]
-                                    })
-
-                        # ---- 4. Per-slide metric extraction ----
-                        ot_m = re.search(
-                            r'[Oo]vertime[:\s]+(\d+(?:\.\d+)?)\s*%', slide_text)
+                                    key_principles.append({'slide': slide_num, 'text': t[:400]})
+                        ot_m = re.search(r'[Oo]vertime[:\s]+(\d+(?:\.\d+)?)\s*%', slide_text)
                         if ot_m and 'overtime_pct' not in metrics:
                             metrics['overtime_pct'] = float(ot_m.group(1))
-
-                        ab_m = re.search(
-                            r'[Aa]bsenteeism[:\s]+(\d+(?:\.\d+)?)\s*%', slide_text)
+                        ab_m = re.search(r'[Aa]bsenteeism[:\s]+(\d+(?:\.\d+)?)\s*%', slide_text)
                         if ab_m and 'absenteeism_pct' not in metrics:
                             metrics['absenteeism_pct'] = float(ab_m.group(1))
-
-                        tn_m = re.search(
-                            r'[Tt]urnover[:\s]+(\d+(?:\.\d+)?)\s*%', slide_text)
+                        tn_m = re.search(r'[Tt]urnover[:\s]+(\d+(?:\.\d+)?)\s*%', slide_text)
                         if tn_m and 'turnover_pct' not in metrics:
                             metrics['turnover_pct'] = float(tn_m.group(1))
-
                         hc_m = re.search(
                             r'(\d+)\s*(?:employees?|operators?|workers?|headcount)',
-                            slide_text, re.IGNORECASE)
+                            slide_text, re.IGNORECASE
+                        )
                         if hc_m and 'headcount' not in metrics:
                             hc = int(hc_m.group(1))
                             if 10 <= hc <= 5000:
                                 metrics['headcount'] = hc
-
                     except Exception:
                         continue
-
         except Exception as zip_err:
             extracted['highlights'].append(f"Error reading OAF PPTX: {str(zip_err)}")
             return extracted
-
-        # ---- Build patterns from collected data ----
 
         if metrics:
             extracted['patterns'].append({
@@ -709,16 +555,12 @@ class DocumentIngestor:
                 'data': {**metrics, 'client': client},
                 'confidence': 0.85
             })
-
         if cost_comparisons:
             extracted['patterns'].append({
                 'type': 'cost_comparison',
                 'name': f'oaf_cost_of_time_{re.sub(r"[^a-z0-9]", "_", client.lower())}',
-                'data': {
-                    'client': client,
-                    'slides_analyzed': len(cost_comparisons),
-                    'comparisons': cost_comparisons
-                },
+                'data': {'client': client, 'slides_analyzed': len(cost_comparisons),
+                         'comparisons': cost_comparisons},
                 'confidence': 0.9
             })
             extracted['insights'].append({
@@ -727,15 +569,11 @@ class DocumentIngestor:
                 'slide_count': len(cost_comparisons),
                 'data': cost_comparisons
             })
-
         if key_principles:
             extracted['patterns'].append({
                 'type': 'operational_principles',
                 'name': f'oaf_principles_{re.sub(r"[^a-z0-9]", "_", client.lower())}',
-                'data': {
-                    'client': client,
-                    'principles': key_principles[:10]
-                },
+                'data': {'client': client, 'principles': key_principles[:10]},
                 'confidence': 0.75
             })
             extracted['insights'].append({
@@ -744,48 +582,32 @@ class DocumentIngestor:
                 'count': len(key_principles),
                 'principles': key_principles[:10]
             })
-
         extracted['insights'].append({
             'type': 'oaf_summary',
             'client': client,
             'metrics': metrics,
             'tables_found': tables_found,
             'cost_comparison_slides': len(cost_comparisons),
-            'narrative_slides_with_content': len(
-                [p for p in key_principles]
-            )
+            'narrative_slides_with_content': len(key_principles)
         })
-
-        # Highlights
         for k, v in metrics.items():
             label = k.replace('_', ' ').title()
             extracted['highlights'].append(f"{label}: {v}{'%' if 'pct' in k else ''}")
         if tables_found:
             extracted['highlights'].append(f"Tables Extracted: {tables_found}")
         if cost_comparisons:
-            extracted['highlights'].append(
-                f"Cost of Time Slides: {len(cost_comparisons)}"
-            )
+            extracted['highlights'].append(f"Cost of Time Slides: {len(cost_comparisons)}")
         if key_principles:
-            extracted['highlights'].append(
-                f"Operational Principles Captured: {len(key_principles)}"
-            )
+            extracted['highlights'].append(f"Operational Principles Captured: {len(key_principles)}")
         if not metrics and not cost_comparisons and not key_principles:
             extracted['highlights'].append("No structured data found in this OAF")
-
         return extracted
 
     # =========================================================================
-    # EXCEL EXTRACTOR
+    # EXCEL EXTRACTOR (unchanged from Session 1/2)
     # =========================================================================
 
     def _detect_sheet_type(self, ws, sheet_name: str) -> str:
-        """
-        Detect what type of data a worksheet contains.
-        Returns: cost_model, schedule_pattern, schedule_staffing,
-                 historical_data, or general.
-        """
-        # Check col H/I area for cost model keywords (labels live in col I = index 8)
         for row in ws.iter_rows(min_row=1, max_row=30, max_col=12, values_only=True):
             for cell in row:
                 if cell and isinstance(cell, str):
@@ -795,16 +617,12 @@ class DocumentIngestor:
                         'cost of time', 'marginal cost'
                     ]):
                         return 'cost_model'
-
-        # Schedule staffing: crews and staffing rows
         rows_sample = []
         for row in ws.iter_rows(min_row=1, max_row=10, max_col=3, values_only=True):
             rows_sample.append([str(v).strip().lower() if v else '' for v in row])
         flat = ' '.join(' '.join(r) for r in rows_sample)
         if any(kw in flat for kw in ['staffing', 'day shift staffing', 'total staffing']):
             return 'schedule_staffing'
-
-        # Schedule pattern: "Week" headers followed by shift codes
         week_count = 0
         shift_count = 0
         for row in ws.iter_rows(min_row=1, max_row=20, values_only=True):
@@ -812,44 +630,22 @@ class DocumentIngestor:
             if 'Week' in vals:
                 week_count += 1
             shift_count += sum(1 for v in vals if _is_shift_code(v))
-
         if week_count >= 1 and shift_count >= 5:
             return 'schedule_pattern'
-
-        # Historical data: date column
         for row in ws.iter_rows(min_row=1, max_row=5, max_col=3, values_only=True):
             for cell in row:
                 if cell and re.match(r'\d{4}-\d{2}-\d{2}', str(cell)):
                     return 'historical_data'
-
         return 'general'
 
     def _extract_cost_model_sheet(self, ws, sheet_name: str, metadata: Dict) -> Dict:
-        """
-        Extract cost model scenarios from a worksheet.
-
-        Layout (Cost_of_time_Best.xlsx):
-        - Row 1: scenario names in columns J-O (0-indexed 9-14)
-        - Column I (index 8): row labels
-        - Values in scenario columns for each label row
-        - Column C/D area: base input parameters
-        """
-        result = {
-            'sheet': sheet_name,
-            'type': 'cost_model',
-            'scenarios': {},
-            'inputs': {}
-        }
-
-        # Scenario names from row 1
+        result = {'sheet': sheet_name, 'type': 'cost_model', 'scenarios': {}, 'inputs': {}}
         row1 = list(ws.iter_rows(min_row=1, max_row=1, values_only=True))[0]
         scenario_cols: Dict[int, str] = {}
         for i, v in enumerate(row1):
             if v and isinstance(v, str) and len(str(v).strip()) > 2:
                 scenario_cols[i] = str(v).strip().replace('\n', ' ')
-
-        LABEL_COL = 8  # Column I (0-indexed)
-
+        LABEL_COL = 8
         for row in ws.iter_rows(values_only=True):
             row = list(row)
             label = (
@@ -859,14 +655,11 @@ class DocumentIngestor:
             )
             if not label or label == 'None':
                 continue
-
             for col_idx, sc_name in scenario_cols.items():
                 if col_idx < len(row) and isinstance(row[col_idx], (int, float)):
                     if sc_name not in result['scenarios']:
                         result['scenarios'][sc_name] = {}
                     result['scenarios'][sc_name][label] = round(float(row[col_idx]), 4)
-
-        # Base inputs from col C (index 2) / col D (index 3)
         for row in ws.iter_rows(min_row=2, max_row=30, values_only=True):
             row = list(row)
             lbl = (
@@ -877,23 +670,10 @@ class DocumentIngestor:
             val = row[3] if len(row) > 3 else None
             if lbl and isinstance(val, (int, float)):
                 result['inputs'][lbl] = round(float(val), 4)
-
         return result
 
     def _extract_schedule_pattern_sheet(self, ws, sheet_name: str) -> Dict:
-        """
-        Extract shift rotation patterns from a worksheet.
-
-        Each pattern block starts with a "Week" header row in col B.
-        Data rows: week number in col B, shift codes in cols C-I.
-        Patterns are separated by empty rows.
-        """
-        result = {
-            'sheet': sheet_name,
-            'type': 'schedule_patterns',
-            'patterns': []
-        }
-
+        result = {'sheet': sheet_name, 'type': 'schedule_patterns', 'patterns': []}
         rows_list = list(ws.iter_rows(values_only=True))
         current_weeks: List[List[str]] = []
         current_header_row: Optional[int] = None
@@ -933,7 +713,6 @@ class DocumentIngestor:
         for i, row in enumerate(rows_list):
             row = list(row)
             col_b = row[1] if len(row) > 1 else None
-
             if col_b == 'Week':
                 save_pattern(current_header_row, current_day_headers, current_weeks)
                 current_header_row = i + 1
@@ -942,7 +721,6 @@ class DocumentIngestor:
                     if len(row) > j and row[j]
                 ]
                 current_weeks = []
-
             elif isinstance(col_b, int) and 1 <= col_b <= 20:
                 week_shifts = [
                     str(row[j]).strip() if (len(row) > j and row[j] is not None) else ''
@@ -950,30 +728,17 @@ class DocumentIngestor:
                 ]
                 if any(_is_shift_code(row[j]) for j in range(2, 9) if len(row) > j):
                     current_weeks.append(week_shifts)
-
         save_pattern(current_header_row, current_day_headers, current_weeks)
         return result
 
     def _extract_schedule_staffing_sheet(self, ws, sheet_name: str) -> Dict:
-        """
-        Extract crew and staffing data from a client implementation sheet.
-        Looks for crew rows (shift codes), staffing summary rows (headcount).
-        """
-        result = {
-            'sheet': sheet_name,
-            'type': 'schedule_staffing',
-            'crews': [],
-            'staffing': {}
-        }
-
+        result = {'sheet': sheet_name, 'type': 'schedule_staffing', 'crews': [], 'staffing': {}}
         for row in ws.iter_rows(values_only=True):
             row = list(row)
             label = str(row[1]).strip() if len(row) > 1 and row[1] is not None else ''
             if not label:
                 continue
-
             label_lower = label.lower()
-
             if 'staffing' in label_lower or ('total' in label_lower and 'staffing' in label_lower):
                 day_vals = [
                     row[j] for j in range(2, 9)
@@ -981,7 +746,6 @@ class DocumentIngestor:
                 ]
                 if day_vals:
                     result['staffing'][label] = {f'day_{j+1}': v for j, v in enumerate(day_vals)}
-
             elif any(_is_shift_code(row[j]) for j in range(2, 9) if len(row) > j):
                 shifts = [
                     str(row[j]).strip() if (len(row) > j and row[j] is not None) else ''
@@ -990,34 +754,17 @@ class DocumentIngestor:
                 headcount = (
                     row[9] if len(row) > 9 and isinstance(row[9], (int, float)) else None
                 )
-                result['crews'].append({
-                    'name': label,
-                    'shifts': shifts,
-                    'headcount': headcount
-                })
-
+                result['crews'].append({'name': label, 'shifts': shifts, 'headcount': headcount})
         return result
 
     def _extract_from_excel(self, file_bytes: bytes, metadata: Dict) -> Dict:
-        """
-        Extract knowledge from an Excel file.
-
-        Processes each sheet individually, auto-detects sheet type:
-        - cost_model       → scenario labor cost comparisons
-        - schedule_pattern → shift rotation grids
-        - schedule_staffing→ crew assignments and headcount
-        - historical_data  → summary only (skip raw rows)
-        - general          → basic dimensions summary
-        """
         extracted = {
             'patterns': [],
             'insights': [],
             'highlights': [],
             'document_category': 'excel'
         }
-
         client = metadata.get('client', 'unknown')
-
         try:
             import openpyxl
             wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
@@ -1033,7 +780,6 @@ class DocumentIngestor:
         for sheet_name in wb.sheetnames:
             ws = wb[sheet_name]
             sheet_type = self._detect_sheet_type(ws, sheet_name)
-
             if sheet_type == 'cost_model':
                 cost_data = self._extract_cost_model_sheet(ws, sheet_name, metadata)
                 if cost_data['scenarios']:
@@ -1056,7 +802,6 @@ class DocumentIngestor:
                         'scenarios': list(cost_data['scenarios'].keys()),
                         'client': client
                     })
-
             elif sheet_type == 'schedule_pattern':
                 pattern_data = self._extract_schedule_pattern_sheet(ws, sheet_name)
                 if pattern_data['patterns']:
@@ -1074,11 +819,8 @@ class DocumentIngestor:
                         'type': 'schedule_patterns_found',
                         'sheet': sheet_name,
                         'count': len(pattern_data['patterns']),
-                        'cycle_lengths': list(set(
-                            p['cycle_weeks'] for p in pattern_data['patterns']
-                        ))
+                        'cycle_lengths': list(set(p['cycle_weeks'] for p in pattern_data['patterns']))
                     })
-
             elif sheet_type == 'schedule_staffing':
                 staffing_data = self._extract_schedule_staffing_sheet(ws, sheet_name)
                 if staffing_data['crews'] or staffing_data['staffing']:
@@ -1098,7 +840,6 @@ class DocumentIngestor:
                         'crews': len(staffing_data['crews']),
                         'client': client
                     })
-
             elif sheet_type == 'historical_data':
                 extracted['insights'].append({
                     'type': 'historical_data_present',
@@ -1106,7 +847,6 @@ class DocumentIngestor:
                     'row_count': ws.max_row,
                     'note': 'Raw historical data — summary only stored'
                 })
-
             else:
                 extracted['insights'].append({
                     'type': 'general_sheet',
@@ -1114,7 +854,6 @@ class DocumentIngestor:
                     'rows': ws.max_row,
                     'cols': ws.max_column
                 })
-
             sheets_processed += 1
 
         extracted['insights'].append({
@@ -1126,59 +865,42 @@ class DocumentIngestor:
             'schedule_patterns': schedule_patterns_found,
             'staffing_sheets': staffing_sheets_found
         })
-
         extracted['highlights'].insert(0,
             f"Sheets: {sheets_processed} | Cost Models: {cost_models_found} | "
-            f"Rotation Patterns: {schedule_patterns_found} | "
-            f"Staffing: {staffing_sheets_found}"
+            f"Rotation Patterns: {schedule_patterns_found} | Staffing: {staffing_sheets_found}"
         )
-
         return extracted
 
     # =========================================================================
-    # WORD DOCUMENT EXTRACTORS (original, unchanged)
+    # WORD DOCUMENT EXTRACTORS
     # =========================================================================
 
     def _extract_from_contract(self, content: str, metadata: Dict) -> Dict:
-        """
-        Extract knowledge from contract/engagement agreement.
-        Extracts: client, total fee, payment milestones, engagement weeks,
-        interest rate, termination formula.
-        """
         extracted = {
             'patterns': [],
             'insights': [],
             'highlights': [],
             'document_category': 'contract'
         }
-
         client_match = re.search(
-            r'\*\*([A-Z][A-Z\s&,\.\-]+)\*\*\s*\(the\s+["\']?Client["\']?\)',
-            content
+            r'\*\*([A-Z][A-Z\s&,\.\-]+)\*\*\s*\(the\s+["\']?Client["\']?\)', content
         )
         client = client_match.group(1).strip() if client_match else metadata.get('client', '')
-
         fee_match = re.search(r'fixed sum of\\+\$([0-9,]+)', content)
         total_fee = fee_match.group(1).replace(',', '') if fee_match else None
-
         payments = re.findall(r'Due upon\s+([^\:]+):\s*\\+\$([0-9,]+)', content)
         payment_schedule = [
             {'milestone': m.strip(), 'amount': int(a.replace(',', ''))}
             for m, a in payments
         ]
-
         weeks = sorted(set(int(w) for w in WEEK_PATTERN.findall(content)))
         max_week = max(weeks) if weeks else None
-
         interest_match = re.search(r'(\d+)%\s+per year on balances unpaid', content)
         interest_rate = int(interest_match.group(1)) if interest_match else 11
-
         formula_match = re.search(r'Consulting Fees Due\s*=\s*([^\n]+)', content)
         termination_formula = formula_match.group(1).strip() if formula_match else None
-
         expense_match = re.search(r'receipts for expenses greater than\\+\$(\d+)', content)
         expense_threshold = int(expense_match.group(1)) if expense_match else 40
-
         contract_data = {
             'client': client,
             'total_fee': int(total_fee) if total_fee else None,
@@ -1191,9 +913,7 @@ class DocumentIngestor:
                 'consultant' if 'provided or developed by Consultant' in content else 'unknown'
             )
         }
-
         extracted['insights'].append({'type': 'contract_terms', 'data': contract_data})
-
         if total_fee:
             extracted['patterns'].append({
                 'type': 'engagement_fee',
@@ -1201,7 +921,6 @@ class DocumentIngestor:
                 'data': {'fee': int(total_fee), 'client': client, 'weeks': max_week},
                 'confidence': 0.95
             })
-
         if payment_schedule:
             extracted['patterns'].append({
                 'type': 'payment_structure',
@@ -1209,14 +928,12 @@ class DocumentIngestor:
                 'data': payment_schedule,
                 'confidence': 0.95
             })
-
         extracted['patterns'].append({
             'type': 'contract_terms',
             'name': 'interest_rate',
             'data': {'rate_pct': interest_rate, 'days_before_interest': 30},
             'confidence': 1.0
         })
-
         if client:
             extracted['highlights'].append(f"Client: {client}")
         if total_fee:
@@ -1228,22 +945,15 @@ class DocumentIngestor:
                 )
         if max_week:
             extracted['highlights'].append(f"Engagement Duration: {max_week} weeks")
-
         return extracted
 
     def _extract_from_implementation_manual(self, content: str, metadata: Dict) -> Dict:
-        """
-        Extract knowledge from implementation manual.
-        Extracts: schedule patterns, shift lengths, start times, facility context,
-        appendix structure, employee selection process.
-        """
         extracted = {
             'patterns': [],
             'insights': [],
             'highlights': [],
             'document_category': 'implementation_manual'
         }
-
         found_patterns = [p for p in KNOWN_SCHEDULE_PATTERNS if p in content]
         if found_patterns:
             extracted['patterns'].append({
@@ -1253,7 +963,6 @@ class DocumentIngestor:
                 'confidence': 0.9
             })
             extracted['highlights'].append(f"Schedule Patterns: {', '.join(found_patterns)}")
-
         shift_lengths = list(set(re.findall(r'(\d+)-hour shifts?', content, re.IGNORECASE)))
         if shift_lengths:
             extracted['patterns'].append({
@@ -1263,11 +972,9 @@ class DocumentIngestor:
                 'confidence': 0.95
             })
             extracted['highlights'].append(f"Shift Lengths: {', '.join(shift_lengths)}-hour")
-
         times = list(set(re.findall(r'(\d{1,2}:\d{2}\s*(?:am|pm))', content, re.IGNORECASE)))
         if times:
             extracted['insights'].append({'type': 'shift_start_times', 'times': times})
-
         appendices = re.findall(r'Appendix\s+[A-Z][:\s\-]+([A-Za-z][^\n\*\[\\]+)', content)
         appendices = [a.strip() for a in appendices if len(a.strip()) > 3]
         seen = set()
@@ -1282,7 +989,6 @@ class DocumentIngestor:
                 'appendices': unique_appendices
             })
             extracted['highlights'].append(f"Appendices: {', '.join(unique_appendices[:4])}")
-
         if 'Preference Form' in content or 'preference form' in content:
             extracted['patterns'].append({
                 'type': 'employee_involvement',
@@ -1290,7 +996,6 @@ class DocumentIngestor:
                 'data': {'method': 'written_preference_form'},
                 'confidence': 0.9
             })
-
         if '24/7' in content:
             extracted['patterns'].append({
                 'type': 'operation_type',
@@ -1299,45 +1004,37 @@ class DocumentIngestor:
                 'confidence': 0.95
             })
             extracted['highlights'].append("Operation Type: 24/7 coverage")
-
         headings = re.findall(r'^#+ (.+)$', content, re.MULTILINE)
         headings = [h.strip().replace('*', '') for h in headings if len(h.strip()) > 3]
         if headings:
             extracted['insights'].append({'type': 'manual_structure', 'sections': headings[:20]})
-
         if metadata.get('client'):
             extracted['insights'].append({
                 'type': 'client_context',
                 'client': metadata['client'],
                 'industry': metadata.get('industry', 'unknown')
             })
-
         return extracted
 
     def _extract_from_lessons_learned(self, content: str, metadata: Dict) -> Dict:
         """
         Extract knowledge from lessons learned / schedule guide documents.
 
-        Updated February 27, 2026:
-        - PROBLEM: Old version searched for '### Lesson #N' Markdown headers, which
-          never existed in the actual .docx files. Real files use Word Heading2 styles
-          with numbered section titles like "1. The Goldilocks Shift". The extractor
-          always returned 0 lessons.
-        - SOLUTION: Now accepts structured JSON paragraph list from ingest.py
-          (format: [{style, bold, text}, ...]) and detects lesson sections by:
-            1. Paragraph with style 'Heading2' (or Heading1/Heading3) AND numbered pattern
-            2. Fallback: Bold paragraph matching numbered pattern (some docs lack heading styles)
-          Captures per-lesson: title, number, body text, bold rules/principles, subheadings.
+        FIXED February 27, 2026 (Session 3):
 
-        Backward compatibility:
-          - If content is NOT valid JSON (old-style Markdown string), falls back to
-            original Markdown '### Lesson #N' parsing so re-ingested old docs still work.
+        BUG 1: key_principle was always empty.
+          ROOT CAUSE: bold_rules only captured paragraphs with bold=True. Real lesson
+          docs (10_Hour_Shift_Lessons_Learned.docx etc.) have plain body text for the
+          key principle — nothing is bold. bold_rules was always [].
+          FIX A: After parsing, if bold_rules is empty, scan body_paragraphs for
+            sentences beginning with RULE_STARTER_PHRASES and add them to bold_rules.
+          FIX B: At pattern-build time, if bold_rules is still empty, set key_principle
+            to the first substantial body_paragraph (same as situation).
 
-        Works with:
-          - 10_Hour_Shift_Lessons_Learned.docx (Heading2-based, 10 lessons)
-          - 4on4off_schedule_guide.docx (Heading1-based, 9 sections)
-          - 223_Complete_Guide.docx (Heading1-based, 10 sections)
-          - Any future lessons/guide doc using numbered Word headings
+        Original description (February 27 Session 1):
+          Parses structured JSON paragraph list from ingest.py ({style, bold, text} dicts).
+          Detects lesson sections by Heading2 style + numbered pattern.
+          Falls back to Markdown '### Lesson #N' parsing if content is not valid JSON.
         """
         extracted = {
             'patterns': [],
@@ -1350,7 +1047,7 @@ class DocumentIngestor:
         HEADING_STYLES = {'Heading1', 'Heading2', 'Heading3',
                           'Heading 1', 'Heading 2', 'Heading 3'}
 
-        # ---- Try structured JSON paragraph list (new path from ingest.py) ----
+        # ---- Try structured JSON paragraph list ----
         paragraphs = None
         try:
             parsed = json.loads(content)
@@ -1360,7 +1057,6 @@ class DocumentIngestor:
             paragraphs = None
 
         if paragraphs is not None:
-            # --- Parse structured paragraph list ---
             lessons_extracted = []
             current_lesson = None
             doc_title = ''
@@ -1374,8 +1070,6 @@ class DocumentIngestor:
 
                 is_heading_style = any(hs in style for hs in ('Heading1', 'Heading2', 'Heading3'))
                 is_numbered = bool(LESSON_HEADING_RE.match(text))
-
-                # Detect lesson/section start
                 is_lesson_start = (is_heading_style and is_numbered) or (
                     bold and is_numbered and len(text) < 120
                 )
@@ -1384,7 +1078,10 @@ class DocumentIngestor:
                 if not doc_title:
                     if (is_heading_style and not is_numbered) or (bold and len(text) < 80):
                         doc_title = text
-                    continue  # Skip title line from lesson content
+                        # FIX BUG 4 (applied here too for lessons): do NOT continue.
+                        # Fall through so this paragraph can also start a lesson if applicable.
+                        if not is_lesson_start:
+                            continue
 
                 if is_lesson_start:
                     if current_lesson:
@@ -1409,17 +1106,12 @@ class DocumentIngestor:
                     }
 
                 elif current_lesson is not None:
-                    # Subheading within a lesson
                     if is_heading_style and not is_numbered:
                         current_lesson['subheadings'].append(text)
-
-                    # Bold rule / key principle
                     elif bold and len(text) > 20:
                         current_lesson['bold_rules'].append(text[:400])
                         if not current_lesson['key_principle']:
                             current_lesson['key_principle'] = text[:400]
-
-                    # Body text
                     else:
                         current_lesson['body_paragraphs'].append(text[:400])
                         if not current_lesson['situation'] and len(text) > 60:
@@ -1428,11 +1120,31 @@ class DocumentIngestor:
             if current_lesson:
                 lessons_extracted.append(current_lesson)
 
+            # ------------------------------------------------------------------
+            # FIX BUG 1: Populate key_principle from body text when bold_rules empty
+            # ------------------------------------------------------------------
+            for lesson in lessons_extracted:
+                if not lesson['bold_rules']:
+                    # Scan body paragraphs for rule-starter phrases
+                    for para in lesson['body_paragraphs']:
+                        if any(para.lower().startswith(phrase) for phrase in RULE_STARTER_PHRASES):
+                            lesson['bold_rules'].append(para[:400])
+                            break
+
+                # Final fallback: use first substantial body paragraph
+                if not lesson['key_principle']:
+                    if lesson['bold_rules']:
+                        lesson['key_principle'] = lesson['bold_rules'][0]
+                    elif lesson['body_paragraphs']:
+                        lesson['key_principle'] = lesson['body_paragraphs'][0][:400]
+
+                if not lesson['situation'] and lesson['body_paragraphs']:
+                    lesson['situation'] = lesson['body_paragraphs'][0][:300]
+
         else:
-            # ---- Fallback: old Markdown '### Lesson #N' parsing ----
+            # ---- Fallback: old Markdown parsing ----
             lesson_blocks = re.split(r'(?=### Lesson #\d+)', content)
             lesson_blocks = [b.strip() for b in lesson_blocks if b.strip().startswith('### Lesson')]
-
             category_map = {}
             current_category = 'General'
             for line in content.split('\n'):
@@ -1446,7 +1158,6 @@ class DocumentIngestor:
                     title_match = re.match(r'### (Lesson #\d+)', line)
                     if title_match:
                         category_map[title_match.group(1)] = current_category
-
             lessons_extracted = []
             for block in lesson_blocks:
                 title_match = re.match(r'### (Lesson #(\d+)[^\n]+)', block)
@@ -1456,15 +1167,12 @@ class DocumentIngestor:
                 lesson_num = int(title_match.group(2))
                 lesson_name = re.sub(r'Lesson #\d+:\s*', '', full_title).strip()
                 category = category_map.get(f"Lesson #{lesson_num}", 'General')
-
                 situation_match = re.search(
                     r'\*\*Situation[^*]*\*\*\s*\n+(.*?)(?=\n\*\*|\Z)', block, re.DOTALL)
                 situation = situation_match.group(1).strip()[:300] if situation_match else ''
-
                 principle_match = re.search(
                     r'\*\*Key Principle[:\*\*\s]+(.+?)(?=\n---|\n###|\Z)', block, re.DOTALL)
                 principle = principle_match.group(1).strip()[:400] if principle_match else ''
-
                 lessons_extracted.append({
                     'lesson_number': lesson_num,
                     'full_title': full_title,
@@ -1477,9 +1185,9 @@ class DocumentIngestor:
                     'situation': situation
                 })
 
-        # ---- Build patterns and insights from lessons_extracted ----
+        # ---- Build patterns and insights ----
         for lesson in lessons_extracted:
-            lesson_num = lesson['lesson_number']
+            lesson_num  = lesson['lesson_number']
             lesson_name = lesson['lesson_name']
 
             lesson_data = {
@@ -1491,7 +1199,12 @@ class DocumentIngestor:
                 'situation': lesson.get('situation', ''),
                 'bold_rules': lesson.get('bold_rules', []),
                 'subheadings': lesson.get('subheadings', []),
-                'body_preview': lesson.get('body_paragraphs', [''])[0][:300] if lesson.get('body_paragraphs') else ''
+                # Full body content for AI retrieval
+                'body_content': lesson.get('body_paragraphs', [])[:10],
+                'body_preview': (
+                    lesson.get('body_paragraphs', [''])[0][:300]
+                    if lesson.get('body_paragraphs') else ''
+                )
             }
 
             extracted['patterns'].append({
@@ -1504,9 +1217,7 @@ class DocumentIngestor:
                 'confidence': 1.0
             })
 
-        categories_covered = list(set(
-            l.get('category', 'General') for l in lessons_extracted
-        ))
+        categories_covered = list(set(l.get('category', 'General') for l in lessons_extracted))
         extracted['insights'].append({
             'type': 'lessons_learned_summary',
             'total_lessons': len(lessons_extracted),
@@ -1527,17 +1238,12 @@ class DocumentIngestor:
         return extracted
 
     def _extract_from_scope_of_work(self, content: str, metadata: Dict) -> Dict:
-        """
-        Extract knowledge from scope of work document.
-        Extracts: client, total cost, weekly deliverables, pre-project requirements.
-        """
         extracted = {
             'patterns': [],
             'insights': [],
             'highlights': [],
             'document_category': 'scope_of_work'
         }
-
         bold_items = re.findall(r'\*\*([^*\n]+)\*\*', content)
         client = None
         for item in bold_items:
@@ -1547,12 +1253,10 @@ class DocumentIngestor:
             if re.search(r'[A-Z]{3,}', item) and len(item) < 60:
                 client = item
                 break
-
         cost_match = re.search(r'\\+\$([0-9,]+)\s*\+?\s*travel', content, re.IGNORECASE)
         if not cost_match:
             cost_match = re.search(r'Project Cost[^$]*\\+\$([0-9,]+)', content, re.IGNORECASE)
         total_cost = int(cost_match.group(1).replace(',', '')) if cost_match else None
-
         weekly_deliverables = {}
         week_sections = re.finditer(
             r'\*\*Week\s+(\d+)[:\*\s]+(.*?)(?=\*\*Week\s+\d+|\*\*Follow|\*\*Project Cost|'
@@ -1565,7 +1269,6 @@ class DocumentIngestor:
             bullets = [b.strip() for b in re.findall(r'-\s+(.+)', week_content) if b.strip()]
             if bullets:
                 weekly_deliverables[f'week_{week_num}'] = bullets
-
         pre_project = []
         pre_match = re.search(
             r'Pre-Project[^\n]*\n+(.*?)(?=\*\*Project Week 1|\Z)',
@@ -1575,7 +1278,6 @@ class DocumentIngestor:
             pre_project = [
                 b.strip() for b in re.findall(r'-\s+(.+)', pre_match.group(1)) if b.strip()
             ]
-
         followup_match = re.search(
             r'\*\*Follow[- ]?up[:\*\s]+(.*?)(?=\*\*Project Cost|\*\*Detailed|\Z)',
             content, re.DOTALL | re.IGNORECASE
@@ -1587,7 +1289,6 @@ class DocumentIngestor:
                 for b in re.findall(r'-\s+(.+)', followup_match.group(1))
                 if b.strip()
             ]
-
         sow_data = {
             'client': client,
             'total_cost': total_cost,
@@ -1596,9 +1297,7 @@ class DocumentIngestor:
             'follow_up_commitments': followup,
             'total_weeks': len(weekly_deliverables)
         }
-
         extracted['insights'].append({'type': 'scope_of_work', 'data': sow_data})
-
         if total_cost:
             extracted['patterns'].append({
                 'type': 'engagement_cost',
@@ -1606,7 +1305,6 @@ class DocumentIngestor:
                 'data': {'cost': total_cost, 'client': client},
                 'confidence': 0.95
             })
-
         if weekly_deliverables:
             extracted['patterns'].append({
                 'type': 'project_structure',
@@ -1614,7 +1312,6 @@ class DocumentIngestor:
                 'data': weekly_deliverables,
                 'confidence': 0.9
             })
-
         if client:
             extracted['highlights'].append(f"Client: {client}")
         if total_cost:
@@ -1623,33 +1320,37 @@ class DocumentIngestor:
             extracted['highlights'].append(f"Project Duration: {len(weekly_deliverables)} weeks")
         if pre_project:
             extracted['highlights'].append(f"Pre-project data items: {len(pre_project)}")
-
         return extracted
 
     def _extract_general_word_doc(self, content: str, metadata: Dict) -> Dict:
         """
         Extract knowledge from general Word documents (Pillar articles, guides, etc.)
 
-        Updated February 27, 2026:
-        - PROBLEM: Old version only scraped percentages and dollar amounts from the
-          document. Rich content — headings, section body text, key quotes, bold
-          principles, operational rules — was completely ignored.
-        - SOLUTION: Accepts structured JSON paragraph list from ingest.py
-          (format: [{style, bold, text}, ...]) and extracts:
-            * Document title (first Heading1 or prominent bold line)
-            * All section headings (Heading2) as searchable structure
-            * Body text per section (captures operational content, not just numbers)
-            * Bold insight lines (key principles, rules, cautions)
-            * Quoted insights (lines with attribution: "--- Jim Dillingham" pattern)
-            * Schedule patterns referenced
-            * Dollar amounts and percentages (preserved from old version)
-            * Consulting insight patterns for AI query retrieval
+        FIXED February 27, 2026 (Session 3):
 
-        Backward compatibility:
-          - If content is NOT valid JSON, falls back to old regex extraction
-            (dollar amounts, schedule patterns, percentages, bold headings).
+        BUG 3: Pillar 1 heading captured as datestamp metadata line.
+          ROOT CAUSE: METADATA_RE didn't filter date-like lines (e.g. '1/26/2026,
+          Claude (Sonnet 4.5) 2/2/2026') that appeared as the first bold paragraph.
+          FIX: Expanded METADATA_RE to match \d{1,2}/\d{1,2}/\d{4}, 'Claude (' and
+          'Sonnet' at the start of a line.
 
-        Works with all 10 Pillar docs plus any general Word document uploaded.
+        BUG 4: First heading paragraph lost after doc_title capture.
+          ROOT CAUSE: 'continue' after capturing doc_title skipped that paragraph.
+          If the first heading IS a real section, all its content was lost.
+          Pillar 2 captured only 1 section (Introduction) instead of ~10.
+          FIX: After setting doc_title, do NOT continue. Fall through to the normal
+          heading/section-start logic.
+
+        BUG 5: key_principles always empty in section_content insights.
+          ROOT CAUSE: key_principles only populated from bold_insights. Pillar docs
+          don't mark principles bold — content is in regular body paragraphs.
+          FIX: Include first 3 body paragraphs as 'body_content' in section_content
+          insights. Store full_body in consulting_insight patterns.
+
+        Original description (February 27 Session 1):
+          Accepts structured JSON paragraph list, extracts title, headings, body,
+          bold insights, quotes, schedule patterns, financial figures.
+          Falls back to regex extraction if content is not valid JSON.
         """
         extracted = {
             'patterns': [],
@@ -1657,10 +1358,9 @@ class DocumentIngestor:
             'highlights': [],
             'document_category': 'general_word'
         }
-
         doc_name = metadata.get('document_name', 'unknown')
 
-        # ---- Try structured JSON paragraph list (new path from ingest.py) ----
+        # ---- Try structured JSON paragraph list ----
         paragraphs = None
         try:
             parsed = json.loads(content)
@@ -1670,13 +1370,15 @@ class DocumentIngestor:
             paragraphs = None
 
         if paragraphs is not None:
-            # ---- Parse structured paragraph list ----
             ATTRIBUTION_RE = re.compile(
                 r'---\s*(Jim|Dan|Ethan|[A-Z][a-z]+)\s+\w+', re.IGNORECASE
             )
+            # FIX BUG 3: Expanded to catch date-lines, Claude metadata, Sonnet references
             METADATA_RE = re.compile(
                 r'^(Pillar \d+|Word Count|Customer Segment|Target URL|'
-                r'Perfect!|This document|Shiftwork Solutions)', re.IGNORECASE
+                r'Perfect!|This document|Shiftwork Solutions|'
+                r'\d{1,2}/\d{1,2}/\d{4}|Claude\s*[\(\s]|Sonnet)',
+                re.IGNORECASE
             )
 
             doc_title = ''
@@ -1698,11 +1400,16 @@ class DocumentIngestor:
                 all_text_parts.append(text)
                 is_heading = any(hs in style for hs in ('Heading1', 'Heading2', 'Heading3'))
 
-                # Capture doc title
+                # FIX BUG 4: Capture doc title but DO NOT continue — fall through
+                # to section-start logic so the first heading isn't lost.
+                title_just_set = False
                 if not doc_title:
                     if is_heading or (bold and len(text) < 100):
                         doc_title = text
-                        continue
+                        title_just_set = True
+                        if not is_heading:
+                            # Only skip non-heading bold title lines (pure metadata)
+                            continue
 
                 if is_heading:
                     if current_section:
@@ -1714,7 +1421,6 @@ class DocumentIngestor:
                         'quotes': []
                     }
                 elif bold and not is_heading and len(text) < 100:
-                    # Short bold lines = subheadings or section titles in un-styled docs
                     if current_section is None:
                         if not doc_title:
                             doc_title = text
@@ -1737,7 +1443,6 @@ class DocumentIngestor:
                         sections.append(intro_section)
                         current_section = intro_section
 
-                    # Quoted insight (attribution line)
                     if ATTRIBUTION_RE.search(text) or ('---' in text and len(text) < 300):
                         current_section['quotes'].append(text[:300])
                     elif bold and len(text) > 20:
@@ -1750,7 +1455,6 @@ class DocumentIngestor:
 
             all_text = ' '.join(all_text_parts)
 
-            # Build structured insights
             if doc_title:
                 extracted['insights'].append({
                     'type': 'document_title',
@@ -1766,23 +1470,27 @@ class DocumentIngestor:
                     'section_count': len(sections)
                 })
 
-            # Per-section consulting insights
+            # FIX BUG 5: Include body_content (not just body_preview) in section insights
             for section in sections:
                 heading = section['heading']
-                body_preview = section['body'][0][:300] if section['body'] else ''
+                body_paragraphs = section['body']
+                body_preview = body_paragraphs[0][:300] if body_paragraphs else ''
+                # First 3 body paragraphs as content for AI retrieval
+                body_content = body_paragraphs[:3]
                 all_bold = section['bold_insights']
                 all_quotes = section['quotes']
 
-                if body_preview or all_bold or all_quotes:
+                if body_preview or all_bold or all_quotes or body_content:
                     extracted['insights'].append({
                         'type': 'section_content',
                         'heading': heading,
                         'body_preview': body_preview,
+                        'body_content': body_content,       # FIX BUG 5: added
                         'key_principles': all_bold[:5],
                         'expert_quotes': all_quotes[:3],
                         'document_name': doc_name
                     })
-                    if len(section['body']) >= 2 or all_bold:
+                    if len(body_paragraphs) >= 2 or all_bold or body_content:
                         extracted['patterns'].append({
                             'type': 'consulting_insight',
                             'name': (
@@ -1793,13 +1501,13 @@ class DocumentIngestor:
                                 'document': doc_name,
                                 'section': heading,
                                 'body_preview': body_preview,
-                                'key_principles': all_bold[:3],
+                                'body_content': body_content,   # FIX BUG 5: full content
+                                'key_principles': all_bold[:5],
                                 'expert_quotes': all_quotes[:2]
                             },
                             'confidence': 0.85
                         })
 
-            # Schedule patterns
             found_patterns = [p for p in KNOWN_SCHEDULE_PATTERNS if p in all_text]
             if found_patterns:
                 extracted['patterns'].append({
@@ -1810,7 +1518,6 @@ class DocumentIngestor:
                 })
                 extracted['highlights'].append(f"Schedule patterns: {', '.join(found_patterns)}")
 
-            # Dollar amounts
             amounts = [int(a.replace(',', '')) for a in DOLLAR_PATTERN.findall(all_text)
                        if a.replace(',', '').isdigit()]
             if amounts:
@@ -1824,10 +1531,13 @@ class DocumentIngestor:
             )
             total_bold = sum(len(s['bold_insights']) for s in sections)
             total_quotes = sum(len(s['quotes']) for s in sections)
+            total_body_paras = sum(len(s['body']) for s in sections)
             if total_bold:
                 extracted['highlights'].append(f"Key principles captured: {total_bold}")
             if total_quotes:
                 extracted['highlights'].append(f"Expert quotes captured: {total_quotes}")
+            if total_body_paras:
+                extracted['highlights'].append(f"Body paragraphs captured: {total_body_paras}")
 
             extracted['insights'].append({
                 'type': 'document_summary',
@@ -1839,12 +1549,11 @@ class DocumentIngestor:
 
             return extracted
 
-        # ---- Fallback: old regex-based extraction for non-JSON content ----
+        # ---- Fallback: old regex-based extraction ----
         headings = re.findall(r'\*\*([^*\n]{5,80})\*\*', content)
         headings = [h.strip() for h in headings if not h.strip().endswith(':')]
         if headings:
             extracted['insights'].append({'type': 'document_structure', 'headings': headings[:30]})
-
         amounts = [int(a.replace(',', '')) for a in DOLLAR_PATTERN.findall(content)
                    if a.replace(',', '').isdigit()]
         if amounts:
@@ -1852,7 +1561,6 @@ class DocumentIngestor:
             extracted['highlights'].append(
                 f"Dollar amounts found: {', '.join(f'${a:,}' for a in sorted(set(amounts))[:5])}"
             )
-
         found_patterns = [p for p in KNOWN_SCHEDULE_PATTERNS if p in content]
         if found_patterns:
             extracted['patterns'].append({
@@ -1862,32 +1570,23 @@ class DocumentIngestor:
                 'confidence': 0.8
             })
             extracted['highlights'].append(f"Schedule patterns: {', '.join(found_patterns)}")
-
         percentages = [float(p) for p in re.findall(r'(\d+(?:\.\d+)?)\s*%', content)]
         if percentages:
             extracted['insights'].append({
                 'type': 'percentage_figures',
                 'values': sorted(set(percentages))[:10]
             })
-
         extracted['insights'].append({
             'type': 'document_summary',
             'content_length': len(content),
             'word_count': len(content.split()),
             'document_name': metadata.get('document_name', 'unknown')
         })
-
         return extracted
 
     def _extract_from_implementation_ppt(self, content: str, metadata: Dict) -> Dict:
-        """
-        Extract from implementation presentation (text content path).
-        For .pptx files, prefer the file_bytes path (_extract_from_survey_pptx /
-        _extract_from_oaf_pptx) which provides chart data access.
-        """
         extracted = self._extract_general_word_doc(content, metadata)
         extracted['document_category'] = 'implementation_ppt'
-
         found_patterns = [p for p in KNOWN_SCHEDULE_PATTERNS if p in content]
         if found_patterns:
             extracted['insights'].append({
@@ -1895,21 +1594,18 @@ class DocumentIngestor:
                 'patterns': found_patterns,
                 'client': metadata.get('client')
             })
-
         return extracted
 
     # =========================================================================
-    # HELPER METHODS (original, unchanged)
+    # HELPER METHODS
     # =========================================================================
 
     def _detect_client(self, content: str, extracted: Dict) -> Optional[str]:
-        """Auto-detect client name from content if not provided in metadata."""
         for insight in extracted.get('insights', []):
             if insight.get('type') == 'contract_terms':
                 return insight['data'].get('client')
             if insight.get('type') == 'scope_of_work':
                 return insight['data'].get('client')
-
         candidates = re.findall(r'\*\*([A-Z][A-Z\s&,\.\-]{3,40})\*\*', content)
         for candidate in candidates:
             candidate = candidate.strip()
@@ -1917,16 +1613,13 @@ class DocumentIngestor:
                     'SUMMARY', 'SCOPE OF WORK', 'NOTE', 'IMPORTANT', 'WARNING'}
             if candidate not in skip and len(candidate) >= 4:
                 return candidate
-
         return None
 
     def _store_extraction(self, document_type: str, document_name: str,
                           extracted_data: Dict, source_hash: str, metadata: Dict,
                           client: str = '', industry: str = '', file_size: int = 0):
-        """Store extracted knowledge in database"""
         db = sqlite3.connect(self.db_path)
         cursor = db.cursor()
-
         cursor.execute('''
             INSERT INTO knowledge_extracts (
                 document_type, document_name, extracted_data,
@@ -1943,30 +1636,21 @@ class DocumentIngestor:
             file_size,
             json.dumps(metadata)
         ))
-
         db.commit()
         db.close()
 
     def _update_cumulative_patterns(self, extracted: Dict) -> int:
-        """
-        Update cumulative learned patterns.
-        Patterns grow stronger (higher confidence) with each supporting document.
-        """
         patterns_added = 0
         db = sqlite3.connect(self.db_path)
         cursor = db.cursor()
-
         for pattern in extracted.get('patterns', []):
             pattern_key_type = pattern.get('type', 'unknown')
             pattern_key_name = pattern.get('name', 'unknown')
-
             cursor.execute('''
                 SELECT id, supporting_documents, confidence FROM learned_patterns
                 WHERE pattern_type = ? AND pattern_name = ?
             ''', (pattern_key_type, pattern_key_name))
-
             existing = cursor.fetchone()
-
             if existing:
                 pattern_id, support_count, current_confidence = existing
                 new_support = support_count + 1
@@ -1997,7 +1681,6 @@ class DocumentIngestor:
                     pattern.get('confidence', 0.5)
                 ))
                 patterns_added += 1
-
         db.commit()
         db.close()
         return patterns_added
@@ -2005,7 +1688,6 @@ class DocumentIngestor:
     def _log_ingestion(self, document_name: str, document_type: str,
                        patterns_extracted: int, insights_extracted: int,
                        error_message: str = None):
-        """Log ingestion for tracking"""
         db = sqlite3.connect(self.db_path)
         cursor = db.cursor()
         cursor.execute('''
@@ -2025,24 +1707,19 @@ class DocumentIngestor:
         db.close()
 
     def get_knowledge_base_stats(self) -> Dict[str, Any]:
-        """Get knowledge base statistics"""
         db = sqlite3.connect(self.db_path)
         db.row_factory = sqlite3.Row
         cursor = db.cursor()
-
         cursor.execute('SELECT COUNT(*) as count FROM knowledge_extracts')
         total_extracts = cursor.fetchone()['count']
-
         cursor.execute('SELECT COUNT(*) as count FROM learned_patterns')
         total_patterns = cursor.fetchone()['count']
-
         cursor.execute('''
             SELECT document_type, COUNT(*) as count
             FROM knowledge_extracts
             GROUP BY document_type
         ''')
         by_type = {row['document_type']: row['count'] for row in cursor.fetchall()}
-
         cursor.execute('''
             SELECT document_name, document_type, status, patterns_extracted,
                    insights_extracted, ingested_at
@@ -2052,7 +1729,6 @@ class DocumentIngestor:
             LIMIT 10
         ''')
         recent = [dict(row) for row in cursor.fetchall()]
-
         db.close()
         return {
             'total_extracts': total_extracts,
@@ -2063,42 +1739,23 @@ class DocumentIngestor:
 
     def query_knowledge(self, query: str, document_type: str = None,
                         client: str = None, limit: int = 10) -> List[Dict]:
-        """
-        Query the knowledge base for relevant extracts.
-
-        Args:
-            query: Search terms
-            document_type: Optional filter by doc type
-            client: Optional filter by client
-            limit: Max results
-
-        Returns:
-            List of matching knowledge extracts
-        """
         db = sqlite3.connect(self.db_path)
         db.row_factory = sqlite3.Row
-
         sql = 'SELECT * FROM knowledge_extracts WHERE 1=1'
         params = []
-
         if document_type:
             sql += ' AND document_type = ?'
             params.append(document_type)
-
         if client:
             sql += ' AND client LIKE ?'
             params.append(f'%{client}%')
-
         if query:
             sql += ' AND (document_name LIKE ? OR extracted_data LIKE ?)'
             params.extend([f'%{query}%', f'%{query}%'])
-
         sql += ' ORDER BY extracted_at DESC LIMIT ?'
         params.append(limit)
-
         rows = db.execute(sql, params).fetchall()
         db.close()
-
         results = []
         for row in rows:
             item = dict(row)
@@ -2108,7 +1765,6 @@ class DocumentIngestor:
                 except Exception:
                     pass
             results.append(item)
-
         return results
 
 
@@ -2120,7 +1776,6 @@ _ingestor = None
 
 
 def get_document_ingestor() -> DocumentIngestor:
-    """Get singleton document ingestor"""
     global _ingestor
     if _ingestor is None:
         _ingestor = DocumentIngestor()
