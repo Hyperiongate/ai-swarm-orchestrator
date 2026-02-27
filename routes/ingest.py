@@ -1,27 +1,32 @@
 """
 KNOWLEDGE INGESTION ROUTES
 Created: February 2, 2026
-Last Updated: February 27, 2026 - ADDED /api/ingest/batch endpoint for multi-file upload
+Last Updated: February 27, 2026 - PER-FILE AUTO-DETECTED document types in batch
 
 CHANGELOG:
 
+- February 27, 2026 (Session 3): PER-FILE DOCUMENT TYPES IN BATCH
+  * PROBLEM: /api/ingest/batch accepted one document_type for ALL files in the
+    batch. This prevented auto-detection per file because the UI had no way to
+    send different types for different files.
+  * SOLUTION: Batch endpoint now accepts an optional 'document_types' JSON array
+    in the form data (one entry per file, in the same order as the 'files' list).
+    If present and non-empty for a given file, it overrides the global
+    'document_type' fallback. If absent or empty string, falls back to
+    'document_type' form field (default 'generic').
+    This allows the UI to auto-detect each file's type from its filename and send
+    the per-file type list alongside the files, with no manual selection required.
+  * Added _detect_document_type(filename) helper used by both the backend (as
+    a server-side fallback) and mirrored in the frontend JS for display.
+  * Single-file /api/ingest/document endpoint unchanged.
+
 - February 27, 2026 (Session 2): ADDED /api/ingest/batch endpoint
-  * PROBLEM: The upload UI only handled one file at a time. Users could not
-    drag and drop multiple files or select multiple files from the file picker.
-    The single /api/ingest/document endpoint accepts one file per POST.
-  * SOLUTION: Added /api/ingest/batch endpoint that accepts multiple files via
-    request.files.getlist('files'), loops through each file, reuses all existing
-    file-type handling (PPTX, Excel, DOCX, PDF/text), and returns a consolidated
-    result with per-file success/error detail and aggregate counts.
-  * Also extracted shared file processing into _process_file_for_ingest() helper
-    so both single and batch paths use identical extraction logic with no duplication.
-  * Single-file path /api/ingest/document is completely unchanged in behavior.
+  * PROBLEM: Upload UI only handled one file at a time.
+  * SOLUTION: Added /api/ingest/batch and _process_file_for_ingest() helper.
 
 - February 27, 2026 (Session 1): FIXED DOCX content extraction
-  * PROBLEM: The else branch (all non-PPTX, non-Excel files, including .docx) was
-    doing content = file.read().decode('utf-8', errors='ignore') reading the raw
-    .docx zip bytes as UTF-8 text. This produces garbled binary output.
-  * SOLUTION: Added _extract_docx_structured() helper using python-docx.
+  * Raw .docx bytes were decoded as UTF-8, producing garbled output.
+  * Fixed with _extract_docx_structured() using python-docx.
 
 - February 26, 2026 (Session 2): UPDATED PPTX and Excel routes to pass file_bytes
 
@@ -86,6 +91,64 @@ def allowed_file(filename):
     """Check if file extension is allowed"""
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def _detect_document_type(filename):
+    """
+    Auto-detect document type from filename and extension.
+
+    Added February 27, 2026 (Session 3).
+    Mirrors the detection logic in knowledge_management.html so that the
+    backend can also detect types independently (server-side fallback if
+    the frontend does not send per-file types).
+
+    Detection priority (first match wins):
+      PPTX/PPT  → oaf, eaf, or implementation_ppt based on filename keywords
+      XLSX/XLS  → schedule_pattern or data_file based on filename keywords
+      DOCX/DOC  → lessons_learned, contract, scope_of_work, implementation_manual,
+                   or general_word based on filename keywords
+      PDF       → lessons_learned, contract, or generic based on filename keywords
+      Other     → generic
+
+    Returns:
+        str: document type string understood by the ingestion engine
+    """
+    name = filename.lower()
+    ext  = name.rsplit('.', 1)[-1] if '.' in name else ''
+
+    if ext in ('pptx', 'ppt'):
+        if 'oaf' in name or 'operations' in name:
+            return 'oaf'
+        if 'eaf' in name or 'employee' in name or 'survey' in name:
+            return 'eaf'
+        return 'implementation_ppt'
+
+    if ext in ('xlsx', 'xls'):
+        if 'schedule' in name or 'pattern' in name:
+            return 'schedule_pattern'
+        return 'data_file'
+
+    if ext in ('docx', 'doc'):
+        if 'lesson' in name:
+            return 'lessons_learned'
+        if 'contract' in name or 'agreement' in name or 'engagement' in name:
+            return 'contract'
+        if 'proposal' in name:
+            return 'contract'
+        if 'scope' in name:
+            return 'scope_of_work'
+        if 'implementation' in name and 'manual' in name:
+            return 'implementation_manual'
+        return 'general_word'
+
+    if ext == 'pdf':
+        if 'lesson' in name:
+            return 'lessons_learned'
+        if 'contract' in name or 'agreement' in name:
+            return 'contract'
+        return 'generic'
+
+    return 'generic'
 
 
 def _extract_docx_structured(file_bytes: bytes) -> dict:
@@ -158,14 +221,14 @@ def _process_file_for_ingest(file, document_type, metadata):
     """
     Shared file processing logic used by both single-file and batch endpoints.
 
-    Added February 27, 2026 (Session 2):
+    Added February 27, 2026 (Session 2).
     Extracted from ingest_document() so that /api/ingest/batch can reuse
     identical PPTX, Excel, DOCX, and plain-text handling without duplication.
     Any future improvements to extraction automatically apply to both paths.
 
     Args:
         file:          werkzeug FileStorage object (already validated as allowed type)
-        document_type: string from form field
+        document_type: string — auto-detected or user-provided
         metadata:      dict with document_name, client, industry, etc.
 
     Returns:
@@ -277,18 +340,13 @@ def ingest_document():
 
     Expects:
         - file: Document file (multipart/form-data)
-        - document_type: Type of document (contract, implementation_manual,
-          lessons_learned, scope_of_work, survey_pptx, eaf, oaf, excel, etc.)
+        - document_type: Optional. If blank or absent, auto-detected from filename.
         - client: Optional client name
         - industry: Optional industry
         - project_type: Optional project type
 
     Returns:
         JSON with ingestion results including highlights from extraction.
-
-    File handling delegated to _process_file_for_ingest() helper (added
-    February 27, 2026 Session 2) so that single and batch paths share
-    identical extraction logic.
     """
     try:
         if 'file' not in request.files:
@@ -305,7 +363,10 @@ def ingest_document():
                 'error': f'File type not allowed. Allowed: {", ".join(sorted(ALLOWED_EXTENSIONS))}'
             }), 400
 
-        document_type = request.form.get('document_type', 'generic')
+        # Auto-detect if not provided
+        document_type = request.form.get('document_type', '').strip()
+        if not document_type:
+            document_type = _detect_document_type(file.filename)
 
         metadata = {
             'document_name': secure_filename(file.filename),
@@ -330,38 +391,39 @@ def ingest_document():
 
 # ============================================================================
 # BATCH ENDPOINT — Added February 27, 2026 (Session 2)
+#                  Updated February 27, 2026 (Session 3): per-file doc types
 # ============================================================================
 @ingest_bp.route('/batch', methods=['POST'])
 def ingest_batch():
     """
     Upload and ingest multiple documents in a single request.
 
-    Added February 27, 2026 (Session 2):
-    Supports multi-file drag-and-drop or multi-select from the Knowledge
-    Management UI. Each file is processed independently using the same
-    _process_file_for_ingest() helper as the single-file endpoint, so all
-    file-type handling (PPTX, Excel, DOCX, PDF/text) is identical.
+    Updated February 27, 2026 (Session 3):
+    Now accepts 'document_types' as a JSON array in the form data, one entry
+    per file in the same order as the 'files' list. Each entry is used as that
+    file's document type. If an entry is blank/missing, falls back to the global
+    'document_type' field, then to auto-detection from the filename.
+    This supports the UI auto-detecting each file's type without requiring any
+    manual selection from the user.
 
     Expects:
-        - files: One or more document files (multipart/form-data, same field name)
-        - document_type: Applied to ALL files in the batch (required)
-        - client: Optional client name (applied to all files)
-        - industry: Optional industry (applied to all files)
+        - files:          One or more document files (multipart/form-data)
+        - document_types: JSON array of type strings, one per file (optional)
+        - document_type:  Global fallback type if per-file type is absent (optional)
+        - client:         Optional client name (applied to all files)
+        - industry:       Optional industry (applied to all files)
 
     Returns:
         JSON with:
-            success:                  True if ALL files succeeded, False if any failed
-            batch:                    True flag for UI to use batch result display
+            success:                  True if ALL files succeeded
+            batch:                    True flag for UI
             total_files:              Number of files processed
             success_count:            Files ingested successfully
             error_count:              Files that failed
-            total_patterns_extracted: Sum of patterns across all files
-            total_insights_extracted: Sum of insights across all files
+            total_patterns_extracted: Sum across all files
+            total_insights_extracted: Sum across all files
             total_patterns:           Total patterns now in knowledge base
-            results:                  Per-file result list
-
-    Processing is sequential (not parallel) to avoid concurrent database writes.
-    For typical batch sizes (2-20 files) this is fast enough.
+            results:                  Per-file result list (includes detected_type)
     """
     try:
         files = request.files.getlist('files')
@@ -369,7 +431,17 @@ def ingest_batch():
         if not files or all(f.filename == '' for f in files):
             return jsonify({'success': False, 'error': 'No files uploaded'}), 400
 
-        document_type = request.form.get('document_type', 'generic')
+        # Per-file types sent as a JSON array by the frontend auto-detector
+        per_file_types = []
+        raw_types = request.form.get('document_types', '')
+        if raw_types:
+            try:
+                per_file_types = json.loads(raw_types)
+            except Exception:
+                per_file_types = []
+
+        # Global fallback (may be empty — that's fine, we'll auto-detect)
+        global_type = request.form.get('document_type', '').strip()
         client   = request.form.get('client', '')
         industry = request.form.get('industry', '')
 
@@ -377,7 +449,7 @@ def ingest_batch():
         success_count = 0
         error_count = 0
 
-        for file in files:
+        for idx, file in enumerate(files):
             if file.filename == '':
                 continue
 
@@ -390,6 +462,15 @@ def ingest_batch():
                 error_count += 1
                 continue
 
+            # Resolve document type: per-file → global fallback → auto-detect
+            doc_type = ''
+            if idx < len(per_file_types):
+                doc_type = (per_file_types[idx] or '').strip()
+            if not doc_type:
+                doc_type = global_type
+            if not doc_type:
+                doc_type = _detect_document_type(file.filename)
+
             metadata = {
                 'document_name': secure_filename(file.filename),
                 'client': client,
@@ -400,7 +481,7 @@ def ingest_batch():
             }
 
             try:
-                result = _process_file_for_ingest(file, document_type, metadata)
+                result = _process_file_for_ingest(file, doc_type, metadata)
             except Exception as file_err:
                 import traceback
                 result = {
@@ -409,7 +490,8 @@ def ingest_batch():
                     'traceback': traceback.format_exc()
                 }
 
-            result['filename'] = file.filename
+            result['filename']      = file.filename
+            result['detected_type'] = doc_type   # surface to UI for display
             results.append(result)
 
             if result.get('success'):
@@ -453,23 +535,19 @@ def ingest_document_content(ingestor, content, document_type, metadata, file_byt
     """
     Helper function to ingest document content.
 
-    UPDATED February 27, 2026:
-    - DOCX files now pass structured JSON paragraph list as content.
-    - Accepts optional file_bytes kwarg and passes it through to ingest_document()
-      so PPTX and Excel can use structured extraction.
-    - 'proposal' is aliased to 'contract' (same document structure, same extractor).
-
     Args:
         ingestor:       DocumentIngestor instance
         content:        For DOCX: JSON list of {style, bold, text} dicts.
                         For PPTX: slide text string (or empty).
                         For others: plain text string.
-        document_type:  Document type string
+        document_type:  Document type string (auto-detected or user-provided)
         metadata:       Dict with document_name, client, industry, etc.
         file_bytes:     Optional raw bytes for PPTX/Excel structured extraction
+
+    Notes:
+        'proposal' is aliased to 'contract' (same extractor).
     """
     try:
-        # Alias proposal -> contract (same document structure, same extractor)
         if document_type == 'proposal':
             document_type = 'contract'
 
@@ -720,18 +798,13 @@ def get_extract_detail(extract_id):
 
 
 # ============================================================================
-# EXPORT ENDPOINT — Added February 22, 2026, unchanged February 27, 2026
+# EXPORT ENDPOINT — Added February 22, 2026
 # ============================================================================
 @ingest_bp.route('/export', methods=['GET'])
 def export_knowledge():
     """
     Export the full knowledge base as a downloadable JSON file.
-
-    Returns a .json file attachment containing all knowledge extracts,
-    learned patterns, ingestion log, and statistics.
-
-    Called via window.location.href (GET) so the browser handles the
-    download natively — no fetch() or JSON parsing required.
+    Called via window.location.href so the browser handles the download natively.
     """
     try:
         import sqlite3
@@ -858,9 +931,6 @@ def clear_knowledge_base():
 
     Does NOT delete the database file - only truncates the three tables.
     Requires JSON body: { "confirm": "CLEAR" } to prevent accidental clears.
-
-    Returns:
-        JSON with counts of deleted rows per table.
     """
     try:
         import sqlite3
@@ -877,7 +947,6 @@ def clear_knowledge_base():
         cursor = db.cursor()
 
         counts = {}
-
         for table in ('knowledge_extracts', 'learned_patterns', 'ingestion_log'):
             try:
                 cursor.execute(f'SELECT COUNT(*) FROM {table}')
