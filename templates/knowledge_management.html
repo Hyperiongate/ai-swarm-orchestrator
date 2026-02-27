@@ -763,6 +763,17 @@ function detectDocumentType(filename) {
         return 'general_word';
     }
 
+    // FIX February 27, 2026 (Session 3 - Part 2):
+    // .md files with 'lesson' in the name → lessons_learned_md.
+    // Jim dictates lessons learned to Claude Sonnet after each engagement.
+    // Sonnet produces rich structured Markdown (## categories, ### Lesson #N,
+    // **Field:** labels) that requires a dedicated Markdown extractor.
+    // 'generic' was losing 18,000+ words of consulting knowledge.
+    if (ext === 'md') {
+        if (name.indexOf('lesson') !== -1) return 'lessons_learned_md';
+        return 'generic';
+    }
+
     if (ext === 'pdf') {
         if (name.indexOf('lesson') !== -1)                                           return 'lessons_learned';
         if (name.indexOf('contract') !== -1 || name.indexOf('agreement') !== -1)     return 'contract';
@@ -775,6 +786,7 @@ function detectDocumentType(filename) {
 // Human-readable labels for type badges
 var TYPE_LABELS = {
     'lessons_learned':       'Lessons Learned',
+    'lessons_learned_md':    'Lessons MD',
     'contract':              'Contract',
     'scope_of_work':         'Scope of Work',
     'implementation_manual': 'Impl. Manual',
