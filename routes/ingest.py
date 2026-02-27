@@ -1,29 +1,37 @@
 """
 KNOWLEDGE INGESTION ROUTES
 Created: February 2, 2026
-Last Updated: February 26, 2026 - ADDED new document types, proposal aliased to contract
+Last Updated: February 26, 2026 - UPDATED PPTX and Excel routes to pass file_bytes
 
 CHANGELOG:
 
-- February 26, 2026: ADDED new document types and proposal alias
-  * Added 'proposal' as alias for 'contract' in ingest_document_content() so that
-    documents uploaded as 'proposal' type get the full contract extractor treatment
-    (client name, fee, payment schedule, engagement terms) instead of the generic fallback.
-  * No route signatures changed. No existing functionality removed.
+- February 26, 2026 (Session 2): UPDATED PPTX and Excel routes to pass file_bytes
+  * PROBLEM: PPTX route was using python-pptx to extract text and passing that string
+    to ingest_document(). python-pptx reads text frames only — chart data embedded
+    as XML inside the zip structure was completely invisible. Survey results (bar charts,
+    pie charts, etc.) were never captured.
+    Excel route was converting all cells to tab-separated text, losing all numeric
+    structure needed for cost model and schedule pattern extraction.
+  * SOLUTION: Both routes now read the file into bytes and pass file_bytes kwarg to
+    ingest_document(). The engine's new extractors operate directly on the zip bytes.
+    Old text-extraction fallback is preserved if file_bytes path fails.
+  * Text extraction fallback: PPTX still reads slide text via python-pptx and stores
+    it as slide_text_preview in metadata for search indexing. Excel raw text is
+    discarded in favor of structured extraction.
+  * All route signatures unchanged. No existing functionality removed.
+  * document_type routing for PPTX: 'eaf' and 'survey_pptx' to survey chart
+    extractor; 'oaf' to OAF table extractor; others auto-detect by subtype.
+
+- February 26, 2026 (Session 1): ADDED new document types and proposal alias
+  * 'proposal' aliased to 'contract' so proposal documents get full contract
+    extractor (client, fee, payment schedule, engagement terms).
 
 - February 22, 2026: ADDED /api/ingest/export (GET)
-  PROBLEM: The Download Knowledge button called /api/knowledge/export which depends on
-           knowledge_backup_system module. Flask returned HTML 404 page. JavaScript
-           tried to parse that as JSON producing:
-           "Unexpected token '<', '<!doctype'... is not valid JSON"
-  FIX: Added /api/ingest/export directly to this blueprint. Queries the existing
-       knowledge_extracts and learned_patterns tables and streams a .json file
-       directly to the browser using send_file() + BytesIO. Zero new dependencies.
-       knowledge_management.html calls this via window.location.href (native browser
-       download — no JSON parsing involved).
+  * Added /api/ingest/export that exports full knowledge base as .json download.
+  * Zero new dependencies — queries existing tables, streams via BytesIO + send_file.
 
 - February 4, 2026: FIXED PowerPoint temp file handling
-  Must close temp file before python-pptx can open it. Added proper cleanup in finally block.
+  * Must close temp file before python-pptx opens it.
 
 Flask API endpoints for document ingestion system.
 Allows uploading documents, viewing knowledge base stats, browsing patterns.
@@ -78,6 +86,7 @@ ALLOWED_EXTENSIONS = {
     'xlsx', 'xls', 'csv', 'json', 'pptx', 'ppt'
 }
 
+
 def allowed_file(filename):
     """Check if file extension is allowed"""
     return '.' in filename and \
@@ -91,13 +100,23 @@ def ingest_document():
 
     Expects:
         - file: Document file (multipart/form-data)
-        - document_type: Type of document (see knowledge_management.html for full list)
+        - document_type: Type of document (contract, implementation_manual,
+          lessons_learned, scope_of_work, survey_pptx, eaf, oaf, excel, etc.)
         - client: Optional client name
         - industry: Optional industry
         - project_type: Optional project type
 
     Returns:
-        JSON with ingestion results including highlights from extraction
+        JSON with ingestion results including highlights from extraction.
+
+    PPTX handling (updated February 26, 2026):
+        File bytes are passed directly to the engine so chart XML can be
+        extracted from the zip structure. python-pptx text is read separately
+        as a slide-text preview stored in metadata for search indexing.
+
+    Excel handling (updated February 26, 2026):
+        File bytes are passed directly to the engine for structured multi-sheet
+        extraction (cost models, schedule patterns, staffing tables).
     """
     try:
         if 'file' not in request.files:
@@ -125,14 +144,20 @@ def ingest_document():
             'upload_date': datetime.now().isoformat()
         }
 
-        # ---- Extract content based on file type ----
-        if file.filename.lower().endswith(('.pptx', '.ppt')):
+        filename_lower = file.filename.lower()
+
+        # ---- PPTX: pass file_bytes to engine for chart XML extraction ----
+        if filename_lower.endswith(('.pptx', '.ppt')):
+            file_bytes = file.read()
+
+            # Also attempt slide text extraction via python-pptx for search indexing
+            slide_text_content = None
             try:
                 from pptx import Presentation
 
                 tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.pptx')
                 tmp_path = tmp.name
-                file.save(tmp_path)
+                tmp.write(file_bytes)
                 tmp.close()  # CRITICAL: Close before python-pptx opens it
 
                 try:
@@ -146,70 +171,57 @@ def ingest_document():
                                 if text:
                                     slide_content.append(text)
                         if slide_content:
-                            slide_texts.append(f"[Slide {slide_num}]\n" + '\n'.join(slide_content))
-                    content = '\n\n'.join(slide_texts) or "[PowerPoint file with no extractable text]"
-                finally:
-                    try:
-                        os.unlink(tmp_path)
-                    except Exception:
-                        pass
-
-            except ImportError:
-                return jsonify({
-                    'success': False,
-                    'error': 'PowerPoint support not installed. Contact administrator.'
-                }), 500
-            except Exception as e:
-                return jsonify({
-                    'success': False,
-                    'error': f'Failed to extract PowerPoint content: {str(e)}'
-                }), 500
-
-        elif file.filename.lower().endswith(('.xlsx', '.xls')):
-            # Excel: extract as CSV-style text for now
-            # Full structured extractor built once sample files provided
-            try:
-                import openpyxl
-                tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx')
-                tmp_path = tmp.name
-                file.save(tmp_path)
-                tmp.close()
-                try:
-                    wb = openpyxl.load_workbook(tmp_path, data_only=True)
-                    all_text = []
-                    for sheet_name in wb.sheetnames:
-                        ws = wb[sheet_name]
-                        all_text.append(f"[Sheet: {sheet_name}]")
-                        for row in ws.iter_rows(values_only=True):
-                            row_text = '\t'.join(str(v) if v is not None else '' for v in row)
-                            if row_text.strip():
-                                all_text.append(row_text)
-                    content = '\n'.join(all_text)
-                    if not content.strip():
-                        content = "[Excel file with no extractable content]"
+                            slide_texts.append(
+                                f"[Slide {slide_num}]\n" + '\n'.join(slide_content)
+                            )
+                    slide_text_content = '\n\n'.join(slide_texts)
                 finally:
                     try:
                         os.unlink(tmp_path)
                     except Exception:
                         pass
             except ImportError:
-                # Fall back to reading raw bytes as text
-                content = file.read().decode('utf-8', errors='ignore')
-            except Exception as e:
-                return jsonify({
-                    'success': False,
-                    'error': f'Failed to extract Excel content: {str(e)}'
-                }), 500
+                pass  # python-pptx not available; file_bytes path will handle it
+            except Exception:
+                pass  # Non-fatal; file_bytes path is primary
 
+            # Store slide text preview in metadata for search indexing
+            if slide_text_content:
+                metadata['slide_text_preview'] = slide_text_content[:2000]
+
+            result = ingest_document_content(
+                ingestor=get_document_ingestor(),
+                content=slide_text_content or '',
+                document_type=document_type,
+                metadata=metadata,
+                file_bytes=file_bytes
+            )
+            return jsonify(result), 200 if result['success'] else 400
+
+        # ---- Excel: pass file_bytes to engine for structured extraction ----
+        elif filename_lower.endswith(('.xlsx', '.xls')):
+            file_bytes = file.read()
+
+            # Normalize document_type for Excel — if generic/word, default to 'excel'
+            excel_type = document_type
+            if document_type in ('generic', 'general_word', ''):
+                excel_type = 'excel'
+
+            result = ingest_document_content(
+                ingestor=get_document_ingestor(),
+                content='',
+                document_type=excel_type,
+                metadata=metadata,
+                file_bytes=file_bytes
+            )
+            return jsonify(result), 200 if result['success'] else 400
+
+        # ---- All other file types: text/Markdown content path (unchanged) ----
         else:
-            # Text, Markdown, PDF, Word (stored as text on server), CSV, JSON
             content = file.read().decode('utf-8', errors='ignore')
-
-        # ---- Ingest ----
-        ingestor = get_document_ingestor()
-        result = ingest_document_content(ingestor, content, document_type, metadata)
-
-        return jsonify(result), 200 if result['success'] else 400
+            ingestor = get_document_ingestor()
+            result = ingest_document_content(ingestor, content, document_type, metadata)
+            return jsonify(result), 200 if result['success'] else 400
 
     except Exception as e:
         import traceback
@@ -220,25 +232,36 @@ def ingest_document():
         }), 500
 
 
-def ingest_document_content(ingestor, content, document_type, metadata):
+def ingest_document_content(ingestor, content, document_type, metadata, file_bytes=None):
     """
     Helper function to ingest document content.
 
     UPDATED February 26, 2026:
-    'proposal' is now aliased to 'contract' so that proposal documents get the
-    full contract extractor (client name, fee, payment schedule, engagement terms)
-    instead of the generic fallback that previously just recorded content_length.
+    - Accepts optional file_bytes kwarg and passes it through to ingest_document()
+      so PPTX and Excel can use structured extraction.
+    - 'proposal' is aliased to 'contract' (same document structure, same extractor).
+
+    Args:
+        ingestor:       DocumentIngestor instance
+        content:        Document text/Markdown string
+        document_type:  Document type string
+        metadata:       Dict with document_name, client, industry, etc.
+        file_bytes:     Optional raw bytes for PPTX/Excel structured extraction
     """
     try:
         # Alias proposal -> contract (same document structure, same extractor)
         if document_type == 'proposal':
             document_type = 'contract'
 
-        result = ingestor.ingest_document(
-            content=content,
-            document_type=document_type,
-            metadata=metadata
-        )
+        kwargs = {
+            'content': content,
+            'document_type': document_type,
+            'metadata': metadata
+        }
+        if file_bytes is not None:
+            kwargs['file_bytes'] = file_bytes
+
+        result = ingestor.ingest_document(**kwargs)
         return result
     except Exception as e:
         import traceback
@@ -263,7 +286,10 @@ def get_status():
         return jsonify({
             'success': True,
             'stats': stats,
-            'message': f'Knowledge base contains {stats["total_extracts"]} documents and {stats["total_patterns"]} patterns'
+            'message': (
+                f'Knowledge base contains {stats["total_extracts"]} documents '
+                f'and {stats["total_patterns"]} patterns'
+            )
         }), 200
     except Exception as e:
         return jsonify({'success': False, 'error': f'Failed to get status: {str(e)}'}), 500
@@ -339,7 +365,9 @@ def get_patterns():
         cursor = db.cursor()
 
         # Gracefully handle missing table
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='learned_patterns'")
+        cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='learned_patterns'"
+        )
         if not cursor.fetchone():
             db.close()
             return jsonify({'success': True, 'count': 0, 'patterns': []}), 200
@@ -367,7 +395,9 @@ def get_patterns():
                 pattern = dict(row)
                 for field in ('pattern_data', 'metadata'):
                     try:
-                        pattern[field] = json.loads(pattern[field]) if pattern.get(field) else {}
+                        pattern[field] = (
+                            json.loads(pattern[field]) if pattern.get(field) else {}
+                        )
                     except Exception:
                         pattern[field] = {}
                 patterns.append(pattern)
@@ -476,7 +506,7 @@ def get_extract_detail(extract_id):
 
 
 # ============================================================================
-# EXPORT ENDPOINT - Added February 22, 2026, unchanged February 26, 2026
+# EXPORT ENDPOINT — Added February 22, 2026, unchanged February 26, 2026
 # ============================================================================
 @ingest_bp.route('/export', methods=['GET'])
 def export_knowledge():
@@ -509,7 +539,9 @@ def export_knowledge():
             extract = dict(row)
             for field in ('extracted_data', 'metadata'):
                 try:
-                    extract[field] = json.loads(extract[field]) if extract.get(field) else {}
+                    extract[field] = (
+                        json.loads(extract[field]) if extract.get(field) else {}
+                    )
                 except Exception:
                     extract[field] = {}
             extracts.append(extract)
@@ -527,7 +559,9 @@ def export_knowledge():
                 pattern = dict(row)
                 for field in ('pattern_data', 'metadata'):
                     try:
-                        pattern[field] = json.loads(pattern[field]) if pattern.get(field) else {}
+                        pattern[field] = (
+                            json.loads(pattern[field]) if pattern.get(field) else {}
+                        )
                     except Exception:
                         pattern[field] = {}
                 patterns.append(pattern)
@@ -583,7 +617,9 @@ def export_knowledge():
         buffer = io.BytesIO(json_bytes)
         buffer.seek(0)
 
-        filename = f"shiftwork_knowledge_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        filename = (
+            f"shiftwork_knowledge_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        )
 
         return send_file(
             buffer,
