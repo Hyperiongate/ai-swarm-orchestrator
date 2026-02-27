@@ -7,42 +7,41 @@
     <!--
         Last Updated: February 27, 2026
 
-        CHANGES - February 27, 2026:
-          * FIXED: Could not add multiple files. Drag and drop only accepted the
-            first file (files[0]). File picker had no 'multiple' attribute.
-            No queue existed - selectedFile was a single File object.
-          * SOLUTION:
-            - selectedFile (single File) replaced with fileQueue (File[] array)
-            - addFilesToQueue(File[]) handles deduplication by name+size and
-              skips unsupported extensions with a warning
-            - removeFromQueue(index, event) removes individual files from queue
-            - renderFileQueue() updates the upload zone UI with a scrollable
-              list of queued files and an Add More Files button
-            - drop handler: Array.from(e.dataTransfer.files) passed to addFilesToQueue
-            - fileInput: added multiple attribute; change handler passes all files
-            - uploadDocuments() routes to uploadSingle() for 1 file or
-              uploadBatch() for 2+ files; batch posts to /api/ingest/batch
-            - showBatchResults() renders per-file result table
-            - showCelebrationBatch() handles batch celebration popup
-          * All single-file functionality preserved: same form fields, same
-            document type hints, same highlights panel, same celebration popup.
-          * Added CSS: .queue-list, .queue-item, .queue-remove, .queue-header,
-            .batch-results, .batch-results-table, .badge-ok, .badge-fail
+        CHANGES - February 27, 2026 (Session 3):
+          * REMOVED mandatory Document Type selection.
+            PROBLEM: Users were required to pick one document type for all queued
+            files, which made no sense when uploading a batch of mixed types
+            (lessons learned, Pillar docs, contracts, etc.).
+            SOLUTION:
+            - Added detectDocumentType(filename) that auto-detects type from
+              filename keywords and extension. Mirrors _detect_document_type()
+              in routes/ingest.py exactly.
+            - Each file in the queue is tagged with its auto-detected type
+              (stored in fileQueue as objects: {file, detectedType}).
+            - Queue render shows detected type as a small badge next to each file.
+            - "Document Type" dropdown changed from required to optional override:
+              if user selects a type it overrides ALL files; if left blank each
+              file uses its auto-detected type.
+            - uploadSingle() uses detectedType from the file object unless
+              dropdown is set.
+            - uploadBatch() sends 'document_types' as a JSON array (one per file)
+              to /api/ingest/batch, which now accepts per-file types.
+            - Batch results table shows detected type for each file.
+            - Removed required validation on document type field.
+
+        CHANGES - February 27, 2026 (Session 2):
+          * ADDED multi-file support. Drop zone accepts multiple files.
+            fileQueue array replaces single selectedFile.
+            Routes to /api/ingest/batch for 2+ files.
 
         CHANGES - February 26, 2026 (second update):
-          * FIXED: After uploading, clicking Choose File / Change File did nothing.
-            Added click listener on uploadZone and fileInput.value reset.
+          * FIXED: After upload, clicking Choose File did nothing.
 
         CHANGES - February 26, 2026 (first update):
-          * Added all new document types to dropdown (scope_of_work, etc.)
-          * Added full industry list
-          * Added highlights display in celebration popup
-          * Document type hints describing what each type extracts
+          * Added all new document types, full industry list, highlights panel.
 
         CHANGES - February 22, 2026:
-          * Fixed Download Knowledge button (window.location.href)
-          * Added PowerPoint file type support
-          * Fixed JavaScript null reference in downloadKnowledge()
+          * Fixed Download Knowledge button, added PowerPoint support.
     -->
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -101,11 +100,7 @@
             transform: translateY(-2px);
         }
 
-        .nav-btn:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-            transform: none;
-        }
+        .nav-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
 
         .stats-grid {
             display: grid;
@@ -122,10 +117,7 @@
             transition: transform 0.3s ease, box-shadow 0.3s ease;
         }
 
-        .stat-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 15px 40px rgba(0,0,0,0.3);
-        }
+        .stat-card:hover { transform: translateY(-5px); box-shadow: 0 15px 40px rgba(0,0,0,0.3); }
 
         .stat-card h3 {
             font-size: 0.85em;
@@ -135,13 +127,7 @@
             margin-bottom: 10px;
         }
 
-        .stat-card .value {
-            font-size: 2.5em;
-            font-weight: 700;
-            color: #667eea;
-            margin-bottom: 5px;
-        }
-
+        .stat-card .value { font-size: 2.5em; font-weight: 700; color: #667eea; margin-bottom: 5px; }
         .stat-card .label { font-size: 0.9em; color: #999; }
 
         .main-grid {
@@ -166,11 +152,7 @@
             padding-bottom: 10px;
         }
 
-        /* -------------------------------------------------------
-           UPLOAD ZONE
-           min-height keeps the zone tall even when the queue is
-           short. flexbox centers content vertically.
-        ------------------------------------------------------- */
+        /* Upload Zone */
         .upload-zone {
             border: 3px dashed #667eea;
             border-radius: 12px;
@@ -186,35 +168,14 @@
             justify-content: center;
         }
 
-        .upload-zone.dragover {
-            background: #e8ebff;
-            border-color: #764ba2;
-            transform: scale(1.02);
-        }
-
+        .upload-zone.dragover { background: #e8ebff; border-color: #764ba2; transform: scale(1.02); }
         .upload-zone:hover { background: #e8ebff; }
-
         .upload-icon { font-size: 3em; margin-bottom: 10px; }
-
-        .upload-zone h3 {
-            color: #667eea;
-            margin-bottom: 8px;
-            font-size: 1.2em;
-        }
-
-        .upload-zone p {
-            color: #666;
-            margin-bottom: 15px;
-            font-size: 0.88em;
-            line-height: 1.5;
-        }
-
+        .upload-zone h3 { color: #667eea; margin-bottom: 8px; font-size: 1.2em; }
+        .upload-zone p { color: #666; margin-bottom: 15px; font-size: 0.88em; line-height: 1.5; }
         .file-input { display: none; }
 
-        /* -------------------------------------------------------
-           FILE QUEUE (rendered inside upload-zone when files
-           are selected)
-        ------------------------------------------------------- */
+        /* File queue */
         .queue-header {
             font-weight: 700;
             color: #333;
@@ -226,7 +187,7 @@
 
         .queue-list {
             width: 100%;
-            max-height: 190px;
+            max-height: 220px;
             overflow-y: auto;
             margin-bottom: 4px;
         }
@@ -254,11 +215,19 @@
             white-space: nowrap;
         }
 
-        .queue-size {
-            color: #aaa;
+        /* Auto-detected type badge shown in queue */
+        .queue-type-badge {
+            background: #e8ebff;
+            color: #667eea;
+            font-size: 0.78em;
+            font-weight: 600;
+            padding: 2px 7px;
+            border-radius: 10px;
+            white-space: nowrap;
             flex-shrink: 0;
-            font-size: 0.85em;
         }
+
+        .queue-size { color: #aaa; flex-shrink: 0; font-size: 0.85em; }
 
         .queue-remove {
             background: none;
@@ -275,9 +244,7 @@
 
         .queue-remove:hover { background: #f8d7da; }
 
-        /* -------------------------------------------------------
-           BUTTONS
-        ------------------------------------------------------- */
+        /* Buttons */
         .btn {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
@@ -291,33 +258,14 @@
             box-shadow: 0 4px 15px rgba(102,126,234,0.4);
         }
 
-        .btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(102,126,234,0.6);
-        }
+        .btn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(102,126,234,0.6); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        .btn-sm { padding: 8px 18px; font-size: 0.87em; }
 
-        .btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-            transform: none;
-        }
-
-        .btn-sm {
-            padding: 8px 18px;
-            font-size: 0.87em;
-        }
-
-        /* -------------------------------------------------------
-           FORM
-        ------------------------------------------------------- */
+        /* Form */
         .form-group { margin-bottom: 20px; }
 
-        .form-group label {
-            display: block;
-            margin-bottom: 8px;
-            color: #333;
-            font-weight: 600;
-        }
+        .form-group label { display: block; margin-bottom: 8px; color: #333; font-weight: 600; }
 
         .form-group select,
         .form-group input {
@@ -330,21 +278,19 @@
         }
 
         .form-group select:focus,
-        .form-group input:focus {
-            outline: none;
-            border-color: #667eea;
-        }
+        .form-group input:focus { outline: none; border-color: #667eea; }
 
-        .form-group .hint {
+        .form-group .hint { font-size: 0.82em; color: #888; margin-top: 5px; font-style: italic; }
+
+        /* Override note shown under document type dropdown */
+        .override-note {
             font-size: 0.82em;
-            color: #888;
+            color: #667eea;
             margin-top: 5px;
             font-style: italic;
         }
 
-        /* -------------------------------------------------------
-           PROGRESS BAR
-        ------------------------------------------------------- */
+        /* Progress */
         .progress {
             background: #f0f0f0;
             border-radius: 10px;
@@ -361,9 +307,7 @@
             transition: width 0.3s ease;
         }
 
-        /* -------------------------------------------------------
-           ALERTS
-        ------------------------------------------------------- */
+        /* Alerts */
         .alert {
             padding: 15px 20px;
             border-radius: 8px;
@@ -379,11 +323,8 @@
 
         .alert-success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
         .alert-error   { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-        .alert-info    { background: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
 
-        /* -------------------------------------------------------
-           HIGHLIGHTS PANEL (single file)
-        ------------------------------------------------------- */
+        /* Highlights panel */
         .highlights-panel {
             background: #f0f4ff;
             border: 1px solid #667eea;
@@ -413,9 +354,7 @@
         .highlights-panel li:last-child { border-bottom: none; }
         .highlights-panel li::before { content: "✓ "; color: #667eea; font-weight: bold; }
 
-        /* -------------------------------------------------------
-           BATCH RESULTS TABLE
-        ------------------------------------------------------- */
+        /* Batch results */
         .batch-results {
             background: #f8f9ff;
             border: 1px solid #667eea;
@@ -433,11 +372,7 @@
             letter-spacing: 0.5px;
         }
 
-        .batch-results-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.86em;
-        }
+        .batch-results-table { width: 100%; border-collapse: collapse; font-size: 0.85em; }
 
         .batch-results-table th {
             background: #667eea;
@@ -446,9 +381,6 @@
             text-align: left;
             font-weight: 600;
         }
-
-        .batch-results-table th:first-child { border-radius: 4px 0 0 0; }
-        .batch-results-table th:last-child  { border-radius: 0 4px 0 0; }
 
         .batch-results-table td {
             padding: 7px 10px;
@@ -459,13 +391,21 @@
         .batch-results-table tr:last-child td { border-bottom: none; }
         .batch-results-table tr.row-success td { background: #f0fff4; }
         .batch-results-table tr.row-error   td { background: #fff5f5; }
-
         .badge-ok   { color: #155724; font-weight: 700; }
         .badge-fail { color: #721c24; font-weight: 700; }
 
-        /* -------------------------------------------------------
-           PATTERNS LIST
-        ------------------------------------------------------- */
+        /* Type label in batch results */
+        .type-label {
+            background: #e8ebff;
+            color: #667eea;
+            font-size: 0.78em;
+            font-weight: 600;
+            padding: 2px 7px;
+            border-radius: 10px;
+            white-space: nowrap;
+        }
+
+        /* Patterns list */
         .patterns-list { max-height: 500px; overflow-y: auto; }
 
         .pattern-item {
@@ -476,18 +416,9 @@
             transition: all 0.3s ease;
         }
 
-        .pattern-item:hover {
-            border-color: #667eea;
-            background: #f8f9ff;
-        }
+        .pattern-item:hover { border-color: #667eea; background: #f8f9ff; }
 
-        .pattern-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 10px;
-        }
-
+        .pattern-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
         .pattern-name { font-weight: 600; color: #333; font-size: 1em; }
 
         .pattern-type {
@@ -499,32 +430,12 @@
             white-space: nowrap;
         }
 
-        .pattern-meta {
-            display: flex;
-            gap: 20px;
-            font-size: 0.85em;
-            color: #666;
-            margin-top: 8px;
-        }
+        .pattern-meta { display: flex; gap: 20px; font-size: 0.85em; color: #666; margin-top: 8px; }
 
-        .confidence-bar {
-            width: 100%;
-            height: 6px;
-            background: #e0e0e0;
-            border-radius: 3px;
-            overflow: hidden;
-            margin-top: 8px;
-        }
+        .confidence-bar { width: 100%; height: 6px; background: #e0e0e0; border-radius: 3px; overflow: hidden; margin-top: 8px; }
+        .confidence-fill { height: 100%; background: linear-gradient(90deg, #667eea 0%, #764ba2 100%); transition: width 0.5s ease; }
 
-        .confidence-fill {
-            height: 100%;
-            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-            transition: width 0.5s ease;
-        }
-
-        /* -------------------------------------------------------
-           HISTORY LIST
-        ------------------------------------------------------- */
+        /* History */
         .history-list { max-height: 500px; overflow-y: auto; }
 
         .history-item {
@@ -537,25 +448,11 @@
 
         .history-item .title { font-weight: 600; color: #333; margin-bottom: 5px; }
         .history-item .meta  { font-size: 0.85em; color: #666; }
+        .history-item .stats { margin-top: 10px; display: flex; gap: 20px; font-size: 0.9em; }
 
-        .history-item .stats {
-            margin-top: 10px;
-            display: flex;
-            gap: 20px;
-            font-size: 0.9em;
-        }
+        .stat-badge { background: white; padding: 4px 10px; border-radius: 6px; color: #667eea; font-weight: 600; }
 
-        .stat-badge {
-            background: white;
-            padding: 4px 10px;
-            border-radius: 6px;
-            color: #667eea;
-            font-weight: 600;
-        }
-
-        /* -------------------------------------------------------
-           SPINNER
-        ------------------------------------------------------- */
+        /* Spinner */
         .spinner {
             border: 4px solid #f3f3f3;
             border-top: 4px solid #667eea;
@@ -566,14 +463,9 @@
             display: none;
         }
 
-        @keyframes spin {
-            0%   { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
-        /* -------------------------------------------------------
-           CELEBRATION
-        ------------------------------------------------------- */
+        /* Celebration */
         .celebration {
             position: fixed;
             top: 50%; left: 50%;
@@ -607,13 +499,7 @@
             font-size: 0.9em;
         }
 
-        .celebration .highlights li {
-            list-style: none;
-            padding: 3px 0;
-            color: #333;
-            border-bottom: 1px solid #e8ebff;
-        }
-
+        .celebration .highlights li { list-style: none; padding: 3px 0; color: #333; border-bottom: 1px solid #e8ebff; }
         .celebration .highlights li:last-child { border-bottom: none; }
         .celebration .highlights li::before { content: "✓ "; color: #667eea; }
 
@@ -624,13 +510,9 @@
             display: none;
         }
 
-        /* optgroup / option */
         optgroup { font-weight: 700; color: #444; }
         option   { font-weight: 400; color: #333; }
 
-        /* -------------------------------------------------------
-           RESPONSIVE
-        ------------------------------------------------------- */
         @media (max-width: 768px) {
             .main-grid  { grid-template-columns: 1fr; }
             .stats-grid { grid-template-columns: 1fr; }
@@ -643,9 +525,6 @@
 <body>
 <div class="container">
 
-    <!-- ===================================================================
-         HEADER
-    =================================================================== -->
     <div class="header">
         <div class="header-nav">
             <a href="/" class="nav-btn">&#8592; Back to Main</a>
@@ -661,10 +540,8 @@
         <p>Shoulders of Giants - Cumulative Learning System</p>
     </div>
 
-    <!-- ===================================================================
-         STATS DASHBOARD
-    =================================================================== -->
-    <div class="stats-grid" id="statsGrid">
+    <!-- Stats -->
+    <div class="stats-grid">
         <div class="stat-card">
             <h3>Total Documents</h3>
             <div class="value" id="totalDocs">0</div>
@@ -697,31 +574,23 @@
         </div>
     </div>
 
-    <!-- ===================================================================
-         MAIN GRID
-    =================================================================== -->
     <div class="main-grid">
 
-        <!-- UPLOAD SECTION -->
+        <!-- Upload Section -->
         <div class="card">
             <h2>&#128228; Upload Document</h2>
 
             <div class="alert alert-success" id="successAlert"></div>
             <div class="alert alert-error"   id="errorAlert"></div>
 
-            <!--
-                uploadZone: clicking anywhere opens the multi-file picker UNLESS
-                the click is on a .queue-remove button (handled in JS).
-                fileInput sits OUTSIDE the zone to prevent nested-element issues.
-                The 'multiple' attribute allows selecting many files at once.
-            -->
             <div class="upload-zone" id="uploadZone">
                 <div class="upload-icon">&#128196;</div>
                 <h3>Drag &amp; Drop Documents</h3>
                 <p>Word (.docx), Excel (.xlsx), PowerPoint (.pptx), PDF, Text, Markdown, CSV<br>
-                   <em>Multiple files supported &#8212; drop several at once</em></p>
+                   <em>Multiple files supported &#8212; type is auto-detected from filename</em></p>
                 <button class="btn" type="button">Choose Files</button>
             </div>
+            <!-- fileInput outside uploadZone to prevent nested-click issues -->
             <input type="file" id="fileInput" class="file-input" multiple
                    accept=".txt,.md,.pdf,.docx,.doc,.xlsx,.xls,.csv,.json,.pptx,.ppt">
 
@@ -729,19 +598,20 @@
                 <div class="progress-bar" id="progressBar"></div>
             </div>
 
-            <!-- Highlights panel: shown after single-file ingest -->
+            <!-- Highlights (single file) -->
             <div class="highlights-panel" id="highlightsPanel">
                 <h4>&#128203; What Was Extracted</h4>
                 <ul id="highlightsList"></ul>
             </div>
 
-            <!-- Batch results: shown after multi-file ingest -->
+            <!-- Batch results table -->
             <div class="batch-results" id="batchResults">
                 <h4>&#128203; Batch Results</h4>
                 <table class="batch-results-table">
                     <thead>
                         <tr>
                             <th>File</th>
+                            <th>Detected Type</th>
                             <th>Status</th>
                             <th>Patterns</th>
                             <th>Insights</th>
@@ -753,10 +623,15 @@
 
             <form id="uploadForm" style="margin-top:25px;">
 
+                <!--
+                    Document Type is now OPTIONAL and acts as a manual override.
+                    If left blank, each file's type is auto-detected from its filename.
+                    If set, it overrides all files in the batch.
+                -->
                 <div class="form-group">
-                    <label for="documentType">Document Type *</label>
-                    <select id="documentType" required>
-                        <option value="">- Select Document Type -</option>
+                    <label for="documentType">Document Type Override (optional)</label>
+                    <select id="documentType">
+                        <option value="">&#8212; Auto-Detect from Filename (recommended) &#8212;</option>
 
                         <optgroup label="-- Word Documents --">
                             <option value="contract">Contract / Engagement Agreement</option>
@@ -777,7 +652,9 @@
                             <option value="data_file">Data File (Labor / Overtime / Cost)</option>
                         </optgroup>
                     </select>
-                    <div class="hint" id="docTypeHint"></div>
+                    <div class="override-note" id="overrideNote">
+                        &#128269; Type auto-detected per file. Select above only to override all files.
+                    </div>
                 </div>
 
                 <div class="form-group">
@@ -826,30 +703,25 @@
             <div class="spinner" id="spinner"></div>
         </div>
 
-        <!-- RECENT ACTIVITY -->
+        <!-- Recent Activity -->
         <div class="card">
             <h2>&#128202; Recent Ingestions</h2>
             <div class="history-list" id="historyList">
-                <p style="text-align:center;color:#999;padding:40px;">
-                    Loading recent activity...
-                </p>
+                <p style="text-align:center;color:#999;padding:40px;">Loading recent activity...</p>
             </div>
         </div>
     </div>
 
-    <!-- LEARNED PATTERNS -->
+    <!-- Patterns -->
     <div class="card" style="margin-bottom:30px;">
         <h2>&#127919; Learned Patterns</h2>
         <div class="patterns-list" id="patternsList">
-            <p style="text-align:center;color:#999;padding:40px;">
-                Loading patterns...
-            </p>
+            <p style="text-align:center;color:#999;padding:40px;">Loading patterns...</p>
         </div>
     </div>
 
-</div><!-- /container -->
+</div>
 
-<!-- Celebration overlay -->
 <div class="overlay"     id="overlay"></div>
 <div class="celebration" id="celebration">
     <div class="icon">&#127881;</div>
@@ -860,26 +732,67 @@
 
 <script>
 // ===========================================================================
-// DOCUMENT TYPE HINTS
+// AUTO-DETECT DOCUMENT TYPE FROM FILENAME
+// Mirrors _detect_document_type() in routes/ingest.py exactly.
+// Added February 27, 2026 (Session 3).
 // ===========================================================================
-var DOC_TYPE_HINTS = {
-    'contract':              'Extracts: client name, total fee, payment milestones, engagement weeks',
-    'implementation_manual': 'Extracts: schedule patterns, shift lengths, start times, appendices',
-    'lessons_learned':       'Extracts: each lesson individually with category, situation, key principle',
-    'scope_of_work':         'Extracts: client, weekly deliverables, total cost, pre-project requirements',
-    'general_word':          'Extracts: headings, dollar amounts, schedule patterns, section structure',
-    'oaf':                   'Extracts: overtime %, headcount, operational metrics (full extractor coming)',
-    'eaf':                   'Extracts: satisfaction scores, response rates (full extractor coming)',
-    'implementation_ppt':    'Extracts: schedule patterns implemented (full extractor coming)',
-    'schedule_pattern':      'Extracts: shift grid data (full extractor coming with Excel sample)',
-    'data_file':             'Extracts: labor/overtime/cost data (full extractor coming with Excel sample)'
+function detectDocumentType(filename) {
+    var name = filename.toLowerCase();
+    var ext  = name.indexOf('.') !== -1 ? name.split('.').pop() : '';
+
+    if (ext === 'pptx' || ext === 'ppt') {
+        if (name.indexOf('oaf') !== -1 || name.indexOf('operations') !== -1) return 'oaf';
+        if (name.indexOf('eaf') !== -1 || name.indexOf('employee') !== -1 || name.indexOf('survey') !== -1) return 'eaf';
+        return 'implementation_ppt';
+    }
+
+    if (ext === 'xlsx' || ext === 'xls') {
+        if (name.indexOf('schedule') !== -1 || name.indexOf('pattern') !== -1) return 'schedule_pattern';
+        return 'data_file';
+    }
+
+    if (ext === 'docx' || ext === 'doc') {
+        if (name.indexOf('lesson') !== -1)                                           return 'lessons_learned';
+        if (name.indexOf('contract') !== -1 || name.indexOf('agreement') !== -1 ||
+            name.indexOf('engagement') !== -1)                                        return 'contract';
+        if (name.indexOf('proposal') !== -1)                                          return 'contract';
+        if (name.indexOf('scope') !== -1)                                             return 'scope_of_work';
+        if (name.indexOf('implementation') !== -1 && name.indexOf('manual') !== -1)   return 'implementation_manual';
+        return 'general_word';
+    }
+
+    if (ext === 'pdf') {
+        if (name.indexOf('lesson') !== -1)                                           return 'lessons_learned';
+        if (name.indexOf('contract') !== -1 || name.indexOf('agreement') !== -1)     return 'contract';
+        return 'generic';
+    }
+
+    return 'generic';
+}
+
+// Human-readable labels for type badges
+var TYPE_LABELS = {
+    'lessons_learned':       'Lessons Learned',
+    'contract':              'Contract',
+    'scope_of_work':         'Scope of Work',
+    'implementation_manual': 'Impl. Manual',
+    'general_word':          'General Word',
+    'oaf':                   'OAF',
+    'eaf':                   'EAF',
+    'implementation_ppt':    'Impl. PPT',
+    'schedule_pattern':      'Schedule Pattern',
+    'data_file':             'Data File',
+    'excel':                 'Excel',
+    'generic':               'Generic'
 };
+
+function typeLabel(t) { return TYPE_LABELS[t] || t; }
 
 // ===========================================================================
 // FILE QUEUE STATE
-// Changed February 27, 2026: was single selectedFile, now fileQueue array.
+// Each entry: { file: File, detectedType: string }
 // ===========================================================================
-var fileQueue = [];   // Array of File objects
+var fileQueue = [];
 
 // ===========================================================================
 // INITIALIZE
@@ -890,37 +803,35 @@ document.addEventListener('DOMContentLoaded', function() {
     loadPatterns();
     setupDragDrop();
     setupFormSubmit();
-    setupDocTypeHint();
+    setupOverrideNote();
 });
 
-// ===========================================================================
-// DOCUMENT TYPE HINT
-// ===========================================================================
-function setupDocTypeHint() {
-    document.getElementById('documentType').addEventListener('change', function() {
-        var hint   = DOC_TYPE_HINTS[this.value] || '';
-        var hintEl = document.getElementById('docTypeHint');
-        hintEl.textContent = hint;
+// Update override note when dropdown changes
+function setupOverrideNote() {
+    var sel  = document.getElementById('documentType');
+    var note = document.getElementById('overrideNote');
+    sel.addEventListener('change', function() {
+        if (this.value) {
+            note.innerHTML = '&#9888;&#65039; Override active: all files will be ingested as <strong>' +
+                typeLabel(this.value) + '</strong>.';
+            note.style.color = '#e67e00';
+        } else {
+            note.innerHTML = '&#128269; Type auto-detected per file. Select above only to override all files.';
+            note.style.color = '#667eea';
+        }
     });
 }
 
 // ===========================================================================
-// DRAG & DROP SETUP
-// Updated February 27, 2026:
-//   - drop handler passes ALL files to addFilesToQueue (was files[0] only)
-//   - fileInput change handler passes ALL files to addFilesToQueue
-//   - zone click listener skips clicks on .queue-remove buttons so that
-//     clicking the remove X doesn't accidentally re-open the file picker
+// DRAG & DROP
 // ===========================================================================
 function setupDragDrop() {
     var uploadZone = document.getElementById('uploadZone');
     var fileInput  = document.getElementById('fileInput');
 
-    // Click anywhere in the zone = open multi-file picker,
-    // EXCEPT when the click target is a remove button.
     uploadZone.addEventListener('click', function(e) {
         if (e.target && e.target.classList.contains('queue-remove')) return;
-        fileInput.value = '';   // reset so same file can be re-selected
+        fileInput.value = '';
         fileInput.click();
     });
 
@@ -941,7 +852,6 @@ function setupDragDrop() {
         }
     });
 
-    // fileInput.change fires whether 1 or many files were selected
     fileInput.addEventListener('change', function(e) {
         if (e.target.files.length > 0) {
             addFilesToQueue(Array.from(e.target.files));
@@ -951,88 +861,60 @@ function setupDragDrop() {
 
 // ===========================================================================
 // FILE QUEUE MANAGEMENT
-// Added February 27, 2026.
 // ===========================================================================
-
-/**
- * Add an array of File objects to fileQueue.
- * Skips files with unsupported extensions and exact duplicates (name+size).
- */
 function addFilesToQueue(files) {
-    var allowed = {
-        'txt':1,'md':1,'pdf':1,'docx':1,'doc':1,
-        'xlsx':1,'xls':1,'csv':1,'json':1,'pptx':1,'ppt':1
-    };
+    var allowed = {'txt':1,'md':1,'pdf':1,'docx':1,'doc':1,'xlsx':1,'xls':1,'csv':1,'json':1,'pptx':1,'ppt':1};
     var skipped = 0;
 
     files.forEach(function(file) {
-        var parts = file.name.split('.');
-        var ext   = parts.length > 1 ? parts[parts.length - 1].toLowerCase() : '';
-        if (!allowed[ext]) {
-            skipped++;
-            return;
-        }
+        var ext = file.name.indexOf('.') !== -1 ? file.name.split('.').pop().toLowerCase() : '';
+        if (!allowed[ext]) { skipped++; return; }
+
         // Deduplicate by name + size
-        var exists = fileQueue.some(function(f) {
-            return f.name === file.name && f.size === file.size;
-        });
+        var exists = fileQueue.some(function(q) { return q.file.name === file.name && q.file.size === file.size; });
         if (!exists) {
-            fileQueue.push(file);
+            fileQueue.push({ file: file, detectedType: detectDocumentType(file.name) });
         }
     });
 
-    if (skipped > 0) {
-        showError(skipped + ' file(s) skipped — unsupported file type.');
-    }
-
+    if (skipped > 0) showError(skipped + ' file(s) skipped — unsupported file type.');
     renderFileQueue();
 }
 
-/**
- * Remove a file from the queue by index.
- * stopPropagation prevents the zone click listener from opening the picker.
- */
 function removeFromQueue(index, event) {
     if (event) event.stopPropagation();
     fileQueue.splice(index, 1);
     renderFileQueue();
 }
 
-/**
- * Re-render the upload zone to show the current file queue.
- * Empty queue → show original drop prompt.
- * Non-empty queue → show scrollable list with individual remove buttons
- *                   and an "Add More Files" button.
- */
 function renderFileQueue() {
-    var icons = {
-        'pptx':'📊','ppt':'📊','xlsx':'📈','xls':'📈',
-        'pdf':'📕','docx':'📝','doc':'📝',
-        'md':'📄','csv':'📊','txt':'📄','json':'📄'
-    };
-    var zone = document.getElementById('uploadZone');
+    var icons = {'pptx':'📊','ppt':'📊','xlsx':'📈','xls':'📈','pdf':'📕','docx':'📝','doc':'📝','md':'📄','csv':'📊','txt':'📄','json':'📄'};
+    var zone  = document.getElementById('uploadZone');
 
     if (fileQueue.length === 0) {
         zone.innerHTML =
             '<div class="upload-icon">&#128196;</div>' +
             '<h3>Drag &amp; Drop Documents</h3>' +
             '<p>Word (.docx), Excel (.xlsx), PowerPoint (.pptx), PDF, Text, Markdown, CSV<br>' +
-            '<em>Multiple files supported &#8212; drop several at once</em></p>' +
+            '<em>Multiple files supported &#8212; type is auto-detected from filename</em></p>' +
             '<button class="btn" type="button">Choose Files</button>';
-
         var sb = document.getElementById('submitBtn');
         if (sb) sb.textContent = '\uD83D\uDE80 Ingest Document';
         return;
     }
 
-    var items = fileQueue.map(function(f, i) {
-        var parts = f.name.split('.');
-        var ext   = parts.length > 1 ? parts[parts.length - 1].toLowerCase() : '';
-        var icon  = icons[ext] || '📄';
-        var kb    = (f.size / 1024).toFixed(1);
+    // Check for manual override
+    var overrideType = document.getElementById('documentType').value;
+
+    var items = fileQueue.map(function(q, i) {
+        var ext      = q.file.name.indexOf('.') !== -1 ? q.file.name.split('.').pop().toLowerCase() : '';
+        var icon     = icons[ext] || '📄';
+        var kb       = (q.file.size / 1024).toFixed(1);
+        var dispType = overrideType || q.detectedType;
         return '<div class="queue-item">' +
             '<span class="queue-icon">' + icon + '</span>' +
-            '<span class="queue-name" title="' + escapeHtml(f.name) + '">' + escapeHtml(f.name) + '</span>' +
+            '<span class="queue-name" title="' + escapeHtml(q.file.name) + '">' + escapeHtml(q.file.name) + '</span>' +
+            '<span class="queue-type-badge">' + escapeHtml(typeLabel(dispType)) + '</span>' +
             '<span class="queue-size">' + kb + ' KB</span>' +
             '<button class="queue-remove" type="button" onclick="removeFromQueue(' + i + ', event)">\u2715</button>' +
             '</div>';
@@ -1044,7 +926,6 @@ function renderFileQueue() {
         '<div class="queue-list">' + items + '</div>' +
         '<button class="btn btn-sm" type="button" style="margin-top:8px;">\u2795 Add More Files</button>';
 
-    // Update submit button label
     var submitBtn = document.getElementById('submitBtn');
     if (submitBtn) {
         submitBtn.textContent = fileQueue.length === 1
@@ -1053,29 +934,26 @@ function renderFileQueue() {
     }
 }
 
+// Re-render queue when override changes so badges update immediately
+document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('documentType').addEventListener('change', function() {
+        if (fileQueue.length > 0) renderFileQueue();
+    });
+});
+
 // ===========================================================================
 // FORM SUBMISSION
 // ===========================================================================
 function setupFormSubmit() {
     document.getElementById('uploadForm').addEventListener('submit', async function(e) {
         e.preventDefault();
-        if (fileQueue.length === 0) {
-            showError('Please select at least one file first');
-            return;
-        }
-        var documentType = document.getElementById('documentType').value;
-        if (!documentType) {
-            showError('Please select a document type');
-            return;
-        }
+        if (fileQueue.length === 0) { showError('Please select at least one file first'); return; }
         await uploadDocuments();
     });
 }
 
 // ===========================================================================
 // UPLOAD ORCHESTRATION
-// Routes to single-file (/api/ingest/document) or batch (/api/ingest/batch)
-// based on queue size.
 // ===========================================================================
 async function uploadDocuments() {
     document.getElementById('spinner').style.display        = 'block';
@@ -1087,9 +965,7 @@ async function uploadDocuments() {
     var progress = 0;
     var progressInterval = setInterval(function() {
         progress += 5;
-        if (progress <= 90) {
-            document.getElementById('progressBar').style.width = progress + '%';
-        }
+        if (progress <= 90) document.getElementById('progressBar').style.width = progress + '%';
     }, 100);
 
     try {
@@ -1125,11 +1001,14 @@ async function uploadDocuments() {
     }
 }
 
-/** POST single file to /api/ingest/document */
-async function uploadSingle(file) {
+// Single file: use detected type unless manual override is set
+async function uploadSingle(queueEntry) {
+    var overrideType = document.getElementById('documentType').value;
+    var docType      = overrideType || queueEntry.detectedType;
+
     var formData = new FormData();
-    formData.append('file',          file);
-    formData.append('document_type', document.getElementById('documentType').value);
+    formData.append('file',          queueEntry.file);
+    formData.append('document_type', docType);
     formData.append('client',        document.getElementById('clientName').value);
     formData.append('industry',      document.getElementById('industry').value);
 
@@ -1137,15 +1016,21 @@ async function uploadSingle(file) {
     return await response.json();
 }
 
-/** POST all queued files to /api/ingest/batch */
+// Batch: send per-file detected types as JSON array
 async function uploadBatch() {
-    var formData = new FormData();
-    fileQueue.forEach(function(f) {
-        formData.append('files', f);
+    var overrideType = document.getElementById('documentType').value;
+
+    // Build per-file type array: override wins, else auto-detected
+    var perFileTypes = fileQueue.map(function(q) {
+        return overrideType || q.detectedType;
     });
-    formData.append('document_type', document.getElementById('documentType').value);
-    formData.append('client',        document.getElementById('clientName').value);
-    formData.append('industry',      document.getElementById('industry').value);
+
+    var formData = new FormData();
+    fileQueue.forEach(function(q) { formData.append('files', q.file); });
+    formData.append('document_types', JSON.stringify(perFileTypes));
+    formData.append('document_type',  overrideType);   // global fallback
+    formData.append('client',         document.getElementById('clientName').value);
+    formData.append('industry',       document.getElementById('industry').value);
 
     var response = await fetch('/api/ingest/batch', { method: 'POST', body: formData });
     return await response.json();
@@ -1160,9 +1045,7 @@ function handleSingleResult(data) {
         showHighlights(data.highlights || []);
         showCelebration(data);
         resetForm();
-        loadStats();
-        loadHistory();
-        loadPatterns();
+        loadStats(); loadHistory(); loadPatterns();
     } else {
         showError(data.error || 'Upload failed');
     }
@@ -1182,49 +1065,40 @@ function handleBatchResult(data) {
     showBatchResults(data.results || []);
     showCelebrationBatch(data);
     resetForm();
-    loadStats();
-    loadHistory();
-    loadPatterns();
+    loadStats(); loadHistory(); loadPatterns();
 }
 
 // ===========================================================================
-// HIGHLIGHTS PANEL (single file)
+// HIGHLIGHTS (single file)
 // ===========================================================================
 function showHighlights(highlights) {
     var panel = document.getElementById('highlightsPanel');
     var list  = document.getElementById('highlightsList');
-    if (!highlights || highlights.length === 0) {
-        panel.style.display = 'none';
-        return;
-    }
-    list.innerHTML = highlights.map(function(h) {
-        return '<li>' + escapeHtml(h) + '</li>';
-    }).join('');
+    if (!highlights || highlights.length === 0) { panel.style.display = 'none'; return; }
+    list.innerHTML = highlights.map(function(h) { return '<li>' + escapeHtml(h) + '</li>'; }).join('');
     panel.style.display = 'block';
 }
 
 // ===========================================================================
-// BATCH RESULTS TABLE
+// BATCH RESULTS TABLE — now includes Detected Type column
 // ===========================================================================
 function showBatchResults(results) {
     var panel = document.getElementById('batchResults');
     var tbody = document.getElementById('batchResultsBody');
-
-    if (!results || results.length === 0) {
-        panel.style.display = 'none';
-        return;
-    }
+    if (!results || results.length === 0) { panel.style.display = 'none'; return; }
 
     tbody.innerHTML = results.map(function(r) {
         var rowClass = r.success ? 'row-success' : 'row-error';
-        var status = r.success
+        var status   = r.success
             ? '<span class="badge-ok">\u2713 OK</span>'
             : '<span class="badge-fail">\u2717 ' + escapeHtml(r.error || 'failed') + '</span>';
-        var patterns = r.success ? (r.patterns_extracted || 0) : '&mdash;';
-        var insights = r.success ? (r.insights_extracted || 0) : '&mdash;';
+        var patterns = r.success ? (r.patterns_extracted  || 0) : '&mdash;';
+        var insights = r.success ? (r.insights_extracted  || 0) : '&mdash;';
+        var dtype    = r.detected_type || '';
         return '<tr class="' + rowClass + '">' +
             '<td>' + escapeHtml(r.filename || '') + '</td>' +
-            '<td>' + status + '</td>' +
+            '<td><span class="type-label">' + escapeHtml(typeLabel(dtype)) + '</span></td>' +
+            '<td>' + status   + '</td>' +
             '<td>' + patterns + '</td>' +
             '<td>' + insights + '</td>' +
             '</tr>';
@@ -1234,7 +1108,7 @@ function showBatchResults(results) {
 }
 
 // ===========================================================================
-// CELEBRATION POPUPS
+// CELEBRATION
 // ===========================================================================
 function showCelebration(data) {
     document.getElementById('celebrationTitle').textContent = 'Knowledge Extracted!';
@@ -1256,8 +1130,7 @@ function showCelebration(data) {
 
 function showCelebrationBatch(data) {
     if (!data.success_count || data.success_count === 0) return;
-    document.getElementById('celebrationTitle').textContent =
-        data.success_count + ' Files Ingested!';
+    document.getElementById('celebrationTitle').textContent = data.success_count + ' Files Ingested!';
     document.getElementById('celebrationMessage').innerHTML =
         '\uD83D\uDCC1 ' + data.success_count + ' of ' + data.total_files + ' files succeeded &nbsp; ' +
         '\uD83D\uDCCA ' + (data.total_patterns_extracted || 0) + ' patterns extracted &nbsp; ' +
@@ -1281,12 +1154,15 @@ function _showCelebrationPopup() {
 function resetForm() {
     fileQueue = [];
     document.getElementById('uploadForm').reset();
-    document.getElementById('docTypeHint').textContent = '';
+    // Reset override note
+    document.getElementById('overrideNote').innerHTML =
+        '&#128269; Type auto-detected per file. Select above only to override all files.';
+    document.getElementById('overrideNote').style.color = '#667eea';
     document.getElementById('uploadZone').innerHTML =
         '<div class="upload-icon">&#128196;</div>' +
         '<h3>Drag &amp; Drop Documents</h3>' +
         '<p>Word (.docx), Excel (.xlsx), PowerPoint (.pptx), PDF, Text, Markdown, CSV<br>' +
-        '<em>Multiple files supported &#8212; drop several at once</em></p>' +
+        '<em>Multiple files supported &#8212; type is auto-detected from filename</em></p>' +
         '<button class="btn" type="button">Choose Files</button>';
     var sb = document.getElementById('submitBtn');
     if (sb) sb.textContent = '\uD83D\uDE80 Ingest Document';
@@ -1306,14 +1182,10 @@ async function loadStats() {
             document.getElementById('totalPatterns').textContent  = stats.total_patterns;
             document.getElementById('implDocs').textContent       = byType.implementation_manual || 0;
             document.getElementById('lessonDocs').textContent     = byType.lessons_learned || 0;
-            document.getElementById('contractDocs').textContent   =
-                (byType.contract || 0) + (byType.proposal || 0);
-            document.getElementById('assessmentDocs').textContent =
-                (byType.oaf || 0) + (byType.eaf || 0);
+            document.getElementById('contractDocs').textContent   = (byType.contract || 0) + (byType.proposal || 0);
+            document.getElementById('assessmentDocs').textContent = (byType.oaf || 0) + (byType.eaf || 0);
         }
-    } catch (error) {
-        console.error('Failed to load stats:', error);
-    }
+    } catch (e) { console.error('Failed to load stats:', e); }
 }
 
 async function loadHistory() {
@@ -1321,26 +1193,22 @@ async function loadHistory() {
         var response = await fetch('/api/ingest/history?limit=10');
         var data = await response.json();
         if (data.success) {
-            var historyList = document.getElementById('historyList');
+            var el = document.getElementById('historyList');
             if (data.history.length === 0) {
-                historyList.innerHTML =
-                    '<p style="text-align:center;color:#999;padding:40px;">No documents ingested yet</p>';
+                el.innerHTML = '<p style="text-align:center;color:#999;padding:40px;">No documents ingested yet</p>';
                 return;
             }
-            historyList.innerHTML = data.history.map(function(item) {
+            el.innerHTML = data.history.map(function(item) {
                 return '<div class="history-item">' +
                     '<div class="title">' + escapeHtml(item.document_name) + '</div>' +
-                    '<div class="meta">' + escapeHtml(item.document_type) + ' &bull; ' +
-                    new Date(item.ingested_at).toLocaleString() + '</div>' +
+                    '<div class="meta">' + escapeHtml(item.document_type) + ' &bull; ' + new Date(item.ingested_at).toLocaleString() + '</div>' +
                     '<div class="stats">' +
                     '<span class="stat-badge">\uD83D\uDCCA ' + item.patterns_extracted + ' patterns</span>' +
                     '<span class="stat-badge">\uD83D\uDCA1 ' + item.insights_extracted + ' insights</span>' +
                     '</div></div>';
             }).join('');
         }
-    } catch (error) {
-        console.error('Failed to load history:', error);
-    }
+    } catch (e) { console.error('Failed to load history:', e); }
 }
 
 async function loadPatterns() {
@@ -1348,30 +1216,26 @@ async function loadPatterns() {
         var response = await fetch('/api/ingest/patterns?limit=30');
         var data = await response.json();
         if (data.success) {
-            var patternsList = document.getElementById('patternsList');
+            var el = document.getElementById('patternsList');
             if (data.patterns.length === 0) {
-                patternsList.innerHTML =
-                    '<p style="text-align:center;color:#999;padding:40px;">No patterns learned yet</p>';
+                el.innerHTML = '<p style="text-align:center;color:#999;padding:40px;">No patterns learned yet</p>';
                 return;
             }
-            patternsList.innerHTML = data.patterns.map(function(pattern) {
-                var pct = (pattern.confidence * 100).toFixed(1);
-                var docs = pattern.supporting_documents;
+            el.innerHTML = data.patterns.map(function(p) {
+                var pct = (p.confidence * 100).toFixed(1);
                 return '<div class="pattern-item">' +
                     '<div class="pattern-header">' +
-                    '<span class="pattern-name">' + escapeHtml(pattern.pattern_name || '') + '</span>' +
-                    '<span class="pattern-type">' + escapeHtml(pattern.pattern_type || '') + '</span>' +
+                    '<span class="pattern-name">' + escapeHtml(p.pattern_name || '') + '</span>' +
+                    '<span class="pattern-type">' + escapeHtml(p.pattern_type  || '') + '</span>' +
                     '</div>' +
                     '<div class="confidence-bar"><div class="confidence-fill" style="width:' + pct + '%"></div></div>' +
                     '<div class="pattern-meta">' +
                     '<span>\uD83D\uDCAA ' + pct + '% confidence</span>' +
-                    '<span>\uD83D\uDCDA ' + docs + ' doc' + (docs !== 1 ? 's' : '') + '</span>' +
+                    '<span>\uD83D\uDCDA ' + p.supporting_documents + ' doc' + (p.supporting_documents !== 1 ? 's' : '') + '</span>' +
                     '</div></div>';
             }).join('');
         }
-    } catch (error) {
-        console.error('Failed to load patterns:', error);
-    }
+    } catch (e) { console.error('Failed to load patterns:', e); }
 }
 
 // ===========================================================================
@@ -1381,30 +1245,15 @@ function downloadKnowledge(btn) {
     btn.disabled = true;
     btn.innerHTML = 'Preparing download...';
     window.location.href = '/api/ingest/export';
-    setTimeout(function() {
-        btn.disabled = false;
-        btn.innerHTML = '&#128229; Download Knowledge';
-    }, 3000);
+    setTimeout(function() { btn.disabled = false; btn.innerHTML = '&#128229; Download Knowledge'; }, 3000);
 }
 
 async function clearKnowledgeBase(btn) {
-    var first = confirm(
-        '\u26A0\uFE0F Clear Knowledge Base?\n\n' +
-        'This will permanently delete ALL ingested documents, patterns, and history.\n\n' +
-        'You will need to re-upload your documents.\n\nClick OK to continue.'
-    );
-    if (!first) return;
-
-    var second = confirm(
-        '\uD83D\uDED1 FINAL CONFIRMATION\n\n' +
-        'Are you absolutely sure?\n\n' +
-        'All knowledge extracts and learned patterns will be deleted.\n\n' +
-        'Click OK to permanently clear the knowledge base.'
-    );
-    if (!second) return;
+    if (!confirm('⚠️ Clear Knowledge Base?\n\nThis will permanently delete ALL ingested documents, patterns, and history.\n\nClick OK to continue.')) return;
+    if (!confirm('🛑 FINAL CONFIRMATION\n\nAre you absolutely sure?\n\nAll knowledge extracts and learned patterns will be deleted.\n\nClick OK to permanently clear.')) return;
 
     btn.disabled = true;
-    btn.innerHTML = '\u23F3 Clearing...';
+    btn.innerHTML = '⏳ Clearing...';
 
     try {
         var response = await fetch('/api/ingest/clear', {
@@ -1415,21 +1264,16 @@ async function clearKnowledgeBase(btn) {
         var data = await response.json();
 
         if (data.success) {
-            var deleted = data.deleted || {};
-            alert(
-                '\u2705 Knowledge base cleared!\n\n' +
-                'Documents deleted: '  + (deleted.knowledge_extracts || 0) + '\n' +
-                'Patterns deleted: '   + (deleted.learned_patterns   || 0) + '\n' +
-                'History deleted: '    + (deleted.ingestion_log      || 0) + '\n\n' +
-                'You can now re-upload your documents.'
-            );
-            loadStats();
-            loadHistory();
+            var d = data.deleted || {};
+            alert('✅ Knowledge base cleared!\n\nDocuments: ' + (d.knowledge_extracts || 0) +
+                  '\nPatterns: ' + (d.learned_patterns || 0) +
+                  '\nHistory: '  + (d.ingestion_log    || 0));
+            loadStats(); loadHistory();
         } else {
-            alert('\u274C Clear failed: ' + (data.error || 'Unknown error'));
+            alert('❌ Clear failed: ' + (data.error || 'Unknown error'));
         }
     } catch (err) {
-        alert('\u274C Request failed: ' + err.message);
+        alert('❌ Request failed: ' + err.message);
     } finally {
         btn.disabled = false;
         btn.innerHTML = '&#128465;&#65039; Clear Knowledge Base';
@@ -1455,11 +1299,7 @@ function showError(message) {
 
 function escapeHtml(str) {
     if (!str) return '';
-    return String(str)
-        .replace(/&/g,  '&amp;')
-        .replace(/</g,  '&lt;')
-        .replace(/>/g,  '&gt;')
-        .replace(/"/g,  '&quot;');
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 </script>
 </body>
