@@ -28,7 +28,7 @@ CHANGELOG:
     ROOT CAUSE: Pillar 1 docx starts with a bold line '1/26/2026, Claude (Sonnet 4.5)
     2/2/2026' which was not caught by METADATA_RE. It became the doc_title and the
     first section heading, causing all content to fall under a garbage heading.
-    FIX: Expanded METADATA_RE to filter date-like patterns (\d{1,2}/\d{1,2}/\d{4}),
+    FIX: Expanded METADATA_RE to filter date-like patterns (d{1,2}/d{1,2}/d{4}),
     'Claude (', and 'Sonnet' at the start of a line.
 
   BUG 4 — GENERAL WORD: First heading paragraph lost after doc_title capture
@@ -1331,7 +1331,7 @@ class DocumentIngestor:
         BUG 3: Pillar 1 heading captured as datestamp metadata line.
           ROOT CAUSE: METADATA_RE didn't filter date-like lines (e.g. '1/26/2026,
           Claude (Sonnet 4.5) 2/2/2026') that appeared as the first bold paragraph.
-          FIX: Expanded METADATA_RE to match \d{1,2}/\d{1,2}/\d{4}, 'Claude (' and
+          FIX: Expanded METADATA_RE to match d{1,2}/d{1,2}/d{4}, 'Claude (' and
           'Sonnet' at the start of a line.
 
         BUG 4: First heading paragraph lost after doc_title capture.
@@ -1420,20 +1420,32 @@ class DocumentIngestor:
                         'bold_insights': [],
                         'quotes': []
                     }
-                elif bold and not is_heading and len(text) < 100:
+                # FIX BUG 6 (February 27, 2026 Session 3):
+                # SHORT bold paragraphs (≤ 80 chars) ALWAYS start a new section.
+                # BEFORE: when current_section was already set, short bold lines went
+                # into bold_insights instead of starting a new section. This caused
+                # docs with no Heading styles (like Pillar_2) to extract only 1 section
+                # ('Introduction') because all bold section titles became bold_insights
+                # of that first section.
+                # FIX: bold ≤ 80 chars → new section, always.
+                #      bold > 80 chars → key principle kept in current section.
+                # The 80-char threshold cleanly separates section titles (≤52 chars in
+                # Pillar 2) from key-principle sentences (≥148 chars in Pillar 2).
+                elif bold and not is_heading and len(text) <= 80:
+                    # Always start a new section for short bold lines
+                    current_section = {
+                        'heading': text, 'body': [], 'bold_insights': [], 'quotes': []
+                    }
+                    sections.append(current_section)
+                elif bold and not is_heading and len(text) > 80:
+                    # Long bold lines = key principle within current section
                     if current_section is None:
-                        if not doc_title:
-                            doc_title = text
-                        else:
-                            current_section = {
-                                'heading': text, 'body': [], 'bold_insights': [], 'quotes': []
-                            }
-                            sections.append(current_section)
-                    else:
-                        if len(text) < 60:
-                            current_section['bold_insights'].append(f'[Subheading] {text}')
-                        else:
-                            current_section['bold_insights'].append(text[:300])
+                        current_section = {
+                            'heading': 'Introduction',
+                            'body': [], 'bold_insights': [], 'quotes': []
+                        }
+                        sections.append(current_section)
+                    current_section['bold_insights'].append(text[:300])
                 else:
                     if current_section is None:
                         intro_section = {
