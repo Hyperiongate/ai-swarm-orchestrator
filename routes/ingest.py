@@ -1,20 +1,26 @@
 """
 KNOWLEDGE INGESTION ROUTES
 Created: February 2, 2026
-Last Updated: February 27, 2026 - FIXED 'engagement' triggering contract mis-classification
+Last Updated: February 27, 2026 - ADDED lessons_learned_md detection for .md files
 
 CHANGELOG:
 
-- February 27, 2026 (Session 3): FIXED auto-detect and per-file document types
+- February 27, 2026 (Session 3 - Part 2): ADDED lessons_learned_md document type
+  * .md files with 'lesson' in filename now detect as 'lessons_learned_md' instead
+    of 'generic'. Jim dictates lessons learned to Claude Sonnet which produces rich
+    structured Markdown (## category headings, ### Lesson #N, **Field:** labels).
+    The generic extractor captured only 1 pattern from 18,000 words of knowledge.
+    'lessons_learned_md' routes to a dedicated full Markdown extractor in the engine
+    that captures all 19 lessons with: situation, key_principle, why_matters,
+    hard_truth, watch_out_for, do/don't lists, bullets, numbered items, bold_fields
+    dict, and full_text for AI retrieval.
+  * ingest_document_content() aliases 'lessons_learned_md' → engine sees
+    'lessons_learned_md' (engine has its own dispatcher for this type).
+  * detectDocumentType() in knowledge_management.html updated to mirror this logic.
+
+- February 27, 2026 (Session 3 - Part 1): FIXED 'engagement' triggering contract mis-classification
   * BUG FIX: Removed 'engagement' from contract detection keywords.
-    'Pillar_7_Employee_Engagement_DRAFT.docx' was being ingested as a contract,
-    extracting only 1 pattern (an interest rate clause) instead of the full
-    consulting content. Contract now requires 'contract' OR 'agreement' explicitly
-    in the filename. Fix applied in both _detect_document_type() and mirrored
-    in knowledge_management.html JS detectDocumentType().
   * ADDED per-file document_types support in /api/ingest/batch.
-    Batch endpoint now accepts 'document_types' JSON array (one per file).
-    Each file's type: per-file type → global fallback → auto-detect from filename.
   * ADDED _detect_document_type() helper used by both single and batch endpoints.
   * Single-file /api/ingest/document also auto-detects when no type provided.
 
@@ -124,6 +130,17 @@ def _detect_document_type(filename):
         if 'implementation' in name and 'manual' in name:
             return 'implementation_manual'
         return 'general_word'
+
+    # FIX February 27, 2026 (Session 3 - Part 2):
+    # .md files with 'lesson' in the name → lessons_learned_md.
+    # Jim dictates lessons learned to Claude Sonnet which produces rich structured
+    # Markdown with ## category headings, ### Lesson #N headings, and **Field:**
+    # bold labels. This is a distinct, knowledge-rich format requiring a dedicated
+    # Markdown extractor. 'generic' classification lost all lesson structure.
+    if ext == 'md':
+        if 'lesson' in name:
+            return 'lessons_learned_md'
+        return 'generic'
 
     if ext == 'pdf':
         if 'lesson' in name:
@@ -452,10 +469,12 @@ def ingest_document_content(ingestor, content, document_type, metadata, file_byt
     """
     Helper: pass content and metadata to the ingestion engine.
     'proposal' aliased to 'contract' (same extractor).
+    'lessons_learned_md' passed through as-is — engine has dedicated Markdown extractor.
     """
     try:
         if document_type == 'proposal':
             document_type = 'contract'
+        # lessons_learned_md is handled natively by the engine dispatcher
         kwargs = {
             'content': content,
             'document_type': document_type,
