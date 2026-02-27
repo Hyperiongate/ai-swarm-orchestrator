@@ -753,8 +753,10 @@ function detectDocumentType(filename) {
 
     if (ext === 'docx' || ext === 'doc') {
         if (name.indexOf('lesson') !== -1)                                           return 'lessons_learned';
-        if (name.indexOf('contract') !== -1 || name.indexOf('agreement') !== -1 ||
-            name.indexOf('engagement') !== -1)                                        return 'contract';
+        // NOTE: 'engagement' alone does NOT indicate a contract.
+        // Pillar_7_Employee_Engagement is a consulting guide, not a legal document.
+        // Require 'contract' or 'agreement' explicitly in the filename.
+        if (name.indexOf('contract') !== -1 || name.indexOf('agreement') !== -1)     return 'contract';
         if (name.indexOf('proposal') !== -1)                                          return 'contract';
         if (name.indexOf('scope') !== -1)                                             return 'scope_of_work';
         if (name.indexOf('implementation') !== -1 && name.indexOf('manual') !== -1)   return 'implementation_manual';
