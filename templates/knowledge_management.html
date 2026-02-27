@@ -7,6 +7,18 @@
     <!--
         Last Updated: February 27, 2026
 
+        CHANGES - February 27, 2026 (Session 4):
+          * FIXED header nav buttons overlapping page title.
+            PROBLEM: .header-nav used position:absolute which floated the
+            buttons on top of the h1/p text at narrower widths.
+            SOLUTION: Removed position:absolute, top, right from .header-nav.
+            Header now uses flexbox column layout: title block centered on top,
+            nav buttons centered below it. Clean at all widths.
+          * ADDED Restore Knowledge button to header nav.
+            Opens a hidden file input, accepts .json export files only,
+            POSTs to /api/admin/restore-knowledge as multipart/form-data.
+            Shows progress feedback and result alert on completion.
+
         CHANGES - February 27, 2026 (Session 3):
           * REMOVED mandatory Document Type selection.
             PROBLEM: Users were required to pick one document type for all queued
@@ -55,11 +67,15 @@
 
         .container { max-width: 1400px; margin: 0 auto; }
 
+        /* ===================================================================
+           HEADER — fixed Feb 27 Session 4
+           Title block is centered. Nav sits below it, also centered.
+           No more position:absolute overlapping the h1.
+           =================================================================== */
         .header {
             text-align: center;
             color: white;
             margin-bottom: 40px;
-            position: relative;
         }
 
         .header h1 {
@@ -69,13 +85,18 @@
             text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
         }
 
-        .header p { font-size: 1.1em; opacity: 0.9; }
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+            margin-bottom: 20px;
+        }
 
         .header-nav {
-            position: absolute;
-            top: 0; right: 0;
             display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
             gap: 10px;
+            margin-top: 10px;
         }
 
         .nav-btn {
@@ -215,7 +236,6 @@
             white-space: nowrap;
         }
 
-        /* Auto-detected type badge shown in queue */
         .queue-type-badge {
             background: #e8ebff;
             color: #667eea;
@@ -282,7 +302,6 @@
 
         .form-group .hint { font-size: 0.82em; color: #888; margin-top: 5px; font-style: italic; }
 
-        /* Override note shown under document type dropdown */
         .override-note {
             font-size: 0.82em;
             color: #667eea;
@@ -323,6 +342,7 @@
 
         .alert-success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
         .alert-error   { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .alert-info    { background: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
 
         /* Highlights panel */
         .highlights-panel {
@@ -394,7 +414,6 @@
         .badge-ok   { color: #155724; font-weight: 700; }
         .badge-fail { color: #721c24; font-weight: 700; }
 
-        /* Type label in batch results */
         .type-label {
             background: #e8ebff;
             color: #667eea;
@@ -518,7 +537,6 @@
             .stats-grid { grid-template-columns: 1fr; }
             .header h1  { font-size: 1.8em; }
             .card       { padding: 20px; }
-            .header-nav { position: static; justify-content: center; margin-top: 20px; }
         }
     </style>
 </head>
@@ -526,18 +544,26 @@
 <div class="container">
 
     <div class="header">
+        <h1>&#129504; Knowledge Management</h1>
+        <p>Shoulders of Giants - Cumulative Learning System</p>
         <div class="header-nav">
             <a href="/" class="nav-btn">&#8592; Back to Main</a>
             <button class="nav-btn" id="downloadBtn" onclick="downloadKnowledge(this)">
                 &#128229; Download Knowledge
             </button>
+            <button class="nav-btn" id="restoreBtn" onclick="triggerRestoreFilePicker()"
+                    style="background:rgba(40,167,69,0.85);border-color:rgba(40,167,69,0.6);">
+                &#128260; Restore Knowledge
+            </button>
             <button class="nav-btn" id="clearBtn" onclick="clearKnowledgeBase(this)"
-                    style="background:#dc3545;color:#fff;border:none;cursor:pointer;">
+                    style="background:#dc3545;border-color:#c82333;">
                 &#128465;&#65039; Clear Knowledge Base
             </button>
         </div>
-        <h1>&#129504; Knowledge Management</h1>
-        <p>Shoulders of Giants - Cumulative Learning System</p>
+        <!-- Hidden file input for restore — accepts .json only -->
+        <input type="file" id="restoreFileInput" style="display:none;" accept=".json">
+        <!-- Restore status alert shown in header area -->
+        <div id="restoreAlert" style="display:none;margin-top:15px;padding:12px 20px;border-radius:8px;font-size:0.9em;font-weight:600;max-width:700px;margin-left:auto;margin-right:auto;"></div>
     </div>
 
     <!-- Stats -->
@@ -590,7 +616,6 @@
                    <em>Multiple files supported &#8212; type is auto-detected from filename</em></p>
                 <button class="btn" type="button">Choose Files</button>
             </div>
-            <!-- fileInput outside uploadZone to prevent nested-click issues -->
             <input type="file" id="fileInput" class="file-input" multiple
                    accept=".txt,.md,.pdf,.docx,.doc,.xlsx,.xls,.csv,.json,.pptx,.ppt">
 
@@ -623,11 +648,6 @@
 
             <form id="uploadForm" style="margin-top:25px;">
 
-                <!--
-                    Document Type is now OPTIONAL and acts as a manual override.
-                    If left blank, each file's type is auto-detected from its filename.
-                    If set, it overrides all files in the batch.
-                -->
                 <div class="form-group">
                     <label for="documentType">Document Type Override (optional)</label>
                     <select id="documentType">
@@ -733,8 +753,6 @@
 <script>
 // ===========================================================================
 // AUTO-DETECT DOCUMENT TYPE FROM FILENAME
-// Mirrors _detect_document_type() in routes/ingest.py exactly.
-// Added February 27, 2026 (Session 3).
 // ===========================================================================
 function detectDocumentType(filename) {
     var name = filename.toLowerCase();
@@ -753,9 +771,6 @@ function detectDocumentType(filename) {
 
     if (ext === 'docx' || ext === 'doc') {
         if (name.indexOf('lesson') !== -1)                                           return 'lessons_learned';
-        // NOTE: 'engagement' alone does NOT indicate a contract.
-        // Pillar_7_Employee_Engagement is a consulting guide, not a legal document.
-        // Require 'contract' or 'agreement' explicitly in the filename.
         if (name.indexOf('contract') !== -1 || name.indexOf('agreement') !== -1)     return 'contract';
         if (name.indexOf('proposal') !== -1)                                          return 'contract';
         if (name.indexOf('scope') !== -1)                                             return 'scope_of_work';
@@ -763,12 +778,6 @@ function detectDocumentType(filename) {
         return 'general_word';
     }
 
-    // FIX February 27, 2026 (Session 3 - Part 2):
-    // .md files with 'lesson' in the name → lessons_learned_md.
-    // Jim dictates lessons learned to Claude Sonnet after each engagement.
-    // Sonnet produces rich structured Markdown (## categories, ### Lesson #N,
-    // **Field:** labels) that requires a dedicated Markdown extractor.
-    // 'generic' was losing 18,000+ words of consulting knowledge.
     if (ext === 'md') {
         if (name.indexOf('lesson') !== -1) return 'lessons_learned_md';
         return 'generic';
@@ -783,7 +792,6 @@ function detectDocumentType(filename) {
     return 'generic';
 }
 
-// Human-readable labels for type badges
 var TYPE_LABELS = {
     'lessons_learned':       'Lessons Learned',
     'lessons_learned_md':    'Lessons MD',
@@ -804,7 +812,6 @@ function typeLabel(t) { return TYPE_LABELS[t] || t; }
 
 // ===========================================================================
 // FILE QUEUE STATE
-// Each entry: { file: File, detectedType: string }
 // ===========================================================================
 var fileQueue = [];
 
@@ -818,9 +825,9 @@ document.addEventListener('DOMContentLoaded', function() {
     setupDragDrop();
     setupFormSubmit();
     setupOverrideNote();
+    setupRestoreFilePicker();
 });
 
-// Update override note when dropdown changes
 function setupOverrideNote() {
     var sel  = document.getElementById('documentType');
     var note = document.getElementById('overrideNote');
@@ -834,6 +841,96 @@ function setupOverrideNote() {
             note.style.color = '#667eea';
         }
     });
+}
+
+// ===========================================================================
+// RESTORE KNOWLEDGE — Added February 27, 2026 (Session 4)
+// Opens file picker for .json export, POSTs to /api/admin/restore-knowledge
+// ===========================================================================
+function setupRestoreFilePicker() {
+    var input = document.getElementById('restoreFileInput');
+    input.addEventListener('change', function(e) {
+        if (e.target.files.length > 0) {
+            restoreFromFile(e.target.files[0]);
+        }
+    });
+}
+
+function triggerRestoreFilePicker() {
+    var input = document.getElementById('restoreFileInput');
+    input.value = '';   // allow re-picking same file
+    input.click();
+}
+
+async function restoreFromFile(file) {
+    if (!file.name.endsWith('.json')) {
+        showRestoreAlert('error', '&#10060; File must be a .json knowledge export. Got: ' + file.name);
+        return;
+    }
+
+    var btn = document.getElementById('restoreBtn');
+    btn.disabled = true;
+    btn.innerHTML = '&#9203; Restoring...';
+    showRestoreAlert('info', '&#9203; Restoring knowledge from ' + escapeHtml(file.name) + '...');
+
+    try {
+        var formData = new FormData();
+        formData.append('export_file', file);
+
+        var response = await fetch('/api/admin/restore-knowledge', {
+            method: 'POST',
+            body: formData
+        });
+
+        var data = await response.json();
+
+        if (data.success) {
+            var r = data.restored || {};
+            var s = data.skipped_already_existed || {};
+            var f = data.final_database_counts || {};
+            showRestoreAlert('success',
+                '&#10004; Restore complete! &nbsp;' +
+                r.extracts + ' documents restored, ' + (s.extracts || 0) + ' already existed. &nbsp;' +
+                r.patterns + ' patterns restored. &nbsp;' +
+                'Knowledge base now has <strong>' + f.knowledge_extracts + ' documents</strong> and ' +
+                '<strong>' + f.learned_patterns + ' patterns</strong>.'
+            );
+            // Refresh stats and history to reflect restored data
+            loadStats();
+            loadHistory();
+            loadPatterns();
+        } else {
+            showRestoreAlert('error',
+                '&#10060; Restore failed: ' + escapeHtml(data.error || 'Unknown error')
+            );
+        }
+
+    } catch (err) {
+        showRestoreAlert('error', '&#10060; Request failed: ' + escapeHtml(err.message));
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '&#128260; Restore Knowledge';
+    }
+}
+
+function showRestoreAlert(type, html) {
+    var el = document.getElementById('restoreAlert');
+    var colors = {
+        'success': { bg: '#d4edda', color: '#155724', border: '#c3e6cb' },
+        'error':   { bg: '#f8d7da', color: '#721c24', border: '#f5c6cb' },
+        'info':    { bg: '#d1ecf1', color: '#0c5460', border: '#bee5eb' }
+    };
+    var c = colors[type] || colors['info'];
+    el.style.background   = c.bg;
+    el.style.color        = c.color;
+    el.style.border       = '1px solid ' + c.border;
+    el.innerHTML          = html;
+    el.style.display      = 'block';
+
+    // Auto-hide success after 10 seconds; keep errors visible
+    if (type === 'success') {
+        setTimeout(function() { el.style.display = 'none'; }, 10000);
+    }
 }
 
 // ===========================================================================
@@ -884,7 +981,6 @@ function addFilesToQueue(files) {
         var ext = file.name.indexOf('.') !== -1 ? file.name.split('.').pop().toLowerCase() : '';
         if (!allowed[ext]) { skipped++; return; }
 
-        // Deduplicate by name + size
         var exists = fileQueue.some(function(q) { return q.file.name === file.name && q.file.size === file.size; });
         if (!exists) {
             fileQueue.push({ file: file, detectedType: detectDocumentType(file.name) });
@@ -917,7 +1013,6 @@ function renderFileQueue() {
         return;
     }
 
-    // Check for manual override
     var overrideType = document.getElementById('documentType').value;
 
     var items = fileQueue.map(function(q, i) {
@@ -948,7 +1043,6 @@ function renderFileQueue() {
     }
 }
 
-// Re-render queue when override changes so badges update immediately
 document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('documentType').addEventListener('change', function() {
         if (fileQueue.length > 0) renderFileQueue();
@@ -1015,7 +1109,6 @@ async function uploadDocuments() {
     }
 }
 
-// Single file: use detected type unless manual override is set
 async function uploadSingle(queueEntry) {
     var overrideType = document.getElementById('documentType').value;
     var docType      = overrideType || queueEntry.detectedType;
@@ -1030,11 +1123,9 @@ async function uploadSingle(queueEntry) {
     return await response.json();
 }
 
-// Batch: send per-file detected types as JSON array
 async function uploadBatch() {
     var overrideType = document.getElementById('documentType').value;
 
-    // Build per-file type array: override wins, else auto-detected
     var perFileTypes = fileQueue.map(function(q) {
         return overrideType || q.detectedType;
     });
@@ -1042,7 +1133,7 @@ async function uploadBatch() {
     var formData = new FormData();
     fileQueue.forEach(function(q) { formData.append('files', q.file); });
     formData.append('document_types', JSON.stringify(perFileTypes));
-    formData.append('document_type',  overrideType);   // global fallback
+    formData.append('document_type',  overrideType);
     formData.append('client',         document.getElementById('clientName').value);
     formData.append('industry',       document.getElementById('industry').value);
 
@@ -1094,7 +1185,7 @@ function showHighlights(highlights) {
 }
 
 // ===========================================================================
-// BATCH RESULTS TABLE — now includes Detected Type column
+// BATCH RESULTS TABLE
 // ===========================================================================
 function showBatchResults(results) {
     var panel = document.getElementById('batchResults');
@@ -1168,7 +1259,6 @@ function _showCelebrationPopup() {
 function resetForm() {
     fileQueue = [];
     document.getElementById('uploadForm').reset();
-    // Reset override note
     document.getElementById('overrideNote').innerHTML =
         '&#128269; Type auto-detected per file. Select above only to override all files.';
     document.getElementById('overrideNote').style.color = '#667eea';
