@@ -1,9 +1,42 @@
 """
 DOCUMENT INGESTION ENGINE
 Created: February 2, 2026
-Last Updated: February 26, 2026 - ADDED full PPTX and Excel extractors
+Last Updated: February 27, 2026 - FIXED DOCX extractors (lessons_learned, general_word, OAF)
 
 CHANGELOG:
+- February 27, 2026: FIXED DOCX extractors — lessons_learned, general_word, OAF slide text
+  * ROOT CAUSE OF ALL FAILURES: ingest.py was reading .docx files with
+    file.read().decode('utf-8', errors='ignore'), producing garbled binary output.
+    The engine received nonsense; only stray ASCII digits (%, $) survived.
+    This is now fixed in ingest.py which uses python-docx for DOCX files.
+    The engine now receives a JSON list of {style, bold, text} dicts as 'content'
+    for all .docx files. All extractors updated to consume this structured format.
+
+  * _extract_from_lessons_learned(): complete rewrite
+    - OLD: looked for '### Lesson #N' Markdown headers (never present in real files)
+    - NEW: parses {style, bold, text} paragraph list from ingest.py
+    - Detects lessons by Heading2 style + numbered pattern (e.g. "1. The Goldilocks Shift")
+    - Falls back to plain-bold + numbered detection for docs without heading styles
+    - Captures: lesson title, lesson number, key rules (bold paragraphs), body text,
+      and all subheadings within each lesson
+    - Backward compatible: if content is not valid JSON, falls back to old Markdown parsing
+
+  * _extract_general_word_doc(): major enhancement
+    - OLD: scraped only percentages, dollar amounts, schedule patterns
+    - NEW: parses {style, bold, text} paragraph list from ingest.py
+    - Extracts: doc title, all section headings, body text per section,
+      bold insights (key principles), quoted insights (Jim/Dan attribution lines),
+      schedule patterns referenced, financial figures
+    - Builds consulting_insight patterns for sections with substantial content
+    - Backward compatible: if content is not valid JSON, uses old regex approach
+
+  * _extract_from_oaf_pptx(): added slide text fallback
+    - OLD: only extracted data from HTML table (a:tbl) elements; returned 0 when no tables
+    - NEW: when no tables found, extracts narrative content from slide text paragraphs
+    - Captures cost comparison data from Cost of Time slides (fully loaded cost, hours)
+    - Captures key principles from narrative slides (overtime, staffing recommendations)
+    - Returns 0 patterns only when BOTH tables AND meaningful text are absent
+
 - February 26, 2026 (Session 2): ADDED full PPTX and Excel extractors
   * PROBLEM: PowerPoint and Excel extractors were stub placeholders (TODO).
     PPTX route used python-pptx which reads slide TEXT only — completely missing
@@ -513,13 +546,21 @@ class DocumentIngestor:
 
     def _extract_from_oaf_pptx(self, file_bytes: bytes, metadata: Dict) -> Dict:
         """
-        Extract knowledge from Operations Assessment (OAF) PowerPoint.
+        Extract knowledge from Operations Assessment / Analysis (OAF) PowerPoint.
 
-        Reads slide tables (a:tbl XML) and text to extract:
-        - Operational metrics: overtime %, absenteeism %, turnover %
-        - Productivity tables (department x metric grids)
-        - FTE / headcount scenarios
-        - Cost comparison data
+        Updated February 27, 2026:
+        - ADDED slide text extraction fallback when no tables present.
+          The OAF.pptx used by Shiftwork Solutions contains cost comparison data
+          and operational principles in slide text paragraphs, not tables.
+          Previously the extractor returned 0 patterns when tables were absent.
+          Now captures: Cost of Time comparisons, key overtime principles, next steps.
+
+        Primary extraction paths (in priority order):
+          1. Slide tables (a:tbl/a:tr/a:tc) — structured grids of operational data
+          2. Slide narrative text — Cost of Time slides, key principles, recommendations
+          3. Per-slide regex patterns — overtime %, absenteeism %, headcount
+
+        Returns patterns for: operational_metrics, cost_comparison, consulting_principles
         """
         extracted = {
             'patterns': [],
@@ -531,6 +572,9 @@ class DocumentIngestor:
         client = metadata.get('client', 'unknown')
         metrics: Dict[str, Any] = {}
         tables_found = 0
+        slide_narratives = []    # Meaningful text collected across slides
+        cost_comparisons = []   # Cost of Time slide data
+        key_principles = []     # Operational insight paragraphs
 
         try:
             with zipfile.ZipFile(io.BytesIO(file_bytes), 'r') as z:
@@ -550,7 +594,7 @@ class DocumentIngestor:
                         ]
                         slide_text = ' '.join(raw_texts)
 
-                        # Extract tables
+                        # ---- 1. Extract tables ----
                         for tbl in re.findall(r'<a:tbl>(.*?)</a:tbl>', slide_xml, re.DOTALL):
                             rows_xml = re.findall(r'<a:tr>(.*?)</a:tr>', tbl, re.DOTALL)
                             table_data = []
@@ -573,7 +617,59 @@ class DocumentIngestor:
                                     'client': client
                                 })
 
-                        # Key metrics
+                        # ---- 2. Cost of Time slide detection ----
+                        slide_lower = slide_text.lower()
+                        if 'cost of' in slide_lower and 'time' in slide_lower:
+                            # Extract fully loaded cost per hour values
+                            cost_matches = re.findall(
+                                r'fully loaded cost per hour[:\s\t]+\$?([\d,]+\.?\d*)',
+                                slide_text, re.IGNORECASE
+                            )
+                            hours_matches = re.findall(
+                                r'total productive hours[:\s\t]+([\d,]+)',
+                                slide_text, re.IGNORECASE
+                            )
+                            annual_hours = re.findall(
+                                r'([\d,]+)\s*annual pay hours',
+                                slide_text, re.IGNORECASE
+                            )
+                            days_off = re.findall(
+                                r'(\d+)\s*days off per year',
+                                slide_text, re.IGNORECASE
+                            )
+                            if cost_matches or hours_matches:
+                                cost_comparisons.append({
+                                    'slide': slide_num,
+                                    'cost_per_hour': [
+                                        float(c.replace(',', '')) for c in cost_matches
+                                    ],
+                                    'productive_hours': [
+                                        int(h.replace(',', '')) for h in hours_matches
+                                    ],
+                                    'annual_pay_hours': [
+                                        int(h.replace(',', '')) for h in annual_hours
+                                    ],
+                                    'days_off_per_year': [int(d) for d in days_off],
+                                    'raw_text': slide_text[:400]
+                                })
+
+                        # ---- 3. Key operational principles (narrative slides) ----
+                        # Slides with substantive paragraphs (>80 chars, not just slide numbers)
+                        long_texts = [t for t in raw_texts if len(t) > 80]
+                        if long_texts:
+                            slide_narratives.extend(long_texts)
+                            # Flag slides with explicit "rule" or key insight text
+                            for t in long_texts:
+                                if any(kw in t.lower() for kw in [
+                                    'overtime', 'staffing', 'cost', 'schedule',
+                                    'employees', 'workforce', 'straight time'
+                                ]):
+                                    key_principles.append({
+                                        'slide': slide_num,
+                                        'text': t[:400]
+                                    })
+
+                        # ---- 4. Per-slide metric extraction ----
                         ot_m = re.search(
                             r'[Oo]vertime[:\s]+(\d+(?:\.\d+)?)\s*%', slide_text)
                         if ot_m and 'overtime_pct' not in metrics:
@@ -604,6 +700,8 @@ class DocumentIngestor:
             extracted['highlights'].append(f"Error reading OAF PPTX: {str(zip_err)}")
             return extracted
 
+        # ---- Build patterns from collected data ----
+
         if metrics:
             extracted['patterns'].append({
                 'type': 'operational_metrics',
@@ -612,17 +710,68 @@ class DocumentIngestor:
                 'confidence': 0.85
             })
 
+        if cost_comparisons:
+            extracted['patterns'].append({
+                'type': 'cost_comparison',
+                'name': f'oaf_cost_of_time_{re.sub(r"[^a-z0-9]", "_", client.lower())}',
+                'data': {
+                    'client': client,
+                    'slides_analyzed': len(cost_comparisons),
+                    'comparisons': cost_comparisons
+                },
+                'confidence': 0.9
+            })
+            extracted['insights'].append({
+                'type': 'cost_of_time_analysis',
+                'client': client,
+                'slide_count': len(cost_comparisons),
+                'data': cost_comparisons
+            })
+
+        if key_principles:
+            extracted['patterns'].append({
+                'type': 'operational_principles',
+                'name': f'oaf_principles_{re.sub(r"[^a-z0-9]", "_", client.lower())}',
+                'data': {
+                    'client': client,
+                    'principles': key_principles[:10]
+                },
+                'confidence': 0.75
+            })
+            extracted['insights'].append({
+                'type': 'key_principles',
+                'client': client,
+                'count': len(key_principles),
+                'principles': key_principles[:10]
+            })
+
         extracted['insights'].append({
             'type': 'oaf_summary',
             'client': client,
             'metrics': metrics,
-            'tables_found': tables_found
+            'tables_found': tables_found,
+            'cost_comparison_slides': len(cost_comparisons),
+            'narrative_slides_with_content': len(
+                [p for p in key_principles]
+            )
         })
 
+        # Highlights
         for k, v in metrics.items():
             label = k.replace('_', ' ').title()
             extracted['highlights'].append(f"{label}: {v}{'%' if 'pct' in k else ''}")
-        extracted['highlights'].append(f"Tables Extracted: {tables_found}")
+        if tables_found:
+            extracted['highlights'].append(f"Tables Extracted: {tables_found}")
+        if cost_comparisons:
+            extracted['highlights'].append(
+                f"Cost of Time Slides: {len(cost_comparisons)}"
+            )
+        if key_principles:
+            extracted['highlights'].append(
+                f"Operational Principles Captured: {len(key_principles)}"
+            )
+        if not metrics and not cost_comparisons and not key_principles:
+            extracted['highlights'].append("No structured data found in this OAF")
 
         return extracted
 
@@ -1167,9 +1316,28 @@ class DocumentIngestor:
 
     def _extract_from_lessons_learned(self, content: str, metadata: Dict) -> Dict:
         """
-        Extract knowledge from lessons learned document.
-        Parses each lesson individually: title, category, situation, principle, examples.
-        Each lesson becomes its own searchable pattern.
+        Extract knowledge from lessons learned / schedule guide documents.
+
+        Updated February 27, 2026:
+        - PROBLEM: Old version searched for '### Lesson #N' Markdown headers, which
+          never existed in the actual .docx files. Real files use Word Heading2 styles
+          with numbered section titles like "1. The Goldilocks Shift". The extractor
+          always returned 0 lessons.
+        - SOLUTION: Now accepts structured JSON paragraph list from ingest.py
+          (format: [{style, bold, text}, ...]) and detects lesson sections by:
+            1. Paragraph with style 'Heading2' (or Heading1/Heading3) AND numbered pattern
+            2. Fallback: Bold paragraph matching numbered pattern (some docs lack heading styles)
+          Captures per-lesson: title, number, body text, bold rules/principles, subheadings.
+
+        Backward compatibility:
+          - If content is NOT valid JSON (old-style Markdown string), falls back to
+            original Markdown '### Lesson #N' parsing so re-ingested old docs still work.
+
+        Works with:
+          - 10_Hour_Shift_Lessons_Learned.docx (Heading2-based, 10 lessons)
+          - 4on4off_schedule_guide.docx (Heading1-based, 9 sections)
+          - 223_Complete_Guide.docx (Heading1-based, 10 sections)
+          - Any future lessons/guide doc using numbered Word headings
         """
         extracted = {
             'patterns': [],
@@ -1178,62 +1346,154 @@ class DocumentIngestor:
             'document_category': 'lessons_learned'
         }
 
-        lesson_blocks = re.split(r'(?=### Lesson #\d+)', content)
-        lesson_blocks = [b.strip() for b in lesson_blocks if b.strip().startswith('### Lesson')]
+        LESSON_HEADING_RE = re.compile(r'^\d+[\.\)]\s+.{3,}')
+        HEADING_STYLES = {'Heading1', 'Heading2', 'Heading3',
+                          'Heading 1', 'Heading 2', 'Heading 3'}
 
-        category_map = {}
-        current_category = 'General'
-        for line in content.split('\n'):
-            line = line.strip()
-            if (line.startswith('## ')
-                    and 'Categories' not in line
-                    and 'How to Add' not in line
-                    and 'Notes for' not in line):
-                current_category = line.replace('## ', '').strip()
-            elif line.startswith('### Lesson'):
-                title_match = re.match(r'### (Lesson #\d+)', line)
-                if title_match:
-                    category_map[title_match.group(1)] = current_category
+        # ---- Try structured JSON paragraph list (new path from ingest.py) ----
+        paragraphs = None
+        try:
+            parsed = json.loads(content)
+            if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
+                paragraphs = parsed
+        except (json.JSONDecodeError, ValueError, TypeError, IndexError):
+            paragraphs = None
 
-        lessons_extracted = []
+        if paragraphs is not None:
+            # --- Parse structured paragraph list ---
+            lessons_extracted = []
+            current_lesson = None
+            doc_title = ''
 
-        for block in lesson_blocks:
-            title_match = re.match(r'### (Lesson #(\d+)[^\n]+)', block)
-            if not title_match:
-                continue
+            for p in paragraphs:
+                style = p.get('style', '')
+                bold = p.get('bold', False)
+                text = p.get('text', '').strip()
+                if not text:
+                    continue
 
-            full_title = title_match.group(1).strip()
-            lesson_num = int(title_match.group(2))
-            lesson_name = re.sub(r'Lesson #\d+:\s*', '', full_title).strip()
-            category = category_map.get(f"Lesson #{lesson_num}", 'General')
+                is_heading_style = any(hs in style for hs in ('Heading1', 'Heading2', 'Heading3'))
+                is_numbered = bool(LESSON_HEADING_RE.match(text))
 
-            situation_match = re.search(
-                r'\*\*Situation[^*]*\*\*\s*\n+(.*?)(?=\n\*\*|\Z)', block, re.DOTALL
-            )
-            situation = situation_match.group(1).strip()[:300] if situation_match else ''
+                # Detect lesson/section start
+                is_lesson_start = (is_heading_style and is_numbered) or (
+                    bold and is_numbered and len(text) < 120
+                )
 
-            principle_match = re.search(
-                r'\*\*Key Principle[:\*\*\s]+(.+?)(?=\n---|\n###|\Z)', block, re.DOTALL
-            )
-            principle = principle_match.group(1).strip()[:400] if principle_match else ''
+                # Capture doc title from first prominent heading or first bold short line
+                if not doc_title:
+                    if (is_heading_style and not is_numbered) or (bold and len(text) < 80):
+                        doc_title = text
+                    continue  # Skip title line from lesson content
 
-            examples = re.findall(
-                r'\*\*Real Example[^\n]*\*\*\s*\n+(.*?)(?=\n\*\*|\n---|\Z)', block, re.DOTALL
-            )
-            examples = [e.strip()[:200] for e in examples]
+                if is_lesson_start:
+                    if current_lesson:
+                        lessons_extracted.append(current_lesson)
+                    lesson_num_str = text.split('.')[0].split(')')[0].strip()
+                    try:
+                        lesson_num = int(lesson_num_str)
+                    except ValueError:
+                        lesson_num = len(lessons_extracted) + 1
+
+                    lesson_title = re.sub(r'^\d+[\.\)]\s*', '', text).strip()
+                    current_lesson = {
+                        'lesson_number': lesson_num,
+                        'full_title': text,
+                        'lesson_name': lesson_title,
+                        'category': 'General',
+                        'body_paragraphs': [],
+                        'bold_rules': [],
+                        'subheadings': [],
+                        'key_principle': '',
+                        'situation': ''
+                    }
+
+                elif current_lesson is not None:
+                    # Subheading within a lesson
+                    if is_heading_style and not is_numbered:
+                        current_lesson['subheadings'].append(text)
+
+                    # Bold rule / key principle
+                    elif bold and len(text) > 20:
+                        current_lesson['bold_rules'].append(text[:400])
+                        if not current_lesson['key_principle']:
+                            current_lesson['key_principle'] = text[:400]
+
+                    # Body text
+                    else:
+                        current_lesson['body_paragraphs'].append(text[:400])
+                        if not current_lesson['situation'] and len(text) > 60:
+                            current_lesson['situation'] = text[:300]
+
+            if current_lesson:
+                lessons_extracted.append(current_lesson)
+
+        else:
+            # ---- Fallback: old Markdown '### Lesson #N' parsing ----
+            lesson_blocks = re.split(r'(?=### Lesson #\d+)', content)
+            lesson_blocks = [b.strip() for b in lesson_blocks if b.strip().startswith('### Lesson')]
+
+            category_map = {}
+            current_category = 'General'
+            for line in content.split('\n'):
+                line = line.strip()
+                if (line.startswith('## ')
+                        and 'Categories' not in line
+                        and 'How to Add' not in line
+                        and 'Notes for' not in line):
+                    current_category = line.replace('## ', '').strip()
+                elif line.startswith('### Lesson'):
+                    title_match = re.match(r'### (Lesson #\d+)', line)
+                    if title_match:
+                        category_map[title_match.group(1)] = current_category
+
+            lessons_extracted = []
+            for block in lesson_blocks:
+                title_match = re.match(r'### (Lesson #(\d+)[^\n]+)', block)
+                if not title_match:
+                    continue
+                full_title = title_match.group(1).strip()
+                lesson_num = int(title_match.group(2))
+                lesson_name = re.sub(r'Lesson #\d+:\s*', '', full_title).strip()
+                category = category_map.get(f"Lesson #{lesson_num}", 'General')
+
+                situation_match = re.search(
+                    r'\*\*Situation[^*]*\*\*\s*\n+(.*?)(?=\n\*\*|\Z)', block, re.DOTALL)
+                situation = situation_match.group(1).strip()[:300] if situation_match else ''
+
+                principle_match = re.search(
+                    r'\*\*Key Principle[:\*\*\s]+(.+?)(?=\n---|\n###|\Z)', block, re.DOTALL)
+                principle = principle_match.group(1).strip()[:400] if principle_match else ''
+
+                lessons_extracted.append({
+                    'lesson_number': lesson_num,
+                    'full_title': full_title,
+                    'lesson_name': lesson_name,
+                    'category': category,
+                    'body_paragraphs': [],
+                    'bold_rules': [principle] if principle else [],
+                    'subheadings': [],
+                    'key_principle': principle,
+                    'situation': situation
+                })
+
+        # ---- Build patterns and insights from lessons_extracted ----
+        for lesson in lessons_extracted:
+            lesson_num = lesson['lesson_number']
+            lesson_name = lesson['lesson_name']
 
             lesson_data = {
                 'lesson_number': lesson_num,
-                'title': full_title,
+                'title': lesson['full_title'],
                 'lesson_name': lesson_name,
-                'category': category,
-                'situation': situation,
-                'key_principle': principle,
-                'real_examples': examples,
-                'full_text': block[:1000]
+                'category': lesson.get('category', 'General'),
+                'key_principle': lesson.get('key_principle', ''),
+                'situation': lesson.get('situation', ''),
+                'bold_rules': lesson.get('bold_rules', []),
+                'subheadings': lesson.get('subheadings', []),
+                'body_preview': lesson.get('body_paragraphs', [''])[0][:300] if lesson.get('body_paragraphs') else ''
             }
 
-            lessons_extracted.append(lesson_data)
             extracted['patterns'].append({
                 'type': 'consulting_lesson',
                 'name': (
@@ -1244,7 +1504,9 @@ class DocumentIngestor:
                 'confidence': 1.0
             })
 
-        categories_covered = list(set(l['category'] for l in lessons_extracted))
+        categories_covered = list(set(
+            l.get('category', 'General') for l in lessons_extracted
+        ))
         extracted['insights'].append({
             'type': 'lessons_learned_summary',
             'total_lessons': len(lessons_extracted),
@@ -1253,13 +1515,13 @@ class DocumentIngestor:
                 {
                     'number': l['lesson_number'],
                     'name': l['lesson_name'],
-                    'category': l['category']
+                    'category': l.get('category', 'General')
                 }
                 for l in lessons_extracted
             ]
         })
 
-        extracted['highlights'].append(f"Total Lessons: {len(lessons_extracted)}")
+        extracted['highlights'].append(f"Total Lessons/Sections: {len(lessons_extracted)}")
         extracted['highlights'].append(f"Categories: {', '.join(categories_covered)}")
 
         return extracted
@@ -1366,8 +1628,28 @@ class DocumentIngestor:
 
     def _extract_general_word_doc(self, content: str, metadata: Dict) -> Dict:
         """
-        Improved generic extractor for any Word document not matched by specific extractor.
-        Extracts: bold headings, dollar amounts, schedule patterns, percentages.
+        Extract knowledge from general Word documents (Pillar articles, guides, etc.)
+
+        Updated February 27, 2026:
+        - PROBLEM: Old version only scraped percentages and dollar amounts from the
+          document. Rich content — headings, section body text, key quotes, bold
+          principles, operational rules — was completely ignored.
+        - SOLUTION: Accepts structured JSON paragraph list from ingest.py
+          (format: [{style, bold, text}, ...]) and extracts:
+            * Document title (first Heading1 or prominent bold line)
+            * All section headings (Heading2) as searchable structure
+            * Body text per section (captures operational content, not just numbers)
+            * Bold insight lines (key principles, rules, cautions)
+            * Quoted insights (lines with attribution: "--- Jim Dillingham" pattern)
+            * Schedule patterns referenced
+            * Dollar amounts and percentages (preserved from old version)
+            * Consulting insight patterns for AI query retrieval
+
+        Backward compatibility:
+          - If content is NOT valid JSON, falls back to old regex extraction
+            (dollar amounts, schedule patterns, percentages, bold headings).
+
+        Works with all 10 Pillar docs plus any general Word document uploaded.
         """
         extracted = {
             'patterns': [],
@@ -1376,12 +1658,195 @@ class DocumentIngestor:
             'document_category': 'general_word'
         }
 
+        doc_name = metadata.get('document_name', 'unknown')
+
+        # ---- Try structured JSON paragraph list (new path from ingest.py) ----
+        paragraphs = None
+        try:
+            parsed = json.loads(content)
+            if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
+                paragraphs = parsed
+        except (json.JSONDecodeError, ValueError, TypeError, IndexError):
+            paragraphs = None
+
+        if paragraphs is not None:
+            # ---- Parse structured paragraph list ----
+            ATTRIBUTION_RE = re.compile(
+                r'---\s*(Jim|Dan|Ethan|[A-Z][a-z]+)\s+\w+', re.IGNORECASE
+            )
+            METADATA_RE = re.compile(
+                r'^(Pillar \d+|Word Count|Customer Segment|Target URL|'
+                r'Perfect!|This document|Shiftwork Solutions)', re.IGNORECASE
+            )
+
+            doc_title = ''
+            sections = []
+            current_section = None
+            all_text_parts = []
+
+            for p in paragraphs:
+                style = p.get('style', '')
+                bold = p.get('bold', False)
+                text = p.get('text', '').strip()
+                if not text:
+                    continue
+
+                # Skip metadata/internal lines
+                if METADATA_RE.match(text):
+                    continue
+
+                all_text_parts.append(text)
+                is_heading = any(hs in style for hs in ('Heading1', 'Heading2', 'Heading3'))
+
+                # Capture doc title
+                if not doc_title:
+                    if is_heading or (bold and len(text) < 100):
+                        doc_title = text
+                        continue
+
+                if is_heading:
+                    if current_section:
+                        sections.append(current_section)
+                    current_section = {
+                        'heading': text,
+                        'body': [],
+                        'bold_insights': [],
+                        'quotes': []
+                    }
+                elif bold and not is_heading and len(text) < 100:
+                    # Short bold lines = subheadings or section titles in un-styled docs
+                    if current_section is None:
+                        if not doc_title:
+                            doc_title = text
+                        else:
+                            current_section = {
+                                'heading': text, 'body': [], 'bold_insights': [], 'quotes': []
+                            }
+                            sections.append(current_section)
+                    else:
+                        if len(text) < 60:
+                            current_section['bold_insights'].append(f'[Subheading] {text}')
+                        else:
+                            current_section['bold_insights'].append(text[:300])
+                else:
+                    if current_section is None:
+                        intro_section = {
+                            'heading': 'Introduction',
+                            'body': [], 'bold_insights': [], 'quotes': []
+                        }
+                        sections.append(intro_section)
+                        current_section = intro_section
+
+                    # Quoted insight (attribution line)
+                    if ATTRIBUTION_RE.search(text) or ('---' in text and len(text) < 300):
+                        current_section['quotes'].append(text[:300])
+                    elif bold and len(text) > 20:
+                        current_section['bold_insights'].append(text[:300])
+                    else:
+                        current_section['body'].append(text[:400])
+
+            if current_section and current_section not in sections:
+                sections.append(current_section)
+
+            all_text = ' '.join(all_text_parts)
+
+            # Build structured insights
+            if doc_title:
+                extracted['insights'].append({
+                    'type': 'document_title',
+                    'title': doc_title,
+                    'document_name': doc_name
+                })
+
+            heading_list = [s['heading'] for s in sections]
+            if heading_list:
+                extracted['insights'].append({
+                    'type': 'document_structure',
+                    'headings': heading_list,
+                    'section_count': len(sections)
+                })
+
+            # Per-section consulting insights
+            for section in sections:
+                heading = section['heading']
+                body_preview = section['body'][0][:300] if section['body'] else ''
+                all_bold = section['bold_insights']
+                all_quotes = section['quotes']
+
+                if body_preview or all_bold or all_quotes:
+                    extracted['insights'].append({
+                        'type': 'section_content',
+                        'heading': heading,
+                        'body_preview': body_preview,
+                        'key_principles': all_bold[:5],
+                        'expert_quotes': all_quotes[:3],
+                        'document_name': doc_name
+                    })
+                    if len(section['body']) >= 2 or all_bold:
+                        extracted['patterns'].append({
+                            'type': 'consulting_insight',
+                            'name': (
+                                f'insight_{re.sub(r"[^a-z0-9]", "_", heading.lower())[:50]}'
+                                f'_{re.sub(r"[^a-z0-9]", "_", doc_name.lower())[:20]}'
+                            ),
+                            'data': {
+                                'document': doc_name,
+                                'section': heading,
+                                'body_preview': body_preview,
+                                'key_principles': all_bold[:3],
+                                'expert_quotes': all_quotes[:2]
+                            },
+                            'confidence': 0.85
+                        })
+
+            # Schedule patterns
+            found_patterns = [p for p in KNOWN_SCHEDULE_PATTERNS if p in all_text]
+            if found_patterns:
+                extracted['patterns'].append({
+                    'type': 'schedule_patterns_mentioned',
+                    'name': f'schedules_in_{re.sub(r"[^a-z0-9]", "_", doc_name.lower())[:40]}',
+                    'data': found_patterns,
+                    'confidence': 0.8
+                })
+                extracted['highlights'].append(f"Schedule patterns: {', '.join(found_patterns)}")
+
+            # Dollar amounts
+            amounts = [int(a.replace(',', '')) for a in DOLLAR_PATTERN.findall(all_text)
+                       if a.replace(',', '').isdigit()]
+            if amounts:
+                extracted['insights'].append({'type': 'financial_figures', 'amounts': amounts})
+                extracted['highlights'].append(
+                    f"Dollar amounts: {', '.join(f'${a:,}' for a in sorted(set(amounts))[:5])}"
+                )
+
+            extracted['highlights'].append(
+                f"Sections: {len(sections)} | Title: {doc_title[:50] or 'unknown'}"
+            )
+            total_bold = sum(len(s['bold_insights']) for s in sections)
+            total_quotes = sum(len(s['quotes']) for s in sections)
+            if total_bold:
+                extracted['highlights'].append(f"Key principles captured: {total_bold}")
+            if total_quotes:
+                extracted['highlights'].append(f"Expert quotes captured: {total_quotes}")
+
+            extracted['insights'].append({
+                'type': 'document_summary',
+                'content_length': len(all_text),
+                'word_count': len(all_text.split()),
+                'section_count': len(sections),
+                'document_name': doc_name
+            })
+
+            return extracted
+
+        # ---- Fallback: old regex-based extraction for non-JSON content ----
         headings = re.findall(r'\*\*([^*\n]{5,80})\*\*', content)
         headings = [h.strip() for h in headings if not h.strip().endswith(':')]
         if headings:
             extracted['insights'].append({'type': 'document_structure', 'headings': headings[:30]})
 
-        amounts = [int(a.replace(',', '')) for a in DOLLAR_PATTERN.findall(content)]
+        amounts = [int(a.replace(',', '')) for a in DOLLAR_PATTERN.findall(content)
+                   if a.replace(',', '').isdigit()]
         if amounts:
             extracted['insights'].append({'type': 'financial_figures', 'amounts': amounts})
             extracted['highlights'].append(
