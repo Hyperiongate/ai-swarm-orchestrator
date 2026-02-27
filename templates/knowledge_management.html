@@ -7,45 +7,41 @@
     <!--
         Last Updated: February 26, 2026
 
-        CHANGES - February 26, 2026 (fourth update):
-          * ADDED: Multi-file batch upload support.
-            Use case: grab all files from a client folder and upload at once.
-            - file input now has multiple attribute — select any number of files
-            - Drag-drop zone accepts multiple files simultaneously
-            - File queue panel shows each file with name, size, type icon, and status
-            - Client Name and Industry apply to the entire batch (set once, shared)
-            - Files upload sequentially (one POST per file) to avoid server overload
-            - Per-file status indicators: ⏳ waiting → 🔄 uploading → ✅ done / ❌ failed
-            - Batch progress bar shows overall completion across all files
-            - Batch summary panel appears when all files finish: total patterns,
-              total insights, per-file results
-            - Celebration fires once when the full batch completes
-            - "Add More Files" button appears after selecting files, so you can
-              append additional files to the queue before uploading
-            - Individual files can be removed from the queue before upload starts
-          * No backend changes — each file posts individually to /api/ingest/document
-
-        CHANGES - February 26, 2026 (third update):
-          * REMOVED: Mandatory "Document Type" dropdown.
-            The backend (routes/ingest.py) already defaults document_type to 'generic'
-            when absent, and the ingestion engine (document_ingestion_engine.py) auto-
-            detects the correct extractor from filename hints and file content signals.
-          * Removed: DOC_TYPE_HINTS, setupDocTypeHint(), documentType validation
-          * Removed: document_type from formData — backend auto-detects
-          * Kept: Client Name and Industry fields (useful metadata for queries)
-
         CHANGES - February 26, 2026 (second update):
           * FIXED: After uploading a file, clicking "Choose File" / "Change File"
-            did nothing without refreshing the page.
-            FIX: Click listener on uploadZone div; fileInput.value reset before .click();
-            removed inline onclick from dynamically generated button HTML.
+            did nothing - could not select a second file without refreshing the page.
+            ROOT CAUSE: setupDragDrop() attached dragover/dragleave/drop listeners to
+            the uploadZone div, but NO click listener. The "Choose File" button used
+            inline onclick="document.getElementById('fileInput').click()" which worked
+            on the initial render. After handleFileSelect() or resetForm() replaced
+            uploadZone.innerHTML, the new button had the same inline onclick - but
+            calling .click() on the file input element after an upload sometimes fails
+            silently due to browser security restrictions on repeated programmatic
+            .click() calls on the same input element.
+            FIX: (1) Added click listener directly on uploadZone div in setupDragDrop()
+            so ANY click anywhere in the zone opens the file picker. (2) Added
+            fileInput.value = '' before .click() so the same file can be re-selected.
+            (3) Removed all inline onclick attributes from dynamically generated button
+            HTML - the zone listener handles all clicks now.
 
         CHANGES - February 26, 2026 (first update):
-          * Added all new document types, full industry list, highlights panel,
-            celebration highlights.
+          * Added all new document types to dropdown:
+              scope_of_work, implementation_ppt, schedule_pattern, data_file, general_word
+          * Removed 'proposal' as separate type - proposal is now aliased to contract
+            in routes/ingest.py so both get the full contract extractor treatment
+          * Added full industry list covering all industries Shiftwork Solutions serves:
+              Chemical, Oil & Gas, Utilities, Paper/Pulp, Metals/Steel, Refinery,
+              Plastics, Aerospace, Automotive added alongside existing industries
+          * Added highlights display in celebration popup and success message -
+            extractors now return what they actually found (client name, fee, patterns)
+          * Added highlights panel below upload form showing extraction results
+          * Document type select now includes descriptive labels explaining what
+            each type extracts so users pick the right one
 
         CHANGES - February 22, 2026:
-          * Fixed Download Knowledge button, added PowerPoint support messaging.
+          * Fixed Download Knowledge button (window.location.href instead of fetch)
+          * Added PowerPoint file type support messaging and icons
+          * Fixed JavaScript null reference in downloadKnowledge()
     -->
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -188,8 +184,14 @@
 
         .upload-zone:hover { background: #e8ebff; }
         .upload-icon { font-size: 4em; margin-bottom: 15px; }
-        .upload-zone h3 { color: #667eea; margin-bottom: 10px; font-size: 1.3em; }
-        .upload-zone p  { color: #666; margin-bottom: 20px; }
+
+        .upload-zone h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 1.3em;
+        }
+
+        .upload-zone p { color: #666; margin-bottom: 20px; }
         .file-input { display: none; }
 
         .btn {
@@ -214,22 +216,6 @@
             opacity: 0.5;
             cursor: not-allowed;
             transform: none;
-        }
-
-        .btn-secondary {
-            background: white;
-            color: #667eea;
-            border: 2px solid #667eea;
-            padding: 10px 20px;
-            border-radius: 8px;
-            font-size: 0.9em;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }
-
-        .btn-secondary:hover {
-            background: #f0f4ff;
         }
 
         .form-group { margin-bottom: 20px; }
@@ -257,168 +243,28 @@
             border-color: #667eea;
         }
 
-        /* File Queue */
-        .file-queue {
-            display: none;
-            margin-top: 20px;
-            border: 1px solid #e0e0e0;
-            border-radius: 10px;
-            overflow: hidden;
+        .form-group .hint {
+            font-size: 0.82em;
+            color: #888;
+            margin-top: 5px;
+            font-style: italic;
         }
 
-        .file-queue-header {
-            background: #f8f9ff;
-            padding: 12px 16px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid #e0e0e0;
-        }
-
-        .file-queue-header h4 {
-            color: #667eea;
-            font-size: 0.95em;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .file-queue-header .queue-count {
-            font-size: 0.85em;
-            color: #999;
-        }
-
-        .file-queue-list {
-            max-height: 260px;
-            overflow-y: auto;
-        }
-
-        .file-queue-item {
-            display: flex;
-            align-items: center;
-            padding: 10px 16px;
-            border-bottom: 1px solid #f0f0f0;
-            gap: 12px;
-            transition: background 0.2s;
-        }
-
-        .file-queue-item:last-child { border-bottom: none; }
-        .file-queue-item:hover      { background: #fafbff; }
-
-        .file-queue-item.uploading  { background: #f0f4ff; }
-        .file-queue-item.done       { background: #f0fff4; }
-        .file-queue-item.failed     { background: #fff5f5; }
-
-        .fq-icon   { font-size: 1.5em; flex-shrink: 0; }
-        .fq-info   { flex: 1; min-width: 0; }
-
-        .fq-name {
-            font-size: 0.9em;
-            font-weight: 600;
-            color: #333;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-
-        .fq-meta { font-size: 0.78em; color: #999; margin-top: 2px; }
-
-        .fq-status {
-            font-size: 1.2em;
-            flex-shrink: 0;
-            min-width: 24px;
-            text-align: center;
-        }
-
-        .fq-status.waiting   { color: #bbb; }
-        .fq-status.uploading { color: #667eea; animation: pulse 1s infinite; }
-        .fq-status.done      { color: #28a745; }
-        .fq-status.failed    { color: #dc3545; }
-
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50%       { opacity: 0.4; }
-        }
-
-        .fq-remove {
-            background: none;
-            border: none;
-            color: #ccc;
-            cursor: pointer;
-            font-size: 1em;
-            padding: 2px 6px;
-            border-radius: 4px;
-            flex-shrink: 0;
-            transition: color 0.2s;
-        }
-
-        .fq-remove:hover { color: #dc3545; }
-
-        /* Batch progress bar */
-        .batch-progress-wrap {
-            display: none;
-            margin-top: 12px;
-        }
-
-        .batch-progress-label {
-            font-size: 0.85em;
-            color: #666;
-            margin-bottom: 6px;
-            display: flex;
-            justify-content: space-between;
-        }
-
+        /* Progress */
         .progress {
             background: #f0f0f0;
             border-radius: 10px;
-            height: 10px;
+            height: 8px;
+            margin: 20px 0;
             overflow: hidden;
+            display: none;
         }
 
         .progress-bar {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             height: 100%;
             width: 0%;
-            transition: width 0.4s ease;
-        }
-
-        /* Batch summary */
-        .batch-summary {
-            display: none;
-            background: #f0f4ff;
-            border: 1px solid #667eea;
-            border-radius: 8px;
-            padding: 15px 20px;
-            margin-top: 15px;
-        }
-
-        .batch-summary h4 {
-            color: #667eea;
-            font-size: 0.95em;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 10px;
-        }
-
-        .batch-summary .summary-stats {
-            display: flex;
-            gap: 20px;
-            flex-wrap: wrap;
-            margin-bottom: 10px;
-        }
-
-        .batch-summary .summary-stat {
-            background: white;
-            padding: 6px 14px;
-            border-radius: 6px;
-            color: #667eea;
-            font-weight: 700;
-            font-size: 0.9em;
-        }
-
-        .batch-summary .summary-failures {
-            font-size: 0.85em;
-            color: #dc3545;
-            margin-top: 6px;
+            transition: width 0.3s ease;
         }
 
         /* Alerts */
@@ -438,6 +284,39 @@
         .alert-success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
         .alert-error   { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
         .alert-info    { background: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
+
+        /* Highlights panel - shown after successful ingest */
+        .highlights-panel {
+            background: #f0f4ff;
+            border: 1px solid #667eea;
+            border-radius: 8px;
+            padding: 15px 20px;
+            margin-top: 15px;
+            display: none;
+        }
+
+        .highlights-panel h4 {
+            color: #667eea;
+            font-size: 0.95em;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .highlights-panel ul {
+            list-style: none;
+            padding: 0;
+        }
+
+        .highlights-panel li {
+            padding: 4px 0;
+            font-size: 0.9em;
+            color: #333;
+            border-bottom: 1px solid #e0e8ff;
+        }
+
+        .highlights-panel li:last-child { border-bottom: none; }
+        .highlights-panel li::before { content: "✓ "; color: #667eea; font-weight: bold; }
 
         /* Patterns List */
         .patterns-list { max-height: 500px; overflow-y: auto; }
@@ -572,7 +451,7 @@
             100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
         }
 
-        .celebration h2    { color: #667eea; font-size: 2em; margin-bottom: 10px; }
+        .celebration h2   { color: #667eea; font-size: 2em; margin-bottom: 10px; }
         .celebration .icon { font-size: 5em; margin-bottom: 20px; }
 
         .celebration .highlights {
@@ -592,7 +471,7 @@
         }
 
         .celebration .highlights li:last-child { border-bottom: none; }
-        .celebration .highlights li::before    { content: "✓ "; color: #667eea; }
+        .celebration .highlights li::before { content: "✓ "; color: #667eea; }
 
         .overlay {
             position: fixed; top: 0; left: 0; right: 0; bottom: 0;
@@ -601,6 +480,7 @@
             display: none;
         }
 
+        /* optgroup styling */
         optgroup { font-weight: 700; color: #444; }
         option   { font-weight: 400; color: #333; }
     </style>
@@ -614,6 +494,10 @@
                 <a href="/" class="nav-btn">← Back to Main</a>
                 <button class="nav-btn" id="downloadBtn" onclick="downloadKnowledge(this)">
                     📥 Download Knowledge
+                </button>
+                <button class="nav-btn" id="clearBtn" onclick="clearKnowledgeBase(this)"
+                        style="background:#dc3545; color:#fff; border:none; cursor:pointer;">
+                    🗑️ Clear Knowledge Base
                 </button>
             </div>
             <h1>🧠 Knowledge Management</h1>
@@ -659,59 +543,70 @@
 
             <!-- Upload Section -->
             <div class="card">
-                <h2>📤 Upload Documents</h2>
+                <h2>📤 Upload Document</h2>
 
                 <div class="alert alert-success" id="successAlert"></div>
                 <div class="alert alert-error"   id="errorAlert"></div>
 
-                <!-- Drop zone — clicking opens multi-file picker -->
                 <div class="upload-zone" id="uploadZone">
-                    <div class="upload-icon">📂</div>
-                    <h3>Drag & Drop Files Here</h3>
-                    <p>Select one file or an entire client folder batch<br>
-                       Word, Excel, PowerPoint, PDF, Text, Markdown, CSV</p>
-                    <button class="btn" type="button">Choose Files</button>
-                    <input type="file" id="fileInput" class="file-input" multiple
+                    <div class="upload-icon">📄</div>
+                    <h3>Drag & Drop Document</h3>
+                    <p>Word (.docx), Excel (.xlsx), PowerPoint (.pptx), PDF, Text, Markdown, CSV</p>
+                    <button class="btn" type="button">
+                        Choose File
+                    </button>
+                    <input type="file" id="fileInput" class="file-input"
                            accept=".txt,.md,.pdf,.docx,.doc,.xlsx,.xls,.csv,.json,.pptx,.ppt">
                 </div>
 
-                <!-- File queue — shown once files are selected -->
-                <div class="file-queue" id="fileQueue">
-                    <div class="file-queue-header">
-                        <h4>📋 Files Ready to Upload</h4>
-                        <span class="queue-count" id="queueCount"></span>
-                    </div>
-                    <div class="file-queue-list" id="fileQueueList"></div>
+                <div class="progress" id="uploadProgress">
+                    <div class="progress-bar" id="progressBar"></div>
                 </div>
 
-                <!-- Batch progress -->
-                <div class="batch-progress-wrap" id="batchProgressWrap">
-                    <div class="batch-progress-label">
-                        <span id="batchProgressLabel">Uploading...</span>
-                        <span id="batchProgressPct">0%</span>
-                    </div>
-                    <div class="progress">
-                        <div class="progress-bar" id="progressBar"></div>
-                    </div>
+                <!-- Highlights panel - shown after successful ingest -->
+                <div class="highlights-panel" id="highlightsPanel">
+                    <h4>📋 What Was Extracted</h4>
+                    <ul id="highlightsList"></ul>
                 </div>
 
-                <!-- Batch summary — shown after all files finish -->
-                <div class="batch-summary" id="batchSummary">
-                    <h4>✅ Batch Complete</h4>
-                    <div class="summary-stats" id="summaryStats"></div>
-                    <div class="summary-failures" id="summaryFailures"></div>
-                </div>
-
-                <form id="uploadForm" style="margin-top: 20px;">
+                <form id="uploadForm" style="margin-top: 25px;">
 
                     <div class="form-group">
-                        <label for="clientName">Client Name (optional — applies to all files)</label>
+                        <label for="documentType">Document Type *</label>
+                        <select id="documentType" required>
+                            <option value="">- Select Document Type -</option>
+
+                            <optgroup label="-- Word Documents --">
+                                <option value="contract">Contract / Engagement Agreement</option>
+                                <option value="implementation_manual">Implementation Manual</option>
+                                <option value="lessons_learned">Lessons Learned</option>
+                                <option value="scope_of_work">Scope of Work</option>
+                                <option value="general_word">General Word Document</option>
+                            </optgroup>
+
+                            <optgroup label="-- PowerPoint Presentations --">
+                                <option value="oaf">Operations Assessment (OAF)</option>
+                                <option value="eaf">Employee Assessment (EAF)</option>
+                                <option value="implementation_ppt">Implementation Presentation</option>
+                            </optgroup>
+
+                            <optgroup label="-- Excel Files --">
+                                <option value="schedule_pattern">Schedule Pattern File</option>
+                                <option value="data_file">Data File (Labor / Overtime / Cost)</option>
+                            </optgroup>
+
+                        </select>
+                        <div class="hint" id="docTypeHint"></div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="clientName">Client Name (optional)</label>
                         <input type="text" id="clientName"
                                placeholder="e.g., Andersen, ChemDesign, Reckitt">
                     </div>
 
                     <div class="form-group">
-                        <label for="industry">Industry (optional — applies to all files)</label>
+                        <label for="industry">Industry (optional)</label>
                         <select id="industry">
                             <option value="">- Select Industry -</option>
                             <optgroup label="-- Process Industries --">
@@ -742,15 +637,9 @@
                         </select>
                     </div>
 
-                    <div style="display:flex; gap:12px;">
-                        <button type="submit" class="btn" id="submitBtn" style="flex:1;" disabled>
-                            🚀 Ingest All Files
-                        </button>
-                        <button type="button" class="btn-secondary" id="addMoreBtn"
-                                style="display:none;" onclick="addMoreFiles()">
-                            ➕ Add More
-                        </button>
-                    </div>
+                    <button type="submit" class="btn" id="submitBtn" style="width:100%;">
+                        🚀 Ingest Document
+                    </button>
                 </form>
 
                 <div class="spinner" id="spinner"></div>
@@ -783,334 +672,49 @@
     <div class="overlay"     id="overlay"></div>
     <div class="celebration" id="celebration">
         <div class="icon">🎉</div>
-        <h2 id="celebrationTitle">Knowledge Extracted!</h2>
+        <h2>Knowledge Extracted!</h2>
         <p id="celebrationMessage"></p>
         <ul class="highlights" id="celebrationHighlights" style="display:none;"></ul>
     </div>
 
     <script>
-        // -----------------------------------------------------------------------
-        // State
-        // -----------------------------------------------------------------------
-        // fileQueue is an array of objects:
-        //   { file: File, id: string, status: 'waiting'|'uploading'|'done'|'failed',
-        //     patterns: number, insights: number, error: string }
-        let fileQueue = [];
-        let batchRunning = false;
-        let nextId = 0;
-
-        const EXT_ICONS = {
-            pptx:'📊', ppt:'📊', xlsx:'📈', xls:'📈',
-            pdf:'📕',  docx:'📝', doc:'📝', md:'📄', csv:'📊',
-            txt:'📄',  json:'📄'
+        // -- Document type hints --
+        const DOC_TYPE_HINTS = {
+            'contract':            'Extracts: client name, total fee, payment milestones, engagement weeks',
+            'implementation_manual': 'Extracts: schedule patterns, shift lengths, start times, appendices',
+            'lessons_learned':     'Extracts: each lesson individually with category, situation, key principle',
+            'scope_of_work':       'Extracts: client, weekly deliverables, total cost, pre-project requirements',
+            'general_word':        'Extracts: headings, dollar amounts, schedule patterns, section structure',
+            'oaf':                 'Extracts: overtime %, headcount, operational metrics (full extractor coming)',
+            'eaf':                 'Extracts: satisfaction scores, response rates (full extractor coming)',
+            'implementation_ppt':  'Extracts: schedule patterns implemented (full extractor coming)',
+            'schedule_pattern':    'Extracts: shift grid data (full extractor coming with Excel sample)',
+            'data_file':           'Extracts: labor/overtime/cost data (full extractor coming with Excel sample)'
         };
 
-        function extIcon(filename) {
-            const ext = filename.split('.').pop().toLowerCase();
-            return EXT_ICONS[ext] || '📄';
-        }
+        // Global state
+        let selectedFile = null;
 
-        function fmtSize(bytes) {
-            if (bytes < 1024)       return bytes + ' B';
-            if (bytes < 1024*1024)  return (bytes/1024).toFixed(1) + ' KB';
-            return (bytes/(1024*1024)).toFixed(1) + ' MB';
-        }
-
-        // -----------------------------------------------------------------------
-        // Initialize
-        // -----------------------------------------------------------------------
+        // -- Initialize --
         document.addEventListener('DOMContentLoaded', function() {
             loadStats();
             loadHistory();
             loadPatterns();
             setupDragDrop();
             setupFormSubmit();
+            setupDocTypeHint();
         });
 
-        // -----------------------------------------------------------------------
-        // Drag & Drop + File Input
-        // -----------------------------------------------------------------------
-        function setupDragDrop() {
-            const uploadZone = document.getElementById('uploadZone');
-            const fileInput  = document.getElementById('fileInput');
-
-            // Click anywhere in the zone (not during a batch run) to open picker
-            uploadZone.addEventListener('click', () => {
-                if (batchRunning) return;
-                fileInput.value = '';
-                fileInput.click();
-            });
-
-            uploadZone.addEventListener('dragover', (e) => {
-                e.preventDefault();
-                if (!batchRunning) uploadZone.classList.add('dragover');
-            });
-            uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
-            uploadZone.addEventListener('drop', (e) => {
-                e.preventDefault();
-                uploadZone.classList.remove('dragover');
-                if (batchRunning) return;
-                const files = Array.from(e.dataTransfer.files);
-                if (files.length > 0) addFilesToQueue(files);
-            });
-
-            fileInput.addEventListener('change', (e) => {
-                const files = Array.from(e.target.files);
-                if (files.length > 0) addFilesToQueue(files);
+        // -- Document type hint --
+        function setupDocTypeHint() {
+            document.getElementById('documentType').addEventListener('change', function() {
+                const hint = DOC_TYPE_HINTS[this.value] || '';
+                const hintEl = document.getElementById('docTypeHint');
+                hintEl.textContent = hint;
             });
         }
 
-        // Hidden second input used only by "Add More" button
-        // so it doesn't interfere with the main zone listener
-        function addMoreFiles() {
-            if (batchRunning) return;
-            const tmp = document.createElement('input');
-            tmp.type     = 'file';
-            tmp.multiple = true;
-            tmp.accept   = '.txt,.md,.pdf,.docx,.doc,.xlsx,.xls,.csv,.json,.pptx,.ppt';
-            tmp.addEventListener('change', (e) => {
-                const files = Array.from(e.target.files);
-                if (files.length > 0) addFilesToQueue(files);
-            });
-            tmp.click();
-        }
-
-        // -----------------------------------------------------------------------
-        // Queue management
-        // -----------------------------------------------------------------------
-        function addFilesToQueue(files) {
-            const ALLOWED = ['txt','md','pdf','docx','doc','xlsx','xls','csv','json','pptx','ppt'];
-            let added = 0;
-            files.forEach(f => {
-                const ext = f.name.split('.').pop().toLowerCase();
-                if (!ALLOWED.includes(ext)) return;
-                // Avoid duplicates by name+size
-                const dupe = fileQueue.some(q => q.file.name === f.name && q.file.size === f.size);
-                if (dupe) return;
-                fileQueue.push({
-                    file:     f,
-                    id:       'fq-' + (nextId++),
-                    status:   'waiting',
-                    patterns: 0,
-                    insights: 0,
-                    error:    ''
-                });
-                added++;
-            });
-            if (added > 0) renderQueue();
-        }
-
-        function removeFromQueue(id) {
-            if (batchRunning) return;
-            fileQueue = fileQueue.filter(q => q.id !== id);
-            renderQueue();
-        }
-
-        function renderQueue() {
-            const queueEl    = document.getElementById('fileQueue');
-            const listEl     = document.getElementById('fileQueueList');
-            const countEl    = document.getElementById('queueCount');
-            const submitBtn  = document.getElementById('submitBtn');
-            const addMoreBtn = document.getElementById('addMoreBtn');
-            const zoneInner  = document.getElementById('uploadZone');
-
-            if (fileQueue.length === 0) {
-                queueEl.style.display    = 'none';
-                submitBtn.disabled       = true;
-                addMoreBtn.style.display = 'none';
-                // Restore drop zone to default
-                zoneInner.innerHTML = `
-                    <div class="upload-icon">📂</div>
-                    <h3>Drag & Drop Files Here</h3>
-                    <p>Select one file or an entire client folder batch<br>
-                       Word, Excel, PowerPoint, PDF, Text, Markdown, CSV</p>
-                    <button class="btn" type="button">Choose Files</button>
-                `;
-                return;
-            }
-
-            // Update drop zone to show summary instead of big prompt
-            const waiting = fileQueue.filter(q => q.status === 'waiting').length;
-            zoneInner.innerHTML = `
-                <div class="upload-icon">📂</div>
-                <h3>${fileQueue.length} file${fileQueue.length !== 1 ? 's' : ''} selected</h3>
-                <p>${waiting} waiting · drag more files here to add them</p>
-                <button class="btn" type="button">Choose More Files</button>
-            `;
-
-            countEl.textContent = fileQueue.length + ' file' + (fileQueue.length !== 1 ? 's' : '');
-
-            listEl.innerHTML = fileQueue.map(q => {
-                const statusIcon = {
-                    waiting:   '<span class="fq-status waiting">⏳</span>',
-                    uploading: '<span class="fq-status uploading">🔄</span>',
-                    done:      '<span class="fq-status done">✅</span>',
-                    failed:    '<span class="fq-status failed">❌</span>'
-                }[q.status];
-
-                const metaLine = q.status === 'done'
-                    ? `${fmtSize(q.file.size)} · ${q.patterns} patterns, ${q.insights} insights`
-                    : q.status === 'failed'
-                    ? `${fmtSize(q.file.size)} · ${escapeHtml(q.error)}`
-                    : fmtSize(q.file.size);
-
-                const removeBtn = (q.status === 'waiting' && !batchRunning)
-                    ? `<button class="fq-remove" onclick="removeFromQueue('${q.id}')" title="Remove">✕</button>`
-                    : '';
-
-                return `
-                    <div class="file-queue-item ${q.status}" id="${q.id}">
-                        <span class="fq-icon">${extIcon(q.file.name)}</span>
-                        <div class="fq-info">
-                            <div class="fq-name" title="${escapeHtml(q.file.name)}">${escapeHtml(q.file.name)}</div>
-                            <div class="fq-meta">${metaLine}</div>
-                        </div>
-                        ${statusIcon}
-                        ${removeBtn}
-                    </div>
-                `;
-            }).join('');
-
-            queueEl.style.display = 'block';
-
-            const allDone = fileQueue.length > 0 && fileQueue.every(q => q.status === 'done' || q.status === 'failed');
-            submitBtn.disabled       = batchRunning || fileQueue.filter(q => q.status === 'waiting').length === 0;
-            addMoreBtn.style.display = (!batchRunning && !allDone) ? 'inline-block' : 'none';
-        }
-
-        // -----------------------------------------------------------------------
-        // Form submit
-        // -----------------------------------------------------------------------
-        function setupFormSubmit() {
-            document.getElementById('uploadForm').addEventListener('submit', async (e) => {
-                e.preventDefault();
-                const waiting = fileQueue.filter(q => q.status === 'waiting');
-                if (waiting.length === 0) { showError('No files selected'); return; }
-                await runBatch();
-            });
-        }
-
-        // -----------------------------------------------------------------------
-        // Batch upload — sequential, one file at a time
-        // -----------------------------------------------------------------------
-        async function runBatch() {
-            batchRunning = true;
-
-            const client   = document.getElementById('clientName').value.trim();
-            const industry = document.getElementById('industry').value;
-
-            const submitBtn  = document.getElementById('submitBtn');
-            const addMoreBtn = document.getElementById('addMoreBtn');
-            const spinner    = document.getElementById('spinner');
-            const progressWrap = document.getElementById('batchProgressWrap');
-            const progressBar  = document.getElementById('progressBar');
-            const progressLabel= document.getElementById('batchProgressLabel');
-            const progressPct  = document.getElementById('batchProgressPct');
-            const batchSummary = document.getElementById('batchSummary');
-
-            submitBtn.disabled       = true;
-            addMoreBtn.style.display = 'none';
-            spinner.style.display    = 'block';
-            progressWrap.style.display = 'block';
-            batchSummary.style.display = 'none';
-
-            const waiting = fileQueue.filter(q => q.status === 'waiting');
-            const total   = waiting.length;
-            let completed = 0;
-            let totalPatterns = 0;
-            let totalInsights = 0;
-            let failures = [];
-
-            for (const item of waiting) {
-                // Update status
-                item.status = 'uploading';
-                renderQueue();
-
-                progressLabel.textContent = `Uploading ${completed + 1} of ${total}: ${item.file.name}`;
-                progressPct.textContent   = Math.round((completed / total) * 100) + '%';
-                progressBar.style.width   = Math.round((completed / total) * 100) + '%';
-
-                try {
-                    const formData = new FormData();
-                    formData.append('file',     item.file);
-                    formData.append('client',   client);
-                    formData.append('industry', industry);
-                    // document_type intentionally omitted — backend auto-detects
-
-                    const response = await fetch('/api/ingest/document', {
-                        method: 'POST',
-                        body:   formData
-                    });
-                    const data = await response.json();
-
-                    if (data.success) {
-                        item.status   = 'done';
-                        item.patterns = data.patterns_extracted || 0;
-                        item.insights = data.insights_extracted || 0;
-                        totalPatterns += item.patterns;
-                        totalInsights += item.insights;
-                    } else {
-                        item.status = 'failed';
-                        item.error  = data.error || 'Upload failed';
-                        failures.push({ name: item.file.name, error: item.error });
-                    }
-                } catch (err) {
-                    item.status = 'failed';
-                    item.error  = err.message || 'Network error';
-                    failures.push({ name: item.file.name, error: item.error });
-                }
-
-                completed++;
-                renderQueue();
-            }
-
-            // Finalize progress
-            progressBar.style.width = '100%';
-            progressPct.textContent = '100%';
-            progressLabel.textContent = `Complete — ${completed} file${completed !== 1 ? 's' : ''} processed`;
-
-            spinner.style.display = 'none';
-            batchRunning = false;
-
-            // Show batch summary
-            const succeeded = completed - failures.length;
-            document.getElementById('summaryStats').innerHTML = `
-                <span class="summary-stat">📁 ${completed} files</span>
-                <span class="summary-stat">✅ ${succeeded} succeeded</span>
-                <span class="summary-stat">📊 ${totalPatterns} patterns</span>
-                <span class="summary-stat">💡 ${totalInsights} insights</span>
-            `;
-
-            const failDiv = document.getElementById('summaryFailures');
-            if (failures.length > 0) {
-                failDiv.innerHTML = '⚠️ Failed: ' + failures.map(f =>
-                    `<strong>${escapeHtml(f.name)}</strong> — ${escapeHtml(f.error)}`
-                ).join('; ');
-                failDiv.style.display = 'block';
-            } else {
-                failDiv.style.display = 'none';
-            }
-            batchSummary.style.display = 'block';
-
-            // Show "Upload More" button (re-enable adding new files)
-            submitBtn.textContent  = '🚀 Upload More Files';
-            submitBtn.disabled     = true; // stays disabled until new files added
-            addMoreBtn.style.display = 'inline-block';
-
-            // Refresh data panels
-            loadStats();
-            loadHistory();
-            loadPatterns();
-
-            // Celebration
-            if (succeeded > 0) {
-                showCelebration(succeeded, total, totalPatterns, totalInsights);
-            }
-        }
-
-        // -----------------------------------------------------------------------
-        // Stats / History / Patterns loaders
-        // -----------------------------------------------------------------------
+        // -- Download Knowledge --
         function downloadKnowledge(btn) {
             btn.disabled = true;
             btn.innerHTML = 'Preparing download...';
@@ -1121,6 +725,59 @@
             }, 3000);
         }
 
+        // -- Clear Knowledge Base --
+        async function clearKnowledgeBase(btn) {
+            // Double confirmation — this is destructive and irreversible
+            const first = confirm(
+                '⚠️ Clear Knowledge Base?\n\n' +
+                'This will permanently delete ALL ingested documents, patterns, and history.\n\n' +
+                'You will need to re-upload your documents.\n\n' +
+                'Click OK to continue.'
+            );
+            if (!first) return;
+
+            const second = confirm(
+                '🛑 FINAL CONFIRMATION\n\n' +
+                'Are you absolutely sure?\n\n' +
+                'All knowledge extracts and learned patterns will be deleted.\n\n' +
+                'Click OK to permanently clear the knowledge base.'
+            );
+            if (!second) return;
+
+            btn.disabled = true;
+            btn.innerHTML = '⏳ Clearing...';
+
+            try {
+                const response = await fetch('/api/ingest/clear', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ confirm: 'CLEAR' })
+                });
+                const data = await response.json();
+
+                if (data.success) {
+                    const deleted = data.deleted || {};
+                    alert(
+                        '✅ Knowledge base cleared!\n\n' +
+                        'Documents deleted: ' + (deleted.knowledge_extracts || 0) + '\n' +
+                        'Patterns deleted: ' + (deleted.learned_patterns || 0) + '\n' +
+                        'History entries deleted: ' + (deleted.ingestion_log || 0) + '\n\n' +
+                        'You can now re-upload your documents with improved extraction.'
+                    );
+                    loadStats();
+                    loadHistory();
+                } else {
+                    alert('❌ Clear failed: ' + (data.error || 'Unknown error'));
+                }
+            } catch (err) {
+                alert('❌ Request failed: ' + err.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '🗑️ Clear Knowledge Base';
+            }
+        }
+
+
         async function loadStats() {
             try {
                 const response = await fetch('/api/ingest/status');
@@ -1128,11 +785,11 @@
                 if (data.success) {
                     const stats  = data.stats;
                     const byType = stats.by_document_type || {};
-                    document.getElementById('totalDocs').textContent     = stats.total_extracts;
-                    document.getElementById('totalPatterns').textContent  = stats.total_patterns;
-                    document.getElementById('implDocs').textContent      = byType.implementation_manual || 0;
-                    document.getElementById('lessonDocs').textContent    = byType.lessons_learned || 0;
-                    document.getElementById('contractDocs').textContent  = (byType.contract || 0) + (byType.proposal || 0);
+                    document.getElementById('totalDocs').textContent    = stats.total_extracts;
+                    document.getElementById('totalPatterns').textContent= stats.total_patterns;
+                    document.getElementById('implDocs').textContent     = byType.implementation_manual || 0;
+                    document.getElementById('lessonDocs').textContent   = byType.lessons_learned || 0;
+                    document.getElementById('contractDocs').textContent = (byType.contract || 0) + (byType.proposal || 0);
                     document.getElementById('assessmentDocs').textContent =
                         (byType.oaf || 0) + (byType.eaf || 0);
                 }
@@ -1141,6 +798,7 @@
             }
         }
 
+        // -- Load history --
         async function loadHistory() {
             try {
                 const response = await fetch('/api/ingest/history?limit=10');
@@ -1171,6 +829,7 @@
             }
         }
 
+        // -- Load patterns --
         async function loadPatterns() {
             try {
                 const response = await fetch('/api/ingest/patterns?limit=30');
@@ -1205,23 +864,165 @@
             }
         }
 
-        // -----------------------------------------------------------------------
-        // Celebration
-        // -----------------------------------------------------------------------
-        function showCelebration(succeeded, total, totalPatterns, totalInsights) {
-            const isBatch = total > 1;
+        // -- Drag & Drop --
+        // FIXED February 26, 2026:
+        // All listeners are attached to the stable outer elements (uploadZone div
+        // and fileInput). resetForm() and handleFileSelect() only replace innerHTML
+        // inside uploadZone - the div itself and the fileInput element are never
+        // removed from the DOM, so all listeners survive across uploads.
+        // Inline onclick removed from dynamically-generated button HTML to avoid
+        // duplicate triggers. A single click listener on uploadZone handles all
+        // "Choose File" / "Change File" clicks anywhere in the zone.
+        function setupDragDrop() {
+            const uploadZone = document.getElementById('uploadZone');
+            const fileInput  = document.getElementById('fileInput');
 
-            document.getElementById('celebrationTitle').textContent =
-                isBatch ? 'Batch Complete! 🎉' : 'Knowledge Extracted!';
+            // Click anywhere in the zone to open file picker
+            // stopPropagation not needed - fileInput is outside uploadZone
+            uploadZone.addEventListener('click', (e) => {
+                // Don't double-trigger if the click is on the button inside the zone
+                // (button has no special handling - we just always trigger the input)
+                fileInput.value = '';   // Reset so same file can be re-selected
+                fileInput.click();
+            });
 
-            document.getElementById('celebrationMessage').innerHTML = isBatch
-                ? `${succeeded} of ${total} files ingested &nbsp;
-                   📊 ${totalPatterns} patterns extracted &nbsp;
-                   💡 ${totalInsights} insights captured`
-                : `📊 ${totalPatterns} patterns extracted &nbsp;
-                   💡 ${totalInsights} insights captured`;
+            uploadZone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                uploadZone.classList.add('dragover');
+            });
+            uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+            uploadZone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                uploadZone.classList.remove('dragover');
+                if (e.dataTransfer.files.length > 0) handleFileSelect(e.dataTransfer.files[0]);
+            });
 
-            document.getElementById('celebrationHighlights').style.display = 'none';
+            // fileInput change fires whenever the OS file picker confirms a selection
+            fileInput.addEventListener('change', (e) => {
+                if (e.target.files.length > 0) handleFileSelect(e.target.files[0]);
+            });
+        }
+
+        // -- File selection --
+        function handleFileSelect(file) {
+            selectedFile = file;
+            const ext = file.name.split('.').pop().toLowerCase();
+            const icons = { pptx: '📊', ppt: '📊', xlsx: '📈', xls: '📈',
+                            pdf: '📕', docx: '📝', doc: '📝', md: '📄', csv: '📊' };
+            const icon = icons[ext] || '📄';
+
+            // Auto-select document type based on extension
+            const docTypeSelect = document.getElementById('documentType');
+            if ((ext === 'pptx' || ext === 'ppt') && docTypeSelect.value === '') {
+                // Leave for user to pick OAF / EAF / implementation_ppt
+            } else if ((ext === 'xlsx' || ext === 'xls') && docTypeSelect.value === '') {
+                // Leave for user to pick schedule_pattern / data_file
+            }
+
+            document.getElementById('uploadZone').innerHTML = `
+                <div class="upload-icon">${icon}</div>
+                <h3>${escapeHtml(file.name)}</h3>
+                <p>${(file.size / 1024).toFixed(1)} KB - click zone or button to change</p>
+                <button class="btn" type="button">Change File</button>
+            `;
+        }
+
+        // -- Form submission --
+        function setupFormSubmit() {
+            document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                if (!selectedFile) { showError('Please select a file first'); return; }
+                const documentType = document.getElementById('documentType').value;
+                if (!documentType) { showError('Please select a document type'); return; }
+                await uploadDocument();
+            });
+        }
+
+        // -- Upload --
+        async function uploadDocument() {
+            const formData = new FormData();
+            formData.append('file',          selectedFile);
+            formData.append('document_type', document.getElementById('documentType').value);
+            formData.append('client',        document.getElementById('clientName').value);
+            formData.append('industry',      document.getElementById('industry').value);
+
+            document.getElementById('spinner').style.display       = 'block';
+            document.getElementById('submitBtn').disabled           = true;
+            document.getElementById('uploadProgress').style.display = 'block';
+            document.getElementById('highlightsPanel').style.display= 'none';
+
+            let progress = 0;
+            const progressInterval = setInterval(() => {
+                progress += 5;
+                if (progress <= 90)
+                    document.getElementById('progressBar').style.width = progress + '%';
+            }, 100);
+
+            try {
+                const response = await fetch('/api/ingest/document',
+                    { method: 'POST', body: formData });
+                const data = await response.json();
+
+                clearInterval(progressInterval);
+                document.getElementById('progressBar').style.width = '100%';
+
+                setTimeout(() => {
+                    document.getElementById('spinner').style.display       = 'none';
+                    document.getElementById('submitBtn').disabled           = false;
+                    document.getElementById('uploadProgress').style.display = 'none';
+                    document.getElementById('progressBar').style.width      = '0%';
+
+                    if (data.success) {
+                        showSuccess(data.message || 'Document ingested successfully');
+                        showHighlights(data.highlights || []);
+                        showCelebration(data);
+                        resetForm();
+                        loadStats();
+                        loadHistory();
+                        loadPatterns();
+                    } else {
+                        showError(data.error || 'Upload failed');
+                    }
+                }, 500);
+
+            } catch (error) {
+                clearInterval(progressInterval);
+                document.getElementById('spinner').style.display       = 'none';
+                document.getElementById('submitBtn').disabled           = false;
+                document.getElementById('uploadProgress').style.display = 'none';
+                showError('Upload failed: ' + error.message);
+            }
+        }
+
+        // -- Highlights panel --
+        function showHighlights(highlights) {
+            const panel = document.getElementById('highlightsPanel');
+            const list  = document.getElementById('highlightsList');
+            if (!highlights || highlights.length === 0) { panel.style.display = 'none'; return; }
+            list.innerHTML = highlights.map(h =>
+                `<li>${escapeHtml(h)}</li>`
+            ).join('');
+            panel.style.display = 'block';
+        }
+
+        // -- Celebration --
+        function showCelebration(data) {
+            document.getElementById('celebrationMessage').innerHTML =
+                `${data.patterns_extracted || 0} patterns extracted &nbsp;
+                 💡 ${data.insights_extracted || 0} insights captured &nbsp;
+                 📊 ${data.total_patterns || 0} total patterns in knowledge base`;
+
+            const highlightsList = document.getElementById('celebrationHighlights');
+            const highlights = data.highlights || [];
+            if (highlights.length > 0) {
+                highlightsList.innerHTML = highlights.map(h =>
+                    `<li>${escapeHtml(h)}</li>`
+                ).join('');
+                highlightsList.style.display = 'block';
+            } else {
+                highlightsList.style.display = 'none';
+            }
+
             document.getElementById('overlay').style.display     = 'block';
             document.getElementById('celebration').style.display = 'block';
 
@@ -1231,9 +1032,14 @@
             }, 4000);
         }
 
-        // -----------------------------------------------------------------------
-        // Helpers
-        // -----------------------------------------------------------------------
+        // -- Helpers --
+        function showSuccess(message) {
+            const alert = document.getElementById('successAlert');
+            alert.textContent = message;
+            alert.style.display = 'block';
+            setTimeout(() => alert.style.display = 'none', 6000);
+        }
+
         function showError(message) {
             const alert = document.getElementById('errorAlert');
             alert.textContent = message;
@@ -1248,6 +1054,18 @@
                 .replace(/</g, '&lt;')
                 .replace(/>/g, '&gt;')
                 .replace(/"/g, '&quot;');
+        }
+
+        function resetForm() {
+            selectedFile = null;
+            document.getElementById('uploadForm').reset();
+            document.getElementById('docTypeHint').textContent = '';
+            document.getElementById('uploadZone').innerHTML = `
+                <div class="upload-icon">📄</div>
+                <h3>Drag & Drop Document</h3>
+                <p>Word (.docx), Excel (.xlsx), PowerPoint (.pptx), PDF, Text, Markdown, CSV</p>
+                <button class="btn" type="button">Choose File</button>
+            `;
         }
     </script>
 </body>
