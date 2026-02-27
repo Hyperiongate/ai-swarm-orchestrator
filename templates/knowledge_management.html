@@ -5,42 +5,43 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Knowledge Management - Shiftwork Solutions AI Swarm</title>
     <!--
-        Last Updated: February 26, 2026
+        Last Updated: February 27, 2026
+
+        CHANGES - February 27, 2026:
+          * FIXED: Could not add multiple files. Drag and drop only accepted the
+            first file (files[0]). File picker had no 'multiple' attribute.
+            No queue existed - selectedFile was a single File object.
+          * SOLUTION:
+            - selectedFile (single File) replaced with fileQueue (File[] array)
+            - addFilesToQueue(File[]) handles deduplication by name+size and
+              skips unsupported extensions with a warning
+            - removeFromQueue(index, event) removes individual files from queue
+            - renderFileQueue() updates the upload zone UI with a scrollable
+              list of queued files and an Add More Files button
+            - drop handler: Array.from(e.dataTransfer.files) passed to addFilesToQueue
+            - fileInput: added multiple attribute; change handler passes all files
+            - uploadDocuments() routes to uploadSingle() for 1 file or
+              uploadBatch() for 2+ files; batch posts to /api/ingest/batch
+            - showBatchResults() renders per-file result table
+            - showCelebrationBatch() handles batch celebration popup
+          * All single-file functionality preserved: same form fields, same
+            document type hints, same highlights panel, same celebration popup.
+          * Added CSS: .queue-list, .queue-item, .queue-remove, .queue-header,
+            .batch-results, .batch-results-table, .badge-ok, .badge-fail
 
         CHANGES - February 26, 2026 (second update):
-          * FIXED: After uploading a file, clicking "Choose File" / "Change File"
-            did nothing - could not select a second file without refreshing the page.
-            ROOT CAUSE: setupDragDrop() attached dragover/dragleave/drop listeners to
-            the uploadZone div, but NO click listener. The "Choose File" button used
-            inline onclick="document.getElementById('fileInput').click()" which worked
-            on the initial render. After handleFileSelect() or resetForm() replaced
-            uploadZone.innerHTML, the new button had the same inline onclick - but
-            calling .click() on the file input element after an upload sometimes fails
-            silently due to browser security restrictions on repeated programmatic
-            .click() calls on the same input element.
-            FIX: (1) Added click listener directly on uploadZone div in setupDragDrop()
-            so ANY click anywhere in the zone opens the file picker. (2) Added
-            fileInput.value = '' before .click() so the same file can be re-selected.
-            (3) Removed all inline onclick attributes from dynamically generated button
-            HTML - the zone listener handles all clicks now.
+          * FIXED: After uploading, clicking Choose File / Change File did nothing.
+            Added click listener on uploadZone and fileInput.value reset.
 
         CHANGES - February 26, 2026 (first update):
-          * Added all new document types to dropdown:
-              scope_of_work, implementation_ppt, schedule_pattern, data_file, general_word
-          * Removed 'proposal' as separate type - proposal is now aliased to contract
-            in routes/ingest.py so both get the full contract extractor treatment
-          * Added full industry list covering all industries Shiftwork Solutions serves:
-              Chemical, Oil & Gas, Utilities, Paper/Pulp, Metals/Steel, Refinery,
-              Plastics, Aerospace, Automotive added alongside existing industries
-          * Added highlights display in celebration popup and success message -
-            extractors now return what they actually found (client name, fee, patterns)
-          * Added highlights panel below upload form showing extraction results
-          * Document type select now includes descriptive labels explaining what
-            each type extracts so users pick the right one
+          * Added all new document types to dropdown (scope_of_work, etc.)
+          * Added full industry list
+          * Added highlights display in celebration popup
+          * Document type hints describing what each type extracts
 
         CHANGES - February 22, 2026:
-          * Fixed Download Knowledge button (window.location.href instead of fetch)
-          * Added PowerPoint file type support messaging and icons
+          * Fixed Download Knowledge button (window.location.href)
+          * Added PowerPoint file type support
           * Fixed JavaScript null reference in downloadKnowledge()
     -->
     <style>
@@ -165,15 +166,24 @@
             padding-bottom: 10px;
         }
 
-        /* Upload Zone */
+        /* -------------------------------------------------------
+           UPLOAD ZONE
+           min-height keeps the zone tall even when the queue is
+           short. flexbox centers content vertically.
+        ------------------------------------------------------- */
         .upload-zone {
             border: 3px dashed #667eea;
             border-radius: 12px;
-            padding: 40px;
+            padding: 25px 20px;
             text-align: center;
             cursor: pointer;
             transition: all 0.3s ease;
             background: #f8f9ff;
+            min-height: 140px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
         }
 
         .upload-zone.dragover {
@@ -183,17 +193,91 @@
         }
 
         .upload-zone:hover { background: #e8ebff; }
-        .upload-icon { font-size: 4em; margin-bottom: 15px; }
+
+        .upload-icon { font-size: 3em; margin-bottom: 10px; }
 
         .upload-zone h3 {
             color: #667eea;
-            margin-bottom: 10px;
-            font-size: 1.3em;
+            margin-bottom: 8px;
+            font-size: 1.2em;
         }
 
-        .upload-zone p { color: #666; margin-bottom: 20px; }
+        .upload-zone p {
+            color: #666;
+            margin-bottom: 15px;
+            font-size: 0.88em;
+            line-height: 1.5;
+        }
+
         .file-input { display: none; }
 
+        /* -------------------------------------------------------
+           FILE QUEUE (rendered inside upload-zone when files
+           are selected)
+        ------------------------------------------------------- */
+        .queue-header {
+            font-weight: 700;
+            color: #333;
+            font-size: 0.95em;
+            margin-bottom: 8px;
+            width: 100%;
+            text-align: left;
+        }
+
+        .queue-list {
+            width: 100%;
+            max-height: 190px;
+            overflow-y: auto;
+            margin-bottom: 4px;
+        }
+
+        .queue-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 10px;
+            background: white;
+            border: 1px solid #e0e8ff;
+            border-radius: 6px;
+            margin-bottom: 4px;
+            font-size: 0.87em;
+            text-align: left;
+        }
+
+        .queue-icon { font-size: 1.15em; flex-shrink: 0; }
+
+        .queue-name {
+            flex: 1;
+            color: #333;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .queue-size {
+            color: #aaa;
+            flex-shrink: 0;
+            font-size: 0.85em;
+        }
+
+        .queue-remove {
+            background: none;
+            border: none;
+            color: #dc3545;
+            cursor: pointer;
+            font-size: 0.95em;
+            padding: 1px 5px;
+            flex-shrink: 0;
+            border-radius: 3px;
+            transition: background 0.2s;
+            line-height: 1;
+        }
+
+        .queue-remove:hover { background: #f8d7da; }
+
+        /* -------------------------------------------------------
+           BUTTONS
+        ------------------------------------------------------- */
         .btn {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
@@ -218,6 +302,14 @@
             transform: none;
         }
 
+        .btn-sm {
+            padding: 8px 18px;
+            font-size: 0.87em;
+        }
+
+        /* -------------------------------------------------------
+           FORM
+        ------------------------------------------------------- */
         .form-group { margin-bottom: 20px; }
 
         .form-group label {
@@ -250,7 +342,9 @@
             font-style: italic;
         }
 
-        /* Progress */
+        /* -------------------------------------------------------
+           PROGRESS BAR
+        ------------------------------------------------------- */
         .progress {
             background: #f0f0f0;
             border-radius: 10px;
@@ -267,7 +361,9 @@
             transition: width 0.3s ease;
         }
 
-        /* Alerts */
+        /* -------------------------------------------------------
+           ALERTS
+        ------------------------------------------------------- */
         .alert {
             padding: 15px 20px;
             border-radius: 8px;
@@ -285,7 +381,9 @@
         .alert-error   { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
         .alert-info    { background: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
 
-        /* Highlights panel - shown after successful ingest */
+        /* -------------------------------------------------------
+           HIGHLIGHTS PANEL (single file)
+        ------------------------------------------------------- */
         .highlights-panel {
             background: #f0f4ff;
             border: 1px solid #667eea;
@@ -303,10 +401,7 @@
             letter-spacing: 0.5px;
         }
 
-        .highlights-panel ul {
-            list-style: none;
-            padding: 0;
-        }
+        .highlights-panel ul { list-style: none; padding: 0; }
 
         .highlights-panel li {
             padding: 4px 0;
@@ -318,7 +413,59 @@
         .highlights-panel li:last-child { border-bottom: none; }
         .highlights-panel li::before { content: "✓ "; color: #667eea; font-weight: bold; }
 
-        /* Patterns List */
+        /* -------------------------------------------------------
+           BATCH RESULTS TABLE
+        ------------------------------------------------------- */
+        .batch-results {
+            background: #f8f9ff;
+            border: 1px solid #667eea;
+            border-radius: 8px;
+            padding: 15px 20px;
+            margin-top: 15px;
+            display: none;
+        }
+
+        .batch-results h4 {
+            color: #667eea;
+            font-size: 0.95em;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .batch-results-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.86em;
+        }
+
+        .batch-results-table th {
+            background: #667eea;
+            color: white;
+            padding: 8px 10px;
+            text-align: left;
+            font-weight: 600;
+        }
+
+        .batch-results-table th:first-child { border-radius: 4px 0 0 0; }
+        .batch-results-table th:last-child  { border-radius: 0 4px 0 0; }
+
+        .batch-results-table td {
+            padding: 7px 10px;
+            border-bottom: 1px solid #e0e0e0;
+            vertical-align: middle;
+        }
+
+        .batch-results-table tr:last-child td { border-bottom: none; }
+        .batch-results-table tr.row-success td { background: #f0fff4; }
+        .batch-results-table tr.row-error   td { background: #fff5f5; }
+
+        .badge-ok   { color: #155724; font-weight: 700; }
+        .badge-fail { color: #721c24; font-weight: 700; }
+
+        /* -------------------------------------------------------
+           PATTERNS LIST
+        ------------------------------------------------------- */
         .patterns-list { max-height: 500px; overflow-y: auto; }
 
         .pattern-item {
@@ -375,7 +522,9 @@
             transition: width 0.5s ease;
         }
 
-        /* History List */
+        /* -------------------------------------------------------
+           HISTORY LIST
+        ------------------------------------------------------- */
         .history-list { max-height: 500px; overflow-y: auto; }
 
         .history-item {
@@ -404,7 +553,9 @@
             font-weight: 600;
         }
 
-        /* Loading Spinner */
+        /* -------------------------------------------------------
+           SPINNER
+        ------------------------------------------------------- */
         .spinner {
             border: 4px solid #f3f3f3;
             border-top: 4px solid #667eea;
@@ -420,16 +571,9 @@
             100% { transform: rotate(360deg); }
         }
 
-        /* Responsive */
-        @media (max-width: 768px) {
-            .main-grid   { grid-template-columns: 1fr; }
-            .stats-grid  { grid-template-columns: 1fr; }
-            .header h1   { font-size: 1.8em; }
-            .card        { padding: 20px; }
-            .header-nav  { position: static; justify-content: center; margin-top: 20px; }
-        }
-
-        /* Celebration Effect */
+        /* -------------------------------------------------------
+           CELEBRATION
+        ------------------------------------------------------- */
         .celebration {
             position: fixed;
             top: 50%; left: 50%;
@@ -442,7 +586,7 @@
             z-index: 1000;
             display: none;
             animation: popIn 0.5s ease;
-            max-width: 500px;
+            max-width: 520px;
             width: 90%;
         }
 
@@ -451,7 +595,7 @@
             100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
         }
 
-        .celebration h2   { color: #667eea; font-size: 2em; margin-bottom: 10px; }
+        .celebration h2    { color: #667eea; font-size: 2em; margin-bottom: 10px; }
         .celebration .icon { font-size: 5em; margin-bottom: 20px; }
 
         .celebration .highlights {
@@ -480,594 +624,844 @@
             display: none;
         }
 
-        /* optgroup styling */
+        /* optgroup / option */
         optgroup { font-weight: 700; color: #444; }
         option   { font-weight: 400; color: #333; }
+
+        /* -------------------------------------------------------
+           RESPONSIVE
+        ------------------------------------------------------- */
+        @media (max-width: 768px) {
+            .main-grid  { grid-template-columns: 1fr; }
+            .stats-grid { grid-template-columns: 1fr; }
+            .header h1  { font-size: 1.8em; }
+            .card       { padding: 20px; }
+            .header-nav { position: static; justify-content: center; margin-top: 20px; }
+        }
     </style>
 </head>
 <body>
-    <div class="container">
+<div class="container">
 
-        <!-- Header -->
-        <div class="header">
-            <div class="header-nav">
-                <a href="/" class="nav-btn">← Back to Main</a>
-                <button class="nav-btn" id="downloadBtn" onclick="downloadKnowledge(this)">
-                    📥 Download Knowledge
+    <!-- ===================================================================
+         HEADER
+    =================================================================== -->
+    <div class="header">
+        <div class="header-nav">
+            <a href="/" class="nav-btn">&#8592; Back to Main</a>
+            <button class="nav-btn" id="downloadBtn" onclick="downloadKnowledge(this)">
+                &#128229; Download Knowledge
+            </button>
+            <button class="nav-btn" id="clearBtn" onclick="clearKnowledgeBase(this)"
+                    style="background:#dc3545;color:#fff;border:none;cursor:pointer;">
+                &#128465;&#65039; Clear Knowledge Base
+            </button>
+        </div>
+        <h1>&#129504; Knowledge Management</h1>
+        <p>Shoulders of Giants - Cumulative Learning System</p>
+    </div>
+
+    <!-- ===================================================================
+         STATS DASHBOARD
+    =================================================================== -->
+    <div class="stats-grid" id="statsGrid">
+        <div class="stat-card">
+            <h3>Total Documents</h3>
+            <div class="value" id="totalDocs">0</div>
+            <div class="label">ingested forever</div>
+        </div>
+        <div class="stat-card">
+            <h3>Learned Patterns</h3>
+            <div class="value" id="totalPatterns">0</div>
+            <div class="label">growing stronger</div>
+        </div>
+        <div class="stat-card">
+            <h3>Implementation Manuals</h3>
+            <div class="value" id="implDocs">0</div>
+            <div class="label">client projects</div>
+        </div>
+        <div class="stat-card">
+            <h3>Lessons Learned</h3>
+            <div class="value" id="lessonDocs">0</div>
+            <div class="label">consulting wisdom</div>
+        </div>
+        <div class="stat-card">
+            <h3>Contracts</h3>
+            <div class="value" id="contractDocs">0</div>
+            <div class="label">engagement terms</div>
+        </div>
+        <div class="stat-card">
+            <h3>Assessments</h3>
+            <div class="value" id="assessmentDocs">0</div>
+            <div class="label">OAF + EAF combined</div>
+        </div>
+    </div>
+
+    <!-- ===================================================================
+         MAIN GRID
+    =================================================================== -->
+    <div class="main-grid">
+
+        <!-- UPLOAD SECTION -->
+        <div class="card">
+            <h2>&#128228; Upload Document</h2>
+
+            <div class="alert alert-success" id="successAlert"></div>
+            <div class="alert alert-error"   id="errorAlert"></div>
+
+            <!--
+                uploadZone: clicking anywhere opens the multi-file picker UNLESS
+                the click is on a .queue-remove button (handled in JS).
+                fileInput sits OUTSIDE the zone to prevent nested-element issues.
+                The 'multiple' attribute allows selecting many files at once.
+            -->
+            <div class="upload-zone" id="uploadZone">
+                <div class="upload-icon">&#128196;</div>
+                <h3>Drag &amp; Drop Documents</h3>
+                <p>Word (.docx), Excel (.xlsx), PowerPoint (.pptx), PDF, Text, Markdown, CSV<br>
+                   <em>Multiple files supported &#8212; drop several at once</em></p>
+                <button class="btn" type="button">Choose Files</button>
+            </div>
+            <input type="file" id="fileInput" class="file-input" multiple
+                   accept=".txt,.md,.pdf,.docx,.doc,.xlsx,.xls,.csv,.json,.pptx,.ppt">
+
+            <div class="progress" id="uploadProgress">
+                <div class="progress-bar" id="progressBar"></div>
+            </div>
+
+            <!-- Highlights panel: shown after single-file ingest -->
+            <div class="highlights-panel" id="highlightsPanel">
+                <h4>&#128203; What Was Extracted</h4>
+                <ul id="highlightsList"></ul>
+            </div>
+
+            <!-- Batch results: shown after multi-file ingest -->
+            <div class="batch-results" id="batchResults">
+                <h4>&#128203; Batch Results</h4>
+                <table class="batch-results-table">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Status</th>
+                            <th>Patterns</th>
+                            <th>Insights</th>
+                        </tr>
+                    </thead>
+                    <tbody id="batchResultsBody"></tbody>
+                </table>
+            </div>
+
+            <form id="uploadForm" style="margin-top:25px;">
+
+                <div class="form-group">
+                    <label for="documentType">Document Type *</label>
+                    <select id="documentType" required>
+                        <option value="">- Select Document Type -</option>
+
+                        <optgroup label="-- Word Documents --">
+                            <option value="contract">Contract / Engagement Agreement</option>
+                            <option value="implementation_manual">Implementation Manual</option>
+                            <option value="lessons_learned">Lessons Learned</option>
+                            <option value="scope_of_work">Scope of Work</option>
+                            <option value="general_word">General Word Document</option>
+                        </optgroup>
+
+                        <optgroup label="-- PowerPoint Presentations --">
+                            <option value="oaf">Operations Assessment (OAF)</option>
+                            <option value="eaf">Employee Assessment (EAF)</option>
+                            <option value="implementation_ppt">Implementation Presentation</option>
+                        </optgroup>
+
+                        <optgroup label="-- Excel Files --">
+                            <option value="schedule_pattern">Schedule Pattern File</option>
+                            <option value="data_file">Data File (Labor / Overtime / Cost)</option>
+                        </optgroup>
+                    </select>
+                    <div class="hint" id="docTypeHint"></div>
+                </div>
+
+                <div class="form-group">
+                    <label for="clientName">Client Name (optional)</label>
+                    <input type="text" id="clientName"
+                           placeholder="e.g., Andersen, ChemDesign, Reckitt">
+                </div>
+
+                <div class="form-group">
+                    <label for="industry">Industry (optional)</label>
+                    <select id="industry">
+                        <option value="">- Select Industry -</option>
+                        <optgroup label="-- Process Industries --">
+                            <option value="chemical">Chemical</option>
+                            <option value="pharmaceutical">Pharmaceutical</option>
+                            <option value="food_processing">Food Processing</option>
+                            <option value="refinery">Refinery / Petroleum</option>
+                            <option value="oil_gas">Oil &amp; Gas</option>
+                            <option value="plastics">Plastics / Rubber</option>
+                            <option value="paper_pulp">Paper / Pulp</option>
+                        </optgroup>
+                        <optgroup label="-- Manufacturing --">
+                            <option value="manufacturing">General Manufacturing</option>
+                            <option value="automotive">Automotive</option>
+                            <option value="aerospace">Aerospace / Defense</option>
+                            <option value="metals">Metals / Steel</option>
+                            <option value="electronics">Electronics</option>
+                        </optgroup>
+                        <optgroup label="-- Extraction &amp; Energy --">
+                            <option value="mining">Mining</option>
+                            <option value="utilities">Utilities / Power</option>
+                        </optgroup>
+                        <optgroup label="-- Other --">
+                            <option value="distribution">Distribution / Warehousing</option>
+                            <option value="healthcare">Healthcare</option>
+                            <option value="other">Other</option>
+                        </optgroup>
+                    </select>
+                </div>
+
+                <button type="submit" class="btn" id="submitBtn" style="width:100%;">
+                    &#128640; Ingest Document
                 </button>
-                <button class="nav-btn" id="clearBtn" onclick="clearKnowledgeBase(this)"
-                        style="background:#dc3545; color:#fff; border:none; cursor:pointer;">
-                    🗑️ Clear Knowledge Base
-                </button>
-            </div>
-            <h1>🧠 Knowledge Management</h1>
-            <p>Shoulders of Giants - Cumulative Learning System</p>
+            </form>
+
+            <div class="spinner" id="spinner"></div>
         </div>
 
-        <!-- Stats Dashboard -->
-        <div class="stats-grid" id="statsGrid">
-            <div class="stat-card">
-                <h3>Total Documents</h3>
-                <div class="value" id="totalDocs">0</div>
-                <div class="label">ingested forever</div>
-            </div>
-            <div class="stat-card">
-                <h3>Learned Patterns</h3>
-                <div class="value" id="totalPatterns">0</div>
-                <div class="label">growing stronger</div>
-            </div>
-            <div class="stat-card">
-                <h3>Implementation Manuals</h3>
-                <div class="value" id="implDocs">0</div>
-                <div class="label">client projects</div>
-            </div>
-            <div class="stat-card">
-                <h3>Lessons Learned</h3>
-                <div class="value" id="lessonDocs">0</div>
-                <div class="label">consulting wisdom</div>
-            </div>
-            <div class="stat-card">
-                <h3>Contracts</h3>
-                <div class="value" id="contractDocs">0</div>
-                <div class="label">engagement terms</div>
-            </div>
-            <div class="stat-card">
-                <h3>Assessments</h3>
-                <div class="value" id="assessmentDocs">0</div>
-                <div class="label">OAF + EAF combined</div>
-            </div>
-        </div>
-
-        <!-- Main Grid -->
-        <div class="main-grid">
-
-            <!-- Upload Section -->
-            <div class="card">
-                <h2>📤 Upload Document</h2>
-
-                <div class="alert alert-success" id="successAlert"></div>
-                <div class="alert alert-error"   id="errorAlert"></div>
-
-                <div class="upload-zone" id="uploadZone">
-                    <div class="upload-icon">📄</div>
-                    <h3>Drag & Drop Document</h3>
-                    <p>Word (.docx), Excel (.xlsx), PowerPoint (.pptx), PDF, Text, Markdown, CSV</p>
-                    <button class="btn" type="button">
-                        Choose File
-                    </button>
-                    <input type="file" id="fileInput" class="file-input"
-                           accept=".txt,.md,.pdf,.docx,.doc,.xlsx,.xls,.csv,.json,.pptx,.ppt">
-                </div>
-
-                <div class="progress" id="uploadProgress">
-                    <div class="progress-bar" id="progressBar"></div>
-                </div>
-
-                <!-- Highlights panel - shown after successful ingest -->
-                <div class="highlights-panel" id="highlightsPanel">
-                    <h4>📋 What Was Extracted</h4>
-                    <ul id="highlightsList"></ul>
-                </div>
-
-                <form id="uploadForm" style="margin-top: 25px;">
-
-                    <div class="form-group">
-                        <label for="documentType">Document Type *</label>
-                        <select id="documentType" required>
-                            <option value="">- Select Document Type -</option>
-
-                            <optgroup label="-- Word Documents --">
-                                <option value="contract">Contract / Engagement Agreement</option>
-                                <option value="implementation_manual">Implementation Manual</option>
-                                <option value="lessons_learned">Lessons Learned</option>
-                                <option value="scope_of_work">Scope of Work</option>
-                                <option value="general_word">General Word Document</option>
-                            </optgroup>
-
-                            <optgroup label="-- PowerPoint Presentations --">
-                                <option value="oaf">Operations Assessment (OAF)</option>
-                                <option value="eaf">Employee Assessment (EAF)</option>
-                                <option value="implementation_ppt">Implementation Presentation</option>
-                            </optgroup>
-
-                            <optgroup label="-- Excel Files --">
-                                <option value="schedule_pattern">Schedule Pattern File</option>
-                                <option value="data_file">Data File (Labor / Overtime / Cost)</option>
-                            </optgroup>
-
-                        </select>
-                        <div class="hint" id="docTypeHint"></div>
-                    </div>
-
-                    <div class="form-group">
-                        <label for="clientName">Client Name (optional)</label>
-                        <input type="text" id="clientName"
-                               placeholder="e.g., Andersen, ChemDesign, Reckitt">
-                    </div>
-
-                    <div class="form-group">
-                        <label for="industry">Industry (optional)</label>
-                        <select id="industry">
-                            <option value="">- Select Industry -</option>
-                            <optgroup label="-- Process Industries --">
-                                <option value="chemical">Chemical</option>
-                                <option value="pharmaceutical">Pharmaceutical</option>
-                                <option value="food_processing">Food Processing</option>
-                                <option value="refinery">Refinery / Petroleum</option>
-                                <option value="oil_gas">Oil & Gas</option>
-                                <option value="plastics">Plastics / Rubber</option>
-                                <option value="paper_pulp">Paper / Pulp</option>
-                            </optgroup>
-                            <optgroup label="-- Manufacturing --">
-                                <option value="manufacturing">General Manufacturing</option>
-                                <option value="automotive">Automotive</option>
-                                <option value="aerospace">Aerospace / Defense</option>
-                                <option value="metals">Metals / Steel</option>
-                                <option value="electronics">Electronics</option>
-                            </optgroup>
-                            <optgroup label="-- Extraction & Energy --">
-                                <option value="mining">Mining</option>
-                                <option value="utilities">Utilities / Power</option>
-                            </optgroup>
-                            <optgroup label="-- Other --">
-                                <option value="distribution">Distribution / Warehousing</option>
-                                <option value="healthcare">Healthcare</option>
-                                <option value="other">Other</option>
-                            </optgroup>
-                        </select>
-                    </div>
-
-                    <button type="submit" class="btn" id="submitBtn" style="width:100%;">
-                        🚀 Ingest Document
-                    </button>
-                </form>
-
-                <div class="spinner" id="spinner"></div>
-            </div>
-
-            <!-- Recent Activity -->
-            <div class="card">
-                <h2>📊 Recent Ingestions</h2>
-                <div class="history-list" id="historyList">
-                    <p style="text-align:center;color:#999;padding:40px;">
-                        Loading recent activity...
-                    </p>
-                </div>
-            </div>
-        </div>
-
-        <!-- Learned Patterns -->
-        <div class="card" style="margin-bottom:30px;">
-            <h2>🎯 Learned Patterns</h2>
-            <div class="patterns-list" id="patternsList">
+        <!-- RECENT ACTIVITY -->
+        <div class="card">
+            <h2>&#128202; Recent Ingestions</h2>
+            <div class="history-list" id="historyList">
                 <p style="text-align:center;color:#999;padding:40px;">
-                    Loading patterns...
+                    Loading recent activity...
                 </p>
             </div>
         </div>
-
-    </div><!-- /container -->
-
-    <!-- Celebration Overlay -->
-    <div class="overlay"     id="overlay"></div>
-    <div class="celebration" id="celebration">
-        <div class="icon">🎉</div>
-        <h2>Knowledge Extracted!</h2>
-        <p id="celebrationMessage"></p>
-        <ul class="highlights" id="celebrationHighlights" style="display:none;"></ul>
     </div>
 
-    <script>
-        // -- Document type hints --
-        const DOC_TYPE_HINTS = {
-            'contract':            'Extracts: client name, total fee, payment milestones, engagement weeks',
-            'implementation_manual': 'Extracts: schedule patterns, shift lengths, start times, appendices',
-            'lessons_learned':     'Extracts: each lesson individually with category, situation, key principle',
-            'scope_of_work':       'Extracts: client, weekly deliverables, total cost, pre-project requirements',
-            'general_word':        'Extracts: headings, dollar amounts, schedule patterns, section structure',
-            'oaf':                 'Extracts: overtime %, headcount, operational metrics (full extractor coming)',
-            'eaf':                 'Extracts: satisfaction scores, response rates (full extractor coming)',
-            'implementation_ppt':  'Extracts: schedule patterns implemented (full extractor coming)',
-            'schedule_pattern':    'Extracts: shift grid data (full extractor coming with Excel sample)',
-            'data_file':           'Extracts: labor/overtime/cost data (full extractor coming with Excel sample)'
-        };
+    <!-- LEARNED PATTERNS -->
+    <div class="card" style="margin-bottom:30px;">
+        <h2>&#127919; Learned Patterns</h2>
+        <div class="patterns-list" id="patternsList">
+            <p style="text-align:center;color:#999;padding:40px;">
+                Loading patterns...
+            </p>
+        </div>
+    </div>
 
-        // Global state
-        let selectedFile = null;
+</div><!-- /container -->
 
-        // -- Initialize --
-        document.addEventListener('DOMContentLoaded', function() {
+<!-- Celebration overlay -->
+<div class="overlay"     id="overlay"></div>
+<div class="celebration" id="celebration">
+    <div class="icon">&#127881;</div>
+    <h2 id="celebrationTitle">Knowledge Extracted!</h2>
+    <p  id="celebrationMessage"></p>
+    <ul class="highlights" id="celebrationHighlights" style="display:none;"></ul>
+</div>
+
+<script>
+// ===========================================================================
+// DOCUMENT TYPE HINTS
+// ===========================================================================
+var DOC_TYPE_HINTS = {
+    'contract':              'Extracts: client name, total fee, payment milestones, engagement weeks',
+    'implementation_manual': 'Extracts: schedule patterns, shift lengths, start times, appendices',
+    'lessons_learned':       'Extracts: each lesson individually with category, situation, key principle',
+    'scope_of_work':         'Extracts: client, weekly deliverables, total cost, pre-project requirements',
+    'general_word':          'Extracts: headings, dollar amounts, schedule patterns, section structure',
+    'oaf':                   'Extracts: overtime %, headcount, operational metrics (full extractor coming)',
+    'eaf':                   'Extracts: satisfaction scores, response rates (full extractor coming)',
+    'implementation_ppt':    'Extracts: schedule patterns implemented (full extractor coming)',
+    'schedule_pattern':      'Extracts: shift grid data (full extractor coming with Excel sample)',
+    'data_file':             'Extracts: labor/overtime/cost data (full extractor coming with Excel sample)'
+};
+
+// ===========================================================================
+// FILE QUEUE STATE
+// Changed February 27, 2026: was single selectedFile, now fileQueue array.
+// ===========================================================================
+var fileQueue = [];   // Array of File objects
+
+// ===========================================================================
+// INITIALIZE
+// ===========================================================================
+document.addEventListener('DOMContentLoaded', function() {
+    loadStats();
+    loadHistory();
+    loadPatterns();
+    setupDragDrop();
+    setupFormSubmit();
+    setupDocTypeHint();
+});
+
+// ===========================================================================
+// DOCUMENT TYPE HINT
+// ===========================================================================
+function setupDocTypeHint() {
+    document.getElementById('documentType').addEventListener('change', function() {
+        var hint   = DOC_TYPE_HINTS[this.value] || '';
+        var hintEl = document.getElementById('docTypeHint');
+        hintEl.textContent = hint;
+    });
+}
+
+// ===========================================================================
+// DRAG & DROP SETUP
+// Updated February 27, 2026:
+//   - drop handler passes ALL files to addFilesToQueue (was files[0] only)
+//   - fileInput change handler passes ALL files to addFilesToQueue
+//   - zone click listener skips clicks on .queue-remove buttons so that
+//     clicking the remove X doesn't accidentally re-open the file picker
+// ===========================================================================
+function setupDragDrop() {
+    var uploadZone = document.getElementById('uploadZone');
+    var fileInput  = document.getElementById('fileInput');
+
+    // Click anywhere in the zone = open multi-file picker,
+    // EXCEPT when the click target is a remove button.
+    uploadZone.addEventListener('click', function(e) {
+        if (e.target && e.target.classList.contains('queue-remove')) return;
+        fileInput.value = '';   // reset so same file can be re-selected
+        fileInput.click();
+    });
+
+    uploadZone.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        uploadZone.classList.add('dragover');
+    });
+
+    uploadZone.addEventListener('dragleave', function() {
+        uploadZone.classList.remove('dragover');
+    });
+
+    uploadZone.addEventListener('drop', function(e) {
+        e.preventDefault();
+        uploadZone.classList.remove('dragover');
+        if (e.dataTransfer.files.length > 0) {
+            addFilesToQueue(Array.from(e.dataTransfer.files));
+        }
+    });
+
+    // fileInput.change fires whether 1 or many files were selected
+    fileInput.addEventListener('change', function(e) {
+        if (e.target.files.length > 0) {
+            addFilesToQueue(Array.from(e.target.files));
+        }
+    });
+}
+
+// ===========================================================================
+// FILE QUEUE MANAGEMENT
+// Added February 27, 2026.
+// ===========================================================================
+
+/**
+ * Add an array of File objects to fileQueue.
+ * Skips files with unsupported extensions and exact duplicates (name+size).
+ */
+function addFilesToQueue(files) {
+    var allowed = {
+        'txt':1,'md':1,'pdf':1,'docx':1,'doc':1,
+        'xlsx':1,'xls':1,'csv':1,'json':1,'pptx':1,'ppt':1
+    };
+    var skipped = 0;
+
+    files.forEach(function(file) {
+        var parts = file.name.split('.');
+        var ext   = parts.length > 1 ? parts[parts.length - 1].toLowerCase() : '';
+        if (!allowed[ext]) {
+            skipped++;
+            return;
+        }
+        // Deduplicate by name + size
+        var exists = fileQueue.some(function(f) {
+            return f.name === file.name && f.size === file.size;
+        });
+        if (!exists) {
+            fileQueue.push(file);
+        }
+    });
+
+    if (skipped > 0) {
+        showError(skipped + ' file(s) skipped — unsupported file type.');
+    }
+
+    renderFileQueue();
+}
+
+/**
+ * Remove a file from the queue by index.
+ * stopPropagation prevents the zone click listener from opening the picker.
+ */
+function removeFromQueue(index, event) {
+    if (event) event.stopPropagation();
+    fileQueue.splice(index, 1);
+    renderFileQueue();
+}
+
+/**
+ * Re-render the upload zone to show the current file queue.
+ * Empty queue → show original drop prompt.
+ * Non-empty queue → show scrollable list with individual remove buttons
+ *                   and an "Add More Files" button.
+ */
+function renderFileQueue() {
+    var icons = {
+        'pptx':'📊','ppt':'📊','xlsx':'📈','xls':'📈',
+        'pdf':'📕','docx':'📝','doc':'📝',
+        'md':'📄','csv':'📊','txt':'📄','json':'📄'
+    };
+    var zone = document.getElementById('uploadZone');
+
+    if (fileQueue.length === 0) {
+        zone.innerHTML =
+            '<div class="upload-icon">&#128196;</div>' +
+            '<h3>Drag &amp; Drop Documents</h3>' +
+            '<p>Word (.docx), Excel (.xlsx), PowerPoint (.pptx), PDF, Text, Markdown, CSV<br>' +
+            '<em>Multiple files supported &#8212; drop several at once</em></p>' +
+            '<button class="btn" type="button">Choose Files</button>';
+
+        var sb = document.getElementById('submitBtn');
+        if (sb) sb.textContent = '\uD83D\uDE80 Ingest Document';
+        return;
+    }
+
+    var items = fileQueue.map(function(f, i) {
+        var parts = f.name.split('.');
+        var ext   = parts.length > 1 ? parts[parts.length - 1].toLowerCase() : '';
+        var icon  = icons[ext] || '📄';
+        var kb    = (f.size / 1024).toFixed(1);
+        return '<div class="queue-item">' +
+            '<span class="queue-icon">' + icon + '</span>' +
+            '<span class="queue-name" title="' + escapeHtml(f.name) + '">' + escapeHtml(f.name) + '</span>' +
+            '<span class="queue-size">' + kb + ' KB</span>' +
+            '<button class="queue-remove" type="button" onclick="removeFromQueue(' + i + ', event)">\u2715</button>' +
+            '</div>';
+    }).join('');
+
+    var plural = fileQueue.length !== 1 ? 's' : '';
+    zone.innerHTML =
+        '<div class="queue-header">' + fileQueue.length + ' file' + plural + ' queued for ingestion</div>' +
+        '<div class="queue-list">' + items + '</div>' +
+        '<button class="btn btn-sm" type="button" style="margin-top:8px;">\u2795 Add More Files</button>';
+
+    // Update submit button label
+    var submitBtn = document.getElementById('submitBtn');
+    if (submitBtn) {
+        submitBtn.textContent = fileQueue.length === 1
+            ? '\uD83D\uDE80 Ingest Document'
+            : '\uD83D\uDE80 Ingest ' + fileQueue.length + ' Documents';
+    }
+}
+
+// ===========================================================================
+// FORM SUBMISSION
+// ===========================================================================
+function setupFormSubmit() {
+    document.getElementById('uploadForm').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        if (fileQueue.length === 0) {
+            showError('Please select at least one file first');
+            return;
+        }
+        var documentType = document.getElementById('documentType').value;
+        if (!documentType) {
+            showError('Please select a document type');
+            return;
+        }
+        await uploadDocuments();
+    });
+}
+
+// ===========================================================================
+// UPLOAD ORCHESTRATION
+// Routes to single-file (/api/ingest/document) or batch (/api/ingest/batch)
+// based on queue size.
+// ===========================================================================
+async function uploadDocuments() {
+    document.getElementById('spinner').style.display        = 'block';
+    document.getElementById('submitBtn').disabled            = true;
+    document.getElementById('uploadProgress').style.display  = 'block';
+    document.getElementById('highlightsPanel').style.display = 'none';
+    document.getElementById('batchResults').style.display    = 'none';
+
+    var progress = 0;
+    var progressInterval = setInterval(function() {
+        progress += 5;
+        if (progress <= 90) {
+            document.getElementById('progressBar').style.width = progress + '%';
+        }
+    }, 100);
+
+    try {
+        var data;
+        if (fileQueue.length === 1) {
+            data = await uploadSingle(fileQueue[0]);
+        } else {
+            data = await uploadBatch();
+        }
+
+        clearInterval(progressInterval);
+        document.getElementById('progressBar').style.width = '100%';
+
+        setTimeout(function() {
+            document.getElementById('spinner').style.display        = 'none';
+            document.getElementById('submitBtn').disabled            = false;
+            document.getElementById('uploadProgress').style.display  = 'none';
+            document.getElementById('progressBar').style.width       = '0%';
+
+            if (data.batch) {
+                handleBatchResult(data);
+            } else {
+                handleSingleResult(data);
+            }
+        }, 500);
+
+    } catch (error) {
+        clearInterval(progressInterval);
+        document.getElementById('spinner').style.display        = 'none';
+        document.getElementById('submitBtn').disabled            = false;
+        document.getElementById('uploadProgress').style.display  = 'none';
+        showError('Upload failed: ' + error.message);
+    }
+}
+
+/** POST single file to /api/ingest/document */
+async function uploadSingle(file) {
+    var formData = new FormData();
+    formData.append('file',          file);
+    formData.append('document_type', document.getElementById('documentType').value);
+    formData.append('client',        document.getElementById('clientName').value);
+    formData.append('industry',      document.getElementById('industry').value);
+
+    var response = await fetch('/api/ingest/document', { method: 'POST', body: formData });
+    return await response.json();
+}
+
+/** POST all queued files to /api/ingest/batch */
+async function uploadBatch() {
+    var formData = new FormData();
+    fileQueue.forEach(function(f) {
+        formData.append('files', f);
+    });
+    formData.append('document_type', document.getElementById('documentType').value);
+    formData.append('client',        document.getElementById('clientName').value);
+    formData.append('industry',      document.getElementById('industry').value);
+
+    var response = await fetch('/api/ingest/batch', { method: 'POST', body: formData });
+    return await response.json();
+}
+
+// ===========================================================================
+// RESULT HANDLERS
+// ===========================================================================
+function handleSingleResult(data) {
+    if (data.success) {
+        showSuccess(data.message || 'Document ingested successfully');
+        showHighlights(data.highlights || []);
+        showCelebration(data);
+        resetForm();
+        loadStats();
+        loadHistory();
+        loadPatterns();
+    } else {
+        showError(data.error || 'Upload failed');
+    }
+}
+
+function handleBatchResult(data) {
+    if (data.success_count > 0) {
+        showSuccess(
+            data.success_count + ' of ' + data.total_files + ' files ingested. ' +
+            data.total_patterns_extracted + ' patterns, ' +
+            data.total_insights_extracted + ' insights extracted.'
+        );
+    }
+    if (data.error_count > 0) {
+        showError(data.error_count + ' file(s) failed — see results table below.');
+    }
+    showBatchResults(data.results || []);
+    showCelebrationBatch(data);
+    resetForm();
+    loadStats();
+    loadHistory();
+    loadPatterns();
+}
+
+// ===========================================================================
+// HIGHLIGHTS PANEL (single file)
+// ===========================================================================
+function showHighlights(highlights) {
+    var panel = document.getElementById('highlightsPanel');
+    var list  = document.getElementById('highlightsList');
+    if (!highlights || highlights.length === 0) {
+        panel.style.display = 'none';
+        return;
+    }
+    list.innerHTML = highlights.map(function(h) {
+        return '<li>' + escapeHtml(h) + '</li>';
+    }).join('');
+    panel.style.display = 'block';
+}
+
+// ===========================================================================
+// BATCH RESULTS TABLE
+// ===========================================================================
+function showBatchResults(results) {
+    var panel = document.getElementById('batchResults');
+    var tbody = document.getElementById('batchResultsBody');
+
+    if (!results || results.length === 0) {
+        panel.style.display = 'none';
+        return;
+    }
+
+    tbody.innerHTML = results.map(function(r) {
+        var rowClass = r.success ? 'row-success' : 'row-error';
+        var status = r.success
+            ? '<span class="badge-ok">\u2713 OK</span>'
+            : '<span class="badge-fail">\u2717 ' + escapeHtml(r.error || 'failed') + '</span>';
+        var patterns = r.success ? (r.patterns_extracted || 0) : '&mdash;';
+        var insights = r.success ? (r.insights_extracted || 0) : '&mdash;';
+        return '<tr class="' + rowClass + '">' +
+            '<td>' + escapeHtml(r.filename || '') + '</td>' +
+            '<td>' + status + '</td>' +
+            '<td>' + patterns + '</td>' +
+            '<td>' + insights + '</td>' +
+            '</tr>';
+    }).join('');
+
+    panel.style.display = 'block';
+}
+
+// ===========================================================================
+// CELEBRATION POPUPS
+// ===========================================================================
+function showCelebration(data) {
+    document.getElementById('celebrationTitle').textContent = 'Knowledge Extracted!';
+    document.getElementById('celebrationMessage').innerHTML =
+        (data.patterns_extracted || 0) + ' patterns extracted &nbsp; ' +
+        '\uD83D\uDCA1 ' + (data.insights_extracted || 0) + ' insights captured &nbsp; ' +
+        '\uD83D\uDCCA ' + (data.total_patterns || 0) + ' total patterns in knowledge base';
+
+    var hl  = document.getElementById('celebrationHighlights');
+    var hls = data.highlights || [];
+    if (hls.length > 0) {
+        hl.innerHTML = hls.map(function(h) { return '<li>' + escapeHtml(h) + '</li>'; }).join('');
+        hl.style.display = 'block';
+    } else {
+        hl.style.display = 'none';
+    }
+    _showCelebrationPopup();
+}
+
+function showCelebrationBatch(data) {
+    if (!data.success_count || data.success_count === 0) return;
+    document.getElementById('celebrationTitle').textContent =
+        data.success_count + ' Files Ingested!';
+    document.getElementById('celebrationMessage').innerHTML =
+        '\uD83D\uDCC1 ' + data.success_count + ' of ' + data.total_files + ' files succeeded &nbsp; ' +
+        '\uD83D\uDCCA ' + (data.total_patterns_extracted || 0) + ' patterns extracted &nbsp; ' +
+        '\uD83D\uDCA1 ' + (data.total_insights_extracted || 0) + ' insights captured';
+    document.getElementById('celebrationHighlights').style.display = 'none';
+    _showCelebrationPopup();
+}
+
+function _showCelebrationPopup() {
+    document.getElementById('overlay').style.display     = 'block';
+    document.getElementById('celebration').style.display = 'block';
+    setTimeout(function() {
+        document.getElementById('overlay').style.display     = 'none';
+        document.getElementById('celebration').style.display = 'none';
+    }, 4000);
+}
+
+// ===========================================================================
+// RESET FORM
+// ===========================================================================
+function resetForm() {
+    fileQueue = [];
+    document.getElementById('uploadForm').reset();
+    document.getElementById('docTypeHint').textContent = '';
+    document.getElementById('uploadZone').innerHTML =
+        '<div class="upload-icon">&#128196;</div>' +
+        '<h3>Drag &amp; Drop Documents</h3>' +
+        '<p>Word (.docx), Excel (.xlsx), PowerPoint (.pptx), PDF, Text, Markdown, CSV<br>' +
+        '<em>Multiple files supported &#8212; drop several at once</em></p>' +
+        '<button class="btn" type="button">Choose Files</button>';
+    var sb = document.getElementById('submitBtn');
+    if (sb) sb.textContent = '\uD83D\uDE80 Ingest Document';
+}
+
+// ===========================================================================
+// STATS / HISTORY / PATTERNS
+// ===========================================================================
+async function loadStats() {
+    try {
+        var response = await fetch('/api/ingest/status');
+        var data = await response.json();
+        if (data.success) {
+            var stats  = data.stats;
+            var byType = stats.by_document_type || {};
+            document.getElementById('totalDocs').textContent     = stats.total_extracts;
+            document.getElementById('totalPatterns').textContent  = stats.total_patterns;
+            document.getElementById('implDocs').textContent       = byType.implementation_manual || 0;
+            document.getElementById('lessonDocs').textContent     = byType.lessons_learned || 0;
+            document.getElementById('contractDocs').textContent   =
+                (byType.contract || 0) + (byType.proposal || 0);
+            document.getElementById('assessmentDocs').textContent =
+                (byType.oaf || 0) + (byType.eaf || 0);
+        }
+    } catch (error) {
+        console.error('Failed to load stats:', error);
+    }
+}
+
+async function loadHistory() {
+    try {
+        var response = await fetch('/api/ingest/history?limit=10');
+        var data = await response.json();
+        if (data.success) {
+            var historyList = document.getElementById('historyList');
+            if (data.history.length === 0) {
+                historyList.innerHTML =
+                    '<p style="text-align:center;color:#999;padding:40px;">No documents ingested yet</p>';
+                return;
+            }
+            historyList.innerHTML = data.history.map(function(item) {
+                return '<div class="history-item">' +
+                    '<div class="title">' + escapeHtml(item.document_name) + '</div>' +
+                    '<div class="meta">' + escapeHtml(item.document_type) + ' &bull; ' +
+                    new Date(item.ingested_at).toLocaleString() + '</div>' +
+                    '<div class="stats">' +
+                    '<span class="stat-badge">\uD83D\uDCCA ' + item.patterns_extracted + ' patterns</span>' +
+                    '<span class="stat-badge">\uD83D\uDCA1 ' + item.insights_extracted + ' insights</span>' +
+                    '</div></div>';
+            }).join('');
+        }
+    } catch (error) {
+        console.error('Failed to load history:', error);
+    }
+}
+
+async function loadPatterns() {
+    try {
+        var response = await fetch('/api/ingest/patterns?limit=30');
+        var data = await response.json();
+        if (data.success) {
+            var patternsList = document.getElementById('patternsList');
+            if (data.patterns.length === 0) {
+                patternsList.innerHTML =
+                    '<p style="text-align:center;color:#999;padding:40px;">No patterns learned yet</p>';
+                return;
+            }
+            patternsList.innerHTML = data.patterns.map(function(pattern) {
+                var pct = (pattern.confidence * 100).toFixed(1);
+                var docs = pattern.supporting_documents;
+                return '<div class="pattern-item">' +
+                    '<div class="pattern-header">' +
+                    '<span class="pattern-name">' + escapeHtml(pattern.pattern_name || '') + '</span>' +
+                    '<span class="pattern-type">' + escapeHtml(pattern.pattern_type || '') + '</span>' +
+                    '</div>' +
+                    '<div class="confidence-bar"><div class="confidence-fill" style="width:' + pct + '%"></div></div>' +
+                    '<div class="pattern-meta">' +
+                    '<span>\uD83D\uDCAA ' + pct + '% confidence</span>' +
+                    '<span>\uD83D\uDCDA ' + docs + ' doc' + (docs !== 1 ? 's' : '') + '</span>' +
+                    '</div></div>';
+            }).join('');
+        }
+    } catch (error) {
+        console.error('Failed to load patterns:', error);
+    }
+}
+
+// ===========================================================================
+// DOWNLOAD / CLEAR
+// ===========================================================================
+function downloadKnowledge(btn) {
+    btn.disabled = true;
+    btn.innerHTML = 'Preparing download...';
+    window.location.href = '/api/ingest/export';
+    setTimeout(function() {
+        btn.disabled = false;
+        btn.innerHTML = '&#128229; Download Knowledge';
+    }, 3000);
+}
+
+async function clearKnowledgeBase(btn) {
+    var first = confirm(
+        '\u26A0\uFE0F Clear Knowledge Base?\n\n' +
+        'This will permanently delete ALL ingested documents, patterns, and history.\n\n' +
+        'You will need to re-upload your documents.\n\nClick OK to continue.'
+    );
+    if (!first) return;
+
+    var second = confirm(
+        '\uD83D\uDED1 FINAL CONFIRMATION\n\n' +
+        'Are you absolutely sure?\n\n' +
+        'All knowledge extracts and learned patterns will be deleted.\n\n' +
+        'Click OK to permanently clear the knowledge base.'
+    );
+    if (!second) return;
+
+    btn.disabled = true;
+    btn.innerHTML = '\u23F3 Clearing...';
+
+    try {
+        var response = await fetch('/api/ingest/clear', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ confirm: 'CLEAR' })
+        });
+        var data = await response.json();
+
+        if (data.success) {
+            var deleted = data.deleted || {};
+            alert(
+                '\u2705 Knowledge base cleared!\n\n' +
+                'Documents deleted: '  + (deleted.knowledge_extracts || 0) + '\n' +
+                'Patterns deleted: '   + (deleted.learned_patterns   || 0) + '\n' +
+                'History deleted: '    + (deleted.ingestion_log      || 0) + '\n\n' +
+                'You can now re-upload your documents.'
+            );
             loadStats();
             loadHistory();
-            loadPatterns();
-            setupDragDrop();
-            setupFormSubmit();
-            setupDocTypeHint();
-        });
-
-        // -- Document type hint --
-        function setupDocTypeHint() {
-            document.getElementById('documentType').addEventListener('change', function() {
-                const hint = DOC_TYPE_HINTS[this.value] || '';
-                const hintEl = document.getElementById('docTypeHint');
-                hintEl.textContent = hint;
-            });
+        } else {
+            alert('\u274C Clear failed: ' + (data.error || 'Unknown error'));
         }
+    } catch (err) {
+        alert('\u274C Request failed: ' + err.message);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '&#128465;&#65039; Clear Knowledge Base';
+    }
+}
 
-        // -- Download Knowledge --
-        function downloadKnowledge(btn) {
-            btn.disabled = true;
-            btn.innerHTML = 'Preparing download...';
-            window.location.href = '/api/ingest/export';
-            setTimeout(function() {
-                btn.disabled = false;
-                btn.innerHTML = '📥 Download Knowledge';
-            }, 3000);
-        }
+// ===========================================================================
+// UTILITY
+// ===========================================================================
+function showSuccess(message) {
+    var el = document.getElementById('successAlert');
+    el.textContent = message;
+    el.style.display = 'block';
+    setTimeout(function() { el.style.display = 'none'; }, 8000);
+}
 
-        // -- Clear Knowledge Base --
-        async function clearKnowledgeBase(btn) {
-            // Double confirmation — this is destructive and irreversible
-            const first = confirm(
-                '⚠️ Clear Knowledge Base?\n\n' +
-                'This will permanently delete ALL ingested documents, patterns, and history.\n\n' +
-                'You will need to re-upload your documents.\n\n' +
-                'Click OK to continue.'
-            );
-            if (!first) return;
+function showError(message) {
+    var el = document.getElementById('errorAlert');
+    el.textContent = message;
+    el.style.display = 'block';
+    setTimeout(function() { el.style.display = 'none'; }, 8000);
+}
 
-            const second = confirm(
-                '🛑 FINAL CONFIRMATION\n\n' +
-                'Are you absolutely sure?\n\n' +
-                'All knowledge extracts and learned patterns will be deleted.\n\n' +
-                'Click OK to permanently clear the knowledge base.'
-            );
-            if (!second) return;
-
-            btn.disabled = true;
-            btn.innerHTML = '⏳ Clearing...';
-
-            try {
-                const response = await fetch('/api/ingest/clear', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ confirm: 'CLEAR' })
-                });
-                const data = await response.json();
-
-                if (data.success) {
-                    const deleted = data.deleted || {};
-                    alert(
-                        '✅ Knowledge base cleared!\n\n' +
-                        'Documents deleted: ' + (deleted.knowledge_extracts || 0) + '\n' +
-                        'Patterns deleted: ' + (deleted.learned_patterns || 0) + '\n' +
-                        'History entries deleted: ' + (deleted.ingestion_log || 0) + '\n\n' +
-                        'You can now re-upload your documents with improved extraction.'
-                    );
-                    loadStats();
-                    loadHistory();
-                } else {
-                    alert('❌ Clear failed: ' + (data.error || 'Unknown error'));
-                }
-            } catch (err) {
-                alert('❌ Request failed: ' + err.message);
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = '🗑️ Clear Knowledge Base';
-            }
-        }
-
-
-        async function loadStats() {
-            try {
-                const response = await fetch('/api/ingest/status');
-                const data = await response.json();
-                if (data.success) {
-                    const stats  = data.stats;
-                    const byType = stats.by_document_type || {};
-                    document.getElementById('totalDocs').textContent    = stats.total_extracts;
-                    document.getElementById('totalPatterns').textContent= stats.total_patterns;
-                    document.getElementById('implDocs').textContent     = byType.implementation_manual || 0;
-                    document.getElementById('lessonDocs').textContent   = byType.lessons_learned || 0;
-                    document.getElementById('contractDocs').textContent = (byType.contract || 0) + (byType.proposal || 0);
-                    document.getElementById('assessmentDocs').textContent =
-                        (byType.oaf || 0) + (byType.eaf || 0);
-                }
-            } catch (error) {
-                console.error('Failed to load stats:', error);
-            }
-        }
-
-        // -- Load history --
-        async function loadHistory() {
-            try {
-                const response = await fetch('/api/ingest/history?limit=10');
-                const data = await response.json();
-                if (data.success) {
-                    const historyList = document.getElementById('historyList');
-                    if (data.history.length === 0) {
-                        historyList.innerHTML =
-                            '<p style="text-align:center;color:#999;padding:40px;">No documents ingested yet</p>';
-                        return;
-                    }
-                    historyList.innerHTML = data.history.map(item => `
-                        <div class="history-item">
-                            <div class="title">${escapeHtml(item.document_name)}</div>
-                            <div class="meta">
-                                ${escapeHtml(item.document_type)} &bull;
-                                ${new Date(item.ingested_at).toLocaleString()}
-                            </div>
-                            <div class="stats">
-                                <span class="stat-badge">📊 ${item.patterns_extracted} patterns</span>
-                                <span class="stat-badge">💡 ${item.insights_extracted} insights</span>
-                            </div>
-                        </div>
-                    `).join('');
-                }
-            } catch (error) {
-                console.error('Failed to load history:', error);
-            }
-        }
-
-        // -- Load patterns --
-        async function loadPatterns() {
-            try {
-                const response = await fetch('/api/ingest/patterns?limit=30');
-                const data = await response.json();
-                if (data.success) {
-                    const patternsList = document.getElementById('patternsList');
-                    if (data.patterns.length === 0) {
-                        patternsList.innerHTML =
-                            '<p style="text-align:center;color:#999;padding:40px;">No patterns learned yet</p>';
-                        return;
-                    }
-                    patternsList.innerHTML = data.patterns.map(pattern => `
-                        <div class="pattern-item">
-                            <div class="pattern-header">
-                                <span class="pattern-name">${escapeHtml(pattern.pattern_name || '')}</span>
-                                <span class="pattern-type">${escapeHtml(pattern.pattern_type || '')}</span>
-                            </div>
-                            <div class="confidence-bar">
-                                <div class="confidence-fill"
-                                     style="width:${(pattern.confidence * 100).toFixed(1)}%"></div>
-                            </div>
-                            <div class="pattern-meta">
-                                <span>💪 ${(pattern.confidence * 100).toFixed(1)}% confidence</span>
-                                <span>📚 ${pattern.supporting_documents}
-                                    doc${pattern.supporting_documents !== 1 ? 's' : ''}</span>
-                            </div>
-                        </div>
-                    `).join('');
-                }
-            } catch (error) {
-                console.error('Failed to load patterns:', error);
-            }
-        }
-
-        // -- Drag & Drop --
-        // FIXED February 26, 2026:
-        // All listeners are attached to the stable outer elements (uploadZone div
-        // and fileInput). resetForm() and handleFileSelect() only replace innerHTML
-        // inside uploadZone - the div itself and the fileInput element are never
-        // removed from the DOM, so all listeners survive across uploads.
-        // Inline onclick removed from dynamically-generated button HTML to avoid
-        // duplicate triggers. A single click listener on uploadZone handles all
-        // "Choose File" / "Change File" clicks anywhere in the zone.
-        function setupDragDrop() {
-            const uploadZone = document.getElementById('uploadZone');
-            const fileInput  = document.getElementById('fileInput');
-
-            // Click anywhere in the zone to open file picker
-            // stopPropagation not needed - fileInput is outside uploadZone
-            uploadZone.addEventListener('click', (e) => {
-                // Don't double-trigger if the click is on the button inside the zone
-                // (button has no special handling - we just always trigger the input)
-                fileInput.value = '';   // Reset so same file can be re-selected
-                fileInput.click();
-            });
-
-            uploadZone.addEventListener('dragover', (e) => {
-                e.preventDefault();
-                uploadZone.classList.add('dragover');
-            });
-            uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
-            uploadZone.addEventListener('drop', (e) => {
-                e.preventDefault();
-                uploadZone.classList.remove('dragover');
-                if (e.dataTransfer.files.length > 0) handleFileSelect(e.dataTransfer.files[0]);
-            });
-
-            // fileInput change fires whenever the OS file picker confirms a selection
-            fileInput.addEventListener('change', (e) => {
-                if (e.target.files.length > 0) handleFileSelect(e.target.files[0]);
-            });
-        }
-
-        // -- File selection --
-        function handleFileSelect(file) {
-            selectedFile = file;
-            const ext = file.name.split('.').pop().toLowerCase();
-            const icons = { pptx: '📊', ppt: '📊', xlsx: '📈', xls: '📈',
-                            pdf: '📕', docx: '📝', doc: '📝', md: '📄', csv: '📊' };
-            const icon = icons[ext] || '📄';
-
-            // Auto-select document type based on extension
-            const docTypeSelect = document.getElementById('documentType');
-            if ((ext === 'pptx' || ext === 'ppt') && docTypeSelect.value === '') {
-                // Leave for user to pick OAF / EAF / implementation_ppt
-            } else if ((ext === 'xlsx' || ext === 'xls') && docTypeSelect.value === '') {
-                // Leave for user to pick schedule_pattern / data_file
-            }
-
-            document.getElementById('uploadZone').innerHTML = `
-                <div class="upload-icon">${icon}</div>
-                <h3>${escapeHtml(file.name)}</h3>
-                <p>${(file.size / 1024).toFixed(1)} KB - click zone or button to change</p>
-                <button class="btn" type="button">Change File</button>
-            `;
-        }
-
-        // -- Form submission --
-        function setupFormSubmit() {
-            document.getElementById('uploadForm').addEventListener('submit', async (e) => {
-                e.preventDefault();
-                if (!selectedFile) { showError('Please select a file first'); return; }
-                const documentType = document.getElementById('documentType').value;
-                if (!documentType) { showError('Please select a document type'); return; }
-                await uploadDocument();
-            });
-        }
-
-        // -- Upload --
-        async function uploadDocument() {
-            const formData = new FormData();
-            formData.append('file',          selectedFile);
-            formData.append('document_type', document.getElementById('documentType').value);
-            formData.append('client',        document.getElementById('clientName').value);
-            formData.append('industry',      document.getElementById('industry').value);
-
-            document.getElementById('spinner').style.display       = 'block';
-            document.getElementById('submitBtn').disabled           = true;
-            document.getElementById('uploadProgress').style.display = 'block';
-            document.getElementById('highlightsPanel').style.display= 'none';
-
-            let progress = 0;
-            const progressInterval = setInterval(() => {
-                progress += 5;
-                if (progress <= 90)
-                    document.getElementById('progressBar').style.width = progress + '%';
-            }, 100);
-
-            try {
-                const response = await fetch('/api/ingest/document',
-                    { method: 'POST', body: formData });
-                const data = await response.json();
-
-                clearInterval(progressInterval);
-                document.getElementById('progressBar').style.width = '100%';
-
-                setTimeout(() => {
-                    document.getElementById('spinner').style.display       = 'none';
-                    document.getElementById('submitBtn').disabled           = false;
-                    document.getElementById('uploadProgress').style.display = 'none';
-                    document.getElementById('progressBar').style.width      = '0%';
-
-                    if (data.success) {
-                        showSuccess(data.message || 'Document ingested successfully');
-                        showHighlights(data.highlights || []);
-                        showCelebration(data);
-                        resetForm();
-                        loadStats();
-                        loadHistory();
-                        loadPatterns();
-                    } else {
-                        showError(data.error || 'Upload failed');
-                    }
-                }, 500);
-
-            } catch (error) {
-                clearInterval(progressInterval);
-                document.getElementById('spinner').style.display       = 'none';
-                document.getElementById('submitBtn').disabled           = false;
-                document.getElementById('uploadProgress').style.display = 'none';
-                showError('Upload failed: ' + error.message);
-            }
-        }
-
-        // -- Highlights panel --
-        function showHighlights(highlights) {
-            const panel = document.getElementById('highlightsPanel');
-            const list  = document.getElementById('highlightsList');
-            if (!highlights || highlights.length === 0) { panel.style.display = 'none'; return; }
-            list.innerHTML = highlights.map(h =>
-                `<li>${escapeHtml(h)}</li>`
-            ).join('');
-            panel.style.display = 'block';
-        }
-
-        // -- Celebration --
-        function showCelebration(data) {
-            document.getElementById('celebrationMessage').innerHTML =
-                `${data.patterns_extracted || 0} patterns extracted &nbsp;
-                 💡 ${data.insights_extracted || 0} insights captured &nbsp;
-                 📊 ${data.total_patterns || 0} total patterns in knowledge base`;
-
-            const highlightsList = document.getElementById('celebrationHighlights');
-            const highlights = data.highlights || [];
-            if (highlights.length > 0) {
-                highlightsList.innerHTML = highlights.map(h =>
-                    `<li>${escapeHtml(h)}</li>`
-                ).join('');
-                highlightsList.style.display = 'block';
-            } else {
-                highlightsList.style.display = 'none';
-            }
-
-            document.getElementById('overlay').style.display     = 'block';
-            document.getElementById('celebration').style.display = 'block';
-
-            setTimeout(() => {
-                document.getElementById('overlay').style.display     = 'none';
-                document.getElementById('celebration').style.display = 'none';
-            }, 4000);
-        }
-
-        // -- Helpers --
-        function showSuccess(message) {
-            const alert = document.getElementById('successAlert');
-            alert.textContent = message;
-            alert.style.display = 'block';
-            setTimeout(() => alert.style.display = 'none', 6000);
-        }
-
-        function showError(message) {
-            const alert = document.getElementById('errorAlert');
-            alert.textContent = message;
-            alert.style.display = 'block';
-            setTimeout(() => alert.style.display = 'none', 6000);
-        }
-
-        function escapeHtml(str) {
-            if (!str) return '';
-            return String(str)
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;');
-        }
-
-        function resetForm() {
-            selectedFile = null;
-            document.getElementById('uploadForm').reset();
-            document.getElementById('docTypeHint').textContent = '';
-            document.getElementById('uploadZone').innerHTML = `
-                <div class="upload-icon">📄</div>
-                <h3>Drag & Drop Document</h3>
-                <p>Word (.docx), Excel (.xlsx), PowerPoint (.pptx), PDF, Text, Markdown, CSV</p>
-                <button class="btn" type="button">Choose File</button>
-            `;
-        }
-    </script>
+function escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/&/g,  '&amp;')
+        .replace(/</g,  '&lt;')
+        .replace(/>/g,  '&gt;')
+        .replace(/"/g,  '&quot;');
+}
+</script>
 </body>
 </html>
 
