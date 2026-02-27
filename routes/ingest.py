@@ -1,61 +1,38 @@
 """
 KNOWLEDGE INGESTION ROUTES
 Created: February 2, 2026
-Last Updated: February 27, 2026 - FIXED DOCX extraction (was reading raw bytes as UTF-8)
+Last Updated: February 27, 2026 - ADDED /api/ingest/batch endpoint for multi-file upload
 
 CHANGELOG:
 
-- February 27, 2026: FIXED DOCX content extraction
-  * PROBLEM: The 'else' branch (all non-PPTX, non-Excel files, including .docx) was
-    doing `content = file.read().decode('utf-8', errors='ignore')` — reading the raw
-    .docx zip bytes as UTF-8 text. This produces garbled binary output. The engine
-    received nonsense and extracted nothing useful. Only stray percentage digits and
-    dollar amounts survived because they appear as recognizable ASCII even in garbage.
-    Lessons learned docs extracted 0 lessons. Pillar docs extracted only percentages.
-  * SOLUTION: Added _extract_docx_structured() helper using python-docx. Reads each
-    paragraph's style name (Heading1, Heading2, BodyText, etc.), bold state, and
-    text. Produces a structured JSON string that the engine extractors can parse
-    properly. Also produces a clean plain-text version as fallback.
-  * Two content strings passed for DOCX:
-    - content: structured JSON list [{style, bold, text}, ...] for engine extractors
-    - metadata['plain_text']: clean paragraph text joined by newlines for any regex
-      fallbacks in older extractors that still need text matching
-  * All PPTX and Excel paths unchanged.
-  * PDF and plain text paths unchanged.
+- February 27, 2026 (Session 2): ADDED /api/ingest/batch endpoint
+  * PROBLEM: The upload UI only handled one file at a time. Users could not
+    drag and drop multiple files or select multiple files from the file picker.
+    The single /api/ingest/document endpoint accepts one file per POST.
+  * SOLUTION: Added /api/ingest/batch endpoint that accepts multiple files via
+    request.files.getlist('files'), loops through each file, reuses all existing
+    file-type handling (PPTX, Excel, DOCX, PDF/text), and returns a consolidated
+    result with per-file success/error detail and aggregate counts.
+  * Also extracted shared file processing into _process_file_for_ingest() helper
+    so both single and batch paths use identical extraction logic with no duplication.
+  * Single-file path /api/ingest/document is completely unchanged in behavior.
+
+- February 27, 2026 (Session 1): FIXED DOCX content extraction
+  * PROBLEM: The else branch (all non-PPTX, non-Excel files, including .docx) was
+    doing content = file.read().decode('utf-8', errors='ignore') reading the raw
+    .docx zip bytes as UTF-8 text. This produces garbled binary output.
+  * SOLUTION: Added _extract_docx_structured() helper using python-docx.
 
 - February 26, 2026 (Session 2): UPDATED PPTX and Excel routes to pass file_bytes
-  * PROBLEM: PPTX route was using python-pptx to extract text and passing that string
-    to ingest_document(). python-pptx reads text frames only — chart data embedded
-    as XML inside the zip structure was completely invisible. Survey results (bar charts,
-    pie charts, etc.) were never captured.
-    Excel route was converting all cells to tab-separated text, losing all numeric
-    structure needed for cost model and schedule pattern extraction.
-  * SOLUTION: Both routes now read the file into bytes and pass file_bytes kwarg to
-    ingest_document(). The engine's new extractors operate directly on the zip bytes.
-    Old text-extraction fallback is preserved if file_bytes path fails.
-  * Text extraction fallback: PPTX still reads slide text via python-pptx and stores
-    it as slide_text_preview in metadata for search indexing. Excel raw text is
-    discarded in favor of structured extraction.
-  * All route signatures unchanged. No existing functionality removed.
-  * document_type routing for PPTX: 'eaf' and 'survey_pptx' to survey chart
-    extractor; 'oaf' to OAF table extractor; others auto-detect by subtype.
 
 - February 26, 2026 (Session 1): ADDED new document types and proposal alias
-  * 'proposal' aliased to 'contract' so proposal documents get full contract
-    extractor (client, fee, payment schedule, engagement terms).
 
 - February 22, 2026: ADDED /api/ingest/export (GET)
-  * Added /api/ingest/export that exports full knowledge base as .json download.
-  * Zero new dependencies — queries existing tables, streams via BytesIO + send_file.
 
 - February 4, 2026: FIXED PowerPoint temp file handling
-  * Must close temp file before python-pptx opens it.
 
 Flask API endpoints for document ingestion system.
-Allows uploading documents, viewing knowledge base stats, browsing patterns.
-
-Part of "Shoulders of Giants" cumulative learning system.
-
+Part of Shoulders of Giants cumulative learning system.
 Author: Jim @ Shiftwork Solutions LLC
 """
 
@@ -116,24 +93,23 @@ def _extract_docx_structured(file_bytes: bytes) -> dict:
     Extract structured paragraph data from a .docx file using python-docx.
 
     Returns a dict with:
-        'paragraphs': list of {style, bold, text} dicts — for engine extractors
-        'plain_text': clean newline-joined text — for regex fallbacks
+        'paragraphs': list of {style, bold, text} dicts - for engine extractors
+        'plain_text': clean newline-joined text - for regex fallbacks
         'error': None or error string if python-docx fails
 
     Why this matters:
         Raw .docx files are zip archives. Reading the bytes as UTF-8 text produces
-        garbled binary that looks like: PK\x03\x04\x14\x00\x06\x00...
-        python-docx properly parses the XML inside and returns real text with
-        formatting metadata (style name, bold state) that the engine extractors
-        need to identify headings, lessons, key principles, and section structure.
+        garbled binary. python-docx properly parses the XML inside and returns real
+        text with formatting metadata (style name, bold state) that the engine
+        extractors need to identify headings, lessons, key principles, and structure.
 
     Style names in typical Shiftwork Solutions docs:
-        'Heading1'      — major section headings  (## equivalent)
-        'Heading2'      — subsection headings      (### equivalent)
-        'BodyText'      — formatted body paragraph
-        'FirstParagraph'— first paragraph of section (some Pillar docs)
-        'ListParagraph' — bullet list items
-        ''              — default/normal paragraph
+        'Heading1'       - major section headings
+        'Heading2'       - subsection headings
+        'BodyText'       - formatted body paragraph
+        'FirstParagraph' - first paragraph of section (some Pillar docs)
+        'ListParagraph'  - bullet list items
+        ''               - default/normal paragraph
     """
     result = {'paragraphs': [], 'plain_text': '', 'error': None}
     try:
@@ -149,13 +125,10 @@ def _extract_docx_structured(file_bytes: bytes) -> dict:
             if not text:
                 continue
 
-            # Get style name (normalize: remove spaces, e.g. "Heading 1" -> "Heading1")
             style_name = ''
             if para.style and para.style.name:
                 style_name = para.style.name.replace(' ', '')
 
-            # Determine bold: True if ALL non-empty runs are bold, or if paragraph
-            # style name contains 'heading' (headings are bold by definition)
             runs_with_text = [r for r in para.runs if r.text.strip()]
             is_bold = False
             if runs_with_text:
@@ -181,10 +154,126 @@ def _extract_docx_structured(file_bytes: bytes) -> dict:
     return result
 
 
+def _process_file_for_ingest(file, document_type, metadata):
+    """
+    Shared file processing logic used by both single-file and batch endpoints.
+
+    Added February 27, 2026 (Session 2):
+    Extracted from ingest_document() so that /api/ingest/batch can reuse
+    identical PPTX, Excel, DOCX, and plain-text handling without duplication.
+    Any future improvements to extraction automatically apply to both paths.
+
+    Args:
+        file:          werkzeug FileStorage object (already validated as allowed type)
+        document_type: string from form field
+        metadata:      dict with document_name, client, industry, etc.
+
+    Returns:
+        dict result from ingest_document_content()
+    """
+    filename_lower = file.filename.lower()
+
+    # ---- PPTX: pass file_bytes to engine for chart XML extraction ----
+    if filename_lower.endswith(('.pptx', '.ppt')):
+        file_bytes = file.read()
+
+        slide_text_content = None
+        try:
+            from pptx import Presentation
+
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.pptx')
+            tmp_path = tmp.name
+            tmp.write(file_bytes)
+            tmp.close()  # CRITICAL: Close before python-pptx opens it
+
+            try:
+                prs = Presentation(tmp_path)
+                slide_texts = []
+                for slide_num, slide in enumerate(prs.slides, 1):
+                    slide_content = []
+                    for shape in slide.shapes:
+                        if hasattr(shape, "text"):
+                            text = shape.text.strip()
+                            if text:
+                                slide_content.append(text)
+                    if slide_content:
+                        slide_texts.append(
+                            f"[Slide {slide_num}]\n" + '\n'.join(slide_content)
+                        )
+                slide_text_content = '\n\n'.join(slide_texts)
+            finally:
+                try:
+                    os.unlink(tmp_path)
+                except Exception:
+                    pass
+        except ImportError:
+            pass  # python-pptx not available; file_bytes path will handle it
+        except Exception:
+            pass  # Non-fatal; file_bytes path is primary
+
+        if slide_text_content:
+            metadata['slide_text_preview'] = slide_text_content[:2000]
+
+        return ingest_document_content(
+            ingestor=get_document_ingestor(),
+            content=slide_text_content or '',
+            document_type=document_type,
+            metadata=metadata,
+            file_bytes=file_bytes
+        )
+
+    # ---- Excel: pass file_bytes to engine for structured extraction ----
+    elif filename_lower.endswith(('.xlsx', '.xls')):
+        file_bytes = file.read()
+        excel_type = document_type
+        if document_type in ('generic', 'general_word', ''):
+            excel_type = 'excel'
+        return ingest_document_content(
+            ingestor=get_document_ingestor(),
+            content='',
+            document_type=excel_type,
+            metadata=metadata,
+            file_bytes=file_bytes
+        )
+
+    # ---- DOCX: use python-docx for proper structured extraction ----
+    elif filename_lower.endswith(('.docx', '.doc')):
+        file_bytes = file.read()
+        docx_data = _extract_docx_structured(file_bytes)
+
+        if docx_data['error'] and not docx_data['paragraphs']:
+            # python-docx completely failed - fall back to raw decode (last resort)
+            content = file_bytes.decode('utf-8', errors='ignore')
+            metadata['docx_extraction_error'] = docx_data['error']
+        else:
+            content = json.dumps(docx_data['paragraphs'], ensure_ascii=False)
+            metadata['plain_text'] = docx_data['plain_text'][:5000]
+            if docx_data['error']:
+                metadata['docx_partial_error'] = docx_data['error']
+
+        return ingest_document_content(
+            ingestor=get_document_ingestor(),
+            content=content,
+            document_type=document_type,
+            metadata=metadata,
+            file_bytes=file_bytes
+        )
+
+    # ---- PDF and plain text: decode and pass as string ----
+    else:
+        content = file.read().decode('utf-8', errors='ignore')
+        return ingest_document_content(
+            ingestor=get_document_ingestor(),
+            content=content,
+            document_type=document_type,
+            metadata=metadata
+        )
+
+
 @ingest_bp.route('/document', methods=['POST'])
 def ingest_document():
     """
-    Upload and ingest a document into the knowledge base.
+    Upload and ingest a single document into the knowledge base.
 
     Expects:
         - file: Document file (multipart/form-data)
@@ -197,21 +286,9 @@ def ingest_document():
     Returns:
         JSON with ingestion results including highlights from extraction.
 
-    DOCX handling (updated February 27, 2026):
-        File bytes passed to _extract_docx_structured() which uses python-docx
-        to parse paragraphs with style names and bold metadata. The structured
-        paragraph list is serialized as JSON and passed as 'content' to the engine.
-        A plain-text version is stored in metadata['plain_text'] for regex fallbacks.
-        file_bytes also passed so engine can use it if needed.
-
-    PPTX handling (updated February 26, 2026):
-        File bytes are passed directly to the engine so chart XML can be
-        extracted from the zip structure. python-pptx text is read separately
-        as a slide-text preview stored in metadata for search indexing.
-
-    Excel handling (updated February 26, 2026):
-        File bytes are passed directly to the engine for structured multi-sheet
-        extraction (cost models, schedule patterns, staffing tables).
+    File handling delegated to _process_file_for_ingest() helper (added
+    February 27, 2026 Session 2) so that single and batch paths share
+    identical extraction logic.
     """
     try:
         if 'file' not in request.files:
@@ -239,112 +316,8 @@ def ingest_document():
             'upload_date': datetime.now().isoformat()
         }
 
-        filename_lower = file.filename.lower()
-
-        # ---- PPTX: pass file_bytes to engine for chart XML extraction ----
-        if filename_lower.endswith(('.pptx', '.ppt')):
-            file_bytes = file.read()
-
-            # Also attempt slide text extraction via python-pptx for search indexing
-            slide_text_content = None
-            try:
-                from pptx import Presentation
-
-                tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.pptx')
-                tmp_path = tmp.name
-                tmp.write(file_bytes)
-                tmp.close()  # CRITICAL: Close before python-pptx opens it
-
-                try:
-                    prs = Presentation(tmp_path)
-                    slide_texts = []
-                    for slide_num, slide in enumerate(prs.slides, 1):
-                        slide_content = []
-                        for shape in slide.shapes:
-                            if hasattr(shape, "text"):
-                                text = shape.text.strip()
-                                if text:
-                                    slide_content.append(text)
-                        if slide_content:
-                            slide_texts.append(
-                                f"[Slide {slide_num}]\n" + '\n'.join(slide_content)
-                            )
-                    slide_text_content = '\n\n'.join(slide_texts)
-                finally:
-                    try:
-                        os.unlink(tmp_path)
-                    except Exception:
-                        pass
-            except ImportError:
-                pass  # python-pptx not available; file_bytes path will handle it
-            except Exception:
-                pass  # Non-fatal; file_bytes path is primary
-
-            # Store slide text preview in metadata for search indexing
-            if slide_text_content:
-                metadata['slide_text_preview'] = slide_text_content[:2000]
-
-            result = ingest_document_content(
-                ingestor=get_document_ingestor(),
-                content=slide_text_content or '',
-                document_type=document_type,
-                metadata=metadata,
-                file_bytes=file_bytes
-            )
-            return jsonify(result), 200 if result['success'] else 400
-
-        # ---- Excel: pass file_bytes to engine for structured extraction ----
-        elif filename_lower.endswith(('.xlsx', '.xls')):
-            file_bytes = file.read()
-
-            # Normalize document_type for Excel — if generic/word, default to 'excel'
-            excel_type = document_type
-            if document_type in ('generic', 'general_word', ''):
-                excel_type = 'excel'
-
-            result = ingest_document_content(
-                ingestor=get_document_ingestor(),
-                content='',
-                document_type=excel_type,
-                metadata=metadata,
-                file_bytes=file_bytes
-            )
-            return jsonify(result), 200 if result['success'] else 400
-
-        # ---- DOCX: use python-docx for proper structured extraction ----
-        elif filename_lower.endswith(('.docx', '.doc')):
-            file_bytes = file.read()
-
-            docx_data = _extract_docx_structured(file_bytes)
-
-            if docx_data['error'] and not docx_data['paragraphs']:
-                # python-docx completely failed — fall back to raw decode (old behavior)
-                # This is a last resort; at least something is extracted
-                content = file_bytes.decode('utf-8', errors='ignore')
-                metadata['docx_extraction_error'] = docx_data['error']
-            else:
-                # Pass structured paragraph data as JSON string so engine extractors
-                # can read style names, bold flags, and text without re-parsing XML
-                content = json.dumps(docx_data['paragraphs'], ensure_ascii=False)
-                metadata['plain_text'] = docx_data['plain_text'][:5000]
-                if docx_data['error']:
-                    metadata['docx_partial_error'] = docx_data['error']
-
-            result = ingest_document_content(
-                ingestor=get_document_ingestor(),
-                content=content,
-                document_type=document_type,
-                metadata=metadata,
-                file_bytes=file_bytes
-            )
-            return jsonify(result), 200 if result['success'] else 400
-
-        # ---- PDF and plain text: decode and pass as string ----
-        else:
-            content = file.read().decode('utf-8', errors='ignore')
-            ingestor = get_document_ingestor()
-            result = ingest_document_content(ingestor, content, document_type, metadata)
-            return jsonify(result), 200 if result['success'] else 400
+        result = _process_file_for_ingest(file, document_type, metadata)
+        return jsonify(result), 200 if result['success'] else 400
 
     except Exception as e:
         import traceback
@@ -353,6 +326,127 @@ def ingest_document():
             'error': f'Ingestion failed: {str(e)}',
             'traceback': traceback.format_exc()
         }), 500
+
+
+# ============================================================================
+# BATCH ENDPOINT — Added February 27, 2026 (Session 2)
+# ============================================================================
+@ingest_bp.route('/batch', methods=['POST'])
+def ingest_batch():
+    """
+    Upload and ingest multiple documents in a single request.
+
+    Added February 27, 2026 (Session 2):
+    Supports multi-file drag-and-drop or multi-select from the Knowledge
+    Management UI. Each file is processed independently using the same
+    _process_file_for_ingest() helper as the single-file endpoint, so all
+    file-type handling (PPTX, Excel, DOCX, PDF/text) is identical.
+
+    Expects:
+        - files: One or more document files (multipart/form-data, same field name)
+        - document_type: Applied to ALL files in the batch (required)
+        - client: Optional client name (applied to all files)
+        - industry: Optional industry (applied to all files)
+
+    Returns:
+        JSON with:
+            success:                  True if ALL files succeeded, False if any failed
+            batch:                    True flag for UI to use batch result display
+            total_files:              Number of files processed
+            success_count:            Files ingested successfully
+            error_count:              Files that failed
+            total_patterns_extracted: Sum of patterns across all files
+            total_insights_extracted: Sum of insights across all files
+            total_patterns:           Total patterns now in knowledge base
+            results:                  Per-file result list
+
+    Processing is sequential (not parallel) to avoid concurrent database writes.
+    For typical batch sizes (2-20 files) this is fast enough.
+    """
+    try:
+        files = request.files.getlist('files')
+
+        if not files or all(f.filename == '' for f in files):
+            return jsonify({'success': False, 'error': 'No files uploaded'}), 400
+
+        document_type = request.form.get('document_type', 'generic')
+        client   = request.form.get('client', '')
+        industry = request.form.get('industry', '')
+
+        results = []
+        success_count = 0
+        error_count = 0
+
+        for file in files:
+            if file.filename == '':
+                continue
+
+            if not allowed_file(file.filename):
+                results.append({
+                    'filename': file.filename,
+                    'success': False,
+                    'error': f'File type not allowed ({file.filename.rsplit(".", 1)[-1] if "." in file.filename else "unknown"})'
+                })
+                error_count += 1
+                continue
+
+            metadata = {
+                'document_name': secure_filename(file.filename),
+                'client': client,
+                'industry': industry,
+                'project_type': '',
+                'uploaded_by': 'user',
+                'upload_date': datetime.now().isoformat()
+            }
+
+            try:
+                result = _process_file_for_ingest(file, document_type, metadata)
+            except Exception as file_err:
+                import traceback
+                result = {
+                    'success': False,
+                    'error': str(file_err),
+                    'traceback': traceback.format_exc()
+                }
+
+            result['filename'] = file.filename
+            results.append(result)
+
+            if result.get('success'):
+                success_count += 1
+            else:
+                error_count += 1
+
+        total_patterns = sum(r.get('patterns_extracted', 0) for r in results)
+        total_insights = sum(r.get('insights_extracted', 0) for r in results)
+
+        # Get total KB pattern count from last successful result
+        total_in_kb = 0
+        for r in reversed(results):
+            if r.get('success') and r.get('total_patterns') is not None:
+                total_in_kb = r['total_patterns']
+                break
+
+        return jsonify({
+            'success': error_count == 0,
+            'batch': True,
+            'total_files': len(results),
+            'success_count': success_count,
+            'error_count': error_count,
+            'total_patterns_extracted': total_patterns,
+            'total_insights_extracted': total_insights,
+            'total_patterns': total_in_kb,
+            'results': results
+        }), 200
+
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'success': False,
+            'error': f'Batch ingestion failed: {str(e)}',
+            'traceback': traceback.format_exc()
+        }), 500
+# ============================================================================
 
 
 def ingest_document_content(ingestor, content, document_type, metadata, file_bytes=None):
@@ -400,12 +494,7 @@ def ingest_document_content(ingestor, content, document_type, metadata, file_byt
 
 @ingest_bp.route('/status', methods=['GET'])
 def get_status():
-    """
-    Get knowledge base statistics.
-
-    Returns:
-        JSON with total_extracts, total_patterns, by_document_type, recent_ingestions
-    """
+    """Get knowledge base statistics."""
     try:
         ingestor = get_document_ingestor()
         stats = ingestor.get_knowledge_base_stats()
@@ -490,7 +579,6 @@ def get_patterns():
         db.row_factory = sqlite3.Row
         cursor = db.cursor()
 
-        # Gracefully handle missing table
         cursor.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='learned_patterns'"
         )
@@ -653,7 +741,6 @@ def export_knowledge():
         db.row_factory = sqlite3.Row
         cursor = db.cursor()
 
-        # Knowledge extracts
         cursor.execute('''
             SELECT id, document_type, document_name, client, industry,
                    project_type, extracted_at, file_size, extracted_data, metadata
@@ -672,7 +759,6 @@ def export_knowledge():
                     extract[field] = {}
             extracts.append(extract)
 
-        # Learned patterns
         patterns = []
         try:
             cursor.execute('''
@@ -694,7 +780,6 @@ def export_knowledge():
         except sqlite3.OperationalError:
             pass
 
-        # Ingestion log (last 500)
         ingestion_log = []
         try:
             cursor.execute('''
@@ -710,7 +795,6 @@ def export_knowledge():
 
         db.close()
 
-        # Statistics
         by_doc_type = {}
         by_industry = {}
         for e in extracts:
@@ -765,24 +849,15 @@ def export_knowledge():
 
 
 # ============================================================================
-# CLEAR ENDPOINT — Added February 27, 2026
+# CLEAR ENDPOINT — Added February 27, 2026 (Session 1)
 # ============================================================================
 @ingest_bp.route('/clear', methods=['POST'])
 def clear_knowledge_base():
     """
     Clear all knowledge extracts, learned patterns, and ingestion log.
 
-    Added February 27, 2026:
-    Allows wiping the knowledge base so documents can be re-ingested with
-    improved extractors without stale/garbled data from previous ingestions.
-
-    Does NOT delete the database file itself — only truncates the three tables:
-        - knowledge_extracts
-        - learned_patterns
-        - ingestion_log
-
-    Requires JSON body: { "confirm": "CLEAR" }
-    This prevents accidental clears from browser refreshes or stray requests.
+    Does NOT delete the database file - only truncates the three tables.
+    Requires JSON body: { "confirm": "CLEAR" } to prevent accidental clears.
 
     Returns:
         JSON with counts of deleted rows per table.
@@ -809,7 +884,7 @@ def clear_knowledge_base():
                 counts[table] = cursor.fetchone()[0]
                 cursor.execute(f'DELETE FROM {table}')
             except sqlite3.OperationalError:
-                counts[table] = 0  # Table doesn't exist yet
+                counts[table] = 0
 
         db.commit()
         db.close()
