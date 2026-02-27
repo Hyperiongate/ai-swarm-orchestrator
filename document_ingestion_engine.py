@@ -1,9 +1,20 @@
 """
 DOCUMENT INGESTION ENGINE
 Created: February 2, 2026
-Last Updated: February 27, 2026 - FIXED 5 extraction bugs found in live data review
+Last Updated: February 27, 2026 - ADDED _extract_from_lessons_learned_md full Markdown extractor
 
 CHANGELOG:
+
+- February 27, 2026 (Session 3 - Part 2): ADDED _extract_from_lessons_learned_md
+  * New document type 'lessons_learned_md' for Jim's dictated Markdown lessons format.
+  * Jim dictates lessons to Claude Sonnet after each engagement. Sonnet produces
+    structured Markdown with ## category headings, ### Lesson #N headings, and
+    **Field:** bold labels. The generic extractor captured 1 pattern from 18,000+ words.
+    New extractor captures all 19 lessons with 10+ structured fields each:
+    situation, key_principle, why_matters, hard_truth, watch_out_for, do/dont lists,
+    key_bullets, numbered_items, bold_fields dict, full_text.
+  * dispatcher in ingest_document() routes 'lessons_learned_md' to new method.
+  * ingest.py _detect_document_type() routes .md + 'lesson' → 'lessons_learned_md'.
 
 - February 27, 2026 (Session 3): FIXED 5 extraction bugs found by analyzing live export
 
@@ -229,6 +240,8 @@ class DocumentIngestor:
             extracted = self._extract_from_implementation_manual(content or '', metadata)
         elif document_type == 'lessons_learned':
             extracted = self._extract_from_lessons_learned(content or '', metadata)
+        elif document_type == 'lessons_learned_md':
+            extracted = self._extract_from_lessons_learned_md(content or '', metadata)
         elif document_type == 'scope_of_work':
             extracted = self._extract_from_scope_of_work(content or '', metadata)
         elif document_type == 'implementation_ppt':
@@ -1234,6 +1247,271 @@ class DocumentIngestor:
 
         extracted['highlights'].append(f"Total Lessons/Sections: {len(lessons_extracted)}")
         extracted['highlights'].append(f"Categories: {', '.join(categories_covered)}")
+
+        return extracted
+
+    def _extract_from_lessons_learned_md(self, content: str, metadata: Dict) -> Dict:
+        """
+        Extract knowledge from Jim's dictated Markdown lessons learned format.
+
+        Added: February 27, 2026 (Session 3 - Part 2)
+
+        PURPOSE:
+            Jim dictates lessons learned to Claude Sonnet after each engagement.
+            Sonnet produces rich structured Markdown with:
+              ## Category Name        (8 categories)
+              ### Lesson #N: Title    (one per lesson)
+              **Field Label:**        (dozens of fields per lesson)
+              - bullet points         (key rules, watch-outs, dos/don'ts)
+              1. numbered items       (checklists, steps)
+
+            The generic extractor previously captured only 1 pattern from 18,000+
+            words of consulting knowledge. This extractor captures all 19 lessons
+            with full structured content across every field.
+
+        CAPTURES PER LESSON:
+            - lesson_number, lesson_name, category, date_added
+            - situation          (Situation/Trigger or The Situation)
+            - key_principle      (Key Principle, Hard Truth, Bottom Line, or Lesson Learned)
+            - why_matters        (Why It Matters / Why This Matters)
+            - hard_truth         (The Hard Truth)
+            - watch_out_for      (Watch Out For)
+            - red_flags / green_flags
+            - do_list / dont_list
+            - related_lessons
+            - key_bullets        (all bullet points, up to 20)
+            - numbered_items     (all numbered list items, up to 15)
+            - bold_fields        (dict of ALL **Label:** → value pairs)
+            - full_text          (full block text up to 8000 chars for AI retrieval)
+        """
+        extracted = {
+            'patterns':  [],
+            'insights':  [],
+            'highlights': [],
+            'document_category': 'lessons_learned_md'
+        }
+
+        if not content or not content.strip():
+            extracted['highlights'].append('Empty document — no lessons extracted')
+            return extracted
+
+        SKIP_H2 = {'Categories', 'How to Add', 'Notes for'}
+
+        # ---- 1. Build category map from ## headings ----
+        category_map = {}
+        current_category = 'General'
+        for line in content.splitlines():
+            stripped = line.strip()
+            if stripped.startswith('## '):
+                heading = stripped[3:].strip()
+                if not any(skip in heading for skip in SKIP_H2):
+                    current_category = heading
+            elif stripped.startswith('### Lesson'):
+                m = re.match(r'### Lesson #(\d+)', stripped)
+                if m:
+                    category_map[int(m.group(1))] = current_category
+
+        # ---- 2. Split into per-lesson blocks ----
+        # NOTE: The split pattern r'\n(?=### Lesson #\d+)' already excludes
+        # the '### Lesson #X' template placeholder (X is not \d+).
+        # We rely solely on re.match for the title — do NOT filter by body content
+        # (e.g., Lesson #19 contains '### Lesson #X' in a template appendix but
+        # it IS a real lesson and must not be dropped).
+        lesson_blocks = re.split(r'\n(?=### Lesson #\d+)', content)
+        lesson_blocks = [
+            b.strip() for b in lesson_blocks
+            if re.match(r'### Lesson #\d+', b.strip())
+        ]
+
+        lessons_extracted = []
+
+        for block in lesson_blocks:
+            title_m = re.match(r'### (Lesson #(\d+)[^\n]+)', block)
+            if not title_m:
+                continue
+
+            full_title  = title_m.group(1).strip()
+            lesson_num  = int(title_m.group(2))
+            lesson_name = re.sub(r'Lesson #\d+:\s*', '', full_title).strip()
+            category    = category_map.get(lesson_num, 'General')
+
+            # ---- Helper: extract text following a **Field:** label ----
+            def get_field(pattern, text=block):
+                """Get paragraph(s) following a **Field:** bold label."""
+                escaped = re.escape(pattern)
+                # Multi-line: label on its own line, content on next line(s)
+                m = re.search(
+                    rf'\*\*{escaped}[:\s]*\*\*\s*\n+(.*?)(?=\n\*\*[A-Z\"]|\n---|\Z)',
+                    text, re.DOTALL | re.IGNORECASE
+                )
+                if m:
+                    return m.group(1).strip()
+                # Inline: **Label:** content on same line
+                m2 = re.search(
+                    rf'\*\*{escaped}[:\s]*\*\*\s+([^\n]+)',
+                    text, re.IGNORECASE
+                )
+                return m2.group(1).strip() if m2 else ''
+
+            # ---- Core fields ----
+            date_m     = re.search(r'\*\*Date Added:\*\*\s*([^\n]+)', block)
+            date_added = date_m.group(1).strip() if date_m else ''
+
+            # Situation: try multiple label variants
+            situation = ''
+            for label in ('Situation/Trigger', 'The Situation', 'Situation'):
+                val = get_field(label)
+                if val and len(val) > 10 and not val.startswith('['):
+                    situation = val[:500]
+                    break
+
+            # Key Principle: try multiple label variants in priority order
+            key_principle = ''
+            for label in ('Key Principle', 'Key Principles', 'The Hard Truth',
+                          'The Bottom Line', 'The Lesson', 'Lesson Learned',
+                          'THE RULE', 'The Philosophy', 'The Right Mindset'):
+                m = re.search(
+                    rf'\*\*{re.escape(label)}[s]?[:\*]*\*\*\s*([^\n]{{10,}}(?:\n(?!\*\*)[^\n]+)*)',
+                    block, re.IGNORECASE
+                )
+                if m:
+                    key_principle = m.group(1).strip()[:500]
+                    break
+
+            # ---- Rich fields ----
+            why_matters = (get_field('Why It Matters') or get_field('Why This Matters')
+                           or get_field('Why This Is Important') or get_field('Why'))
+            hard_truth  = get_field('The Hard Truth')
+            watch_out   = get_field('Watch Out For')
+            red_flags   = get_field('Red Flags') or get_field('Red Flag')
+            green_flags = get_field('Green Flags')
+
+            # DO / DON'T lists
+            do_list, dont_list = [], []
+            do_block = get_field('DO')
+            if do_block:
+                do_list = [
+                    b.strip() for b in re.findall(r'[-*]\s+(.+)', do_block)
+                    if b.strip() and len(b.strip()) > 5
+                ][:10]
+            dont_block = get_field("DON'T")
+            if dont_block:
+                dont_list = [
+                    b.strip() for b in re.findall(r'[-*]\s+(.+)', dont_block)
+                    if b.strip() and len(b.strip()) > 5
+                ][:10]
+
+            # Related lessons reference
+            related_m = re.search(
+                r'\*\*Related (?:Lessons?|to)[^\n]*\*\*[:\s]*([^\n]+)',
+                block, re.IGNORECASE
+            )
+            related_lessons = related_m.group(1).strip() if related_m else ''
+
+            # All bullet points (valuable for AI retrieval of rules and principles)
+            all_bullets = [
+                b.strip() for b in re.findall(r'^[-*]\s+(.+)', block, re.MULTILINE)
+                if len(b.strip()) > 10
+            ][:20]
+
+            # All numbered items (checklists, steps, procedures)
+            numbered = [
+                n.strip() for n in re.findall(r'^\d+\.\s+(.+)', block, re.MULTILINE)
+                if len(n.strip()) > 10
+            ][:15]
+
+            # Collect ALL bold field labels and their inline values
+            # This captures the full richness without enumerating every possible field
+            bold_fields = {}
+            for label, val in re.findall(
+                r'\*\*([^*\n]{3,60})\*\*[:\s]+([^\n]{5,200})', block
+            ):
+                label = label.strip().rstrip(':')
+                if label not in ('Date Added',) and val.strip():
+                    bold_fields[label] = val.strip()[:200]
+
+            # Full block text for AI full-text retrieval (capped at 8000 chars)
+            full_text = block[:8000]
+
+            lessons_extracted.append({
+                'lesson_number':   lesson_num,
+                'full_title':      full_title,
+                'lesson_name':     lesson_name,
+                'category':        category,
+                'date_added':      date_added,
+                'situation':       situation,
+                'key_principle':   key_principle,
+                'why_matters':     why_matters[:400]  if why_matters  else '',
+                'hard_truth':      hard_truth[:400]   if hard_truth   else '',
+                'watch_out_for':   watch_out[:400]    if watch_out    else '',
+                'red_flags':       red_flags[:400]    if red_flags    else '',
+                'green_flags':     green_flags[:400]  if green_flags  else '',
+                'do_list':         do_list,
+                'dont_list':       dont_list,
+                'related_lessons': related_lessons,
+                'key_bullets':     all_bullets,
+                'numbered_items':  numbered,
+                'bold_fields':     bold_fields,
+                'full_text':       full_text,
+            })
+
+        # ---- 3. Build patterns and insights ----
+        for lesson in lessons_extracted:
+            lesson_num  = lesson['lesson_number']
+            lesson_name = lesson['lesson_name']
+            safe_name   = re.sub(r'[^a-z0-9]', '_', lesson_name.lower())[:40]
+
+            extracted['patterns'].append({
+                'type': 'consulting_lesson',
+                'name': f'lesson_{lesson_num}_{safe_name}',
+                'data': {
+                    'lesson_number':   lesson_num,
+                    'title':           lesson['full_title'],
+                    'lesson_name':     lesson_name,
+                    'category':        lesson['category'],
+                    'date_added':      lesson['date_added'],
+                    'key_principle':   lesson['key_principle'],
+                    'situation':       lesson['situation'],
+                    'why_matters':     lesson['why_matters'],
+                    'hard_truth':      lesson['hard_truth'],
+                    'watch_out_for':   lesson['watch_out_for'],
+                    'red_flags':       lesson['red_flags'],
+                    'green_flags':     lesson['green_flags'],
+                    'do_list':         lesson['do_list'],
+                    'dont_list':       lesson['dont_list'],
+                    'related_lessons': lesson['related_lessons'],
+                    'key_bullets':     lesson['key_bullets'],
+                    'numbered_items':  lesson['numbered_items'],
+                    'bold_fields':     lesson['bold_fields'],
+                    'full_text':       lesson['full_text'],
+                },
+                'confidence': 1.0
+            })
+
+        # ---- 4. Summary insight ----
+        categories_covered = list(dict.fromkeys(
+            l['category'] for l in lessons_extracted
+        ))  # preserves insertion order, dedupes
+        extracted['insights'].append({
+            'type':         'lessons_learned_summary',
+            'total_lessons': len(lessons_extracted),
+            'categories':   categories_covered,
+            'lessons': [
+                {
+                    'number':   l['lesson_number'],
+                    'name':     l['lesson_name'],
+                    'category': l['category'],
+                }
+                for l in lessons_extracted
+            ]
+        })
+
+        extracted['highlights'].append(f"Total Lessons: {len(lessons_extracted)}")
+        extracted['highlights'].append(f"Categories: {', '.join(categories_covered)}")
+        extracted['highlights'].append(
+            f"Fields captured per lesson: situation, key_principle, why_matters, "
+            f"hard_truth, watch_out_for, do/dont lists, bullets, numbered_items, full_text"
+        )
 
         return extracted
 
