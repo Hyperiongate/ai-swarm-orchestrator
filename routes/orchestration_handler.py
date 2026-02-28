@@ -1,9 +1,29 @@
 """
 Orchestration Handler - Main AI Task Processing (REFACTORED)
 Created: January 31, 2026
-Last Updated: February 28, 2026 - FIXED UnboundLocalError on labor_response
+Last Updated: February 28, 2026 - ADDED HANDLER 3.6 SURVEY BUILDER
 
 CHANGELOG:
+
+- February 28, 2026: ADDED HANDLER 3.6 SURVEY BUILDER
+  PROBLEM: Typing "provide me with a survey" in Quick Tasks produced either
+    no output (clarification questions with no follow-through) or unformatted
+    plain text from Sonnet with no download link. The dedicated SurveyBuilder
+    with its 97-question bank and Word export was never called from the
+    orchestration flow.
+  FIX: Added Handler 3.6 between Handler 3.5 (Contract) and Handler 4 (Labor).
+    Uses the same two-pass pattern as Handler 3.5:
+    Pass 1 - _detect_survey_request() detects intent -> asks 5 clarifying
+      questions (survey type, company name, shift length, distribution, count)
+    Pass 2 - clarification_answers received -> _map_survey_answers_to_questions()
+      maps answers to question IDs and schedule IDs -> SurveyBuilder.create_survey()
+      -> SurveyBuilder.export_to_word() -> saved to /tmp -> save_generated_document()
+      -> returns download link.
+    Added helpers: _detect_survey_request(), _build_survey_questions_html(),
+      _map_survey_answers_to_questions().
+  IMPACT: "provide me with a survey" (and similar) now produces a downloadable
+    Word document using the proper 97-question bank, correctly filtered by
+    survey type and shift length.
 
 - February 28, 2026: FIXED UnboundLocalError on labor_response
   PROBLEM: When conversation_id is None, Handler 4 (if conversation_id:) is skipped
@@ -313,6 +333,184 @@ def orchestrate():
                 'document_url': document_url, 'document_id': document_id,
                 'document_type': 'docx', 'execution_time': total_time
             })
+
+        # ========================================================================
+        # HANDLER 3.6: SURVEY BUILDER
+        # Added February 28, 2026
+        #
+        # Detects survey/questionnaire requests and routes them through the
+        # dedicated SurveyBuilder rather than letting them fall through to
+        # Sonnet (which produces unformatted text with no download).
+        #
+        # FLOW:
+        #   Pass 1 (no clarification_answers): detect intent -> ask questions
+        #   Pass 2 (clarification_answers present): build survey -> Word export
+        #
+        # Uses the same two-pass pattern as Handler 3.5 (Contract/Proposal).
+        # Fires BEFORE Handler 10 / ProactiveAgent so it owns the survey flow.
+        # ========================================================================
+        is_survey_req = _detect_survey_request(user_request)
+
+        if is_survey_req and not clarification_answers:
+            print(f"HANDLER 3.6: Survey request detected - asking clarifying questions")
+            if not conversation_id:
+                conversation_id = create_conversation(mode=mode, project_id=project_id)
+            add_message(conversation_id, 'user', user_request)
+            questions_html = _build_survey_questions_html()
+            db = get_db()
+            cursor = db.execute(
+                'INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
+                (user_request, 'needs_clarification', conversation_id)
+            )
+            task_id = cursor.lastrowid
+            db.commit()
+            db.close()
+            add_message(conversation_id, 'assistant', questions_html, task_id,
+                       {'waiting_for_input': True, 'handler': 'survey_builder'})
+            return jsonify({
+                'success': True, 'task_id': task_id, 'conversation_id': conversation_id,
+                'result': questions_html, 'needs_input': True, 'handler': 'survey_builder',
+                'orchestrator': 'survey_builder',
+                'execution_time': time.time() - overall_start
+            })
+
+        if is_survey_req and clarification_answers:
+            print(f"HANDLER 3.6: Survey answers received - building survey document")
+            if not conversation_id:
+                conversation_id = create_conversation(mode=mode, project_id=project_id)
+            add_message(conversation_id, 'user', user_request)
+            db = get_db()
+            cursor = db.execute(
+                'INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
+                (user_request, 'processing', conversation_id)
+            )
+            task_id = cursor.lastrowid
+            db.commit()
+
+            survey_type    = clarification_answers.get('survey_type', 'Schedule Preference')
+            company_name   = clarification_answers.get('company_name', 'Client')
+            shift_length   = clarification_answers.get('shift_length', 'Mixed / not sure')
+            distribution   = clarification_answers.get('distribution_method', 'Not sure yet')
+            employee_count = clarification_answers.get('employee_count', '')
+            timing         = clarification_answers.get('implementation_timing', '')
+
+            # Clean up survey_type label (user picks from dropdown which may
+            # include the description in parentheses - strip it)
+            survey_type_clean = survey_type.split('(')[0].strip()
+
+            project_name = f"{company_name} - {survey_type_clean} Survey"
+
+            selected_questions, schedules_to_rate = _map_survey_answers_to_questions(
+                survey_type_clean, shift_length
+            )
+
+            actual_output = ""
+            document_created = False
+            document_url = None
+            document_id = None
+
+            try:
+                from survey_builder import SurveyBuilder
+                import os
+                import tempfile
+
+                builder = SurveyBuilder()
+                survey_obj = builder.create_survey(
+                    project_name=project_name,
+                    company_name=company_name,
+                    selected_questions=selected_questions,
+                    schedules_to_rate=schedules_to_rate
+                )
+
+                word_buffer = builder.export_to_word(survey_obj)
+
+                # Save buffer to a temp file so save_generated_document can track it
+                safe_company = "".join(c for c in company_name if c.isalnum() or c in (' ', '_')).replace(' ', '_')
+                filename = f"{safe_company}_{survey_type_clean.replace(' ', '_')}_Survey_{datetime.now().strftime('%Y%m%d')}.docx"
+                tmp_dir = '/tmp'
+                file_path = os.path.join(tmp_dir, filename)
+                with open(file_path, 'wb') as f:
+                    f.write(word_buffer.read())
+                file_size = os.path.getsize(file_path)
+
+                doc_id = save_generated_document(
+                    filename=filename,
+                    original_name=project_name,
+                    document_type='docx',
+                    file_path=file_path,
+                    file_size=file_size,
+                    task_id=task_id,
+                    conversation_id=conversation_id,
+                    project_id=project_id,
+                    title=project_name,
+                    description=f"{survey_type_clean} survey for {company_name} ({len(selected_questions)} questions)",
+                    category='survey'
+                )
+                document_created = True
+                document_url = f'/api/generated-documents/{doc_id}/download'
+                document_id = doc_id
+
+                q_count = len(selected_questions)
+                actual_output = (
+                    f"## {project_name}\n\n"
+                    f"Your **{survey_type_clean}** survey has been built and is ready to download.\n\n"
+                    f"**Survey Details:**\n"
+                    f"- Company: {company_name}\n"
+                    f"- Survey Type: {survey_type_clean}\n"
+                    f"- Questions Included: {q_count}\n"
+                    f"- Shift Length Context: {shift_length}\n"
+                )
+                if distribution and distribution != 'Not sure yet':
+                    actual_output += f"- Distribution Method: {distribution}\n"
+                if employee_count:
+                    actual_output += f"- Target Employee Count: {employee_count}\n"
+                if timing:
+                    actual_output += f"- Survey Timing: {timing}\n"
+                if schedules_to_rate:
+                    actual_output += f"- Schedule Concepts Included: {len(schedules_to_rate)}\n"
+                actual_output += (
+                    f"\n**The Word document includes:**\n"
+                    f"- Standard survey directions\n"
+                    f"- All selected questions with formatted answer choices\n"
+                )
+                if schedules_to_rate:
+                    actual_output += "- Schedule concept rating sections\n"
+                actual_output += (
+                    f"- Shiftwork Solutions footer and contact information\n\n"
+                    f"Click the download button to save the `.docx` file. "
+                    f"You can edit it further in Word before distributing."
+                )
+
+            except Exception as survey_err:
+                import traceback
+                print(f"HANDLER 3.6: Survey build error: {traceback.format_exc()}")
+                actual_output = (
+                    f"I encountered an error building the survey document: {str(survey_err)}\n\n"
+                    f"Please try again or contact support."
+                )
+
+            formatted_output = convert_markdown_to_html(actual_output)
+            total_time = time.time() - overall_start
+            db.execute(
+                'UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
+                ('completed', 'survey_builder', total_time, task_id)
+            )
+            db.commit()
+            db.close()
+            add_message(conversation_id, 'assistant', actual_output, task_id,
+                       {'orchestrator': 'survey_builder', 'document_created': document_created,
+                        'document_url': document_url, 'execution_time': total_time})
+            return jsonify({
+                'success': True, 'task_id': task_id, 'conversation_id': conversation_id,
+                'result': formatted_output, 'orchestrator': 'survey_builder',
+                'document_created': document_created, 'document_url': document_url,
+                'document_id': document_id, 'document_type': 'docx',
+                'execution_time': total_time
+            })
+
+        # ========================================================================
+        # END HANDLER 3.6
+        # ========================================================================
 
         # HANDLER 4: Labor analysis response handler
         # Initialize to None so Handler 4.5 can safely reference it even when
@@ -1545,6 +1743,303 @@ INSTRUCTIONS:
 7. Return the COMPLETE filled-in {doc_label} -- do not truncate or summarize
 
 Generate the complete {doc_label} now:"""
+
+
+# ============================================================================
+# SURVEY BUILDER HANDLER HELPERS
+# Added February 28, 2026 - Handler 3.6
+# ============================================================================
+
+def _detect_survey_request(user_request):
+    """
+    Detect if the user is asking for a survey or questionnaire.
+    Returns True if detected, False otherwise.
+
+    Intentionally simple - catches 'survey' and 'questionnaire' in any context.
+    Handler 3.6 uses this as a gate; the two-pass flow handles everything else.
+    """
+    if not user_request:
+        return False
+    req_lower = user_request.lower()
+    return any(kw in req_lower for kw in ['survey', 'questionnaire'])
+
+
+def _build_survey_questions_html():
+    """
+    Build the HTML clarification form for survey requests.
+    Follows the same pattern as _build_contract_questions_html() in Handler 3.5.
+    Called on Pass 1 when no clarification_answers are present.
+    """
+    html = (
+        '<div style="background: linear-gradient(135deg, #e3f2fd 0%, #e8f5e9 100%); '
+        'border-radius: 12px; padding: 20px; margin: 10px 0;">'
+        '<div style="font-weight: 600; font-size: 16px; color: #333; margin-bottom: 15px;">'
+        'I\'ll build a professional survey for you. A few quick details first:'
+        '</div>'
+    )
+
+    # Survey Type - dropdown
+    survey_types = [
+        'Schedule Preference (which schedules employees prefer)',
+        'Overtime Preference (OT willingness and preferences)',
+        'Employee Satisfaction (satisfaction with current schedule)',
+        'Shift Preference (days/shifts employees prefer)',
+        'Pre-Implementation (baseline before a schedule change)',
+        'Post-Implementation (feedback after a schedule change)',
+    ]
+    html += (
+        '<div style="background: white; border-radius: 8px; padding: 15px; margin-bottom: 12px;">'
+        '<div style="font-weight: 500; color: #333; margin-bottom: 8px;">'
+        'What type of survey? <span style="color: #d32f2f;">*</span></div>'
+        '<select id="survey_field_survey_type" '
+        'style="width: 100%; padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; '
+        'font-size: 14px; box-sizing: border-box;">'
+        '<option value="">-- Select survey type --</option>'
+    )
+    for st in survey_types:
+        html += f'<option value="{st}">{st}</option>'
+    html += '</select></div>'
+
+    # Company Name - text input
+    html += (
+        '<div style="background: white; border-radius: 8px; padding: 15px; margin-bottom: 12px;">'
+        '<div style="font-weight: 500; color: #333; margin-bottom: 8px;">'
+        'Client / Company name? <span style="color: #d32f2f;">*</span></div>'
+        '<input type="text" id="survey_field_company_name" placeholder="e.g. Acme Foods Inc." '
+        'style="width: 100%; padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; '
+        'font-size: 14px; box-sizing: border-box;">'
+        '</div>'
+    )
+
+    # Shift Length - dropdown
+    shift_options = ['8-hour shifts', '10-hour shifts', '12-hour shifts', 'Mixed / not sure']
+    html += (
+        '<div style="background: white; border-radius: 8px; padding: 15px; margin-bottom: 12px;">'
+        '<div style="font-weight: 500; color: #333; margin-bottom: 8px;">'
+        'What shift length are employees working?</div>'
+        '<select id="survey_field_shift_length" '
+        'style="width: 100%; padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; '
+        'font-size: 14px; box-sizing: border-box;">'
+    )
+    for opt in shift_options:
+        html += f'<option value="{opt}">{opt}</option>'
+    html += '</select></div>'
+
+    # Distribution Method - dropdown
+    dist_options = ['Paper forms (printed)', 'Email link', 'In-person / kiosk', 'Not sure yet']
+    html += (
+        '<div style="background: white; border-radius: 8px; padding: 15px; margin-bottom: 12px;">'
+        '<div style="font-weight: 500; color: #333; margin-bottom: 8px;">'
+        'How will it be distributed?</div>'
+        '<select id="survey_field_distribution_method" '
+        'style="width: 100%; padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; '
+        'font-size: 14px; box-sizing: border-box;">'
+    )
+    for opt in dist_options:
+        html += f'<option value="{opt}">{opt}</option>'
+    html += '</select></div>'
+
+    # Employee Count - dropdown
+    count_options = ['Under 50', '50-150', '150-500', 'Over 500']
+    html += (
+        '<div style="background: white; border-radius: 8px; padding: 15px; margin-bottom: 12px;">'
+        '<div style="font-weight: 500; color: #333; margin-bottom: 8px;">'
+        'Approximately how many employees will complete it?</div>'
+        '<select id="survey_field_employee_count" '
+        'style="width: 100%; padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; '
+        'font-size: 14px; box-sizing: border-box;">'
+        '<option value="">-- Select range --</option>'
+    )
+    for opt in count_options:
+        html += f'<option value="{opt}">{opt}</option>'
+    html += '</select></div>'
+
+    # Submit button
+    html += (
+        '<div style="margin-top: 20px; text-align: center;">'
+        '<button onclick="submitSurveyAnswers()" '
+        'style="background: linear-gradient(135deg, #43a047 0%, #1b5e20 100%); '
+        'color: white; border: none; padding: 12px 30px; border-radius: 8px; '
+        'font-weight: 600; cursor: pointer; font-size: 15px;">'
+        'Build My Survey</button>'
+        '</div></div>'
+    )
+
+    # JavaScript handler
+    html += '''
+<script>
+function submitSurveyAnswers() {
+    var fields = ['survey_type', 'company_name', 'shift_length', 'distribution_method', 'employee_count'];
+    var required = ['survey_type', 'company_name'];
+    var answers = {};
+    var missing = [];
+
+    fields.forEach(function(f) {
+        var el = document.getElementById('survey_field_' + f);
+        if (el && el.value.trim()) {
+            answers[f] = el.value.trim();
+        } else if (required.indexOf(f) !== -1) {
+            missing.push(f.replace('_', ' '));
+        }
+    });
+
+    if (missing.length > 0) {
+        alert('Please fill in: ' + missing.join(', '));
+        return;
+    }
+
+    var loading = document.getElementById('loadingIndicator');
+    if (loading) loading.classList.add('active');
+
+    var formData = new FormData();
+    formData.append('request', 'Build a survey with the provided details');
+    formData.append('clarification_answers', JSON.stringify(answers));
+    if (typeof currentConversationId !== 'undefined' && currentConversationId) {
+        formData.append('conversation_id', currentConversationId);
+    }
+
+    fetch('/api/orchestrate', { method: 'POST', body: formData })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (loading) loading.classList.remove('active');
+        if (data.success) {
+            if (data.conversation_id && typeof currentConversationId !== 'undefined') {
+                currentConversationId = data.conversation_id;
+                localStorage.setItem('currentConversationId', currentConversationId);
+            }
+            var downloadSection = '';
+            if (data.document_url) {
+                downloadSection = '<div style="margin-top:15px;padding:12px;background:#e8f5e9;border-left:4px solid #4caf50;border-radius:4px;">'
+                    + '<strong>Survey Ready!</strong> '
+                    + '<a href="' + data.document_url + '" download style="padding:8px 16px;background:#4caf50;color:white;text-decoration:none;border-radius:6px;margin-left:10px;">Download Survey (.docx)</a></div>';
+            }
+            if (typeof addMessage === 'function') {
+                addMessage('assistant', data.result + downloadSection, data.task_id, 'quick');
+            }
+            if (typeof loadDocuments === 'function') loadDocuments();
+        } else {
+            alert('Error: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(function(err) {
+        if (loading) loading.classList.remove('active');
+        alert('Error generating survey: ' + err.message);
+    });
+}
+</script>
+'''
+    return html
+
+
+def _map_survey_answers_to_questions(survey_type, shift_length):
+    """
+    Map clarification answers to SurveyBuilder question IDs and schedule IDs.
+
+    Args:
+        survey_type: Cleaned survey type label (e.g. 'Schedule Preference')
+        shift_length: Shift length answer (e.g. '12-hour shifts')
+
+    Returns:
+        tuple: (selected_questions list, schedules_to_rate list)
+    """
+    # Question ID sets per survey type
+    SURVEY_QUESTION_MAP = {
+        'Schedule Preference': [
+            'dept', 'tenure', 'caregiving', 'age_group', 'commute_distance',
+            'schedule_improvement', 'current_schedule_satisfaction',
+            'better_schedules_exist', 'time_off_predictable', 'schedule_flexibility',
+            'preferred_8hr_shift', 'preferred_12hr_shift', 'hours_vs_days_off',
+            'fixed_vs_rotating', 'day_shift_start_8hr', 'day_shift_start_12hr',
+            'weekend_preference', 'weekend_pattern', 'work_pattern',
+            'three_day_preference', 'weekday_preference', 'supervisor_overlap',
+            'overtime_dependency', 'overtime_amount', 'overtime_satisfaction',
+            'overtime_predictable', 'time_vs_overtime', 'overtime_desire',
+            'overtime_expectation', 'overtime_weekly_hours',
+            'schedule_like_most', 'schedule_like_least',
+        ],
+        'Overtime Preference': [
+            'dept', 'tenure', 'current_schedule',
+            'overtime_dependency', 'overtime_amount', 'overtime_satisfaction',
+            'overtime_predictable', 'time_vs_overtime', 'overtime_desire',
+            'overtime_expectation', 'overtime_weekly_hours',
+            'schedule_improvement', 'current_schedule_satisfaction',
+            'schedule_like_most', 'schedule_like_least',
+        ],
+        'Employee Satisfaction': [
+            'dept', 'tenure', 'age_group', 'caregiving',
+            'safety_rating', 'safety_improvement', 'company_communication',
+            'management_input', 'enjoy_work', 'pay_competitive',
+            'company_belonging', 'facility_improvement', 'best_workplace',
+            'training_importance', 'training_adequacy', 'supervisor_responsive',
+            'management_responsive', 'current_schedule_satisfaction',
+            'schedule_flexibility', 'work_life_positives', 'work_life_improvements',
+        ],
+        'Shift Preference': [
+            'dept', 'tenure', 'current_schedule', 'caregiving',
+            'preferred_8hr_shift', 'preferred_12hr_shift', 'hours_vs_days_off',
+            'fixed_vs_rotating', 'day_shift_start_8hr', 'day_shift_start_12hr',
+            'weekend_preference', 'weekend_pattern', 'work_pattern',
+            'three_day_preference', 'weekday_preference', 'supervisor_overlap',
+            'schedule_like_most', 'schedule_like_least',
+        ],
+        'Pre-Implementation': [
+            'dept', 'tenure', 'caregiving', 'age_group', 'commute_distance',
+            'second_job', 'partner_status', 'single_parent',
+            'sleep_day_shift', 'sleep_night_shift', 'sleep_days_off',
+            'sleep_needed', 'sleepiness_problems',
+            'safety_rating', 'company_communication', 'management_input',
+            'enjoy_work', 'company_belonging', 'best_workplace',
+            'schedule_improvement', 'current_schedule_satisfaction',
+            'better_schedules_exist', 'time_off_predictable', 'schedule_flexibility',
+            'preferred_8hr_shift', 'preferred_12hr_shift', 'hours_vs_days_off',
+            'fixed_vs_rotating', 'weekend_preference', 'work_pattern',
+            'overtime_dependency', 'overtime_amount', 'overtime_desire',
+            'overtime_weekly_hours', 'time_vs_overtime',
+            'schedule_like_most', 'schedule_like_least', 'work_life_improvements',
+        ],
+        'Post-Implementation': [
+            'dept', 'tenure', 'current_schedule',
+            'sleep_day_shift', 'sleep_night_shift', 'sleep_days_off', 'sleepiness_problems',
+            'safety_rating', 'company_communication', 'management_input',
+            'enjoy_work', 'company_belonging', 'facility_improvement',
+            'current_schedule_satisfaction', 'time_off_predictable',
+            'schedule_flexibility', 'overtime_dependency', 'overtime_amount',
+            'overtime_satisfaction', 'overtime_predictable',
+            'schedule_like_most', 'schedule_like_least',
+            'work_life_positives', 'work_life_improvements',
+        ],
+    }
+
+    # Schedule IDs to include per shift length
+    SCHEDULE_MAP = {
+        '8-hour shifts':    ['rotating_8hr'],
+        '10-hour shifts':   [],
+        '12-hour shifts':   ['2_3_2_fixed_days', '2_3_2_fixed_nights',
+                             'dupont_rotating', '4_on_4_off_days', '4_on_4_off_nights'],
+        'Mixed / not sure': ['rotating_8hr', '2_3_2_fixed_days', 'dupont_rotating'],
+    }
+
+    # Normalize survey_type lookup (try exact match, then partial)
+    selected_questions = SURVEY_QUESTION_MAP.get(survey_type)
+    if not selected_questions:
+        # Try partial match
+        for key in SURVEY_QUESTION_MAP:
+            if key.lower() in survey_type.lower() or survey_type.lower() in key.lower():
+                selected_questions = SURVEY_QUESTION_MAP[key]
+                break
+    if not selected_questions:
+        # Fallback to Schedule Preference (most common)
+        selected_questions = SURVEY_QUESTION_MAP['Schedule Preference']
+
+    # Normalize shift_length lookup
+    schedules_to_rate = SCHEDULE_MAP.get(shift_length, SCHEDULE_MAP['Mixed / not sure'])
+
+    # For non-schedule surveys, skip schedule rating concepts
+    NON_SCHEDULE_TYPES = {'Employee Satisfaction', 'Overtime Preference'}
+    if survey_type in NON_SCHEDULE_TYPES:
+        schedules_to_rate = []
+
+    return selected_questions, schedules_to_rate
 
 
 # I did no harm and this file is not truncated
