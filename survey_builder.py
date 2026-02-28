@@ -1,24 +1,52 @@
 """
 SURVEY BUILDER MODULE FOR AI SWARM ORCHESTRATOR
 Created: January 28, 2026
-Last Updated: January 28, 2026
+Last Updated: February 28, 2026
+
+CHANGELOG:
+
+- February 28, 2026: ADDED 39 NEW QUESTIONS FROM MASTER SURVEY DOCUMENT
+  SOURCE: Master_Survey_for_Survey_Business.doc (Dan Capshaw / Shiftwork Solutions)
+  PREVIOUS TOTAL: 64 questions
+  NEW TOTAL: 103 questions
+  NEW QUESTIONS BY CATEGORY:
+    Demographics (5):
+      crew_assignment, dept_tenure, prior_shiftwork, second_job_timing, worst_shift_start
+    Sleep & Alertness (6):
+      alarm_clock_normal, alarm_clock_day, alarm_clock_afternoon, alarm_clock_night,
+      sleep_second_shift, sleep_third_shift
+    Working Conditions (1):
+      management_equality
+    Schedule Features (16):
+      schedule_policies_fair, shift_mobility_intent, least_preferred_8hr_shift,
+      fixed_vs_rotating_no_seniority, fixed_vs_rotating_not_first_choice,
+      crew_cohesion, rotation_frequency, rotation_direction, day_shift_start_10hr,
+      shift_swap_importance, night_shift_start_preference, task_variety,
+      weekend_willingness, weekend_occasional, understand_247_need,
+      new_schedule_trial_willingness
+    Overtime (5):
+      overtime_timing_actual, overtime_timing_preferred, overtime_extend_shift,
+      overtime_day_off, overtime_distribution_fair
+    Day Care / Elder Care (6) - ENTIRELY NEW CATEGORY:
+      daycare_use, daycare_location, daycare_relationship, daycare_shifts_used,
+      daycare_shift_issue, daycare_worst_shift
 
 PURPOSE:
 Internal survey creation tool for Jim @ Shiftwork Solutions LLC.
 NOT client-facing - this is for creating surveys that will be administered to clients.
 
 FEATURES:
-- Master question bank (97 standardized questions)
+- Master question bank (103 standardized questions)
 - Schedule rating questions (customizable per survey)
-- Export to PDF/Word
-- Normative database integration
+- Export to Word (.docx)
+- Normative database integration (future)
 - Custom question creation
 
 WORKFLOW:
-1. Select questions from master bank
+1. Select questions from master bank (or use comprehensive default)
 2. Add custom questions if needed
 3. Select schedules to rate (with videos/descriptions)
-4. Generate PDF or Word document
+4. Generate Word document
 5. Later: analyze results against normative database
 
 AUTHOR: Jim @ Shiftwork Solutions LLC
@@ -36,28 +64,33 @@ class SurveyBuilder:
     """
     Survey builder for creating customized shift schedule surveys
     """
-    
+
     def __init__(self):
         """Initialize with master question bank"""
         self.question_bank = self._load_question_bank()
         self.schedule_library = self._load_schedule_library()
-        
+
     def _load_question_bank(self):
         """
-        Master question bank - 97 standardized questions
+        Master question bank - 103 standardized questions
         Based on hundreds of client engagements
-        
+
         Categories:
-        - Demographics (dept, tenure, age, family status, commute)
+        - Demographics
         - Sleep & Alertness
         - Working Conditions (safety, communication, training, management)
-        - Schedule Features (preferences, flexibility)
+        - Schedule Features (preferences, flexibility, rotation)
         - Overtime
-        - Schedule Concepts (ratings of specific schedules)
+        - Day Care / Elder Care
+        - Open-Ended
         """
-        
+
         return {
-            # === DEMOGRAPHICS ===
+
+            # ================================================================
+            # DEMOGRAPHICS
+            # ================================================================
+
             'dept': {
                 'id': 'dept',
                 'category': 'demographics',
@@ -71,13 +104,29 @@ class SurveyBuilder:
                 'text': 'How long have you worked for this company?',
                 'type': 'multiple_choice',
                 'options': [
-                    'Less than 6 months',
-                    '6 months to 1 year',
-                    '1 to 5 years',
-                    '6 to 10 years',
-                    '11 to 15 years',
-                    '16 to 20 years',
-                    'Over 20 years'
+                    'Less than 6 months', '6 months to 1 year', '1 to 5 years',
+                    '6 to 10 years', '11 to 15 years', '16 to 20 years', 'Over 20 years'
+                ]
+            },
+            'dept_tenure': {
+                'id': 'dept_tenure',
+                'category': 'demographics',
+                'text': 'How long have you worked in your current department?',
+                'type': 'multiple_choice',
+                'options': [
+                    'Less than 6 months', '6 months to 1 year', '1 to 5 years',
+                    '6 to 10 years', '11 to 15 years', '16 to 20 years', 'Over 20 years'
+                ]
+            },
+            'crew_assignment': {
+                'id': 'crew_assignment',
+                'category': 'demographics',
+                'text': 'What crew are you assigned to?',
+                'type': 'multiple_choice',
+                'options': [
+                    'First Shift (8-hour or 10-hour)', 'First Shift (12-hour)',
+                    'Second Shift (8-hour)', 'Second Shift (12-hour)',
+                    'Third Shift', 'Weekend Shift'
                 ]
             },
             'current_schedule': {
@@ -87,12 +136,31 @@ class SurveyBuilder:
                 'type': 'multiple_choice',
                 'options': ['12-hour Day shift', '12-hour Night shift', 'Other']
             },
+            'prior_shiftwork': {
+                'id': 'prior_shiftwork',
+                'category': 'demographics',
+                'text': 'Have you ever worked shiftwork at another facility? (A "shiftwork" job is one that requires more than one shift to provide full coverage.)',
+                'type': 'multiple_choice',
+                'options': ['Yes', 'No']
+            },
             'second_job': {
                 'id': 'second_job',
                 'category': 'demographics',
                 'text': 'Do you have a second job?',
                 'type': 'multiple_choice',
                 'options': ['Yes', 'No']
+            },
+            'second_job_timing': {
+                'id': 'second_job_timing',
+                'category': 'demographics',
+                'text': 'If you have a second job, do you typically work at that job:',
+                'type': 'multiple_choice',
+                'options': [
+                    'Before your shift at this company starts',
+                    'After you have worked your shift at this company',
+                    'Only on days that you don\'t work at this company',
+                    'I don\'t work at a second job'
+                ]
             },
             'employment_type': {
                 'id': 'employment_type',
@@ -132,6 +200,13 @@ class SurveyBuilder:
                     '41 to 45', '46 to 50', '51 to 55', 'Over 55'
                 ]
             },
+            'single_parent': {
+                'id': 'single_parent',
+                'category': 'demographics',
+                'text': 'Are you a single parent?',
+                'type': 'multiple_choice',
+                'options': ['Yes', 'No', 'Not applicable']
+            },
             'partner_status': {
                 'id': 'partner_status',
                 'category': 'demographics',
@@ -145,13 +220,6 @@ class SurveyBuilder:
                     'Works the same schedule as I do in this company',
                     'Works the same schedule as I do outside this company'
                 ]
-            },
-            'single_parent': {
-                'id': 'single_parent',
-                'category': 'demographics',
-                'text': 'Are you a single parent?',
-                'type': 'multiple_choice',
-                'options': ['Yes', 'No', 'Not applicable']
             },
             'commute_method': {
                 'id': 'commute_method',
@@ -170,20 +238,82 @@ class SurveyBuilder:
                     '21 to 30 miles', '31 to 40 miles', 'More than 40 miles'
                 ]
             },
-            
-            # === SLEEP & ALERTNESS ===
+            'worst_shift_start': {
+                'id': 'worst_shift_start',
+                'category': 'demographics',
+                'text': 'Looking at your daily commute, what is the worst time to start the day shift?',
+                'type': 'multiple_choice',
+                'options': [
+                    'Before 5:30 a.m.', '5:30 a.m.', '6:00 a.m.', '6:30 a.m.',
+                    '7:00 a.m.', '7:30 a.m.', '8:00 a.m.', 'Later than 8:00 a.m. before noon'
+                ]
+            },
+
+            # ================================================================
+            # SLEEP & ALERTNESS
+            # ================================================================
+
+            'alarm_clock_normal': {
+                'id': 'alarm_clock_normal',
+                'category': 'sleep_alertness',
+                'text': 'Do you normally use an alarm clock to wake up after a sleep period?',
+                'type': 'multiple_choice',
+                'options': ['Yes', 'No']
+            },
+            'alarm_clock_day': {
+                'id': 'alarm_clock_day',
+                'category': 'sleep_alertness',
+                'text': 'Do you use an alarm clock to wake up when you are working day shift?',
+                'type': 'multiple_choice',
+                'options': ['Yes', 'No']
+            },
+            'alarm_clock_afternoon': {
+                'id': 'alarm_clock_afternoon',
+                'category': 'sleep_alertness',
+                'text': 'Do you use an alarm clock to wake up when you are working afternoon shift?',
+                'type': 'multiple_choice',
+                'options': ['Yes', 'No']
+            },
+            'alarm_clock_night': {
+                'id': 'alarm_clock_night',
+                'category': 'sleep_alertness',
+                'text': 'Do you use an alarm clock to wake up when you are working night shift?',
+                'type': 'multiple_choice',
+                'options': ['Yes', 'No']
+            },
             'sleep_day_shift': {
                 'id': 'sleep_day_shift',
                 'category': 'sleep_alertness',
                 'text': 'How many hours of sleep do you get every 24-hour period when you are working Day shift?',
                 'type': 'multiple_choice',
                 'options': [
-                    'I never work the Day shift',
-                    'Less than 5 hours',
-                    '5 or more hours but less than 6 hours',
-                    '6 or more hours but less than 7 hours',
-                    '7 or more hours but less than 8 hours',
-                    '8 or more hours but less than 9 hours',
+                    'I never work the Day shift', 'Less than 5 hours',
+                    '5 or more hours but less than 6 hours', '6 or more hours but less than 7 hours',
+                    '7 or more hours but less than 8 hours', '8 or more hours but less than 9 hours',
+                    '9 or more hours'
+                ]
+            },
+            'sleep_second_shift': {
+                'id': 'sleep_second_shift',
+                'category': 'sleep_alertness',
+                'text': 'How many hours of sleep do you get every 24-hour period when you are working second shift?',
+                'type': 'multiple_choice',
+                'options': [
+                    'I never work the second shift', 'Less than 5 hours',
+                    '5 or more hours but less than 6 hours', '6 or more hours but less than 7 hours',
+                    '7 or more hours but less than 8 hours', '8 or more hours but less than 9 hours',
+                    '9 or more hours'
+                ]
+            },
+            'sleep_third_shift': {
+                'id': 'sleep_third_shift',
+                'category': 'sleep_alertness',
+                'text': 'How many hours of sleep do you get every 24-hour period when you are working third shift?',
+                'type': 'multiple_choice',
+                'options': [
+                    'I never work the third shift', 'Less than 5 hours',
+                    '5 or more hours but less than 6 hours', '6 or more hours but less than 7 hours',
+                    '7 or more hours but less than 8 hours', '8 or more hours but less than 9 hours',
                     '9 or more hours'
                 ]
             },
@@ -193,12 +323,9 @@ class SurveyBuilder:
                 'text': 'How many hours of sleep do you get every 24-hour period when you are working Night shift?',
                 'type': 'multiple_choice',
                 'options': [
-                    'I never work the Night shift',
-                    'Less than 5 hours',
-                    '5 or more hours but less than 6 hours',
-                    '6 or more hours but less than 7 hours',
-                    '7 or more hours but less than 8 hours',
-                    '8 or more hours but less than 9 hours',
+                    'I never work the Night shift', 'Less than 5 hours',
+                    '5 or more hours but less than 6 hours', '6 or more hours but less than 7 hours',
+                    '7 or more hours but less than 8 hours', '8 or more hours but less than 9 hours',
                     '9 or more hours'
                 ]
             },
@@ -208,12 +335,9 @@ class SurveyBuilder:
                 'text': 'How many hours of sleep do you get every 24-hour period on days off?',
                 'type': 'multiple_choice',
                 'options': [
-                    'Less than 5 hours',
-                    '5 or more hours but less than 6 hours',
-                    '6 or more hours but less than 7 hours',
-                    '7 or more hours but less than 8 hours',
-                    '8 or more hours but less than 9 hours',
-                    '9 or more hours'
+                    'Less than 5 hours', '5 or more hours but less than 6 hours',
+                    '6 or more hours but less than 7 hours', '7 or more hours but less than 8 hours',
+                    '8 or more hours but less than 9 hours', '9 or more hours'
                 ]
             },
             'sleep_needed': {
@@ -222,12 +346,9 @@ class SurveyBuilder:
                 'text': 'How many hours of sleep do you need every 24-hour period to be fully alert?',
                 'type': 'multiple_choice',
                 'options': [
-                    'Less than 5 hours',
-                    '5 or more hours but less than 6 hours',
-                    '6 or more hours but less than 7 hours',
-                    '7 or more hours but less than 8 hours',
-                    '8 or more hours but less than 9 hours',
-                    '9 or more hours'
+                    'Less than 5 hours', '5 or more hours but less than 6 hours',
+                    '6 or more hours but less than 7 hours', '7 or more hours but less than 8 hours',
+                    '8 or more hours but less than 9 hours', '9 or more hours'
                 ]
             },
             'sleepiness_problems': {
@@ -237,8 +358,11 @@ class SurveyBuilder:
                 'type': 'multiple_choice',
                 'options': ['Never', 'Rarely', 'Once a month', 'Once a week', 'Almost daily']
             },
-            
-            # === WORKING CONDITIONS (Likert Scale 1-5) ===
+
+            # ================================================================
+            # WORKING CONDITIONS
+            # ================================================================
+
             'safety_rating': {
                 'id': 'safety_rating',
                 'category': 'working_conditions',
@@ -300,6 +424,13 @@ class SurveyBuilder:
                 'id': 'pay_competitive',
                 'category': 'working_conditions',
                 'text': 'The pay here is good compared to other jobs in the area.',
+                'type': 'likert',
+                'scale': '1 (Strongly Disagree) to 5 (Strongly Agree)'
+            },
+            'management_equality': {
+                'id': 'management_equality',
+                'category': 'working_conditions',
+                'text': 'Management treats shift-workers and day-workers equally.',
                 'type': 'likert',
                 'scale': '1 (Strongly Disagree) to 5 (Strongly Agree)'
             },
@@ -374,12 +505,22 @@ class SurveyBuilder:
                 'type': 'likert',
                 'scale': '1 (Strongly Disagree) to 5 (Strongly Agree)'
             },
-            
-            # === SCHEDULE FEATURES ===
+
+            # ================================================================
+            # SCHEDULE FEATURES
+            # ================================================================
+
             'schedule_improvement': {
                 'id': 'schedule_improvement',
                 'category': 'schedule_features',
                 'text': 'A better schedule will really improve things here.',
+                'type': 'likert',
+                'scale': '1 (Strongly Disagree) to 5 (Strongly Agree)'
+            },
+            'schedule_policies_fair': {
+                'id': 'schedule_policies_fair',
+                'category': 'schedule_features',
+                'text': 'Current shift schedule policies are fair.',
                 'type': 'likert',
                 'scale': '1 (Strongly Disagree) to 5 (Strongly Agree)'
             },
@@ -396,6 +537,16 @@ class SurveyBuilder:
                 'text': 'I think there are better schedules available than our current schedule.',
                 'type': 'likert',
                 'scale': '1 (Strongly Disagree) to 5 (Strongly Agree)'
+            },
+            'shift_mobility_intent': {
+                'id': 'shift_mobility_intent',
+                'category': 'schedule_features',
+                'text': 'Which best describes you?',
+                'type': 'multiple_choice',
+                'options': [
+                    'I plan to go to a better shift as soon as I can',
+                    'My current shift is where I plan to stay'
+                ]
             },
             'time_off_predictable': {
                 'id': 'time_off_predictable',
@@ -415,6 +566,13 @@ class SurveyBuilder:
                 'id': 'preferred_8hr_shift',
                 'category': 'schedule_features',
                 'text': 'If you were assigned to work a single shift for the next few years, which would be your preferred 8-hour shift?',
+                'type': 'multiple_choice',
+                'options': ['Day Shift', 'Afternoon Shift', 'Night Shift']
+            },
+            'least_preferred_8hr_shift': {
+                'id': 'least_preferred_8hr_shift',
+                'category': 'schedule_features',
+                'text': 'If you were assigned to work a single shift for the next few years, which would be your least preferred 8-hour shift?',
                 'type': 'multiple_choice',
                 'options': ['Day Shift', 'Afternoon Shift', 'Night Shift']
             },
@@ -442,10 +600,68 @@ class SurveyBuilder:
                 'type': 'multiple_choice',
                 'options': ['Fixed or "steady" shifts', 'Rotating shifts']
             },
+            'fixed_vs_rotating_no_seniority': {
+                'id': 'fixed_vs_rotating_no_seniority',
+                'category': 'schedule_features',
+                'text': 'Which would you prefer?',
+                'type': 'multiple_choice',
+                'options': [
+                    'Fixed shifts, even though seniority is not a consideration when being assigned to a shift',
+                    'Rotating shifts'
+                ]
+            },
+            'fixed_vs_rotating_not_first_choice': {
+                'id': 'fixed_vs_rotating_not_first_choice',
+                'category': 'schedule_features',
+                'text': 'Which would you prefer?',
+                'type': 'multiple_choice',
+                'options': [
+                    'Fixed shifts, even though I would not be assigned to my first choice',
+                    'Rotating shifts'
+                ]
+            },
+            'crew_cohesion': {
+                'id': 'crew_cohesion',
+                'category': 'schedule_features',
+                'text': 'Keeping my current crew members together is important to me.',
+                'type': 'likert',
+                'scale': '1 (Strongly Disagree) to 5 (Strongly Agree)'
+            },
+            'rotation_frequency': {
+                'id': 'rotation_frequency',
+                'category': 'schedule_features',
+                'text': 'How often would you like to rotate between shifts?',
+                'type': 'multiple_choice',
+                'options': [
+                    'Once a week', 'Once every two weeks', 'Once every four weeks',
+                    'Once every two months', 'Once every six months', 'Annually'
+                ]
+            },
+            'rotation_direction': {
+                'id': 'rotation_direction',
+                'category': 'schedule_features',
+                'text': 'On an 8-hour schedule, which direction would you prefer to rotate?',
+                'type': 'multiple_choice',
+                'options': [
+                    'Days > Nights > Evenings > Days',
+                    'Days > Evenings > Nights > Days',
+                    'No preference'
+                ]
+            },
             'day_shift_start_8hr': {
                 'id': 'day_shift_start_8hr',
                 'category': 'schedule_features',
                 'text': 'If you worked 8-hour shifts, what time would you like the day shift to start?',
+                'type': 'multiple_choice',
+                'options': [
+                    'Before 5:30 a.m.', '5:30 a.m.', '6:00 a.m.', '6:30 a.m.',
+                    '7:00 a.m.', '7:30 a.m.', '8:00 a.m.', 'Later than 8:00 a.m.'
+                ]
+            },
+            'day_shift_start_10hr': {
+                'id': 'day_shift_start_10hr',
+                'category': 'schedule_features',
+                'text': 'If you worked 10-hour shifts, what time would you like the day shift to start?',
                 'type': 'multiple_choice',
                 'options': [
                     'Before 5:30 a.m.', '5:30 a.m.', '6:00 a.m.', '6:30 a.m.',
@@ -458,8 +674,9 @@ class SurveyBuilder:
                 'text': 'If you worked 12-hour shifts, what time would you like the day shift to start?',
                 'type': 'multiple_choice',
                 'options': [
-                    'Before 5:30 a.m.', '5:30 a.m.', '6:00 a.m.', '6:30 a.m.', '7:00 a.m.',
-                    '7:30 a.m.', '8:00 a.m.', 'Later than 8:00 a.m. before noon', 'Noon', '3:00 p.m.'
+                    'Before 5:30 a.m.', '5:30 a.m.', '6:00 a.m.', '6:30 a.m.',
+                    '7:00 a.m.', '7:30 a.m.', '8:00 a.m.',
+                    'Later than 8:00 a.m. before noon', 'Noon', '3:00 p.m.'
                 ]
             },
             'weekend_preference': {
@@ -471,6 +688,23 @@ class SurveyBuilder:
                     'Work 8 Saturdays and have 8 Sundays off',
                     'Work 8 Sundays and have 8 Saturdays off',
                     'Work 4 full weekends and have 4 full weekends off'
+                ]
+            },
+            'shift_swap_importance': {
+                'id': 'shift_swap_importance',
+                'category': 'schedule_features',
+                'text': 'The ability to swap shifts is important to me.',
+                'type': 'likert',
+                'scale': '1 (Strongly Disagree) to 5 (Strongly Agree)'
+            },
+            'night_shift_start_preference': {
+                'id': 'night_shift_start_preference',
+                'category': 'schedule_features',
+                'text': 'If pay is not a factor when comparing the following two work shifts, I would prefer to work a night shift that:',
+                'type': 'multiple_choice',
+                'options': [
+                    'Starts Sunday night and ends Monday morning',
+                    'Starts Friday night and ends Saturday morning'
                 ]
             },
             'weekend_pattern': {
@@ -518,8 +752,53 @@ class SurveyBuilder:
                 'type': 'multiple_choice',
                 'options': ['100%', '90%', '80%', '70%', '60%', '50% or less']
             },
-            
-            # === OVERTIME ===
+            'task_variety': {
+                'id': 'task_variety',
+                'category': 'schedule_features',
+                'text': "I don't mind doing several different types of work during the week.",
+                'type': 'likert',
+                'scale': '1 (Strongly Disagree) to 5 (Strongly Agree)'
+            },
+            'weekend_willingness': {
+                'id': 'weekend_willingness',
+                'category': 'schedule_features',
+                'text': 'Which best describes you?',
+                'type': 'multiple_choice',
+                'options': [
+                    'I am willing to work my share of weekends',
+                    'I will quit before I work weekends'
+                ]
+            },
+            'weekend_occasional': {
+                'id': 'weekend_occasional',
+                'category': 'schedule_features',
+                'text': 'I am willing to work weekends occasionally if I can plan them in advance.',
+                'type': 'likert',
+                'scale': '1 (Strongly Disagree) to 5 (Strongly Agree)'
+            },
+            'understand_247_need': {
+                'id': 'understand_247_need',
+                'category': 'schedule_features',
+                'text': 'It is clear to me why we have to go to a 24/7 schedule to keep this company competitive in this industry.',
+                'type': 'likert',
+                'scale': '1 (Strongly Disagree) to 5 (Strongly Agree)'
+            },
+            'new_schedule_trial_willingness': {
+                'id': 'new_schedule_trial_willingness',
+                'category': 'schedule_features',
+                'text': 'Which best describes you?',
+                'type': 'multiple_choice',
+                'options': [
+                    'I am willing to try a new schedule for 6 to 12 months',
+                    'I will reluctantly go along with a new schedule trial if that is what the majority of the workforce wants',
+                    'I will quit before I go to a new schedule'
+                ]
+            },
+
+            # ================================================================
+            # OVERTIME
+            # ================================================================
+
             'overtime_dependency': {
                 'id': 'overtime_dependency',
                 'category': 'overtime',
@@ -545,6 +824,48 @@ class SurveyBuilder:
                 'type': 'likert',
                 'scale': '1 (Strongly Disagree) to 5 (Strongly Agree)'
             },
+            'overtime_timing_actual': {
+                'id': 'overtime_timing_actual',
+                'category': 'overtime',
+                'text': 'When you work overtime outside your schedule, when do you usually work it?',
+                'type': 'multiple_choice',
+                'options': [
+                    "I don't work overtime",
+                    'On a regularly scheduled workday by coming in early or staying late',
+                    'On Saturdays, but not Sundays',
+                    'On Sundays, but not Saturdays',
+                    'Any chance I get',
+                    'I work overtime when necessary for business needs'
+                ]
+            },
+            'overtime_timing_preferred': {
+                'id': 'overtime_timing_preferred',
+                'category': 'overtime',
+                'text': 'When you have to work overtime, when do you prefer to work it?',
+                'type': 'multiple_choice',
+                'options': ['On a scheduled work day', 'On a day off', 'No preference']
+            },
+            'overtime_extend_shift': {
+                'id': 'overtime_extend_shift',
+                'category': 'overtime',
+                'text': 'I prefer overtime by extending my shift.',
+                'type': 'likert',
+                'scale': '1 (Strongly Disagree) to 5 (Strongly Agree)'
+            },
+            'overtime_day_off': {
+                'id': 'overtime_day_off',
+                'category': 'overtime',
+                'text': 'I prefer to work overtime by coming in on a day off.',
+                'type': 'likert',
+                'scale': '1 (Strongly Disagree) to 5 (Strongly Agree)'
+            },
+            'overtime_distribution_fair': {
+                'id': 'overtime_distribution_fair',
+                'category': 'overtime',
+                'text': 'Current overtime distribution policies are fair.',
+                'type': 'likert',
+                'scale': '1 (Strongly Disagree) to 5 (Strongly Agree)'
+            },
             'overtime_predictable': {
                 'id': 'overtime_predictable',
                 'category': 'overtime',
@@ -565,11 +886,8 @@ class SurveyBuilder:
                 'text': 'When it comes to overtime, I generally want to get:',
                 'type': 'multiple_choice',
                 'options': [
-                    'As much as possible',
-                    'Frequent overtime',
-                    'Occasional overtime',
-                    'Infrequent overtime',
-                    'I do not want any overtime'
+                    'As much as possible', 'Frequent overtime', 'Occasional overtime',
+                    'Infrequent overtime', 'I do not want any overtime'
                 ]
             },
             'overtime_expectation': {
@@ -585,17 +903,67 @@ class SurveyBuilder:
                 'text': 'How much overtime would you like to have every week?',
                 'type': 'multiple_choice',
                 'options': [
-                    'None',
-                    'Less than 2 hours',
-                    'Between 2 and 4 hours',
-                    'Between 4 and 6 hours',
-                    'Between 6 and 8 hours',
-                    'Between 8 and 12 hours',
-                    'I will take all that I can get'
+                    'None', 'Less than 2 hours', 'Between 2 and 4 hours',
+                    'Between 4 and 6 hours', 'Between 6 and 8 hours',
+                    'Between 8 and 12 hours', 'I will take all that I can get'
                 ]
             },
-            
-            # === OPEN-ENDED QUESTIONS ===
+
+            # ================================================================
+            # DAY CARE / ELDER CARE  (New section added February 28, 2026)
+            # ================================================================
+
+            'daycare_use': {
+                'id': 'daycare_use',
+                'category': 'daycare_eldercare',
+                'text': 'Do you use outside day/elder care?',
+                'type': 'multiple_choice',
+                'options': ['Yes', 'No']
+            },
+            'daycare_location': {
+                'id': 'daycare_location',
+                'category': 'daycare_eldercare',
+                'text': 'Is your day/elder care provider:',
+                'type': 'multiple_choice',
+                'options': ['Close to home', 'Close to work', 'At home']
+            },
+            'daycare_relationship': {
+                'id': 'daycare_relationship',
+                'category': 'daycare_eldercare',
+                'text': 'Is your day/elder care provider a family member, neighbor or friend?',
+                'type': 'multiple_choice',
+                'options': ['Yes', 'No']
+            },
+            'daycare_shifts_used': {
+                'id': 'daycare_shifts_used',
+                'category': 'daycare_eldercare',
+                'text': 'Do you use day/elder care when working? (check all that apply)',
+                'type': 'checkbox',
+                'options': [
+                    'Days - Yes', 'Days - No',
+                    'Afternoons - Yes', 'Afternoons - No',
+                    'Nights - Yes', 'Nights - No'
+                ]
+            },
+            'daycare_shift_issue': {
+                'id': 'daycare_shift_issue',
+                'category': 'daycare_eldercare',
+                'text': 'Is day/elder care a bigger issue on a particular shift?',
+                'type': 'multiple_choice',
+                'options': ['Yes', 'No']
+            },
+            'daycare_worst_shift': {
+                'id': 'daycare_worst_shift',
+                'category': 'daycare_eldercare',
+                'text': 'If day/elder care is a bigger issue on a particular shift, which shift?',
+                'type': 'multiple_choice',
+                'options': ['Days', 'Afternoons', 'Nights']
+            },
+
+            # ================================================================
+            # OPEN-ENDED
+            # ================================================================
+
             'schedule_like_most': {
                 'id': 'schedule_like_most',
                 'category': 'open_ended',
@@ -619,23 +987,16 @@ class SurveyBuilder:
                 'category': 'open_ended',
                 'text': 'Please list 3 examples of things the company should start doing to improve your work-life balance.',
                 'type': 'text'
-            }
+            },
+
         }
-    
+
     def _load_schedule_library(self):
         """
-        Standard schedule library that can be shown to employees
-        Each can have video links and descriptions
+        Standard schedule library that can be shown to employees.
+        Each can have video links and descriptions.
         """
         return {
-            'rotating_8hr': {
-                'id': 'rotating_8hr',
-                'name': 'Rotating 8-Hour Schedule',
-                'description': 'Traditional rotating 8-hour schedule with day, afternoon, and night shifts',
-                'shift_length': '8 hours',
-                'pattern_type': 'rotating',
-                'video_url': None
-            },
             '2_3_2_fixed_days': {
                 'id': '2_3_2_fixed_days',
                 'name': '2-3-2 Pattern (Fixed Days)',
@@ -676,6 +1037,14 @@ class SurveyBuilder:
                 'pattern_type': 'fixed',
                 'video_url': None
             },
+            'rotating_8hr': {
+                'id': 'rotating_8hr',
+                'name': 'Rotating 8-Hour Schedule',
+                'description': 'Traditional rotating 8-hour schedule with day, afternoon, and night shifts',
+                'shift_length': '8 hours',
+                'pattern_type': 'rotating',
+                'video_url': None
+            },
             '5_and_2_days': {
                 'id': '5_and_2_days',
                 'name': '5&2 (Fixed Days)',
@@ -691,22 +1060,23 @@ class SurveyBuilder:
                 'shift_length': '12 hours',
                 'pattern_type': 'fixed',
                 'video_url': None
-            }
+            },
         }
-    
-    def create_survey(self, project_name, company_name, selected_questions, schedules_to_rate, custom_questions=None):
+
+    def create_survey(self, project_name, company_name, selected_questions,
+                      schedules_to_rate, custom_questions=None):
         """
-        Create a complete survey
-        
+        Create a complete survey object.
+
         Args:
-            project_name: Name of the project
-            company_name: Client company name
+            project_name:       Name of the project
+            company_name:       Client company name
             selected_questions: List of question IDs from question bank
-            schedules_to_rate: List of schedule IDs to include ratings for
-            custom_questions: Optional list of custom questions
-            
+            schedules_to_rate:  List of schedule IDs to include ratings for
+            custom_questions:   Optional list of custom question dicts
+
         Returns:
-            Survey object ready to export
+            Survey dict ready to pass to export_to_word()
         """
         survey = {
             'metadata': {
@@ -720,8 +1090,8 @@ class SurveyBuilder:
             'questions': [],
             'custom_questions': custom_questions or []
         }
-        
-        # Add schedule rating questions
+
+        # Add schedule rating sections
         for schedule_id in schedules_to_rate:
             if schedule_id in self.schedule_library:
                 schedule = self.schedule_library[schedule_id]
@@ -736,14 +1106,14 @@ class SurveyBuilder:
                         'Never show this to me again!'
                     ]
                 })
-        
-        # Add selected questions from bank
+
+        # Add selected questions from bank (preserving order)
         for question_id in selected_questions:
             if question_id in self.question_bank:
                 survey['questions'].append(self.question_bank[question_id])
-        
+
         return survey
-    
+
     def _get_standard_instructions(self):
         """Standard survey instructions"""
         return {
@@ -755,103 +1125,121 @@ class SurveyBuilder:
                 'If you mark more than one answer, your response will not be counted!'
             ]
         }
-    
+
     def export_to_word(self, survey):
         """
-        Export survey to Word document (.docx)
-        
+        Export survey to Word document (.docx).
+
         Args:
-            survey: Survey object from create_survey()
-            
+            survey: Survey dict from create_survey()
+
         Returns:
             BytesIO object containing the Word document
         """
         doc = Document()
-        
-        # Add Shiftwork Solutions logo placeholder
-        # (In production, you'd add actual logo here)
-        
+
         # Title
         title = doc.add_heading('Shift Schedule Lifestyle Survey', 0)
         title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        
+
         # Metadata
         doc.add_paragraph(f"Prepared for: {survey['metadata']['company_name']}")
         doc.add_paragraph(f"Project: {survey['metadata']['project_name']}")
         doc.add_paragraph(f"Date: {survey['metadata']['created_date']}")
         doc.add_paragraph()
-        
+
         # Instructions
         doc.add_heading('Directions:', level=1)
         for instruction in survey['instructions']['directions']:
             doc.add_paragraph(instruction, style='List Bullet')
         doc.add_paragraph()
-        
+
         # Schedule Concepts Section
         if survey['schedule_concepts']:
             doc.add_heading('Schedule Concepts', level=1)
             doc.add_paragraph('Please rate the following schedule options:')
             doc.add_paragraph()
-            
+
             for i, concept in enumerate(survey['schedule_concepts'], 1):
                 schedule = concept['schedule']
                 doc.add_heading(f"Concept #{i}: {schedule['name']}", level=2)
                 doc.add_paragraph(schedule['description'])
                 doc.add_paragraph(f"Shift Length: {schedule['shift_length']}")
                 doc.add_paragraph()
-                
+
                 doc.add_paragraph(concept['question'], style='Heading 3')
                 for option in concept['rating_options']:
                     doc.add_paragraph(f"○ {option}", style='List Bullet')
                 doc.add_paragraph()
-        
+
         # Main Questions Section
         if survey['questions']:
             doc.add_heading('Survey Questions', level=1)
-            
+
             current_category = None
             question_number = 1
-            
+
+            # Human-friendly category labels
+            CATEGORY_LABELS = {
+                'demographics':      'Section 1: Demographics',
+                'sleep_alertness':   'Section 2: Sleep & Alertness',
+                'working_conditions':'Section 3: Working Conditions',
+                'schedule_features': 'Section 4: Shift Schedule Features',
+                'overtime':          'Section 5: Overtime',
+                'daycare_eldercare': 'Section 6: Day Care / Elder Care',
+                'open_ended':        'Section 7: Open-Ended Questions',
+            }
+
             for question in survey['questions']:
-                # Add category header if changed
+                # Category header when it changes
                 if question['category'] != current_category:
                     current_category = question['category']
-                    category_name = current_category.replace('_', ' ').title()
-                    doc.add_heading(category_name, level=2)
-                
+                    label = CATEGORY_LABELS.get(
+                        current_category,
+                        current_category.replace('_', ' ').title()
+                    )
+                    doc.add_heading(label, level=2)
+
                 # Question text
-                doc.add_paragraph(f"{question_number}. {question['text']}", style='Heading 3')
-                
+                doc.add_paragraph(
+                    f"{question_number}. {question['text']}",
+                    style='Heading 3'
+                )
+
                 # Answer options
-                if question['type'] == 'multiple_choice':
+                q_type = question['type']
+                if q_type == 'multiple_choice':
                     for option in question['options']:
                         doc.add_paragraph(f"○ {option}", style='List Bullet')
-                elif question['type'] == 'likert':
+                elif q_type == 'likert':
                     doc.add_paragraph(f"Scale: {question['scale']}")
                     for i in range(1, 6):
                         doc.add_paragraph(f"○ {i}", style='List Bullet')
-                elif question['type'] == 'checkbox':
+                elif q_type == 'checkbox':
                     for option in question['options']:
                         doc.add_paragraph(f"☐ {option}", style='List Bullet')
-                elif question['type'] == 'text':
+                elif q_type == 'text':
                     doc.add_paragraph('_' * 80)
                     doc.add_paragraph('_' * 80)
                     doc.add_paragraph('_' * 80)
-                
+
                 doc.add_paragraph()
                 question_number += 1
-        
+
         # Custom Questions Section
         if survey['custom_questions']:
             doc.add_heading('Additional Questions', level=1)
-            for i, custom_q in enumerate(survey['custom_questions'], 1):
-                doc.add_paragraph(f"{question_number}. {custom_q['text']}", style='Heading 3')
+            for custom_q in survey['custom_questions']:
+                doc.add_paragraph(
+                    f"{question_number}. {custom_q['text']}",
+                    style='Heading 3'
+                )
                 if 'options' in custom_q:
                     for option in custom_q['options']:
                         doc.add_paragraph(f"○ {option}", style='List Bullet')
                 doc.add_paragraph()
                 question_number += 1
-        
+
         # Footer
         doc.add_paragraph()
         doc.add_paragraph('_' * 80)
@@ -859,20 +1247,20 @@ class SurveyBuilder:
         footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
         contact = doc.add_paragraph('Phone: (415) 763-5005 | www.shift-work.com')
         contact.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        
+
         # Save to BytesIO
         buffer = io.BytesIO()
         doc.save(buffer)
         buffer.seek(0)
         return buffer
-    
+
     def get_categories(self):
         """Get all question categories"""
         categories = set()
         for question in self.question_bank.values():
             categories.add(question['category'])
         return sorted(list(categories))
-    
+
     def get_questions_by_category(self, category):
         """Get all questions for a specific category"""
         return [q for q in self.question_bank.values() if q['category'] == category]
