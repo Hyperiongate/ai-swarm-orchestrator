@@ -1,9 +1,15 @@
 """
 Orchestration Handler - Main AI Task Processing (REFACTORED)
 Created: January 31, 2026
-Last Updated: February 27, 2026 - ADDED HANDLER 4.6 INTROSPECTION ROUTING
+Last Updated: February 28, 2026 - FIXED UnboundLocalError on labor_response
 
 CHANGELOG:
+
+- February 28, 2026: FIXED UnboundLocalError on labor_response
+  PROBLEM: When conversation_id is None, Handler 4 (if conversation_id:) is skipped
+    entirely so labor_response is never assigned. Handler 4.5 then references
+    "if not labor_response" causing UnboundLocalError on every new conversation.
+  FIX: Initialize labor_response = None before the if conversation_id: block.
 
 - February 27, 2026: ADDED HANDLER 4.6 INTROSPECTION ROUTING
   PROBLEM: When user typed "run introspection" (or any introspection trigger phrase),
@@ -309,6 +315,10 @@ def orchestrate():
             })
 
         # HANDLER 4: Labor analysis response handler
+        # Initialize to None so Handler 4.5 can safely reference it even when
+        # conversation_id is None and this block is skipped entirely.
+        # Fix applied February 28, 2026 - UnboundLocalError on new conversations.
+        labor_response = None
         if conversation_id:
             labor_response = handle_labor_response(user_request, conversation_id)
             if labor_response:
