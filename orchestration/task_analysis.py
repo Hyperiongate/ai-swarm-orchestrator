@@ -1,9 +1,41 @@
 """
 Task Analysis Module - WITH UNIFIED KNOWLEDGE BASE (Project Files + Knowledge Management)
 Created: January 21, 2026
-Last Updated: February 21, 2026 - ADDED TIME-SENSITIVE OVERRIDE + DIAGNOSTIC PRINTS
+Last Updated: February 28, 2026 - FIXED KM DB CONTENT EXTRACTION
 
 CHANGELOG:
+
+- February 28, 2026: FIXED KM DB CONTENT EXTRACTION
+  PROBLEM 1: search_knowledge_management_db() was connecting to the wrong DB.
+    config.py DATABASE = '/mnt/project/swarm_intelligence.db' but the knowledge
+    database is '/mnt/project/knowledge_ingestion.db'. The February 20 fix used
+    DATABASE as the fallback, which pointed to the wrong file. The KNOWLEDGE_DB_PATH
+    env var ('/mnt/project/knowledge_ingestion.db') overrides correctly when set,
+    but the fallback was silently wrong.
+  FIX 1: Added explicit KNOWLEDGE_DB_PATH constant at module level that reads
+    the env var with a correct hardcoded fallback to 'knowledge_ingestion.db'
+    (not swarm_intelligence.db). Added startup diagnostic print so Render logs
+    always show which DB file is being used.
+
+  PROBLEM 2: check_knowledge_base_unified() built useless metadata summaries
+    from the Knowledge Management DB instead of extracting actual content.
+    It told the AI "3 insights found" and "type: consulting_lesson" — the AI
+    could see documents existed but could not read any of their content.
+    Result: 218 uploaded documents were effectively invisible to the AI.
+  FIX 2: Added extract_content_from_extract() function that reads extracted_data
+    JSON from each knowledge record and pulls:
+      - consulting_lesson: lesson_name, key_principle, situation, why_matters,
+                           hard_truth, key_bullets
+      - consulting_insight: section heading, body_preview, body_content,
+                            key_principles
+      - survey_norm / survey_client_result: question + top answer distribution
+      - operational_metrics: metric values
+      - contract_terms / engagement_fee: fee, duration
+      - lessons_learned_summary: lesson count and categories
+      - highlights: top 3 highlight strings
+    check_knowledge_base_unified() now calls extract_content_from_extract()
+    and injects real readable excerpts into the AI prompt, matching the quality
+    of the project files path.
 
 - February 21, 2026: ADDED TIME-SENSITIVE OVERRIDE + DIAGNOSTIC PRINTS
   PROBLEM: Sonnet was answering "What did OSHA announce this week?" from KB at
@@ -88,6 +120,20 @@ import os
 from orchestration.ai_clients import call_claude_sonnet, call_claude_opus
 from database import get_db
 from config import DATABASE
+
+
+# ============================================================================
+# KNOWLEDGE DB PATH
+# February 28, 2026: Resolved conflict between config.DATABASE (swarm_intelligence.db)
+# and the actual knowledge database (knowledge_ingestion.db).
+# KNOWLEDGE_DB_PATH env var is authoritative. Fallback uses knowledge_ingestion.db
+# explicitly rather than DATABASE (which points to swarm_intelligence.db).
+# ============================================================================
+_KM_DB_PATH = os.environ.get(
+    'KNOWLEDGE_DB_PATH',
+    '/mnt/project/knowledge_ingestion.db'   # explicit correct fallback
+)
+print(f"📚 [task_analysis] Knowledge Management DB path: {_KM_DB_PATH}")
 
 
 # ============================================================================
@@ -293,45 +339,262 @@ def get_learning_context():
         return ""
 
 
+# ============================================================================
+# CONTENT EXTRACTOR FOR KNOWLEDGE MANAGEMENT DB RECORDS
+# Added February 28, 2026
+#
+# Reads extracted_data JSON from a knowledge_extracts row and returns a
+# readable text excerpt the AI can actually use — not just metadata labels.
+# Handles all document types stored by document_ingestion_engine.py:
+#   consulting_lesson, consulting_insight, survey_norm, survey_client_result,
+#   operational_metrics, cost_model, contract_terms, engagement_fee,
+#   payment_structure, schedule_patterns_mentioned, operational_principles,
+#   lessons_learned_summary, document_summary, oaf_summary, highlights
+# ============================================================================
+
+def extract_content_from_extract(doc):
+    """
+    Extract meaningful readable text from a knowledge_extracts row.
+
+    Args:
+        doc (dict): Row from knowledge_extracts table with keys:
+                    document_name, document_type, client, extracted_data
+
+    Returns:
+        str: Readable excerpt suitable for inclusion in an AI prompt.
+             Returns empty string if nothing useful can be extracted.
+    """
+    parts = []
+    doc_name = doc.get('document_name', 'Unknown')
+    doc_type = doc.get('document_type', 'unknown')
+    client   = (doc.get('client') or '').strip()
+
+    header = f"Document: {doc_name} (Type: {doc_type})"
+    if client:
+        header += f" | Client: {client}"
+    parts.append(header)
+
+    try:
+        raw = doc.get('extracted_data', '')
+        extracted = json.loads(raw) if isinstance(raw, str) else raw
+        if not isinstance(extracted, dict):
+            return '\n'.join(parts)
+    except Exception:
+        return '\n'.join(parts)
+
+    # ── PATTERNS ─────────────────────────────────────────────────────────────
+    for pattern in extracted.get('patterns', [])[:6]:
+        ptype = pattern.get('type', '')
+        data  = pattern.get('data', {})
+        if not isinstance(data, dict):
+            continue
+
+        if ptype == 'consulting_lesson':
+            name    = data.get('lesson_name', '') or data.get('title', '')
+            kp      = data.get('key_principle', '')
+            sit     = data.get('situation', '')
+            why     = data.get('why_matters', '')
+            ht      = data.get('hard_truth', '')
+            wo      = data.get('watch_out_for', '')
+            bullets = data.get('key_bullets', [])
+            do_list = data.get('do_list', [])
+            dont    = data.get('dont_list', [])
+
+            if name:
+                parts.append(f"  Lesson: {name}")
+            if kp:
+                parts.append(f"  Key Principle: {kp[:300]}")
+            if sit:
+                parts.append(f"  Situation: {sit[:200]}")
+            if why:
+                parts.append(f"  Why It Matters: {why[:200]}")
+            if ht:
+                parts.append(f"  Hard Truth: {ht[:200]}")
+            if wo:
+                parts.append(f"  Watch Out For: {wo[:150]}")
+            if bullets:
+                parts.append(f"  Key Points: {' | '.join(str(b)[:80] for b in bullets[:4])}")
+            if do_list:
+                parts.append(f"  DO: {' | '.join(str(b)[:60] for b in do_list[:3])}")
+            if dont:
+                parts.append(f"  DON'T: {' | '.join(str(b)[:60] for b in dont[:3])}")
+
+        elif ptype == 'consulting_insight':
+            section = data.get('section', '')
+            preview = data.get('body_preview', '')
+            body    = data.get('body_content', [])
+            kps     = data.get('key_principles', [])
+            quotes  = data.get('expert_quotes', [])
+
+            if section:
+                parts.append(f"  Section: {section}")
+            if preview:
+                parts.append(f"  Content: {preview[:300]}")
+            elif body:
+                parts.append(f"  Content: {str(body[0])[:300]}")
+            if kps:
+                parts.append(f"  Key Principle: {str(kps[0])[:200]}")
+            if quotes:
+                parts.append(f"  Expert Quote: {str(quotes[0])[:200]}")
+
+        elif ptype in ('survey_norm', 'survey_client_result'):
+            question = data.get('question', '')
+            dist     = data.get('distribution', {})
+            if question:
+                parts.append(f"  Survey Q: {question[:200]}")
+            if dist and isinstance(dist, dict):
+                top = sorted(dist.items(), key=lambda x: -float(x[1]))[:3]
+                parts.append(f"  Results: {', '.join(f'{k}: {v}%' for k, v in top)}")
+
+        elif ptype == 'operational_metrics':
+            metric_pairs = [
+                f"{k.replace('_', ' ')}: {v}"
+                for k, v in data.items()
+                if k not in ('client',) and v is not None
+            ]
+            if metric_pairs:
+                parts.append(f"  Metrics: {', '.join(metric_pairs[:6])}")
+
+        elif ptype == 'cost_model':
+            scenarios = data.get('scenarios', {})
+            for sc_name, sc_data in list(scenarios.items())[:2]:
+                cst = sc_data.get('Cost of Scheduled Time')
+                if cst:
+                    parts.append(f"  Cost Model — {sc_name}: ${cst:.2f}/hr")
+
+        elif ptype in ('contract_terms', 'engagement_fee', 'payment_structure'):
+            fee = data.get('fee') or data.get('total_fee')
+            wks = data.get('weeks') or data.get('engagement_weeks')
+            if fee:
+                parts.append(f"  Engagement Fee: ${int(fee):,}")
+            if wks:
+                parts.append(f"  Duration: {wks} weeks")
+
+        elif ptype == 'schedule_patterns_mentioned':
+            pats = data if isinstance(data, list) else data.get('patterns', [])
+            if pats:
+                parts.append(f"  Schedule Patterns: {', '.join(str(p) for p in pats[:6])}")
+
+        elif ptype == 'schedule_rotation_library':
+            inner = data.get('patterns', [])
+            if inner:
+                parts.append(f"  Rotation Patterns: {len(inner)} patterns found")
+                for rp in inner[:2]:
+                    shift_types = rp.get('shift_types', [])
+                    cycle_wks   = rp.get('cycle_weeks', '')
+                    if shift_types:
+                        parts.append(f"    - {cycle_wks}-week cycle, shifts: {', '.join(shift_types)}")
+
+        elif ptype == 'operational_principles':
+            principles = data.get('principles', [])
+            for pr in principles[:3]:
+                txt = pr.get('text', '') if isinstance(pr, dict) else str(pr)
+                if txt:
+                    parts.append(f"  Principle: {txt[:200]}")
+
+        else:
+            # Generic fallback: find first string value > 40 chars
+            for v in data.values():
+                if isinstance(v, str) and len(v) > 40:
+                    parts.append(f"  Info: {v[:200]}")
+                    break
+
+    # ── INSIGHTS ─────────────────────────────────────────────────────────────
+    for insight in extracted.get('insights', [])[:4]:
+        if not isinstance(insight, dict):
+            continue
+        itype = insight.get('type', '')
+
+        if itype == 'lessons_learned_summary':
+            total = insight.get('total_lessons', 0)
+            cats  = insight.get('categories', [])
+            if total:
+                parts.append(f"  Contains {total} lessons across: {', '.join(str(c) for c in cats[:5])}")
+
+        elif itype == 'document_summary':
+            wc = insight.get('word_count', 0)
+            sc = insight.get('section_count', 0)
+            if wc:
+                parts.append(f"  Document stats: {wc:,} words, {sc} sections")
+
+        elif itype == 'oaf_summary':
+            metrics = insight.get('metrics', {})
+            if metrics:
+                metric_str = ', '.join(f"{k}: {v}" for k, v in metrics.items())
+                parts.append(f"  OAF Metrics: {metric_str}")
+
+        elif itype == 'survey_summary':
+            n_q   = insight.get('questions_processed', 0)
+            norms = insight.get('normative_questions', 0)
+            if n_q:
+                parts.append(f"  Survey: {n_q} questions processed, {norms} with normative benchmarks")
+
+        elif itype == 'cost_model_summary':
+            scenarios = insight.get('scenarios', [])
+            if scenarios:
+                parts.append(f"  Cost Model Scenarios: {', '.join(str(s) for s in scenarios[:4])}")
+
+        elif itype == 'document_structure':
+            headings = insight.get('headings', [])
+            if headings:
+                parts.append(f"  Sections: {', '.join(str(h)[:50] for h in headings[:5])}")
+
+        elif itype == 'section_content':
+            heading  = insight.get('heading', '')
+            preview  = insight.get('body_preview', '')
+            kps      = insight.get('key_principles', [])
+            if heading and preview:
+                parts.append(f"  {heading}: {preview[:200]}")
+            if kps:
+                parts.append(f"    Principle: {str(kps[0])[:150]}")
+
+    # ── HIGHLIGHTS ────────────────────────────────────────────────────────────
+    highlights = extracted.get('highlights', [])
+    if highlights:
+        parts.append(f"  Highlights: {' | '.join(str(h) for h in highlights[:3])}")
+
+    result = '\n'.join(parts)
+    # Return empty string if nothing useful was found beyond the header
+    if result.count('\n') == 0:
+        return ''
+    return result
+
+
 def search_knowledge_management_db(user_request, max_results=5):
     """
     Search the Knowledge Management database (uploaded documents).
-    Returns extracted knowledge from the 42+ documents in swarm_intelligence.db
+    Returns extracted knowledge from the 218 documents in knowledge_ingestion.db.
 
     This is the "Shoulders of Giants" cumulative learning system.
+
+    FIXED February 28, 2026:
+    - Uses module-level _KM_DB_PATH constant (reads KNOWLEDGE_DB_PATH env var
+      with explicit fallback to knowledge_ingestion.db, not swarm_intelligence.db)
+    - Added startup diagnostic print at module level to confirm which DB is used
     """
     try:
         import sqlite3
 
-        # ================================================================
-        # FIX (February 20, 2026): Use config.DATABASE as the default path
-        # BEFORE: os.environ.get('KNOWLEDGE_DB_PATH', 'swarm_intelligence.db')
-        #   -> defaults to ephemeral local file, not the persistent disk DB
-        # AFTER:  os.environ.get('KNOWLEDGE_DB_PATH', DATABASE)
-        #   -> DATABASE = '/mnt/project/swarm_intelligence.db' from config.py
-        #   -> KNOWLEDGE_DB_PATH env var still overrides if explicitly set
-        # ================================================================
-        db_path = os.environ.get('KNOWLEDGE_DB_PATH', DATABASE)
-        # ================================================================
+        db_path = _KM_DB_PATH  # Set at module load — see top of file
 
         db = sqlite3.connect(db_path)
         db.row_factory = sqlite3.Row
         cursor = db.cursor()
 
         # Check if table exists
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='knowledge_extracts'")
+        cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='knowledge_extracts'"
+        )
         if not cursor.fetchone():
             db.close()
+            print(f"⚠️ [task_analysis] knowledge_extracts table not found in {db_path}")
             return []
 
         # Simple keyword search across all documents
-        search_terms = user_request.lower().split()[:10]  # Use first 10 words
+        search_terms = [t for t in user_request.lower().split()[:10] if len(t) >= 3]
 
         results = []
         for term in search_terms:
-            if len(term) < 3:  # Skip very short words
-                continue
-
             cursor.execute('''
                 SELECT
                     id, document_name, document_type, client, industry,
@@ -365,17 +628,21 @@ def search_knowledge_management_db(user_request, max_results=5):
 def check_knowledge_base_unified(user_request, project_knowledge_base):
     """
     UNIFIED knowledge search across BOTH sources:
-    1. Project files knowledge base (35 documents)
-    2. Knowledge Management DB (42+ uploaded documents)
+    1. Project files knowledge base (34 documents via knowledge_integration.py)
+    2. Knowledge Management DB (218 uploaded documents in knowledge_ingestion.db)
 
-    This gives the AI access to ALL accumulated wisdom - 77+ documents total.
+    FIXED February 28, 2026:
+    - Knowledge Management DB results now extract ACTUAL CONTENT from extracted_data
+      JSON via extract_content_from_extract(). Previously only metadata labels were
+      included ("3 insights found", "type: consulting_lesson") which were useless
+      to the AI. Now the AI receives lesson principles, survey results, metrics etc.
     """
     all_sources = []
     all_context = []
     max_confidence = 0.0
 
     # ============================================================
-    # SOURCE 1: Project Files Knowledge Base (35 documents)
+    # SOURCE 1: Project Files Knowledge Base (34 documents)
     # ============================================================
     if project_knowledge_base:
         try:
@@ -419,58 +686,40 @@ def check_knowledge_base_unified(user_request, project_knowledge_base):
             print(f"⚠️ Project knowledge search error: {e}")
 
     # ============================================================
-    # SOURCE 2: Knowledge Management Database (42+ documents)
+    # SOURCE 2: Knowledge Management Database (218 documents)
+    # FIXED February 28, 2026: Now extracts actual content, not metadata labels
     # ============================================================
     print("🔍 Searching uploaded documents (Knowledge Management DB)...")
-    km_results = search_knowledge_management_db(user_request, max_results=3)
+    km_results = search_knowledge_management_db(user_request, max_results=5)
 
     if km_results:
-        # Build context from Knowledge Management results
-        km_context_parts = ["=== UPLOADED DOCUMENTS (Knowledge Management) ==="]
+        km_context_parts = ["=== UPLOADED DOCUMENTS (Knowledge Management — 218 documents) ==="]
 
         for idx, doc in enumerate(km_results, 1):
-            doc_name = doc['document_name']
-            doc_type = doc['document_type']
-            client = doc['client'] or 'Unknown'
-
-            # Parse extracted_data JSON
-            try:
-                extracted = json.loads(doc['extracted_data'])
-                insights = extracted.get('insights', [])
-                patterns = extracted.get('patterns', [])
-
-                km_context_parts.append(f"\n📄 Document {idx}: {doc_name}")
-                km_context_parts.append(f"   Type: {doc_type} | Client: {client}")
-
-                # Add insights
-                if insights:
-                    km_context_parts.append(f"   Insights: {len(insights)} found")
-                    for insight in insights[:2]:  # Top 2 insights
-                        if isinstance(insight, dict):
-                            insight_type = insight.get('type', 'general')
-                            km_context_parts.append(f"     - {insight_type}")
-
-                # Add patterns
-                if patterns:
-                    km_context_parts.append(f"   Patterns: {len(patterns)} found")
-                    for pattern in patterns[:2]:  # Top 2 patterns
-                        if isinstance(pattern, dict):
-                            pattern_name = pattern.get('name', 'unknown')
-                            km_context_parts.append(f"     - {pattern_name}")
-
-            except Exception:
-                km_context_parts.append(f"\n📄 Document {idx}: {doc_name} (Type: {doc_type})")
+            # Extract real readable content from this record
+            content_excerpt = extract_content_from_extract(doc)
+            if content_excerpt:
+                km_context_parts.append(f"\n[KM Doc {idx}]")
+                km_context_parts.append(content_excerpt)
 
         km_context = '\n'.join(km_context_parts)
-        all_context.append(km_context)
-        all_sources.extend([doc['document_name'] for doc in km_results])
 
-        # Estimate confidence based on number of results
-        km_confidence = min(0.8, len(km_results) * 0.25)
-        max_confidence = max(max_confidence, km_confidence)
+        # Only add if we got real content (more than just the header)
+        if len(km_context) > len(km_context_parts[0]) + 10:
+            all_context.append(km_context)
+            all_sources.extend([doc['document_name'] for doc in km_results])
 
-        print(f"  ✅ Found {len(km_results)} relevant uploaded documents")
-        print(f"  📊 Confidence: {km_confidence*100:.0f}%")
+            km_confidence = min(0.8, len(km_results) * 0.25)
+            max_confidence = max(max_confidence, km_confidence)
+
+            print(f"  ✅ Found {len(km_results)} relevant uploaded documents")
+            print(f"  📊 KM confidence: {km_confidence*100:.0f}%")
+            print(f"  📄 KM context length: {len(km_context)} chars")
+        else:
+            print(f"  ⚠️ KM search returned {len(km_results)} docs but no extractable content")
+
+    else:
+        print(f"  ℹ️ No matching documents in Knowledge Management DB for this query")
 
     # ============================================================
     # COMBINE RESULTS
@@ -489,17 +738,18 @@ def check_knowledge_base_unified(user_request, project_knowledge_base):
 
     print(f"📚 UNIFIED KNOWLEDGE: {len(all_sources)} documents from {len(all_context)} sources")
     print(f"   Overall Confidence: {max_confidence*100:.0f}%")
+    print(f"   Total context: {len(combined_context)} chars")
 
     return {
         'has_relevant_knowledge': True,
         'knowledge_context': combined_context,
         'knowledge_confidence': max_confidence,
-        'knowledge_sources': list(set(all_sources)),  # Deduplicate
+        'knowledge_sources': list(set(all_sources)),
         'should_proceed_to_ai': True,
         'reason': f'Found {len(all_sources)} relevant documents across both knowledge bases',
         'source_breakdown': {
             'project_files': len([s for s in all_sources if 'project_files' in str(s)]),
-            'uploaded_docs': len(km_results)
+            'uploaded_docs': len(km_results) if km_results else 0
         }
     }
 
@@ -509,21 +759,25 @@ def analyze_task_with_sonnet(user_request, knowledge_base=None, file_paths=None,
     Sonnet analyzes task WITH unified knowledge + system capabilities + FILE ATTACHMENTS.
 
     NOW SEARCHES BOTH:
-    - Project files knowledge base (35 documents)
-    - Knowledge Management DB (42+ uploaded documents)
+    - Project files knowledge base (34 documents)
+    - Knowledge Management DB (218 uploaded documents)
 
-    Total: 77+ documents available for every request!
+    Total: 250+ documents available for every request.
 
-    UPDATED February 20, 2026:
-    - Added SPECIALIST_ROUTING_RULES to prompt so Sonnet knows WHEN to use each AI
-    - Added "research_agent" as a valid specialist in the JSON schema hint
+    UPDATED February 28, 2026:
+    - check_knowledge_base_unified() now returns real content excerpts from
+      the Knowledge Management DB (218 docs). Previously returned metadata only.
 
     UPDATED February 21, 2026:
     - Added TIME-SENSITIVE OVERRIDE: after parsing Sonnet's JSON, detects time-
       sensitive keywords in the user request and forces research_agent into
       specialists_needed. Fixes: Sonnet was answering "What did OSHA announce
-      this week?" from KB at 90% confidence, never dispatching research_agent
-      even though KB data is static and cannot contain current week's news.
+      this week?" from KB content at 90% confidence, never dispatching
+      research_agent even though KB data is static.
+
+    UPDATED February 20, 2026:
+    - Added SPECIALIST_ROUTING_RULES to prompt so Sonnet knows WHEN to use each AI
+    - Added "research_agent" as a valid specialist in the JSON schema hint
 
     Args:
         user_request (str): The user's request
@@ -544,7 +798,6 @@ def analyze_task_with_sonnet(user_request, knowledge_base=None, file_paths=None,
     learning_context = get_learning_context()
 
     # Build prompt with CAPABILITIES FIRST (so AI knows what it can do)
-    # UPDATED February 20, 2026: Added SPECIALIST_ROUTING_RULES block
     analysis_prompt = f"""{capabilities}
 
 You are the primary orchestrator in an AI swarm system for Shiftwork Solutions LLC.
@@ -552,7 +805,7 @@ You are the primary orchestrator in an AI swarm system for Shiftwork Solutions L
 🎯 CRITICAL: You have access to extensive accumulated knowledge from:
    - Project files (implementation manuals, contracts, proposals)
    - Uploaded documents (lessons learned, assessments, client work)
-   - Total: 77+ documents spanning hundreds of projects
+   - Total: 250+ documents spanning hundreds of projects
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🚨 STRICT GROUNDING RULES - MANDATORY
@@ -672,7 +925,6 @@ KNOWLEDGE BASE STATUS:
 ℹ️  No directly relevant knowledge found
 """
 
-    # UPDATED February 20, 2026: Added "research_agent" to valid specialists list
     analysis_prompt += """
 Analyze this request and determine:
 1. Task type (strategy, schedule_design, implementation, survey, content, code, analysis, complex)
@@ -750,9 +1002,7 @@ Respond ONLY with valid JSON:
         request_lower_ts = user_request.lower()
         is_time_sensitive = any(kw in request_lower_ts for kw in TIME_SENSITIVE_KEYWORDS)
 
-        # DIAGNOSTIC: unconditional prints - fires on every request so we can
-        # confirm this code is running and see exactly what Sonnet returned.
-        # Added February 21, 2026.
+        # DIAGNOSTIC: unconditional prints — fires on every request
         print(f"DIAGNOSTIC: is_time_sensitive={is_time_sensitive} | request={user_request[:50]}")
         print(f"DIAGNOSTIC: specialists_needed={analysis.get('specialists_needed', [])}")
 
@@ -796,6 +1046,9 @@ def handle_with_opus(user_request, sonnet_analysis, knowledge_base=None, file_pa
 
     NOW SEARCHES BOTH knowledge sources for complete context.
 
+    UPDATED February 28, 2026: check_knowledge_base_unified() now returns real
+    content excerpts from Knowledge Management DB (218 docs).
+
     UPDATED February 20, 2026: Added SPECIALIST_ROUTING_RULES to Opus prompt
     for consistency with Sonnet routing logic.
 
@@ -816,12 +1069,11 @@ def handle_with_opus(user_request, sonnet_analysis, knowledge_base=None, file_pa
     learning_context = get_learning_context()
 
     # Build prompt with CAPABILITIES FIRST
-    # UPDATED February 20, 2026: Added SPECIALIST_ROUTING_RULES block
     opus_prompt = f"""{capabilities}
 
 You are the strategic supervisor in the AI Swarm for Shiftwork Solutions LLC.
 
-🎯 You have access to 77+ documents of accumulated expertise. Act as a senior consulting partner.
+🎯 You have access to 250+ documents of accumulated expertise. Act as a senior consulting partner.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🚨 GROUNDING RULES - SENIOR PARTNER STANDARDS
@@ -978,18 +1230,14 @@ def execute_specialist_task(specialist_ai, task_description, knowledge_context="
     from orchestration.system_capabilities import get_system_capabilities_prompt
     capabilities = get_system_capabilities_prompt()
 
-    # ================================================================
-    # UPDATED February 20, 2026: Added research_agent to specialist_map
-    # ================================================================
     specialist_map = {
-        "research_agent": call_research_agent,   # NEW - Tavily web search
+        "research_agent": call_research_agent,   # Tavily web search
         "gpt4": call_gpt4,
         "deepseek": call_deepseek,
         "gemini": call_gemini,
         "sonnet": call_claude_sonnet,
         "opus": call_claude_opus
     }
-    # ================================================================
 
     ai_function = specialist_map.get(specialist_ai.lower())
     if not ai_function:
