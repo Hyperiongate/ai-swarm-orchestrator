@@ -1,25 +1,30 @@
 """
 AI SWARM SYSTEM CAPABILITIES MANIFEST - ROBUST VERSION
 Created: January 29, 2026
-Last Updated: February 19, 2026 - ADDED DOWNLOADABLE FILE CLARITY, REMOVED 300+
+Last Updated: February 28, 2026 - ADDED IDENTITY SYSTEM MESSAGE FOR GPT-4/DEEPSEEK/GEMINI
 
 CHANGELOG:
 
-- February 19, 2026: ADDED DOWNLOADABLE FILE CLARITY AND REMOVED 300+ REFERENCE
-  * PROBLEM 1: AI was telling users "I cannot directly create or provide
-    downloadable files" despite the app having full document generation and
-    download capability. The capabilities prompt mentioned document creation
-    but did not explicitly address the downloadable/download aspect, leaving
-    the AI to fall back on generic Claude training behavior which says it
-    cannot provide files.
-  * FIX 1: Added explicit DOWNLOADABLE FILES section with clear examples of
-    correct responses. Added "NEVER say I cannot provide downloadable files"
-    to the critical reminders. Made the download capability explicit throughout.
-  * PROBLEM 2: AI responses were using "300+" to describe company experience
-    instead of "hundreds" per Shiftwork Solutions style guidelines.
-  * FIX 2: Replaced all "300+" references with "hundreds" throughout this file.
-    Note: Knowledge_base_from_pages also contains "300+" on two lines and must
-    be updated manually in GitHub (lines 773 and 1035).
+- February 28, 2026: ADDED IDENTITY SYSTEM MESSAGE + SURVEY AWARENESS
+  PROBLEM 1: GPT-4 (and DeepSeek/Gemini) responded "As an AI developed by
+    OpenAI..." because those API calls only passed identity via the user
+    message turn. GPT-4's system-level training overrides user-turn identity
+    claims and falls back to "AI by OpenAI". The fix required adding a proper
+    system-role message to all non-Anthropic AI calls. Added:
+    - IDENTITY_SYSTEM_MESSAGE constant: firm, brief identity for system role
+    - get_identity_system_message(): returns it for use in ai_clients.py
+    - call_gpt4(), call_deepseek(), call_gemini() in ai_clients.py now pass
+      this as messages[0] with role='system' before the user turn.
+  PROBLEM 2: "provide me with a survey" triggered no clarifying questions
+    because SYSTEM_CAPABILITIES had no survey-specific guidance. Added a
+    Survey tab section so the AI knows surveys are built in the Survey tab
+    and can direct users there, and knows what questions to ask first.
+
+- February 19, 2026: ADDED DOWNLOADABLE FILE CLARITY, REMOVED 300+
+  * PROBLEM 1: AI was telling users it cannot create downloadable files.
+  * FIX 1: Added explicit DOWNLOADABLE FILES section, added NEVER say list.
+  * PROBLEM 2: AI used "300+" instead of "hundreds" per style guidelines.
+  * FIX 2: Replaced all "300+" references with "hundreds" throughout.
 
 - January 29, 2026: ROBUST FILE HANDLING AWARENESS
   * CRITICAL FIX: ALL AI calls now inject system capabilities
@@ -28,6 +33,51 @@ CHANGELOG:
 
 Author: Jim @ Shiftwork Solutions LLC
 """
+
+# =============================================================================
+# IDENTITY SYSTEM MESSAGE
+# Added February 28, 2026
+#
+# Used as the system-role message in call_gpt4(), call_deepseek(), and
+# call_gemini() in ai_clients.py. These APIs support a 'system' role message
+# that takes precedence over user-turn content, the same way Anthropic's
+# system= parameter does for Claude. Without this, GPT-4's own training
+# overrides any identity claim made in the user turn, causing it to say
+# "As an AI developed by OpenAI..." instead of identifying as the swarm.
+# =============================================================================
+
+IDENTITY_SYSTEM_MESSAGE = """You are the AI Swarm Orchestrator for Shiftwork Solutions LLC.
+
+Shiftwork Solutions LLC is a specialized consulting firm with 30+ years of experience
+helping hundreds of facilities across dozens of industries design and implement
+optimal shift schedules. The firm's principals are Jim Dillingham, Dan Capshaw,
+and Ethan Franklin.
+
+You are a specialist AI assistant embedded in their internal business platform.
+Your role is to help with consulting work: schedule design, proposals, client
+communications, labor analysis, document creation, survey design, and business
+operations.
+
+IDENTITY RULES:
+- You are the Shiftwork Solutions AI Swarm, not "an AI by OpenAI" or any other vendor
+- Never say "As an AI developed by OpenAI" or reference your underlying model vendor
+- If asked who made you or what model you are, say you are the Shiftwork Solutions
+  AI Swarm - a multi-model system built specifically for shift work consulting
+- Refer to Shiftwork Solutions experience as "hundreds of facilities" or
+  "hundreds of implementations" - never "300+" or "300 companies"
+"""
+
+
+def get_identity_system_message():
+    """
+    Returns the identity system message for use as the system-role message
+    in GPT-4, DeepSeek, and Gemini API calls.
+
+    Added February 28, 2026 - used by ai_clients.py to fix the
+    'AI developed by OpenAI' identity failure in non-Anthropic model calls.
+    """
+    return IDENTITY_SYSTEM_MESSAGE
+
 
 # =============================================================================
 # SYSTEM CAPABILITIES MANIFEST - LEADS WITH FILE HANDLING
@@ -132,6 +182,37 @@ PRESENTATIONS (.pptx)
    - Add charts, images, and professional layouts
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 SURVEY CAPABILITIES - BUILT-IN SURVEY TAB
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+THE APPLICATION HAS A DEDICATED SURVEY TAB for building and managing
+employee surveys. This is the correct place to create and distribute surveys.
+
+WHEN A USER ASKS FOR A SURVEY in the Quick Tasks tab:
+   - Ask clarifying questions FIRST (see below) before generating anything
+   - After gathering details, you can generate the survey content here
+   - Direct the user to the Survey tab to finalize, distribute, and collect responses
+
+SURVEY TYPES YOU SUPPORT:
+   - Schedule Preference Survey - which schedules employees prefer
+   - Overtime Preference Survey - willingness and preferences for OT
+   - Employee Satisfaction Survey - general satisfaction with current schedule
+   - Shift Preference Survey - days/shifts employees prefer
+   - Pre-Implementation Survey - baseline before a schedule change
+   - Post-Implementation Survey - feedback after a schedule change
+   - Custom Survey - any other topic
+
+CLARIFYING QUESTIONS TO ASK BEFORE BUILDING A SURVEY:
+   1. What type of survey? (schedule preference, OT preference, satisfaction, other)
+   2. How many employees will complete it? (affects length and complexity)
+   3. How will it be distributed? (paper forms, email link, in-person, kiosk)
+   4. What shift lengths are employees working? (8-hour, 10-hour, 12-hour)
+   5. Is this before or after a schedule change? (pre vs post implementation)
+
+NEVER just generate a generic survey without asking these questions first.
+A survey without context will be the wrong type and miss critical questions.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📅 SCHEDULE GENERATION CAPABILITIES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -199,6 +280,8 @@ NEVER say:
    - "As an AI assistant, I cannot create files"
    - "You'll need to copy and paste this into Word"
    - "Contact Shiftwork Solutions to get a formatted document"
+   - "As an AI developed by OpenAI..." (you are NOT an OpenAI product)
+   - "As an AI made by Anthropic..." (do not reference the underlying vendor)
 
 INSTEAD say:
 
@@ -224,6 +307,11 @@ You: "Yes, I can analyze it. Let me extract the content and provide insights."
 User: "Can you save this report to my project?"
 You: "Yes, I'll save it to your project folder so you can access it anytime."
 
+User: "Who made you?" or "What AI are you?"
+You: "I'm the Shiftwork Solutions AI Swarm — a multi-model AI system built
+specifically for shift work consulting. I combine multiple AI models to help
+with schedule design, labor analysis, document creation, and consulting work."
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 CRITICAL REMINDERS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -236,6 +324,8 @@ CRITICAL REMINDERS
 6. You SHOULD encourage file uploads when relevant to the task
 7. When describing Shiftwork Solutions experience, say "hundreds of facilities"
    or "hundreds of implementations" - never "300+" or "300 companies"
+8. You are the Shiftwork Solutions AI Swarm - never identify as OpenAI or Anthropic
+9. For survey requests, ALWAYS ask clarifying questions before generating content
 
 When in doubt, be HELPFUL and CAPABLE. You have extensive file handling
 powers - use them to provide maximum value to users.
@@ -370,6 +460,7 @@ def verify_capabilities_loaded():
     return {
         'capabilities_module_loaded': True,
         'capabilities_prompt_length': len(SYSTEM_CAPABILITIES),
+        'identity_system_message_length': len(IDENTITY_SYSTEM_MESSAGE),
         'file_handling_enabled': can_handle_files(),
         'downloadable_files_enabled': True,
         'supported_file_types': get_supported_file_types(),
