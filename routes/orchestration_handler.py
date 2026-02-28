@@ -1748,33 +1748,46 @@ Generate the complete {doc_label} now:"""
 
 # All standard question IDs in the order they should appear in the survey.
 # This is the comprehensive set used for every survey — no category filtering.
+# Updated February 28, 2026: added 39 new questions from Master_Survey_for_Survey_Business.doc
+# Total: 103 questions across 7 categories (added Day Care / Elder Care as new category)
 _ALL_SURVEY_QUESTION_IDS = [
-    # Demographics
-    'dept', 'tenure', 'current_schedule', 'second_job', 'employment_type',
+    # Demographics (18 questions)
+    'dept', 'tenure', 'dept_tenure', 'crew_assignment', 'current_schedule',
+    'prior_shiftwork', 'second_job', 'second_job_timing', 'employment_type',
     'student_status', 'caregiving', 'gender', 'age_group', 'partner_status',
-    'single_parent', 'commute_method', 'commute_distance',
-    # Sleep & Alertness
-    'sleep_day_shift', 'sleep_night_shift', 'sleep_days_off',
-    'sleep_needed', 'sleepiness_problems',
-    # Working Conditions
+    'single_parent', 'commute_method', 'commute_distance', 'worst_shift_start',
+    # Sleep & Alertness (11 questions)
+    'alarm_clock_normal', 'alarm_clock_day', 'alarm_clock_afternoon', 'alarm_clock_night',
+    'sleep_day_shift', 'sleep_second_shift', 'sleep_third_shift',
+    'sleep_night_shift', 'sleep_days_off', 'sleep_needed', 'sleepiness_problems',
+    # Working Conditions (18 questions)
     'safety_rating', 'safety_improvement', 'company_communication',
     'communication_importance', 'handoff_time', 'management_input',
-    'enjoy_work', 'pay_competitive', 'company_belonging', 'absenteeism_impact',
-    'facility_improvement', 'best_workplace', 'training_importance',
-    'training_adequacy', 'training_amount', 'supervisor_responsive',
-    'management_responsive',
-    # Schedule Features
-    'schedule_improvement', 'current_schedule_satisfaction',
-    'better_schedules_exist', 'time_off_predictable', 'schedule_flexibility',
-    'preferred_8hr_shift', 'preferred_12hr_shift', 'hours_vs_days_off',
-    'fixed_vs_rotating', 'day_shift_start_8hr', 'day_shift_start_12hr',
-    'weekend_preference', 'weekend_pattern', 'work_pattern',
-    'three_day_preference', 'weekday_preference', 'supervisor_overlap',
-    # Overtime
+    'enjoy_work', 'pay_competitive', 'management_equality', 'company_belonging',
+    'absenteeism_impact', 'facility_improvement', 'best_workplace',
+    'training_importance', 'training_adequacy', 'training_amount',
+    'supervisor_responsive', 'management_responsive',
+    # Schedule Features (33 questions)
+    'schedule_improvement', 'schedule_policies_fair', 'current_schedule_satisfaction',
+    'better_schedules_exist', 'shift_mobility_intent', 'time_off_predictable',
+    'schedule_flexibility', 'preferred_8hr_shift', 'least_preferred_8hr_shift',
+    'preferred_12hr_shift', 'hours_vs_days_off', 'fixed_vs_rotating',
+    'fixed_vs_rotating_no_seniority', 'fixed_vs_rotating_not_first_choice',
+    'crew_cohesion', 'rotation_frequency', 'rotation_direction',
+    'day_shift_start_8hr', 'day_shift_start_10hr', 'day_shift_start_12hr',
+    'weekend_preference', 'shift_swap_importance', 'night_shift_start_preference',
+    'weekend_pattern', 'work_pattern', 'three_day_preference', 'weekday_preference',
+    'supervisor_overlap', 'task_variety', 'weekend_willingness', 'weekend_occasional',
+    'understand_247_need', 'new_schedule_trial_willingness',
+    # Overtime (13 questions)
     'overtime_dependency', 'overtime_amount', 'overtime_satisfaction',
-    'overtime_predictable', 'time_vs_overtime', 'overtime_desire',
-    'overtime_expectation', 'overtime_weekly_hours',
-    # Open-ended
+    'overtime_timing_actual', 'overtime_timing_preferred', 'overtime_extend_shift',
+    'overtime_day_off', 'overtime_distribution_fair', 'overtime_predictable',
+    'time_vs_overtime', 'overtime_desire', 'overtime_expectation', 'overtime_weekly_hours',
+    # Day Care / Elder Care (6 questions - new section added February 28, 2026)
+    'daycare_use', 'daycare_location', 'daycare_relationship',
+    'daycare_shifts_used', 'daycare_shift_issue', 'daycare_worst_shift',
+    # Open-ended (4 questions)
     'schedule_like_most', 'schedule_like_least',
     'work_life_positives', 'work_life_improvements',
 ]
