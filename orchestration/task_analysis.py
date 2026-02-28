@@ -1,11 +1,37 @@
 """
 Task Analysis Module - WITH UNIFIED KNOWLEDGE BASE (Project Files + Knowledge Management)
 Created: January 21, 2026
-Last Updated: February 28, 2026 - FIXED KM DB CONTENT EXTRACTION
+Last Updated: February 28, 2026 - IMPROVED CONSULTING INSIGHT CONTENT EXTRACTION
 
 CHANGELOG:
 
-- February 28, 2026: FIXED KM DB CONTENT EXTRACTION
+- February 28, 2026 (Pass 2): IMPROVED CONSULTING INSIGHT CONTENT EXTRACTION
+  PROBLEM: extract_content_from_extract() was only reading the first 6 patterns
+    per document ([:6]) and only the first line of body_content for consulting_insight
+    patterns. This caused up to 75% of substantive content to be silently dropped.
+    Examples:
+      - WP3 (Overtime Strategy) has 24 consulting_insight patterns; only 6 were read,
+        missing "The Hidden Complexity of Change", "Best Practice #15 (20/60/20 Rule)",
+        "Best Practice #16", and 16 other sections.
+      - Pillar_1 (Complete Guide to Schedule Design) had similar truncation.
+    Additionally, "cover page" noise patterns (contact info, copyright lines) were
+    consuming slots in the 6-pattern budget before substantive content appeared.
+    Duplicate section headings were also appearing in output.
+
+  FIX: Modified extract_content_from_extract() consulting_insight branch only:
+    1. Increased pattern limit from [:6] to [:15] - reads 2.5x more patterns
+    2. Added _is_noise_section() helper - skips cover-page/header patterns that
+       contain contact info, copyright lines, or other non-consulting content
+    3. Added _get_body_text() helper - joins ALL body_content lines (up to 4 lines,
+       500 chars) instead of only showing body[0]
+    4. Added seen_sections set within the function - deduplicates identical section
+       headings so same content doesn't appear twice
+    5. Skips patterns with fewer than 20 chars of content
+    6. Includes up to 2 key_principles instead of only the first one
+  ALL OTHER FUNCTIONS UNCHANGED. All other pattern type branches UNCHANGED.
+  Database: read-only, no schema changes.
+
+- February 28, 2026 (Pass 1): FIXED KM DB CONTENT EXTRACTION
   PROBLEM 1: search_knowledge_management_db() was connecting to the wrong DB.
     config.py DATABASE = '/mnt/project/swarm_intelligence.db' but the knowledge
     database is '/mnt/project/knowledge_ingestion.db'. The February 20 fix used
@@ -114,7 +140,9 @@ CHANGELOG:
 Author: Jim @ Shiftwork Solutions LLC
 """
 
+import ast
 import json
+import re
 import time
 import os
 from orchestration.ai_clients import call_claude_sonnet, call_claude_opus
@@ -340,8 +368,88 @@ def get_learning_context():
 
 
 # ============================================================================
+# HELPERS FOR extract_content_from_extract()
+# Added February 28, 2026 (Pass 2)
+#
+# These two helpers are used ONLY by the consulting_insight branch of
+# extract_content_from_extract(). Isolated here for clarity and testability.
+# ============================================================================
+
+# Phrases that indicate a pattern is cover-page / header noise with no
+# consulting value (contact info, copyright lines, branding text).
+_NOISE_PHRASES = (
+    'shift-work.com',
+    'contact@',
+    'all rights reserved',
+    '© 20',
+    'optimizing 24/7 operations since',
+    'covers 9 essential',
+    'www.shift',
+    'shiftwork solutions llc',
+    '(415)',
+    '@shift-work',
+)
+
+
+def _is_noise_section(section, body_content):
+    """
+    Return True if this consulting_insight pattern is cover-page / header noise
+    that provides no consulting value to the AI.
+
+    Checks the section heading and the joined body_content against a list of
+    known noise phrases (contact info, copyright, branding boilerplate).
+
+    Args:
+        section (str): Section heading from pattern_data
+        body_content: body_content value (list or str)
+
+    Returns:
+        bool: True if the pattern should be skipped
+    """
+    if isinstance(body_content, list):
+        body_str = ' '.join(str(x) for x in body_content)
+    else:
+        body_str = str(body_content)
+
+    combined = (section + ' ' + body_str).lower()
+    return any(phrase in combined for phrase in _NOISE_PHRASES)
+
+
+def _get_body_text(body_content, max_lines=4, max_chars=500):
+    """
+    Join body_content lines into a single readable string.
+
+    Handles both list and string formats (the ingestion engine may store
+    body_content as a Python-literal string representation of a list).
+    Filters out very short lines (< 15 chars) that are typically noise.
+
+    Args:
+        body_content: body_content value from pattern_data (list or str)
+        max_lines (int): Maximum number of lines to include (default 4)
+        max_chars (int): Maximum characters in result (default 500)
+
+    Returns:
+        str: Joined readable text, or empty string if nothing useful
+    """
+    if isinstance(body_content, str):
+        try:
+            body_content = ast.literal_eval(body_content)
+        except Exception:
+            # Not a list literal — use the string directly
+            return body_content[:max_chars]
+
+    if isinstance(body_content, list):
+        lines = [str(x).strip() for x in body_content if str(x).strip()]
+        meaningful = [ln for ln in lines if len(ln) > 15][:max_lines]
+        return ' '.join(meaningful)[:max_chars]
+
+    return ''
+
+
+# ============================================================================
 # CONTENT EXTRACTOR FOR KNOWLEDGE MANAGEMENT DB RECORDS
-# Added February 28, 2026
+# Added February 28, 2026 (Pass 1)
+# Updated February 28, 2026 (Pass 2): Improved consulting_insight branch
 #
 # Reads extracted_data JSON from a knowledge_extracts row and returns a
 # readable text excerpt the AI can actually use — not just metadata labels.
@@ -383,13 +491,23 @@ def extract_content_from_extract(doc):
         return '\n'.join(parts)
 
     # ── PATTERNS ─────────────────────────────────────────────────────────────
-    for pattern in extracted.get('patterns', [])[:6]:
+    #
+    # CHANGED February 28, 2026 (Pass 2):
+    #   - Increased from [:6] to [:15] to capture more patterns per document
+    #   - consulting_insight branch now uses _is_noise_section(), _get_body_text(),
+    #     seen_sections dedup, and reads up to 2 key_principles
+    #   - All other branches (consulting_lesson, survey_norm, etc.) UNCHANGED
+
+    seen_sections = set()  # used only by consulting_insight branch
+
+    for pattern in extracted.get('patterns', [])[:15]:
         ptype = pattern.get('type', '')
         data  = pattern.get('data', {})
         if not isinstance(data, dict):
             continue
 
         if ptype == 'consulting_lesson':
+            # UNCHANGED
             name    = data.get('lesson_name', '') or data.get('title', '')
             kp      = data.get('key_principle', '')
             sit     = data.get('situation', '')
@@ -420,24 +538,74 @@ def extract_content_from_extract(doc):
                 parts.append(f"  DON'T: {' | '.join(str(b)[:60] for b in dont[:3])}")
 
         elif ptype == 'consulting_insight':
-            section = data.get('section', '')
-            preview = data.get('body_preview', '')
+            # UPDATED February 28, 2026 (Pass 2):
+            #
+            # Previous version:
+            #   - Used body[0] only (first line of body_content)
+            #   - Used kps[0] only (first key principle)
+            #   - No noise filtering
+            #   - No deduplication
+            #
+            # Current version:
+            #   - _is_noise_section(): skips cover-page / header patterns
+            #   - seen_sections: skips duplicate section headings
+            #   - _get_body_text(): joins ALL meaningful body_content lines
+            #   - Skips patterns with < 20 chars of content
+            #   - Includes up to 2 key_principles
+
+            section = data.get('section', '').strip()
             body    = data.get('body_content', [])
+            preview = data.get('body_preview', '').strip()
             kps     = data.get('key_principles', [])
             quotes  = data.get('expert_quotes', [])
 
+            # Skip cover-page noise (contact info, copyright, branding)
+            if _is_noise_section(section, body):
+                continue
+
+            # Skip duplicate section headings within the same document
+            section_key = section.lower()[:50]
+            if section_key and section_key in seen_sections:
+                continue
+            if section_key:
+                seen_sections.add(section_key)
+
+            # Build rich body text from all meaningful lines
+            body_text = _get_body_text(body, max_lines=4, max_chars=500)
+
+            # Use body_text first; fall back to preview
+            content = body_text or preview
+
+            # Skip patterns with no substantive content
+            if not content or len(content.strip()) < 20:
+                continue
+
             if section:
                 parts.append(f"  Section: {section}")
-            if preview:
-                parts.append(f"  Content: {preview[:300]}")
-            elif body:
-                parts.append(f"  Content: {str(body[0])[:300]}")
-            if kps:
-                parts.append(f"  Key Principle: {str(kps[0])[:200]}")
+            parts.append(f"  Content: {content}")
+
+            # Include up to 2 key principles (was 1)
+            if isinstance(kps, str):
+                try:
+                    kps = ast.literal_eval(kps)
+                except Exception:
+                    kps = [kps]
+            for kp in (kps[:2] if isinstance(kps, list) else [kps]):
+                kp_text = str(kp).strip()
+                if kp_text and len(kp_text) > 20:
+                    parts.append(f"  Key Principle: {kp_text[:250]}")
+
+            # Include first expert quote if present
             if quotes:
-                parts.append(f"  Expert Quote: {str(quotes[0])[:200]}")
+                if isinstance(quotes, list):
+                    q = str(quotes[0]).strip()
+                else:
+                    q = str(quotes).strip()
+                if q and len(q) > 20:
+                    parts.append(f"  Expert Quote: {q[:200]}")
 
         elif ptype in ('survey_norm', 'survey_client_result'):
+            # UNCHANGED
             question = data.get('question', '')
             dist     = data.get('distribution', {})
             if question:
@@ -447,6 +615,7 @@ def extract_content_from_extract(doc):
                 parts.append(f"  Results: {', '.join(f'{k}: {v}%' for k, v in top)}")
 
         elif ptype == 'operational_metrics':
+            # UNCHANGED
             metric_pairs = [
                 f"{k.replace('_', ' ')}: {v}"
                 for k, v in data.items()
@@ -456,6 +625,7 @@ def extract_content_from_extract(doc):
                 parts.append(f"  Metrics: {', '.join(metric_pairs[:6])}")
 
         elif ptype == 'cost_model':
+            # UNCHANGED
             scenarios = data.get('scenarios', {})
             for sc_name, sc_data in list(scenarios.items())[:2]:
                 cst = sc_data.get('Cost of Scheduled Time')
@@ -463,6 +633,7 @@ def extract_content_from_extract(doc):
                     parts.append(f"  Cost Model — {sc_name}: ${cst:.2f}/hr")
 
         elif ptype in ('contract_terms', 'engagement_fee', 'payment_structure'):
+            # UNCHANGED
             fee = data.get('fee') or data.get('total_fee')
             wks = data.get('weeks') or data.get('engagement_weeks')
             if fee:
@@ -471,11 +642,13 @@ def extract_content_from_extract(doc):
                 parts.append(f"  Duration: {wks} weeks")
 
         elif ptype == 'schedule_patterns_mentioned':
+            # UNCHANGED
             pats = data if isinstance(data, list) else data.get('patterns', [])
             if pats:
                 parts.append(f"  Schedule Patterns: {', '.join(str(p) for p in pats[:6])}")
 
         elif ptype == 'schedule_rotation_library':
+            # UNCHANGED
             inner = data.get('patterns', [])
             if inner:
                 parts.append(f"  Rotation Patterns: {len(inner)} patterns found")
@@ -486,6 +659,7 @@ def extract_content_from_extract(doc):
                         parts.append(f"    - {cycle_wks}-week cycle, shifts: {', '.join(shift_types)}")
 
         elif ptype == 'operational_principles':
+            # UNCHANGED
             principles = data.get('principles', [])
             for pr in principles[:3]:
                 txt = pr.get('text', '') if isinstance(pr, dict) else str(pr)
@@ -493,13 +667,14 @@ def extract_content_from_extract(doc):
                     parts.append(f"  Principle: {txt[:200]}")
 
         else:
-            # Generic fallback: find first string value > 40 chars
+            # Generic fallback: find first string value > 40 chars — UNCHANGED
             for v in data.values():
                 if isinstance(v, str) and len(v) > 40:
                     parts.append(f"  Info: {v[:200]}")
                     break
 
     # ── INSIGHTS ─────────────────────────────────────────────────────────────
+    # UNCHANGED
     for insight in extracted.get('insights', [])[:4]:
         if not isinstance(insight, dict):
             continue
@@ -549,6 +724,7 @@ def extract_content_from_extract(doc):
                 parts.append(f"    Principle: {str(kps[0])[:150]}")
 
     # ── HIGHLIGHTS ────────────────────────────────────────────────────────────
+    # UNCHANGED
     highlights = extracted.get('highlights', [])
     if highlights:
         parts.append(f"  Highlights: {' | '.join(str(h) for h in highlights[:3])}")
@@ -567,7 +743,7 @@ def search_knowledge_management_db(user_request, max_results=5):
 
     This is the "Shoulders of Giants" cumulative learning system.
 
-    FIXED February 28, 2026:
+    FIXED February 28, 2026 (Pass 1):
     - Uses module-level _KM_DB_PATH constant (reads KNOWLEDGE_DB_PATH env var
       with explicit fallback to knowledge_ingestion.db, not swarm_intelligence.db)
     - Added startup diagnostic print at module level to confirm which DB is used
@@ -631,11 +807,16 @@ def check_knowledge_base_unified(user_request, project_knowledge_base):
     1. Project files knowledge base (34 documents via knowledge_integration.py)
     2. Knowledge Management DB (218 uploaded documents in knowledge_ingestion.db)
 
-    FIXED February 28, 2026:
+    FIXED February 28, 2026 (Pass 1):
     - Knowledge Management DB results now extract ACTUAL CONTENT from extracted_data
       JSON via extract_content_from_extract(). Previously only metadata labels were
       included ("3 insights found", "type: consulting_lesson") which were useless
       to the AI. Now the AI receives lesson principles, survey results, metrics etc.
+
+    IMPROVED February 28, 2026 (Pass 2):
+    - extract_content_from_extract() now reads up to 15 patterns per document
+      (was 6), filters noise, deduplicates sections, and joins all body_content
+      lines for consulting_insight patterns.
     """
     all_sources = []
     all_context = []
@@ -687,7 +868,8 @@ def check_knowledge_base_unified(user_request, project_knowledge_base):
 
     # ============================================================
     # SOURCE 2: Knowledge Management Database (218 documents)
-    # FIXED February 28, 2026: Now extracts actual content, not metadata labels
+    # FIXED February 28, 2026 (Pass 1): Now extracts actual content
+    # IMPROVED February 28, 2026 (Pass 2): Richer consulting_insight extraction
     # ============================================================
     print("🔍 Searching uploaded documents (Knowledge Management DB)...")
     km_results = search_knowledge_management_db(user_request, max_results=5)
@@ -764,7 +946,12 @@ def analyze_task_with_sonnet(user_request, knowledge_base=None, file_paths=None,
 
     Total: 250+ documents available for every request.
 
-    UPDATED February 28, 2026:
+    UPDATED February 28, 2026 (Pass 2):
+    - extract_content_from_extract() now delivers richer consulting_insight
+      content: up to 15 patterns, noise filtered, sections deduped, full
+      body_content text joined (up to 4 lines per section, 500 chars).
+
+    UPDATED February 28, 2026 (Pass 1):
     - check_knowledge_base_unified() now returns real content excerpts from
       the Knowledge Management DB (218 docs). Previously returned metadata only.
 
@@ -1046,8 +1233,11 @@ def handle_with_opus(user_request, sonnet_analysis, knowledge_base=None, file_pa
 
     NOW SEARCHES BOTH knowledge sources for complete context.
 
-    UPDATED February 28, 2026: check_knowledge_base_unified() now returns real
-    content excerpts from Knowledge Management DB (218 docs).
+    UPDATED February 28, 2026 (Pass 2): extract_content_from_extract() now
+    delivers richer consulting_insight content for Knowledge Management DB docs.
+
+    UPDATED February 28, 2026 (Pass 1): check_knowledge_base_unified() now returns
+    real content excerpts from Knowledge Management DB (218 docs).
 
     UPDATED February 20, 2026: Added SPECIALIST_ROUTING_RULES to Opus prompt
     for consistency with Sonnet routing logic.
