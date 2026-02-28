@@ -1,32 +1,36 @@
 """
 Proactive Intelligence Module
 Created: January 22, 2026
-Last Updated: February 21, 2026 - ADDED MISSING INTERFACE METHODS
+Last Updated: February 28, 2026 - ADDED SURVEY CLARIFICATION LOGIC
 
 CHANGELOG:
 
+- February 28, 2026: ADDED SURVEY CLARIFICATION LOGIC
+  PROBLEM: Typing "provide me with a survey" in the Quick Tasks tab produced
+    a generic, wrong-type survey with no clarifying questions asked first.
+    SmartQuestioner.analyze_ambiguity() had no detection for survey requests.
+    The word 'survey' was actually listed in _has_document_type() as already
+    resolved, which suppressed even the generic document-type question.
+  FIX: Added survey/questionnaire detection block to analyze_ambiguity().
+    When the request contains 'survey' or 'questionnaire' (and does not already
+    specify a survey type), the system now asks:
+      1. What type of survey? (with Shiftwork Solutions-specific options)
+      2. How many employees will complete it?
+      3. How will it be distributed?
+      4. What shift length are employees on?
+      5. Is this pre- or post-implementation?
+    Also added 'survey_created' task type to NextStepSuggester so meaningful
+    follow-on suggestions appear after a survey is built.
+    Also removed 'survey' from _has_document_type() since survey requests need
+    their own dedicated questions, not the generic document-type question.
+
 - February 21, 2026: ADDED MISSING INTERFACE METHODS
-  PROBLEM: orchestration_handler.py calls two methods that never existed
-    on ProactiveAgent:
-      proactive.pre_process_request(user_request)
-        -> AttributeError: 'ProactiveAgent' object has no attribute 'pre_process_request'
-      proactive.post_process_result(task_id, user_request, actual_output)
-        -> AttributeError: 'ProactiveAgent' object has no attribute 'post_process_result'
-    Both failures were caught by try/except in orchestration_handler.py and
-    logged on every single request, but the calls were silently skipped.
-  FIX: Added pre_process_request() and post_process_result() as the interface
-    methods orchestration_handler.py expects.
-    - pre_process_request(user_request) wraps process_request() and returns
-      {'action': 'ask_questions', 'data': ...} or {'action': 'proceed'} or
-      {'action': 'detect_project', 'data': ...} matching handler expectations.
-    - post_process_result(task_id, user_request, actual_output) infers the
-      completed task type from the request text and returns suggestion strings.
-  No other logic changed. All existing methods intact. Fully backward compatible.
+  PROBLEM: orchestration_handler.py calls pre_process_request() and
+    post_process_result() which never existed on ProactiveAgent.
+  FIX: Added both methods as the interface orchestration_handler.py expects.
 
 - January 26, 2026: DISABLED SCHEDULE CLARIFICATIONS
   * Schedule requests now handled by schedule_request_handler.py
-  * Removed DuPont/Panama/Pitman/industry clarification logic
-  * Schedule system now uses conversational pattern-based approach
 
 Author: Jim @ Shiftwork Solutions LLC
 """
@@ -49,9 +53,90 @@ class SmartQuestioner:
         IMPORTANT: Schedule requests are NO LONGER handled here.
         They are handled by schedule_request_handler.py which uses
         a conversational approach (shift length -> pattern selection).
+
+        UPDATED February 28, 2026: Added survey/questionnaire detection.
         """
         ambiguities = []
         request_lower = user_request.lower()
+
+        # =====================================================================
+        # SURVEY / QUESTIONNAIRE DETECTION
+        # Added February 28, 2026
+        #
+        # Fires when the request mentions survey or questionnaire but does NOT
+        # already specify a survey type. We ask up to 5 targeted questions so
+        # the AI generates the right survey for the right audience.
+        # =====================================================================
+        SURVEY_KEYWORDS = ['survey', 'questionnaire']
+        SURVEY_TYPE_KEYWORDS = [
+            'schedule preference', 'overtime preference', 'ot preference',
+            'satisfaction', 'shift preference', 'pre-implementation',
+            'post-implementation', 'pre implementation', 'post implementation',
+            'employee satisfaction', 'custom'
+        ]
+
+        is_survey_request = any(kw in request_lower for kw in SURVEY_KEYWORDS)
+        survey_type_specified = any(kw in request_lower for kw in SURVEY_TYPE_KEYWORDS)
+
+        if is_survey_request and not survey_type_specified:
+            ambiguities.append({
+                'field': 'survey_type',
+                'question': 'What type of survey do you need?',
+                'options': [
+                    'Schedule Preference (which schedules employees prefer)',
+                    'Overtime Preference (OT willingness and preferences)',
+                    'Employee Satisfaction (satisfaction with current schedule)',
+                    'Shift Preference (days/shifts employees prefer)',
+                    'Pre-Implementation (baseline before a schedule change)',
+                    'Post-Implementation (feedback after a schedule change)',
+                    'Custom (I will describe it)'
+                ],
+                'why': 'Different survey types have very different questions — the wrong type will miss critical data',
+                'required': True
+            })
+
+            ambiguities.append({
+                'field': 'employee_count',
+                'question': 'Approximately how many employees will complete this survey?',
+                'options': ['Under 50', '50-150', '150-500', 'Over 500'],
+                'why': 'Affects survey length and complexity',
+                'required': False
+            })
+
+            ambiguities.append({
+                'field': 'distribution_method',
+                'question': 'How will the survey be distributed?',
+                'options': ['Paper forms (printed)', 'Email link', 'In-person / kiosk', 'Not sure yet'],
+                'why': 'Paper surveys need different formatting than digital ones',
+                'required': False
+            })
+
+            ambiguities.append({
+                'field': 'shift_length',
+                'question': 'What shift length are these employees working?',
+                'options': ['8-hour shifts', '10-hour shifts', '12-hour shifts', 'Mixed / not sure'],
+                'why': 'Shift length affects which schedule options appear in the survey',
+                'required': False
+            })
+
+            ambiguities.append({
+                'field': 'implementation_timing',
+                'question': 'Is this survey before or after a schedule change?',
+                'options': [
+                    'Before — gathering preferences prior to a change',
+                    'After — collecting feedback on a recent change',
+                    'No schedule change planned — general pulse check'
+                ],
+                'why': 'Determines whether to include baseline or change-specific questions',
+                'required': False
+            })
+
+            # Return early — survey questions are sufficient, no need to check further
+            return ambiguities
+
+        # =====================================================================
+        # END SURVEY DETECTION
+        # =====================================================================
 
         # Check for missing project context (non-schedule requests)
         if ('implementation' in request_lower or 'rollout' in request_lower) and not self._has_client_context(request_lower):
@@ -63,7 +148,7 @@ class SmartQuestioner:
                 'required': False
             })
 
-        # Check for missing document type
+        # Check for missing document type (excluding survey — handled above)
         if 'document' in request_lower and not self._has_document_type(request_lower):
             ambiguities.append({
                 'field': 'document_type',
@@ -93,8 +178,15 @@ class SmartQuestioner:
         return any(indicator in text.lower() for indicator in client_indicators)
 
     def _has_document_type(self, text):
-        """Check if document type is specified"""
-        doc_types = ['proposal', 'plan', 'summary', 'report', 'collection', 'survey']
+        """
+        Check if document type is specified.
+
+        UPDATED February 28, 2026: Removed 'survey' from this list.
+        Survey requests need their own dedicated clarification block above,
+        not the generic document-type question. Previously, 'survey' here
+        caused survey requests to appear already resolved and skip questions.
+        """
+        doc_types = ['proposal', 'plan', 'summary', 'report', 'collection']
         return any(doc_type in text.lower() for doc_type in doc_types)
 
     def format_clarification_response(self, ambiguities):
@@ -131,7 +223,11 @@ class NextStepSuggester:
     """Suggests logical next steps after completing a task"""
 
     def suggest_next_steps(self, completed_task_type, context=None):
-        """Based on what was just done, suggest what to do next"""
+        """
+        Based on what was just done, suggest what to do next.
+
+        UPDATED February 28, 2026: Added 'survey_created' suggestions.
+        """
         suggestions = []
 
         if completed_task_type == 'schedule_created':
@@ -139,6 +235,13 @@ class NextStepSuggester:
                 "Would you like me to create a cost analysis for this schedule?",
                 "Should I draft a communication plan for rolling this out to employees?",
                 "Do you want to compare this to alternative schedule patterns?"
+            ]
+
+        elif completed_task_type == 'survey_created':
+            suggestions = [
+                "Would you like me to format this as a printable paper survey?",
+                "Should I create a summary template for recording and analyzing the results?",
+                "Do you want a cover letter to send with the survey explaining its purpose?"
             ]
 
         elif completed_task_type == 'data_collection':
@@ -161,12 +264,16 @@ class NextStepSuggester:
         """
         Infer completed task type from user request text.
         Used by post_process_result() to choose the right suggestions.
+
+        UPDATED February 28, 2026: Added survey detection.
         """
         request_lower = user_request.lower()
 
-        if any(w in request_lower for w in ['schedule', 'dupont', 'panama', 'pitman', 'rotation', 'shift pattern']):
+        if any(w in request_lower for w in ['survey', 'questionnaire']):
+            return 'survey_created'
+        elif any(w in request_lower for w in ['schedule', 'dupont', 'panama', 'pitman', 'rotation', 'shift pattern']):
             return 'schedule_created'
-        elif any(w in request_lower for w in ['data', 'collect', 'survey', 'gather']):
+        elif any(w in request_lower for w in ['data', 'collect', 'gather']):
             return 'data_collection'
         elif any(w in request_lower for w in ['proposal', 'bid', 'quote', 'scope']):
             return 'proposal_created'
@@ -296,7 +403,7 @@ class ProjectAutoDetector:
         return {
             'project_id': project_id,
             'client_name': project_details['client_name'],
-            'message': f"✅ I've automatically set up a project structure for {project_details['client_name']}. I've created an implementation checklist to track progress. What would you like to work on first?"
+            'message': f"I've automatically set up a project structure for {project_details['client_name']}. I've created an implementation checklist to track progress. What would you like to work on first?"
         }
 
 
@@ -308,11 +415,12 @@ class ProactiveAgent:
     """
     Main class that orchestrates all proactive features.
 
-    UPDATED February 21, 2026:
-    Added pre_process_request() and post_process_result() which are the
-    interface methods called by orchestration_handler.py. Previously only
-    process_request() and suggest_next_steps() existed, causing
-    AttributeError on every request.
+    UPDATED February 28, 2026: Survey clarification now flows through
+    pre_process_request() -> analyze_ambiguity() -> survey detection block.
+
+    UPDATED February 21, 2026: Added pre_process_request() and
+    post_process_result() as the interface methods orchestration_handler.py
+    expects. Previously only process_request() and suggest_next_steps() existed.
     """
 
     def __init__(self):
@@ -322,7 +430,7 @@ class ProactiveAgent:
         self.project_detector = ProjectAutoDetector()
 
     # =========================================================================
-    # ADDED February 21, 2026 - Interface methods for orchestration_handler.py
+    # Interface methods for orchestration_handler.py
     # =========================================================================
 
     def pre_process_request(self, user_request):
@@ -344,7 +452,7 @@ class ProactiveAgent:
             except Exception as e:
                 print(f"Auto project creation failed: {e}")
 
-        # Check for clarification needs
+        # Check for clarification needs (includes survey detection as of Feb 28, 2026)
         ambiguities = self.questioner.analyze_ambiguity(user_request)
         if ambiguities:
             clarification = self.questioner.format_clarification_response(ambiguities)
