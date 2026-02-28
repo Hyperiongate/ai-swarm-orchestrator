@@ -1,9 +1,27 @@
 """
 Orchestration Handler - Main AI Task Processing (REFACTORED)
 Created: January 31, 2026
-Last Updated: February 21, 2026 - RESEARCH AGENT SYNTHESIS: feed Tavily results to Sonnet for proper answer
+Last Updated: February 27, 2026 - ADDED INGESTED KNOWLEDGE BASE BRIDGE (System 2 integration)
 
 CHANGELOG:
+
+- February 27, 2026: ADDED INGESTED KNOWLEDGE BASE BRIDGE
+  PROBLEM: Documents uploaded through the Knowledge Management UI (79 docs,
+    413 patterns as of Feb 27, 2026) were stored in knowledge_ingestion.db but
+    NEVER queried when the AI answered questions. Only the GitHub project files
+    (knowledge_integration.py / knowledge_base object - System 1) were used.
+    The entire manually-curated knowledge base was invisible to the AI.
+  FIX: In PATH 3 (Sonnet regular conversation), immediately before building
+    completion_prompt, call knowledge_query_bridge.query_ingested_knowledge()
+    to search the ingested KB for content relevant to the user's question.
+    The result (ingested_kb_context) is injected into completion_prompt between
+    summary_context and file_section. The bridge uses LIKE-based SQLite search
+    with domain-aware scoring. All failures are caught and return "" so no
+    existing functionality is affected (Do No Harm).
+  NEW FILE: knowledge_query_bridge.py — standalone bridge module.
+  IMPACT: Consulting lessons, pillar articles, implementation manuals,
+    contracts, survey results, and all other ingested documents are now
+    available to the AI as a primary reference source.
 
 - February 21, 2026: RESEARCH AGENT SYNTHESIS
   PROBLEM: When research_agent (Tavily) ran and returned raw web results, those
@@ -132,6 +150,7 @@ def orchestrate():
     """
     Main orchestration endpoint - routes requests to appropriate handlers.
 
+    UPDATED February 27, 2026: Ingested KB bridge (System 2 integration)
     UPDATED February 21, 2026: Research agent synthesis (feed Tavily results to Sonnet)
     UPDATED February 21, 2026: Fixed clarification_answers NameError
     UPDATED February 19, 2026: Fixed knowledge base prompt injection
@@ -1033,6 +1052,7 @@ Be comprehensive and professional."""
 
             # ====================================================================
             # FIXED February 19, 2026: AUTHORITATIVE KNOWLEDGE BASE INJECTION
+            # System 1: GitHub project files (auto-indexed by knowledge_integration.py)
             # ====================================================================
             def get_knowledge_context_for_prompt(kb, user_req, max_context=6000):
                 if not kb:
@@ -1277,7 +1297,27 @@ preferences, implementation, or change management:
 
 """
 
-                completion_prompt = f"""{project_context}{file_context}{conversation_history}{learning_context}{client_profile_context}{avoidance_context}{specialized_context}{summary_context}{file_section}
+                # ============================================================
+                # ADDED February 27, 2026: INGESTED KNOWLEDGE BASE BRIDGE
+                # System 2: manually uploaded documents via Knowledge Management UI
+                # Queries knowledge_ingestion.db for patterns and lessons
+                # relevant to the user's question. Runs in parallel with
+                # System 1 (knowledge_base / GitHub files above).
+                # Graceful degradation: any failure returns "" — no harm done.
+                # ============================================================
+                ingested_kb_context = ""
+                try:
+                    from knowledge_query_bridge import query_ingested_knowledge
+                    ingested_kb_context = query_ingested_knowledge(user_request)
+                    if ingested_kb_context:
+                        print(f"Ingested KB: added {len(ingested_kb_context)} chars of context from uploaded documents")
+                except Exception as ikb_err:
+                    print(f"Ingested KB query failed (non-critical): {ikb_err}")
+                # ============================================================
+                # END INGESTED KNOWLEDGE BASE BRIDGE
+                # ============================================================
+
+                completion_prompt = f"""{project_context}{file_context}{conversation_history}{learning_context}{client_profile_context}{avoidance_context}{specialized_context}{summary_context}{ingested_kb_context}{file_section}
 USER REQUEST: {user_request}
 
 Please complete this request fully. Provide the actual deliverable.
