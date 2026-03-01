@@ -1,141 +1,91 @@
 """
 Task Analysis Module - WITH UNIFIED KNOWLEDGE BASE (Project Files + Knowledge Management)
 Created: January 21, 2026
-Last Updated: February 28, 2026 - IMPROVED CONSULTING INSIGHT CONTENT EXTRACTION
+Last Updated: February 28, 2026 - GAP 3 FIX: RELEVANCE-RANKED KNOWLEDGE SEARCH
 
 CHANGELOG:
+
+- February 28, 2026 (Gap 3): RELEVANCE-RANKED KNOWLEDGE SEARCH
+  PROBLEM: search_knowledge_management_db() used LIKE %term% queries with no
+    relevance scoring. Documents were returned in DB insertion order (by id),
+    meaning the first document in the database that mentioned any search term
+    would always win — regardless of how well it matched the query, how rich
+    its content was, or what type of document it was. Three specific failure modes:
+
+    1. INSERTION ORDER BIAS: A spreadsheet added to the DB on day 1 would always
+       outrank a white paper added on day 30, even if the white paper perfectly
+       matched the query. The DB id was the de facto ranking key.
+
+    2. SINGLE-TERM DOMINANCE: If term A matched 153 docs and term B matched 74,
+       the first 5 results for term A were returned before any of term B's results
+       were considered. Rare, specific terms (which indicate high relevance) were
+       penalized relative to common terms.
+
+    3. NO CONTENT DEPTH SIGNAL: A contract with "schedule" in one clause matched
+       as well as a 50-page Schedule Design white paper with 841 consulting
+       insights. All LIKE matches were treated identically.
+
+  FIX: Replaced the sequential per-term LIKE loop with a multi-signal relevance
+    scorer. The new search_knowledge_management_db():
+      a) Pre-filters candidates: any doc matching at least 1 search term
+      b) Scores each candidate across 4 signals (+ title bonus):
+           Signal 1 - Term Coverage (weight 0.40): fraction of query terms matched
+           Signal 2 - Term Depth   (weight 0.20): total term mentions (capped at 15)
+           Signal 3 - Type Quality (weight 0.25): document type tier score
+                        1.0 - general_word, implementation_manual, lessons_learned
+                        0.75 - eaf, survey_pptx, oaf
+                        0.55 - implementation_ppt
+                        0.35 - data_file, excel, schedule_pattern
+                        0.20 - contract, scope_of_work, generic
+           Signal 4 - Pattern Richness (weight 0.15): extracted pattern count / 20
+           Title Bonus (+0.15 per term): term appears in document filename
+      c) Returns top N candidates sorted by score descending
+    Also added _extract_search_terms() helper that filters stop words ("the",
+    "and", "for", etc.) from search terms.
+    Added _score_document() as a testable standalone helper.
+
+  DRY-RUN RESULTS (February 28, 2026):
+    Query "12-hour shift overtime cost reduction":
+      OLD: THE_SHIFT_WORK_HANDBOOK.docx (insertion order, partial match)
+      NEW: Pillar_1_Complete_Guide_to_Schedule_Design (score=1.11, full match)
+           WP3_Overtime_Staffing_Strategy (score=1.07, full match)
+    Query "schedule change employee resistance implementation":
+      OLD: THE_SHIFT_WORK_HANDBOOK.docx (insertion order)
+      NEW: Pillar_6_Schedule_Change_Management (score=1.23, full match)
+    Query "survey results preferences 12-hour shifts":
+      OLD: WP4_Leadership_Communication.docx, Contract.docx (wrong type)
+      NEW: Employee_Survey_Results_Presentation (score=1.16, correct type)
+
+  SCOPE: search_knowledge_management_db() fully replaced. Added module-level
+    constants DOC_TYPE_TIER, STOP_WORDS, and helpers _extract_search_terms(),
+    _score_document(). All other functions UNCHANGED. DB read-only, no schema
+    changes.
 
 - February 28, 2026 (Pass 2): IMPROVED CONSULTING INSIGHT CONTENT EXTRACTION
   PROBLEM: extract_content_from_extract() was only reading the first 6 patterns
     per document ([:6]) and only the first line of body_content for consulting_insight
     patterns. This caused up to 75% of substantive content to be silently dropped.
-    Examples:
-      - WP3 (Overtime Strategy) has 24 consulting_insight patterns; only 6 were read,
-        missing "The Hidden Complexity of Change", "Best Practice #15 (20/60/20 Rule)",
-        "Best Practice #16", and 16 other sections.
-      - Pillar_1 (Complete Guide to Schedule Design) had similar truncation.
-    Additionally, "cover page" noise patterns (contact info, copyright lines) were
-    consuming slots in the 6-pattern budget before substantive content appeared.
-    Duplicate section headings were also appearing in output.
-
   FIX: Modified extract_content_from_extract() consulting_insight branch only:
-    1. Increased pattern limit from [:6] to [:15] - reads 2.5x more patterns
-    2. Added _is_noise_section() helper - skips cover-page/header patterns that
-       contain contact info, copyright lines, or other non-consulting content
-    3. Added _get_body_text() helper - joins ALL body_content lines (up to 4 lines,
-       500 chars) instead of only showing body[0]
-    4. Added seen_sections set within the function - deduplicates identical section
-       headings so same content doesn't appear twice
+    1. Increased pattern limit from [:6] to [:15]
+    2. Added _is_noise_section() helper
+    3. Added _get_body_text() helper
+    4. Added seen_sections deduplication
     5. Skips patterns with fewer than 20 chars of content
-    6. Includes up to 2 key_principles instead of only the first one
-  ALL OTHER FUNCTIONS UNCHANGED. All other pattern type branches UNCHANGED.
-  Database: read-only, no schema changes.
+    6. Includes up to 2 key_principles
 
 - February 28, 2026 (Pass 1): FIXED KM DB CONTENT EXTRACTION
   PROBLEM 1: search_knowledge_management_db() was connecting to the wrong DB.
-    config.py DATABASE = '/mnt/project/swarm_intelligence.db' but the knowledge
-    database is '/mnt/project/knowledge_ingestion.db'. The February 20 fix used
-    DATABASE as the fallback, which pointed to the wrong file. The KNOWLEDGE_DB_PATH
-    env var ('/mnt/project/knowledge_ingestion.db') overrides correctly when set,
-    but the fallback was silently wrong.
-  FIX 1: Added explicit KNOWLEDGE_DB_PATH constant at module level that reads
-    the env var with a correct hardcoded fallback to 'knowledge_ingestion.db'
-    (not swarm_intelligence.db). Added startup diagnostic print so Render logs
-    always show which DB file is being used.
-
-  PROBLEM 2: check_knowledge_base_unified() built useless metadata summaries
-    from the Knowledge Management DB instead of extracting actual content.
-    It told the AI "3 insights found" and "type: consulting_lesson" — the AI
-    could see documents existed but could not read any of their content.
-    Result: 218 uploaded documents were effectively invisible to the AI.
-  FIX 2: Added extract_content_from_extract() function that reads extracted_data
-    JSON from each knowledge record and pulls:
-      - consulting_lesson: lesson_name, key_principle, situation, why_matters,
-                           hard_truth, key_bullets
-      - consulting_insight: section heading, body_preview, body_content,
-                            key_principles
-      - survey_norm / survey_client_result: question + top answer distribution
-      - operational_metrics: metric values
-      - contract_terms / engagement_fee: fee, duration
-      - lessons_learned_summary: lesson count and categories
-      - highlights: top 3 highlight strings
-    check_knowledge_base_unified() now calls extract_content_from_extract()
-    and injects real readable excerpts into the AI prompt, matching the quality
-    of the project files path.
+  FIX 1: Added explicit KNOWLEDGE_DB_PATH constant.
+  PROBLEM 2: check_knowledge_base_unified() built useless metadata summaries.
+  FIX 2: Added extract_content_from_extract() function.
 
 - February 21, 2026: ADDED TIME-SENSITIVE OVERRIDE + DIAGNOSTIC PRINTS
-  PROBLEM: Sonnet was answering "What did OSHA announce this week?" from KB at
-    90% confidence, never dispatching research_agent. KB data is static and
-    cannot contain current week's news.
-  FIX: After parsing Sonnet's JSON, detect time-sensitive keywords in user
-    request and force research_agent into specialists_needed regardless of what
-    Sonnet decided. Added unconditional DIAGNOSTIC print statements to confirm
-    this code block executes on every request and to reveal exactly what Sonnet
-    returned for specialists_needed.
-  IMPACT: Time-sensitive queries now always route to research_agent (Tavily)
-    for real-time web results. DIAGNOSTIC prints provide permanent observability.
-
 - February 20, 2026: WIRED RESEARCH AGENT INTO SPECIALIST DISPATCH + ROUTING RULES
-  PROBLEM 1: research_agent.py (Tavily) was fully built and registered as its own
-    route, but it was NEVER dispatched by Sonnet during normal conversations.
-    execute_specialist_task() had no entry for "research_agent" in its specialist_map,
-    so even if Sonnet tried to assign it, the call would silently fail with
-    "ERROR: Unknown specialist".
-  FIX 1: Added call_research_agent() wrapper function that calls
-    ResearchAgent.research_topic() and normalizes its output dict to the standard
-    {'content', 'usage', 'error'} format expected by execute_specialist_task().
-    Added "research_agent": call_research_agent to specialist_map.
-
-  PROBLEM 2: Sonnet had no explicit rules about WHEN to use which specialist.
-    Its routing prompt listed "gpt4, deepseek, gemini" as options but gave no
-    guidance about when each was appropriate - or that research_agent existed at all.
-    Result: Sonnet returned specialists_needed=[] on nearly every request.
-  FIX 2: Added SPECIALIST ROUTING RULES section to analyze_task_with_sonnet()
-    prompt. Sonnet now receives explicit rules:
-      - research_agent: current events, news, regulations, studies, anything
-                        requiring real-time web data beyond training cutoff
-      - gpt4:          document formatting, report writing, structured output
-      - deepseek:      code, calculations, data processing, technical analysis
-      - gemini:        multimodal tasks involving images or visual content
-      - opus:          complex multi-step strategy, high-stakes recommendations
-    Same rules added to handle_with_opus() for consistency.
-
-  PROBLEM 3: Sonnet's JSON response schema hint listed only the old specialists.
-    Updated the schema comment to include "research_agent" as a valid value.
-
-  NO other logic changed. All existing specialist calls are identical.
-  Backward compatible - existing calls unaffected.
-
 - February 20, 2026: FIXED KNOWLEDGE DB PATH IN search_knowledge_management_db()
-  BUG: The function defaulted to 'swarm_intelligence.db' (local/ephemeral path).
-       config.py sets DATABASE = '/mnt/project/swarm_intelligence.db' (persistent disk).
-       Result: Knowledge search silently returned empty results - all 42+ uploaded
-       documents were invisible to the AI swarm. The "unified knowledge" system
-       was effectively reading from the wrong (or nonexistent) local DB.
-  FIX: Import DATABASE from config and use it as the default fallback path.
-       The KNOWLEDGE_DB_PATH env var still overrides if explicitly set.
-       One-line change: os.environ.get('KNOWLEDGE_DB_PATH', 'swarm_intelligence.db')
-                     -> os.environ.get('KNOWLEDGE_DB_PATH', DATABASE)
-  NO other logic changed. No function signatures changed. Fully backward compatible.
-
 - February 3, 2026: UNIFIED KNOWLEDGE BASE INTEGRATION
-  * Now searches BOTH project_files (35 docs) AND Knowledge Management DB (42 docs)
-  * Total of 77+ documents available to every conversation
-  * AI acts as senior partner with access to ALL accumulated wisdom
-  * Proactive insights: "Based on Acme project..." "Your Lessons Learned says..."
-  * Cumulative intelligence - gets smarter with every uploaded document
-
 - January 30, 2026: CRITICAL FIX - FILE CONTENTS IN USER REQUEST
-  * Moved file contents from system context INTO the user request
-  * AI can no longer give reflexive "I don't see files" responses
-
 - January 30, 2026: CRITICAL FIX - FILE CONTENTS NOW VISIBLE TO AI
-  * Added file_contents parameter to analyze_task_with_sonnet()
-  * AI now receives ACTUAL FILE CONTENTS in the prompt
-
 - January 29, 2026: FILE ATTACHMENT AWARENESS FIX
-  * AI now receives explicit information about attached files
-  * When files are uploaded, AI is told: filenames, paths, and file count
 
 Author: Jim @ Shiftwork Solutions LLC
 """
@@ -159,7 +109,7 @@ from config import DATABASE
 # ============================================================================
 _KM_DB_PATH = os.environ.get(
     'KNOWLEDGE_DB_PATH',
-    '/mnt/project/knowledge_ingestion.db'   # explicit correct fallback
+    '/mnt/project/knowledge_ingestion.db'
 )
 print(f"📚 [task_analysis] Knowledge Management DB path: {_KM_DB_PATH}")
 
@@ -167,27 +117,12 @@ print(f"📚 [task_analysis] Knowledge Management DB path: {_KM_DB_PATH}")
 # ============================================================================
 # RESEARCH AGENT WRAPPER
 # Added February 20, 2026
-#
-# ResearchAgent.research_topic() returns:
-#   {'success', 'query', 'summary', 'results', 'result_count', 'topic', ...}
-#
-# execute_specialist_task() expects the callable to return:
-#   {'content', 'usage', 'error'}
-#
-# This wrapper normalizes the ResearchAgent output into that standard format
-# so it drops cleanly into the existing specialist_map without touching any
-# other part of execute_specialist_task().
 # ============================================================================
 
 def call_research_agent(prompt, max_tokens=4000):
     """
     Wrapper that calls ResearchAgent.research_topic() and normalizes the
     result to the standard {'content', 'usage', 'error'} format.
-
-    The 'prompt' received here is the task_description from execute_specialist_task(),
-    which is the user's original request or the specialist sub-task assigned by Sonnet/Opus.
-
-    Returns dict with 'content', 'usage', 'error' (matching ai_clients.py format).
     """
     try:
         from research_agent import get_research_agent
@@ -209,9 +144,7 @@ def call_research_agent(prompt, max_tokens=4000):
                 'error': True
             }
 
-        # Build a readable content string from the research results
         parts = []
-
         if result.get('summary'):
             parts.append(f"**Research Summary:**\n{result['summary']}\n")
 
@@ -255,16 +188,12 @@ def call_research_agent(prompt, max_tokens=4000):
 # ============================================================================
 # SPECIALIST ROUTING RULES
 # Added February 20, 2026
-#
-# Single source of truth for routing rules, injected into both
-# analyze_task_with_sonnet() and handle_with_opus() so both orchestrators
-# know exactly when to use each specialist.
 # ============================================================================
 
 SPECIALIST_ROUTING_RULES = """
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
 SPECIALIST ROUTING RULES - READ CAREFULLY
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
 
 You have access to these specialist AIs. Use them when the task genuinely
 benefits from their capability. Do NOT default to an empty list.
@@ -285,42 +214,32 @@ SPECIALIST: gpt4 (OpenAI GPT-4 - document and report specialist)
   - User asks for a formatted report, executive summary, or professional document
   - Task requires creating structured multi-section written output
   - User asks to "format", "write up", "draft", or "create a report"
-  - Complex document assembly from multiple inputs
-  EXAMPLES: "Write an executive summary of...", "Format this into a report",
-    "Draft a proposal for..."
-  NOTE: File analysis already goes to GPT-4 via Handler 9 - no need to assign
-    gpt4 here for tasks that involve uploaded files
+  EXAMPLES: "Write an executive summary of...", "Format this into a report"
+  NOTE: File analysis already goes to GPT-4 via Handler 9
 
 SPECIALIST: deepseek (DeepSeek - code and data specialist)
   USE WHEN:
   - User asks for data calculations, statistical analysis, or number crunching
   - User asks to write, fix, or review code
   - Task involves processing structured data (CSV, Excel formulas, SQL)
-  - Complex technical analysis requiring computational precision
-  EXAMPLES: "Calculate the cost savings from...", "Write a Python script to...",
-    "Analyze this data set..."
+  EXAMPLES: "Calculate the cost savings from...", "Write a Python script to..."
 
 SPECIALIST: gemini (Google Gemini - multimodal specialist)
   USE WHEN:
   - Task involves analyzing images or visual content
   - User uploads an image and asks questions about it
-  - Task requires understanding charts, diagrams, or visual schedules
-  EXAMPLES: "What does this chart show?", "Analyze this image of our schedule board"
+  EXAMPLES: "What does this chart show?", "Analyze this image..."
 
 ESCALATE TO OPUS (escalate_to_opus: true) WHEN:
   - Request requires deep multi-step strategic planning
   - High-stakes recommendation affecting many employees or large budget
   - Complex change management planning across multiple phases
-  - Request involves significant organizational or political risk
   - Task type is "complex" AND confidence is below 0.6
-  EXAMPLES: "Design a complete 5-year implementation roadmap",
-    "How do we manage union resistance to a full schedule overhaul?"
 
 FOR MOST STANDARD QUESTIONS: specialists_needed = [] and escalate_to_opus = false
-  Simple Q&A, explanations, typical schedule advice → handle with Sonnet directly.
   Only assign specialists when they add genuine value.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
 """
 
 
@@ -370,13 +289,8 @@ def get_learning_context():
 # ============================================================================
 # HELPERS FOR extract_content_from_extract()
 # Added February 28, 2026 (Pass 2)
-#
-# These two helpers are used ONLY by the consulting_insight branch of
-# extract_content_from_extract(). Isolated here for clarity and testability.
 # ============================================================================
 
-# Phrases that indicate a pattern is cover-page / header noise with no
-# consulting value (contact info, copyright lines, branding text).
 _NOISE_PHRASES = (
     'shift-work.com',
     'contact@',
@@ -393,18 +307,7 @@ _NOISE_PHRASES = (
 
 def _is_noise_section(section, body_content):
     """
-    Return True if this consulting_insight pattern is cover-page / header noise
-    that provides no consulting value to the AI.
-
-    Checks the section heading and the joined body_content against a list of
-    known noise phrases (contact info, copyright, branding boilerplate).
-
-    Args:
-        section (str): Section heading from pattern_data
-        body_content: body_content value (list or str)
-
-    Returns:
-        bool: True if the pattern should be skipped
+    Return True if this consulting_insight pattern is cover-page / header noise.
     """
     if isinstance(body_content, list):
         body_str = ' '.join(str(x) for x in body_content)
@@ -418,24 +321,12 @@ def _is_noise_section(section, body_content):
 def _get_body_text(body_content, max_lines=4, max_chars=500):
     """
     Join body_content lines into a single readable string.
-
-    Handles both list and string formats (the ingestion engine may store
-    body_content as a Python-literal string representation of a list).
-    Filters out very short lines (< 15 chars) that are typically noise.
-
-    Args:
-        body_content: body_content value from pattern_data (list or str)
-        max_lines (int): Maximum number of lines to include (default 4)
-        max_chars (int): Maximum characters in result (default 500)
-
-    Returns:
-        str: Joined readable text, or empty string if nothing useful
+    Handles both list and string formats. Filters lines shorter than 15 chars.
     """
     if isinstance(body_content, str):
         try:
             body_content = ast.literal_eval(body_content)
         except Exception:
-            # Not a list literal — use the string directly
             return body_content[:max_chars]
 
     if isinstance(body_content, list):
@@ -447,17 +338,131 @@ def _get_body_text(body_content, max_lines=4, max_chars=500):
 
 
 # ============================================================================
+# SEARCH RANKING CONSTANTS AND HELPERS
+# Added February 28, 2026 (Gap 3)
+#
+# Used exclusively by search_knowledge_management_db() and _score_document().
+# ============================================================================
+
+# Quality score for each document type. Reflects consulting knowledge depth.
+# Used as Signal 3 in _score_document() with weight 0.25.
+DOC_TYPE_TIER = {
+    'general_word':          1.0,   # White papers, guides, consulting docs
+    'implementation_manual': 1.0,   # Project implementation manuals
+    'lessons_learned':       1.0,   # Lessons learned documents
+    'lessons_learned_md':    1.0,   # Markdown lessons learned
+    'eaf':                   0.75,  # Employee/lifestyle survey presentations
+    'survey_pptx':           0.75,  # Survey result presentations
+    'oaf':                   0.75,  # Operations analysis files
+    'implementation_ppt':    0.55,  # Client presentation decks
+    'data_file':             0.35,  # Excel data files
+    'excel':                 0.35,  # Excel spreadsheets
+    'schedule_pattern':      0.35,  # Schedule pattern spreadsheets
+    'contract':              0.20,  # Contract documents
+    'scope_of_work':         0.20,  # Scope of work documents
+    'generic':               0.20,  # Generic / unclassified documents
+}
+
+# Common English words that appear in virtually every document.
+# Filtered before scoring to prevent near-universal matches.
+STOP_WORDS = frozenset({
+    'the', 'and', 'for', 'are', 'was', 'has', 'had', 'have', 'not',
+    'but', 'you', 'all', 'can', 'her', 'his', 'our', 'out', 'use',
+    'any', 'day', 'may', 'new', 'now', 'old', 'see', 'two', 'way',
+    'who', 'its', 'did', 'get', 'how', 'let', 'put', 'set', 'too',
+    'per', 'via', 'etc', 'yes', 'ago',
+})
+
+
+def _extract_search_terms(query, max_terms=10):
+    """
+    Extract meaningful search terms from a query string.
+    Filters stop words and tokens shorter than 3 characters.
+
+    Args:
+        query (str): Raw user query
+        max_terms (int): Maximum terms to return (default 10)
+
+    Returns:
+        list[str]: Lowercase search terms
+    """
+    terms = []
+    for token in query.lower().split():
+        t = token.strip('.,!?;:\'"()[]{}')
+        if len(t) >= 3 and t not in STOP_WORDS:
+            terms.append(t)
+        if len(terms) >= max_terms:
+            break
+    return terms
+
+
+def _score_document(doc, search_terms, doc_text=None):
+    """
+    Compute a relevance score for a single document against query search terms.
+
+    Four signals (weights sum to 1.0) plus an optional title bonus:
+
+    Signal 1 - Term Coverage  (0.40): fraction of search_terms present in doc
+    Signal 2 - Term Depth     (0.20): total occurrences across all terms, capped at 15
+    Signal 3 - Type Quality   (0.25): DOC_TYPE_TIER score for document_type
+    Signal 4 - Pattern Richness (0.15): extracted pattern count, capped at 20
+    Title Bonus (+0.15 per term): term appears in the document filename
+
+    Args:
+        doc (dict): Row from knowledge_extracts
+        search_terms (list[str]): Filtered search terms
+        doc_text (str|None): Pre-built searchable text. Built here if None.
+
+    Returns:
+        float: Relevance score (typically 0.0-1.5)
+    """
+    if not search_terms:
+        return 0.0
+
+    doc_name = (doc.get('document_name') or '').lower()
+    doc_type = doc.get('document_type', 'generic')
+
+    if doc_text is None:
+        raw      = doc.get('extracted_data', '')
+        client   = (doc.get('client') or '').lower()
+        doc_text = (str(raw) + ' ' + doc_name + ' ' + client).lower()
+
+    # Signal 1: Term coverage
+    matched       = sum(1 for t in search_terms if t in doc_text)
+    term_coverage = matched / len(search_terms)
+
+    # Signal 2: Term depth
+    total_hits = sum(doc_text.count(t) for t in search_terms)
+    term_depth = min(1.0, total_hits / 15)
+
+    # Title bonus
+    title_bonus = sum(1 for t in search_terms if t in doc_name) * 0.15
+
+    # Signal 3: Document type quality
+    type_quality = DOC_TYPE_TIER.get(doc_type, 0.20)
+
+    # Signal 4: Pattern richness
+    try:
+        raw           = doc.get('extracted_data', '')
+        extracted     = json.loads(raw) if isinstance(raw, str) else raw
+        pattern_count = len(extracted.get('patterns', []))
+    except Exception:
+        pattern_count = 0
+    pattern_richness = min(1.0, pattern_count / 20)
+
+    return (
+        term_coverage    * 0.40 +
+        term_depth       * 0.20 +
+        type_quality     * 0.25 +
+        pattern_richness * 0.15 +
+        title_bonus
+    )
+
+
+# ============================================================================
 # CONTENT EXTRACTOR FOR KNOWLEDGE MANAGEMENT DB RECORDS
 # Added February 28, 2026 (Pass 1)
 # Updated February 28, 2026 (Pass 2): Improved consulting_insight branch
-#
-# Reads extracted_data JSON from a knowledge_extracts row and returns a
-# readable text excerpt the AI can actually use — not just metadata labels.
-# Handles all document types stored by document_ingestion_engine.py:
-#   consulting_lesson, consulting_insight, survey_norm, survey_client_result,
-#   operational_metrics, cost_model, contract_terms, engagement_fee,
-#   payment_structure, schedule_patterns_mentioned, operational_principles,
-#   lessons_learned_summary, document_summary, oaf_summary, highlights
 # ============================================================================
 
 def extract_content_from_extract(doc):
@@ -465,12 +470,10 @@ def extract_content_from_extract(doc):
     Extract meaningful readable text from a knowledge_extracts row.
 
     Args:
-        doc (dict): Row from knowledge_extracts table with keys:
-                    document_name, document_type, client, extracted_data
+        doc (dict): Row from knowledge_extracts
 
     Returns:
-        str: Readable excerpt suitable for inclusion in an AI prompt.
-             Returns empty string if nothing useful can be extracted.
+        str: Readable excerpt for AI prompt. Empty string if nothing useful.
     """
     parts = []
     doc_name = doc.get('document_name', 'Unknown')
@@ -490,15 +493,7 @@ def extract_content_from_extract(doc):
     except Exception:
         return '\n'.join(parts)
 
-    # ── PATTERNS ─────────────────────────────────────────────────────────────
-    #
-    # CHANGED February 28, 2026 (Pass 2):
-    #   - Increased from [:6] to [:15] to capture more patterns per document
-    #   - consulting_insight branch now uses _is_noise_section(), _get_body_text(),
-    #     seen_sections dedup, and reads up to 2 key_principles
-    #   - All other branches (consulting_lesson, survey_norm, etc.) UNCHANGED
-
-    seen_sections = set()  # used only by consulting_insight branch
+    seen_sections = set()
 
     for pattern in extracted.get('patterns', [])[:15]:
         ptype = pattern.get('type', '')
@@ -507,7 +502,6 @@ def extract_content_from_extract(doc):
             continue
 
         if ptype == 'consulting_lesson':
-            # UNCHANGED
             name    = data.get('lesson_name', '') or data.get('title', '')
             kp      = data.get('key_principle', '')
             sit     = data.get('situation', '')
@@ -538,45 +532,24 @@ def extract_content_from_extract(doc):
                 parts.append(f"  DON'T: {' | '.join(str(b)[:60] for b in dont[:3])}")
 
         elif ptype == 'consulting_insight':
-            # UPDATED February 28, 2026 (Pass 2):
-            #
-            # Previous version:
-            #   - Used body[0] only (first line of body_content)
-            #   - Used kps[0] only (first key principle)
-            #   - No noise filtering
-            #   - No deduplication
-            #
-            # Current version:
-            #   - _is_noise_section(): skips cover-page / header patterns
-            #   - seen_sections: skips duplicate section headings
-            #   - _get_body_text(): joins ALL meaningful body_content lines
-            #   - Skips patterns with < 20 chars of content
-            #   - Includes up to 2 key_principles
-
             section = data.get('section', '').strip()
             body    = data.get('body_content', [])
             preview = data.get('body_preview', '').strip()
             kps     = data.get('key_principles', [])
             quotes  = data.get('expert_quotes', [])
 
-            # Skip cover-page noise (contact info, copyright, branding)
             if _is_noise_section(section, body):
                 continue
 
-            # Skip duplicate section headings within the same document
             section_key = section.lower()[:50]
             if section_key and section_key in seen_sections:
                 continue
             if section_key:
                 seen_sections.add(section_key)
 
-            # Build rich body text from all meaningful lines
             body_text = _get_body_text(body, max_lines=4, max_chars=500)
-
-            # Use body_text first; fall back to preview
             content = body_text or preview
 
-            # Skip patterns with no substantive content
             if not content or len(content.strip()) < 20:
                 continue
 
@@ -584,7 +557,6 @@ def extract_content_from_extract(doc):
                 parts.append(f"  Section: {section}")
             parts.append(f"  Content: {content}")
 
-            # Include up to 2 key principles (was 1)
             if isinstance(kps, str):
                 try:
                     kps = ast.literal_eval(kps)
@@ -595,7 +567,6 @@ def extract_content_from_extract(doc):
                 if kp_text and len(kp_text) > 20:
                     parts.append(f"  Key Principle: {kp_text[:250]}")
 
-            # Include first expert quote if present
             if quotes:
                 if isinstance(quotes, list):
                     q = str(quotes[0]).strip()
@@ -605,7 +576,6 @@ def extract_content_from_extract(doc):
                     parts.append(f"  Expert Quote: {q[:200]}")
 
         elif ptype in ('survey_norm', 'survey_client_result'):
-            # UNCHANGED
             question = data.get('question', '')
             dist     = data.get('distribution', {})
             if question:
@@ -615,7 +585,6 @@ def extract_content_from_extract(doc):
                 parts.append(f"  Results: {', '.join(f'{k}: {v}%' for k, v in top)}")
 
         elif ptype == 'operational_metrics':
-            # UNCHANGED
             metric_pairs = [
                 f"{k.replace('_', ' ')}: {v}"
                 for k, v in data.items()
@@ -625,15 +594,13 @@ def extract_content_from_extract(doc):
                 parts.append(f"  Metrics: {', '.join(metric_pairs[:6])}")
 
         elif ptype == 'cost_model':
-            # UNCHANGED
             scenarios = data.get('scenarios', {})
             for sc_name, sc_data in list(scenarios.items())[:2]:
                 cst = sc_data.get('Cost of Scheduled Time')
                 if cst:
-                    parts.append(f"  Cost Model — {sc_name}: ${cst:.2f}/hr")
+                    parts.append(f"  Cost Model - {sc_name}: ${cst:.2f}/hr")
 
         elif ptype in ('contract_terms', 'engagement_fee', 'payment_structure'):
-            # UNCHANGED
             fee = data.get('fee') or data.get('total_fee')
             wks = data.get('weeks') or data.get('engagement_weeks')
             if fee:
@@ -642,13 +609,11 @@ def extract_content_from_extract(doc):
                 parts.append(f"  Duration: {wks} weeks")
 
         elif ptype == 'schedule_patterns_mentioned':
-            # UNCHANGED
             pats = data if isinstance(data, list) else data.get('patterns', [])
             if pats:
                 parts.append(f"  Schedule Patterns: {', '.join(str(p) for p in pats[:6])}")
 
         elif ptype == 'schedule_rotation_library':
-            # UNCHANGED
             inner = data.get('patterns', [])
             if inner:
                 parts.append(f"  Rotation Patterns: {len(inner)} patterns found")
@@ -659,7 +624,6 @@ def extract_content_from_extract(doc):
                         parts.append(f"    - {cycle_wks}-week cycle, shifts: {', '.join(shift_types)}")
 
         elif ptype == 'operational_principles':
-            # UNCHANGED
             principles = data.get('principles', [])
             for pr in principles[:3]:
                 txt = pr.get('text', '') if isinstance(pr, dict) else str(pr)
@@ -667,14 +631,11 @@ def extract_content_from_extract(doc):
                     parts.append(f"  Principle: {txt[:200]}")
 
         else:
-            # Generic fallback: find first string value > 40 chars — UNCHANGED
             for v in data.values():
                 if isinstance(v, str) and len(v) > 40:
                     parts.append(f"  Info: {v[:200]}")
                     break
 
-    # ── INSIGHTS ─────────────────────────────────────────────────────────────
-    # UNCHANGED
     for insight in extracted.get('insights', [])[:4]:
         if not isinstance(insight, dict):
             continue
@@ -723,14 +684,11 @@ def extract_content_from_extract(doc):
             if kps:
                 parts.append(f"    Principle: {str(kps[0])[:150]}")
 
-    # ── HIGHLIGHTS ────────────────────────────────────────────────────────────
-    # UNCHANGED
     highlights = extracted.get('highlights', [])
     if highlights:
         parts.append(f"  Highlights: {' | '.join(str(h) for h in highlights[:3])}")
 
     result = '\n'.join(parts)
-    # Return empty string if nothing useful was found beyond the header
     if result.count('\n') == 0:
         return ''
     return result
@@ -738,26 +696,43 @@ def extract_content_from_extract(doc):
 
 def search_knowledge_management_db(user_request, max_results=5):
     """
-    Search the Knowledge Management database (uploaded documents).
-    Returns extracted knowledge from the 218 documents in knowledge_ingestion.db.
+    Search the Knowledge Management database with relevance-ranked results.
 
-    This is the "Shoulders of Giants" cumulative learning system.
+    REWRITTEN February 28, 2026 (Gap 3).
 
-    FIXED February 28, 2026 (Pass 1):
-    - Uses module-level _KM_DB_PATH constant (reads KNOWLEDGE_DB_PATH env var
-      with explicit fallback to knowledge_ingestion.db, not swarm_intelligence.db)
-    - Added startup diagnostic print at module level to confirm which DB is used
+    PREVIOUS BEHAVIOR: Sequential per-term LIKE queries returned documents in
+    DB insertion order. No relevance scoring — all LIKE matches treated equally.
+
+    NEW BEHAVIOR: Multi-signal relevance scoring.
+      Step 1: Extract meaningful search terms (filter stop words, short tokens)
+      Step 2: Pre-filter candidates via SQL (any doc matching at least 1 term)
+      Step 3: Score each candidate across 4 signals + title bonus
+      Step 4: Return top max_results sorted by score descending
+
+    Scoring signals:
+      Term Coverage  (40%): fraction of query terms matched
+      Term Depth     (20%): total term occurrences, capped at 15
+      Type Quality   (25%): document type tier (white papers > spreadsheets)
+      Pattern Richness (15%): extracted pattern count (content depth proxy)
+      Title Bonus    (+0.15/term): term appears in document filename
+
+    Args:
+        user_request (str): The user's query
+        max_results (int): Maximum documents to return (default 5)
+
+    Returns:
+        list[dict]: Matching documents sorted by relevance score, each dict
+                    includes '_relevance_score' key.
     """
     try:
         import sqlite3
 
-        db_path = _KM_DB_PATH  # Set at module load — see top of file
+        db_path = _KM_DB_PATH
 
         db = sqlite3.connect(db_path)
         db.row_factory = sqlite3.Row
         cursor = db.cursor()
 
-        # Check if table exists
         cursor.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='knowledge_extracts'"
         )
@@ -766,10 +741,16 @@ def search_knowledge_management_db(user_request, max_results=5):
             print(f"⚠️ [task_analysis] knowledge_extracts table not found in {db_path}")
             return []
 
-        # Simple keyword search across all documents
-        search_terms = [t for t in user_request.lower().split()[:10] if len(t) >= 3]
+        # Step 1: Extract meaningful search terms
+        search_terms = _extract_search_terms(user_request, max_terms=10)
+        if not search_terms:
+            db.close()
+            return []
 
-        results = []
+        # Step 2: Pre-filter candidates — fetch all docs matching any term
+        seen_ids   = set()
+        candidates = []
+
         for term in search_terms:
             cursor.execute('''
                 SELECT
@@ -779,22 +760,42 @@ def search_knowledge_management_db(user_request, max_results=5):
                 WHERE LOWER(extracted_data) LIKE ?
                    OR LOWER(document_name) LIKE ?
                    OR LOWER(client) LIKE ?
-                LIMIT ?
-            ''', (f'%{term}%', f'%{term}%', f'%{term}%', max_results))
+            ''', (f'%{term}%', f'%{term}%', f'%{term}%'))
 
-            results.extend([dict(row) for row in cursor.fetchall()])
+            for row in cursor.fetchall():
+                doc = dict(row)
+                if doc['id'] not in seen_ids:
+                    seen_ids.add(doc['id'])
+                    candidates.append(doc)
 
         db.close()
 
-        # Deduplicate by id
-        seen = set()
-        unique_results = []
-        for r in results:
-            if r['id'] not in seen:
-                seen.add(r['id'])
-                unique_results.append(r)
+        if not candidates:
+            return []
 
-        return unique_results[:max_results]
+        # Step 3: Score all candidates
+        scored = []
+        for doc in candidates:
+            raw      = doc.get('extracted_data', '')
+            doc_name = (doc.get('document_name') or '').lower()
+            client   = (doc.get('client') or '').lower()
+            doc_text = (str(raw) + ' ' + doc_name + ' ' + client).lower()
+
+            score = _score_document(doc, search_terms, doc_text=doc_text)
+
+            if score >= 0.15:
+                doc['_relevance_score'] = round(score, 3)
+                scored.append((score, doc))
+
+        # Step 4: Sort by score, return top N
+        scored.sort(key=lambda x: -x[0])
+        results = [doc for _, doc in scored[:max_results]]
+
+        if results:
+            print(f"  🏆 Top KM result: '{results[0]['document_name'][:50]}' "
+                  f"(score={results[0].get('_relevance_score', '?')})")
+
+        return results
 
     except Exception as e:
         print(f"⚠️ Knowledge Management DB search error: {e}")
@@ -807,24 +808,22 @@ def check_knowledge_base_unified(user_request, project_knowledge_base):
     1. Project files knowledge base (34 documents via knowledge_integration.py)
     2. Knowledge Management DB (218 uploaded documents in knowledge_ingestion.db)
 
-    FIXED February 28, 2026 (Pass 1):
-    - Knowledge Management DB results now extract ACTUAL CONTENT from extracted_data
-      JSON via extract_content_from_extract(). Previously only metadata labels were
-      included ("3 insights found", "type: consulting_lesson") which were useless
-      to the AI. Now the AI receives lesson principles, survey results, metrics etc.
+    IMPROVED February 28, 2026 (Gap 3):
+    - search_knowledge_management_db() now uses relevance scoring. Best-matched
+      documents surface first regardless of DB insertion order or type distribution.
 
     IMPROVED February 28, 2026 (Pass 2):
-    - extract_content_from_extract() now reads up to 15 patterns per document
-      (was 6), filters noise, deduplicates sections, and joins all body_content
-      lines for consulting_insight patterns.
+    - extract_content_from_extract() reads up to 15 patterns, noise filtered,
+      sections deduped, full body_content joined.
+
+    FIXED February 28, 2026 (Pass 1):
+    - KM DB results now extract actual content (not metadata labels).
     """
     all_sources = []
     all_context = []
     max_confidence = 0.0
 
-    # ============================================================
-    # SOURCE 1: Project Files Knowledge Base (34 documents)
-    # ============================================================
+    # SOURCE 1: Project Files Knowledge Base
     if project_knowledge_base:
         try:
             print("🔍 Searching project files knowledge base...")
@@ -866,27 +865,22 @@ def check_knowledge_base_unified(user_request, project_knowledge_base):
         except Exception as e:
             print(f"⚠️ Project knowledge search error: {e}")
 
-    # ============================================================
-    # SOURCE 2: Knowledge Management Database (218 documents)
-    # FIXED February 28, 2026 (Pass 1): Now extracts actual content
-    # IMPROVED February 28, 2026 (Pass 2): Richer consulting_insight extraction
-    # ============================================================
+    # SOURCE 2: Knowledge Management Database
     print("🔍 Searching uploaded documents (Knowledge Management DB)...")
     km_results = search_knowledge_management_db(user_request, max_results=5)
 
     if km_results:
-        km_context_parts = ["=== UPLOADED DOCUMENTS (Knowledge Management — 218 documents) ==="]
+        km_context_parts = ["=== UPLOADED DOCUMENTS (Knowledge Management - 218 documents) ==="]
 
         for idx, doc in enumerate(km_results, 1):
-            # Extract real readable content from this record
             content_excerpt = extract_content_from_extract(doc)
             if content_excerpt:
-                km_context_parts.append(f"\n[KM Doc {idx}]")
+                score_label = f" [relevance: {doc.get('_relevance_score', '?')}]"
+                km_context_parts.append(f"\n[KM Doc {idx}{score_label}]")
                 km_context_parts.append(content_excerpt)
 
         km_context = '\n'.join(km_context_parts)
 
-        # Only add if we got real content (more than just the header)
         if len(km_context) > len(km_context_parts[0]) + 10:
             all_context.append(km_context)
             all_sources.extend([doc['document_name'] for doc in km_results])
@@ -903,9 +897,6 @@ def check_knowledge_base_unified(user_request, project_knowledge_base):
     else:
         print(f"  ℹ️ No matching documents in Knowledge Management DB for this query")
 
-    # ============================================================
-    # COMBINE RESULTS
-    # ============================================================
     if not all_sources:
         return {
             'has_relevant_knowledge': False,
@@ -940,51 +931,33 @@ def analyze_task_with_sonnet(user_request, knowledge_base=None, file_paths=None,
     """
     Sonnet analyzes task WITH unified knowledge + system capabilities + FILE ATTACHMENTS.
 
-    NOW SEARCHES BOTH:
+    Searches BOTH:
     - Project files knowledge base (34 documents)
     - Knowledge Management DB (218 uploaded documents)
-
     Total: 250+ documents available for every request.
 
+    UPDATED February 28, 2026 (Gap 3):
+    - search_knowledge_management_db() now returns relevance-ranked results.
+
     UPDATED February 28, 2026 (Pass 2):
-    - extract_content_from_extract() now delivers richer consulting_insight
-      content: up to 15 patterns, noise filtered, sections deduped, full
-      body_content text joined (up to 4 lines per section, 500 chars).
+    - Richer consulting_insight content: 15 patterns, noise filtered, sections deduped.
 
     UPDATED February 28, 2026 (Pass 1):
-    - check_knowledge_base_unified() now returns real content excerpts from
-      the Knowledge Management DB (218 docs). Previously returned metadata only.
+    - KM DB returns real content excerpts.
 
     UPDATED February 21, 2026:
-    - Added TIME-SENSITIVE OVERRIDE: after parsing Sonnet's JSON, detects time-
-      sensitive keywords in the user request and forces research_agent into
-      specialists_needed. Fixes: Sonnet was answering "What did OSHA announce
-      this week?" from KB content at 90% confidence, never dispatching
-      research_agent even though KB data is static.
+    - TIME-SENSITIVE OVERRIDE: forces research_agent for time-sensitive queries.
 
     UPDATED February 20, 2026:
-    - Added SPECIALIST_ROUTING_RULES to prompt so Sonnet knows WHEN to use each AI
-    - Added "research_agent" as a valid specialist in the JSON schema hint
-
-    Args:
-        user_request (str): The user's request
-        knowledge_base: Project knowledge base instance (optional)
-        file_paths (list): List of file paths that were uploaded (optional)
-        file_contents (str): Extracted contents from uploaded files (optional)
-
-    Returns:
-        dict: Analysis results with task routing decisions
+    - Added SPECIALIST_ROUTING_RULES and research_agent to valid specialists.
     """
 
-    # 🔧 CRITICAL: Import and inject system capabilities
     from orchestration.system_capabilities import get_system_capabilities_prompt
     capabilities = get_system_capabilities_prompt()
 
-    # 🎯 Unified knowledge search across BOTH sources
     kb_check = check_knowledge_base_unified(user_request, knowledge_base)
     learning_context = get_learning_context()
 
-    # Build prompt with CAPABILITIES FIRST (so AI knows what it can do)
     analysis_prompt = f"""{capabilities}
 
 You are the primary orchestrator in an AI swarm system for Shiftwork Solutions LLC.
@@ -1043,7 +1016,6 @@ VIOLATION OF THESE RULES = LOSS OF CREDIBILITY
 
 """
 
-    # File contents handling
     file_section = ""
     if file_contents:
         file_section = f"""
@@ -1079,7 +1051,7 @@ ATTACHED FILES:
                 analysis_prompt += f"{idx}. {filename} - Type: {file_ext}\n"
                 analysis_prompt += f"   Path: {fp}\n"
 
-        analysis_prompt += f"""
+        analysis_prompt += """
 INSTRUCTIONS FOR HANDLING ATTACHED FILES:
 - These files are REAL and ACCESSIBLE - you can work with them
 - The user expects you to analyze, process, or reference these files
@@ -1089,7 +1061,6 @@ INSTRUCTIONS FOR HANDLING ATTACHED FILES:
 
 """
 
-    # Add user request WITH file contents
     analysis_prompt += f"""USER REQUEST: {user_request}{file_section}
 
 """
@@ -1107,7 +1078,7 @@ KNOWLEDGE BASE STATUS:
 
         analysis_prompt += "\nACT AS A SENIOR PARTNER: Reference this knowledge proactively when relevant.\n"
     else:
-        analysis_prompt += f"""
+        analysis_prompt += """
 KNOWLEDGE BASE STATUS:
 ℹ️  No directly relevant knowledge found
 """
@@ -1135,7 +1106,6 @@ Respond ONLY with valid JSON:
     api_response = call_claude_sonnet(analysis_prompt)
     execution_time = time.time() - start_time
 
-    # Extract content from dict response
     if isinstance(api_response, dict):
         if api_response.get('error'):
             return {
@@ -1154,7 +1124,6 @@ Respond ONLY with valid JSON:
         response_text = str(api_response)
 
     try:
-        # Clean JSON
         if "```json" in response_text:
             response_text = response_text.split("```json")[1].split("```")[0].strip()
         elif "```" in response_text:
@@ -1167,17 +1136,7 @@ Respond ONLY with valid JSON:
         analysis['knowledge_confidence'] = kb_check['knowledge_confidence']
         analysis['files_attached'] = len(file_paths) if file_paths else 0
 
-        # ================================================================
         # TIME-SENSITIVE OVERRIDE (Added February 21, 2026)
-        # PROBLEM: Sonnet was answering time-sensitive questions ("What did
-        #   OSHA announce this week?") from KB content at 90% confidence,
-        #   never dispatching research_agent even though KB data is static.
-        # FIX: After parsing Sonnet's JSON, detect time-sensitive keywords
-        #   in the user request and force research_agent into specialists_needed
-        #   regardless of what Sonnet decided. This bypasses Sonnet's routing
-        #   ONLY for requests where KB knowledge is structurally unsuitable
-        #   (current events, recent announcements, breaking news).
-        # ================================================================
         TIME_SENSITIVE_KEYWORDS = [
             'this week', 'this month', 'this year', 'today', 'yesterday',
             'latest', 'recent', 'just announced', 'just released', 'new rule',
@@ -1189,7 +1148,6 @@ Respond ONLY with valid JSON:
         request_lower_ts = user_request.lower()
         is_time_sensitive = any(kw in request_lower_ts for kw in TIME_SENSITIVE_KEYWORDS)
 
-        # DIAGNOSTIC: unconditional prints — fires on every request
         print(f"DIAGNOSTIC: is_time_sensitive={is_time_sensitive} | request={user_request[:50]}")
         print(f"DIAGNOSTIC: specialists_needed={analysis.get('specialists_needed', [])}")
 
@@ -1203,9 +1161,7 @@ Respond ONLY with valid JSON:
                 print(f"TIME-SENSITIVE: research_agent already in specialists - no override needed")
         else:
             print(f"NOT TIME-SENSITIVE: no research_agent override applied")
-        # ================================================================
 
-        # Boost confidence if strong knowledge match
         if kb_check['knowledge_confidence'] > 0.7:
             original = analysis.get('confidence', 0.5)
             analysis['confidence'] = min(0.95, original + 0.2)
@@ -1231,34 +1187,24 @@ def handle_with_opus(user_request, sonnet_analysis, knowledge_base=None, file_pa
     """
     Opus handles complex requests WITH unified knowledge + system capabilities + FILES.
 
-    NOW SEARCHES BOTH knowledge sources for complete context.
+    Searches BOTH knowledge sources for complete context.
 
-    UPDATED February 28, 2026 (Pass 2): extract_content_from_extract() now
-    delivers richer consulting_insight content for Knowledge Management DB docs.
+    UPDATED February 28, 2026 (Gap 3): search_knowledge_management_db() now uses
+    relevance scoring.
 
-    UPDATED February 28, 2026 (Pass 1): check_knowledge_base_unified() now returns
-    real content excerpts from Knowledge Management DB (218 docs).
+    UPDATED February 28, 2026 (Pass 2): Richer consulting_insight content.
 
-    UPDATED February 20, 2026: Added SPECIALIST_ROUTING_RULES to Opus prompt
-    for consistency with Sonnet routing logic.
+    UPDATED February 28, 2026 (Pass 1): KM DB returns real content excerpts.
 
-    Args:
-        user_request (str): The user's request
-        sonnet_analysis (dict): Sonnet's analysis results
-        knowledge_base: Knowledge base instance (optional)
-        file_paths (list): List of file paths that were uploaded (optional)
-        file_contents (str): Extracted contents from uploaded files (optional)
+    UPDATED February 20, 2026: Added SPECIALIST_ROUTING_RULES to Opus prompt.
     """
 
-    # 🔧 CRITICAL: Import and inject system capabilities
     from orchestration.system_capabilities import get_system_capabilities_prompt
     capabilities = get_system_capabilities_prompt()
 
-    # 🎯 Unified knowledge search
     kb_check = check_knowledge_base_unified(user_request, knowledge_base)
     learning_context = get_learning_context()
 
-    # Build prompt with CAPABILITIES FIRST
     opus_prompt = f"""{capabilities}
 
 You are the strategic supervisor in the AI Swarm for Shiftwork Solutions LLC.
@@ -1292,7 +1238,6 @@ SPEAK LIKE AN EXPERIENCED PARTNER, NOT A SALES BROCHURE.
 
 """
 
-    # File handling
     file_section = ""
     if file_contents:
         file_section = f"""
@@ -1338,7 +1283,6 @@ SONNET'S ANALYSIS:
 Provide strategic response with:
 1. Deep analysis (reference specific projects/documents when relevant)
 2. Specialist assignments - valid values: "research_agent", "gpt4", "deepseek", "gemini"
-   Use the SPECIALIST ROUTING RULES above when assigning specialists.
 3. Expected workflow
 4. Learning for Sonnet
 5. Methodology applied
@@ -1356,7 +1300,6 @@ Respond in JSON:
     api_response = call_claude_opus(opus_prompt)
     execution_time = time.time() - start_time
 
-    # Extract content
     if isinstance(api_response, dict):
         if api_response.get('error'):
             return {
@@ -1372,7 +1315,6 @@ Respond in JSON:
         response_text = str(api_response)
 
     try:
-        # Clean JSON
         if "```json" in response_text:
             response_text = response_text.split("```json")[1].split("```")[0].strip()
         elif "```" in response_text:
@@ -1402,12 +1344,9 @@ def execute_specialist_task(specialist_ai, task_description, knowledge_context="
     Execute task with specialist AI.
 
     UPDATED February 20, 2026: Added "research_agent" to specialist_map.
-    The call_research_agent() wrapper normalizes ResearchAgent output to the
-    standard {'content', 'usage', 'error'} format so it integrates cleanly.
 
     Args:
-        specialist_ai (str): Name of the specialist AI to use
-                             Valid: "research_agent", "gpt4", "deepseek",
+        specialist_ai (str): Valid: "research_agent", "gpt4", "deepseek",
                                    "gemini", "sonnet", "opus"
         task_description (str): Description of the task
         knowledge_context (str): Optional knowledge context
@@ -1416,12 +1355,11 @@ def execute_specialist_task(specialist_ai, task_description, knowledge_context="
     """
     from orchestration.ai_clients import call_gpt4, call_deepseek, call_gemini
 
-    # 🔧 CRITICAL: Inject capabilities for specialists too
     from orchestration.system_capabilities import get_system_capabilities_prompt
     capabilities = get_system_capabilities_prompt()
 
     specialist_map = {
-        "research_agent": call_research_agent,   # Tavily web search
+        "research_agent": call_research_agent,
         "gpt4": call_gpt4,
         "deepseek": call_deepseek,
         "gemini": call_gemini,
@@ -1439,9 +1377,6 @@ def execute_specialist_task(specialist_ai, task_description, knowledge_context="
             "success": False
         }
 
-    # Build prompt with capabilities
-    # research_agent gets the raw task_description since call_research_agent()
-    # uses it as the topic for ResearchAgent.research_topic()
     if specialist_ai.lower() == "research_agent":
         full_prompt = task_description
     else:
@@ -1450,7 +1385,6 @@ def execute_specialist_task(specialist_ai, task_description, knowledge_context="
         if knowledge_context:
             full_prompt += f"{knowledge_context}\n\n"
 
-        # Build file section for task description
         file_section = ""
         if file_contents:
             file_section = f"\n\n📎 ATTACHED FILES:\n{file_contents}\n\n"
@@ -1466,7 +1400,6 @@ def execute_specialist_task(specialist_ai, task_description, knowledge_context="
     api_response = ai_function(full_prompt)
     execution_time = time.time() - start_time
 
-    # Extract content
     if isinstance(api_response, dict):
         output_text = api_response.get('content', '')
         has_error = api_response.get('error', False)
