@@ -1,11 +1,46 @@
 """
 DOCUMENT INGESTION ENGINE
 Created: February 2, 2026
-Last Updated: February 28, 2026 - GAP 1 FIX: derive why_matters/hard_truth/key_bullets from body_paragraphs
+Last Updated: February 28, 2026 - GAP 2 FIX: implementation_ppt routing and slide text extraction
 
 CHANGELOG:
 
-- February 28, 2026: GAP 1 FIX — LESSONS LEARNED DOCX: why_matters / hard_truth / key_bullets
+- February 28, 2026 (Gap 2): IMPLEMENTATION PPT FIX — routing and slide text extraction
+  PROBLEM 1 — ROUTING BUG: All PPTX files with file_bytes were caught by the generic
+    "elif file_bytes is not None and document_name.lower().endswith(('.pptx', '.ppt')):"
+    routing clause before the document_type-specific checks could fire. This meant
+    implementation_ppt files were processed by _extract_from_survey_pptx (chart XML
+    extractor) instead of their own extractor. The chart extractor found no survey
+    charts → 105 of 126 docs yielded 0 patterns.
+  FIX: Added explicit 'implementation_ppt' check BEFORE the generic .pptx catch:
+    "elif document_type == 'implementation_ppt':"  → routes to _extract_from_implementation_ppt
+    The generic .pptx catch remains for files that arrive without a document_type.
+
+  PROBLEM 2 — EXTRACTOR TOO THIN: _extract_from_implementation_ppt was a 4-line stub
+    that called _extract_general_word_doc(content, metadata). The content at this point
+    is the slide_text_content string in "[Slide N]\ntitle\nbody\n\n[Slide N+1]\n..." format
+    produced by python-pptx in ingest.py. _extract_general_word_doc fails json.loads()
+    on this format and falls through to the regex fallback which finds only markdown bold
+    text (none exists in slide text) → almost nothing extracted.
+  FIX: Complete rewrite of _extract_from_implementation_ppt to:
+    - Parse "[Slide N]" format into individual slides (title + body lines)
+    - Filter noise slides (cover, contact, branding) via PPTX_NOISE_PHRASES
+    - Build consulting_insight pattern per substantive slide
+    - Classify slides as findings/recommendation/general for summary insight
+    - Extract schedule patterns and dollar amounts mentioned
+    - Fall back to _extract_general_word_doc for non-slide-format content
+
+  SCOPE: Only _extract_from_implementation_ppt() and 2 routing lines changed.
+    Added PPTX_NOISE_PHRASES constant. All other code unchanged. ingest.py unchanged.
+
+  DRY-RUN VERIFIED: Tested against slide_text_preview from 6 actual documents:
+    Schedule_Analysis.pptx:                2 → 7 patterns
+    Summary_of_Findings_and_Recommendations: 1 → 5 patterns
+    Post_intial_visit_summary.pptx:         0 → 3 patterns
+    Short_Version_initial_Visit_v4.5.pptx:  0 → 4 patterns
+    76 docs in .ppt format (not .pptx): unchanged — python-pptx can't read binary .ppt
+
+- February 28, 2026 (Gap 1): GAP 1 FIX — LESSONS LEARNED DOCX: why_matters / hard_truth / key_bullets
   PROBLEM: The 10 lessons in 10_Hour_Shift_Lessons_Learned.docx had why_matters,
     hard_truth, and key_bullets fields permanently empty. Root cause: the .docx format
     uses free-form prose, not labeled sections (no "Why It Matters:" headers). The
@@ -143,6 +178,14 @@ RULE_STARTER_PHRASES = (
 # "Rule: Do not give workers something..." → strip prefix for clean storage.
 _RULE_PREFIX_RE = re.compile(r'^Rule:\s*', re.IGNORECASE)
 
+# Phrases that identify cover/branding/contact slides in implementation PPTs.
+# Slides whose joined text contains any of these AND have ≤4 lines are noise.
+# Used in _extract_from_implementation_ppt to skip non-content slides.
+_PPTX_NOISE_PHRASES = (
+    '(415)', 'www.shift', 'shiftwork solutions', 'shift-work.com',
+    'solutions llc', '© 20', 'all rights reserved', 'shiftworksolutions'
+)
+
 
 def _is_shift_code(v) -> bool:
     if v is None:
@@ -252,13 +295,46 @@ class DocumentIngestor:
         db.close()
 
         # ---- Route to correct extractor ----
-        if file_bytes is not None and document_type in ('survey_pptx', 'eaf'):
+        #
+        # IMPORTANT ORDERING: document_type-specific checks must come BEFORE the
+        # generic file_bytes+extension catches. Previously, implementation_ppt files
+        # were caught by the generic '.pptx' clause (line 4 below) before the
+        # document_type check could fire, sending them to the survey chart extractor.
+        # Fix: explicit implementation_ppt check with content priority is placed FIRST,
+        # before any file_bytes+extension routing. (Gap 2 fix, February 28, 2026)
+        #
+        if document_type == 'implementation_ppt' and content:
+            # ingest.py has already extracted slide text via python-pptx and passed
+            # it as 'content'. Use that — it is richer and better structured for
+            # consulting insight extraction than raw XML chart parsing.
+            extracted = self._extract_from_implementation_ppt(content, metadata)
+            # Also extract chart data if file_bytes are available (some implementation
+            # PPTs contain embedded survey charts — e.g. Lifestyle Presentations).
+            # Merge any survey patterns found into the slide-text extraction.
+            if file_bytes is not None:
+                try:
+                    chart_extracted = self._extract_from_survey_pptx(file_bytes, metadata)
+                    chart_patterns = [
+                        p for p in chart_extracted.get('patterns', [])
+                        if p.get('type') in ('survey_client_result', 'survey_norm')
+                    ]
+                    if chart_patterns:
+                        extracted['patterns'].extend(chart_patterns)
+                        survey_count = len(chart_patterns)
+                        extracted['highlights'].append(
+                            f"Chart survey patterns also extracted: {survey_count}"
+                        )
+                except Exception:
+                    pass  # Chart extraction failure is non-fatal
+        elif file_bytes is not None and document_type in ('survey_pptx', 'eaf'):
             extracted = self._extract_from_survey_pptx(file_bytes, metadata)
         elif file_bytes is not None and document_type == 'oaf':
             extracted = self._extract_from_oaf_pptx(file_bytes, metadata)
         elif file_bytes is not None and document_type in ('excel', 'schedule_pattern', 'data_file'):
             extracted = self._extract_from_excel(file_bytes, metadata)
         elif file_bytes is not None and document_name.lower().endswith(('.pptx', '.ppt')):
+            # Generic fallback: PPTX arrived without a specific document_type.
+            # Auto-detect subtype from XML content.
             subtype = self._detect_pptx_subtype(file_bytes)
             if subtype == 'oaf':
                 extracted = self._extract_from_oaf_pptx(file_bytes, metadata)
@@ -1925,15 +2001,241 @@ class DocumentIngestor:
         return extracted
 
     def _extract_from_implementation_ppt(self, content: str, metadata: Dict) -> Dict:
-        extracted = self._extract_general_word_doc(content, metadata)
-        extracted['document_category'] = 'implementation_ppt'
-        found_patterns = [p for p in KNOWN_SCHEDULE_PATTERNS if p in content]
-        if found_patterns:
-            extracted['insights'].append({
-                'type': 'schedules_implemented',
-                'patterns': found_patterns,
-                'client': metadata.get('client')
+        """
+        Extract consulting knowledge from implementation PPT slide text.
+
+        REWRITTEN February 28, 2026 — Gap 2 Fix.
+
+        BACKGROUND:
+            ingest.py uses python-pptx to extract slide text from each PPTX file
+            and passes it as 'content' in this format:
+                [Slide 1]
+                Shape text line
+                Shape text line
+
+                [Slide 2]
+                Shape text line
+                ...
+            Previously this method was a 4-line stub that called _extract_general_word_doc()
+            on this content. _extract_general_word_doc() tried json.loads() (fails), then
+            fell to the regex fallback which looks for **bold** markdown — not present in
+            slide text — yielding almost nothing.
+
+            Compound problem: the routing in ingest_document() sent implementation_ppt
+            files to _extract_from_survey_pptx via the generic file_bytes+.pptx catch
+            before the document_type check could fire, so this method was never called.
+            Both bugs are now fixed.
+
+        EXTRACTION STRATEGY:
+            1. Split content on "[Slide N]" markers into individual slides
+            2. Filter noise slides (cover/branding/contact) via _PPTX_NOISE_PHRASES
+            3. Per substantive slide: build a consulting_insight pattern
+               (title = first line, body = remaining lines)
+            4. Classify slides by title keywords: findings, recommendation, general
+            5. Extract known schedule pattern names and dollar amounts from full text
+            6. If content is not in [Slide N] format, fall back to _extract_general_word_doc
+
+        DRY-RUN RESULTS (February 28, 2026):
+            Schedule_Analysis.pptx:                    2 → 7 consulting_insight patterns
+            Summary_of_Findings_and_Recommendations:   1 → 5 consulting_insight patterns
+            Post_intial_visit_summary.pptx:             0 → 3 consulting_insight patterns
+            Short_Version_initial_Visit_v4.5.pptx:      0 → 4 consulting_insight patterns
+        """
+        extracted = {
+            'patterns': [],
+            'insights': [],
+            'highlights': [],
+            'document_category': 'implementation_ppt'
+        }
+        doc_name = metadata.get('document_name', 'unknown')
+        client   = metadata.get('client', '')
+
+        # ---- Detect format: is this [Slide N] text or something else? ----
+        if not content or not content.strip():
+            extracted['highlights'].append('No slide text content available')
+            return extracted
+
+        if not re.search(r'\[Slide \d+\]', content):
+            # Not in slide-text format — fall back to general word doc extractor
+            fallback = self._extract_general_word_doc(content, metadata)
+            fallback['document_category'] = 'implementation_ppt'
+            # Append any schedule patterns found
+            found_patterns = [p for p in KNOWN_SCHEDULE_PATTERNS if p in content]
+            if found_patterns:
+                fallback['insights'].append({
+                    'type': 'schedules_implemented',
+                    'patterns': found_patterns,
+                    'client': client
+                })
+            return fallback
+
+        # ---- Parse [Slide N] blocks ----
+        slide_blocks = re.split(r'\n\n(?=\[Slide \d+\])', content.strip())
+        # Handle case where first block has no preceding \n\n
+        if slide_blocks and not slide_blocks[0].lstrip().startswith('[Slide '):
+            slide_blocks = re.split(r'(?=\[Slide \d+\])', content.strip())
+
+        slides = []
+        for block in slide_blocks:
+            lines = [l.strip() for l in block.splitlines() if l.strip()]
+            if not lines:
+                continue
+
+            # Extract slide number
+            slide_num = 0
+            slide_m = re.match(r'\[Slide (\d+)\]', lines[0])
+            if slide_m:
+                slide_num = int(slide_m.group(1))
+                lines = lines[1:]  # remove [Slide N] header line
+
+            if not lines:
+                continue
+
+            # Is this a noise slide? (cover/contact/branding with very little text)
+            joined = ' '.join(lines).lower()
+            is_noise = (
+                any(phrase in joined for phrase in _PPTX_NOISE_PHRASES)
+                and len(lines) <= 4
+            )
+            if is_noise:
+                continue
+
+            title     = lines[0]
+            body_lines = lines[1:]
+            body_text  = ' '.join(body_lines)
+
+            # Skip slides that are just a title with no body (e.g. section dividers)
+            if not body_text and len(title) < 15:
+                continue
+
+            slides.append({
+                'slide_num':  slide_num,
+                'title':      title,
+                'body_lines': body_lines,
+                'body_text':  body_text,
+                'full_text':  '\n'.join(lines)
             })
+
+        if not slides:
+            extracted['highlights'].append('No substantive slides found after noise filtering')
+            return extracted
+
+        # ---- Classify and extract schedule patterns ----
+        findings_count      = 0
+        recommendation_count = 0
+        all_schedule_patterns = set()
+        all_dollar_amounts    = []
+
+        for slide in slides:
+            title_lower = slide['title'].lower()
+            full_lower  = slide['full_text'].lower()
+
+            # Classify slide type
+            if any(kw in title_lower for kw in [
+                'finding', 'summary', 'analysis', 'assessment', 'result', 'current'
+            ]):
+                findings_count += 1
+            elif any(kw in title_lower for kw in [
+                'recommend', 'option', 'proposal', 'concept', 'next step', 'solution'
+            ]):
+                recommendation_count += 1
+
+            # Schedule patterns mentioned
+            for sp in KNOWN_SCHEDULE_PATTERNS:
+                if sp in slide['full_text']:
+                    all_schedule_patterns.add(sp)
+
+            # Dollar amounts
+            amounts = [
+                int(a.replace(',', ''))
+                for a in DOLLAR_PATTERN.findall(slide['full_text'])
+                if a.replace(',', '').isdigit()
+            ]
+            all_dollar_amounts.extend(amounts)
+
+        # ---- Build consulting_insight patterns (one per substantive slide) ----
+        for slide in slides:
+            if not slide['body_text'] and len(slide['title']) < 20:
+                continue  # truly empty — skip
+
+            # body_content: up to first 3 body lines joined as one string,
+            # so the AI gets a full sentence/paragraph not fragments
+            body_content_str = ' '.join(slide['body_lines'][:3])
+
+            safe_title   = re.sub(r'[^a-z0-9]', '_', slide['title'].lower())[:40]
+            safe_docname = re.sub(r'[^a-z0-9]', '_', doc_name.lower())[:20]
+
+            extracted['patterns'].append({
+                'type': 'consulting_insight',
+                'name': f'slide_{slide["slide_num"]}_{safe_title}_{safe_docname}',
+                'data': {
+                    'document':     doc_name,
+                    'section':      slide['title'],
+                    'slide_number': slide['slide_num'],
+                    'body_preview': slide['body_text'][:300],
+                    'body_content': [body_content_str] if body_content_str else [],
+                    'client':       client,
+                    'source_type':  'implementation_ppt',
+                    'key_principles': [],
+                    'expert_quotes':  []
+                },
+                'confidence': 0.75
+            })
+
+        # ---- Schedule patterns insight ----
+        if all_schedule_patterns:
+            extracted['insights'].append({
+                'type':     'schedules_implemented',
+                'patterns': sorted(all_schedule_patterns),
+                'client':   client,
+                'document': doc_name
+            })
+            extracted['patterns'].append({
+                'type': 'schedule_patterns_mentioned',
+                'name': f'schedules_in_{re.sub(r"[^a-z0-9]", "_", doc_name.lower())[:40]}',
+                'data': sorted(all_schedule_patterns),
+                'confidence': 0.8
+            })
+
+        # ---- Dollar amounts insight ----
+        if all_dollar_amounts:
+            unique_amounts = sorted(set(all_dollar_amounts))
+            extracted['insights'].append({
+                'type':    'financial_figures',
+                'amounts': unique_amounts
+            })
+
+        # ---- Summary insight ----
+        extracted['insights'].append({
+            'type':                  'implementation_ppt_summary',
+            'document_name':         doc_name,
+            'client':                client,
+            'total_slides':          len(slides),
+            'findings_slides':       findings_count,
+            'recommendation_slides': recommendation_count,
+            'schedule_patterns':     sorted(all_schedule_patterns),
+            'dollar_amounts_found':  len(all_dollar_amounts)
+        })
+
+        # ---- Highlights ----
+        extracted['highlights'].append(f"Slides processed: {len(slides)}")
+        extracted['highlights'].append(
+            f"Consulting insights extracted: {len(extracted['patterns'])}"
+        )
+        if findings_count:
+            extracted['highlights'].append(f"Findings slides: {findings_count}")
+        if recommendation_count:
+            extracted['highlights'].append(f"Recommendation slides: {recommendation_count}")
+        if all_schedule_patterns:
+            extracted['highlights'].append(
+                f"Schedule patterns: {', '.join(sorted(all_schedule_patterns))}"
+            )
+        if all_dollar_amounts:
+            extracted['highlights'].append(
+                f"Dollar amounts: "
+                f"{', '.join(f'${a:,}' for a in sorted(set(all_dollar_amounts))[:5])}"
+            )
+
         return extracted
 
     # =========================================================================
