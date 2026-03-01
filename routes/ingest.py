@@ -1,11 +1,29 @@
 """
 KNOWLEDGE INGESTION ROUTES
 Created: February 2, 2026
-Last Updated: February 27, 2026 - ADDED lessons_learned_md detection for .md files
+Last Updated: February 28, 2026 - GAP 2 FIX: 'lifestyle' → 'eaf' in _detect_document_type()
 
 CHANGELOG:
 
-- February 27, 2026 (Session 3 - Part 2): ADDED lessons_learned_md document type
+- February 28, 2026 — GAP 2 FIX: 'lifestyle' keyword added to eaf detection
+  PROBLEM: Four Lifestyle Presentation PPTX files were classified as 'implementation_ppt'
+    instead of 'eaf'. They contain embedded lifestyle survey chart data (survey_client_result
+    and survey_norm patterns), but the filename lacks 'eaf', 'employee', or 'survey' — it
+    only has 'lifestyle'. Affected files:
+      Durand_Glass_Lifestyle_Presentation_with_extra_breakouts.pptx  (123 chart patterns)
+      Aptalis_Lifestyle_Presentation.pptx                             (106 chart patterns)
+      Andersen_Corp._Lifestyle_Presentation.pptx                      (98 chart patterns)
+      Impax_Lifestyle_Presentation.ppt
+    Under the Gap 2 engine fix, re-ingesting these as 'implementation_ppt' would route
+    them to the slide-text extractor and lose the chart data. Correct type is 'eaf' →
+    routes to _extract_from_survey_pptx (chart XML extractor) → full chart patterns.
+  FIX: Added 'lifestyle' to the eaf keyword check in _detect_document_type(). This is
+    a single-word addition to one conditional: no other logic changed.
+  SCOPE: _detect_document_type() only. All other code unchanged.
+  NOTE: Existing DB records for these files already have correct chart patterns from
+    prior ingestion. Fix ensures re-ingestion produces the same correct result.
+
+- February 27, 2026 (Session 3 - Part 2): ADDED lessons_learned_md detection for .md files
   * .md files with 'lesson' in filename now detect as 'lessons_learned_md' instead
     of 'generic'. Jim dictates lessons learned to Claude Sonnet which produces rich
     structured Markdown (## category headings, ### Lesson #N, **Field:** labels).
@@ -95,10 +113,13 @@ def _detect_document_type(filename):
     Added February 27, 2026 (Session 3).
     Mirrors detectDocumentType() in knowledge_management.html exactly.
 
-    FIX February 27, 2026 (Session 3):
-      'engagement' REMOVED from contract detection keywords.
-      Pillar_7_Employee_Engagement_DRAFT.docx is a consulting guide, not a contract.
-      Contract now requires 'contract' OR 'agreement' explicitly in filename.
+    CHANGELOG:
+    - February 28, 2026 (Gap 2): Added 'lifestyle' to eaf keyword check.
+      Lifestyle Presentation PPTX files contain survey chart data and must
+      route to 'eaf' (→ _extract_from_survey_pptx chart extractor) not
+      'implementation_ppt' (→ slide text extractor).
+    - February 27, 2026 (Session 3): 'engagement' REMOVED from contract
+      detection keywords. Contract requires 'contract' OR 'agreement' explicitly.
 
     Returns: document type string understood by document_ingestion_engine.py
     """
@@ -108,7 +129,9 @@ def _detect_document_type(filename):
     if ext in ('pptx', 'ppt'):
         if 'oaf' in name or 'operations' in name:
             return 'oaf'
-        if 'eaf' in name or 'employee' in name or 'survey' in name:
+        # GAP 2 FIX February 28, 2026: Added 'lifestyle' — Lifestyle Presentation
+        # files contain survey chart data and must use the EAF chart extractor.
+        if 'eaf' in name or 'employee' in name or 'survey' in name or 'lifestyle' in name:
             return 'eaf'
         return 'implementation_ppt'
 
@@ -131,7 +154,6 @@ def _detect_document_type(filename):
             return 'implementation_manual'
         return 'general_word'
 
-    # FIX February 27, 2026 (Session 3 - Part 2):
     # .md files with 'lesson' in the name → lessons_learned_md.
     # Jim dictates lessons learned to Claude Sonnet which produces rich structured
     # Markdown with ## category headings, ### Lesson #N headings, and **Field:**
@@ -211,6 +233,12 @@ def _process_file_for_ingest(file, document_type, metadata):
     Added February 27, 2026 (Session 2): extracted from ingest_document().
     Updated February 27, 2026 (Session 3): document_type now auto-detected
     upstream; this function receives the resolved type.
+
+    For PPTX files: extracts slide text via python-pptx and passes BOTH the
+    slide_text_content (as 'content') AND the raw file_bytes. The engine
+    routing then decides which extractor to use based on document_type:
+      - 'eaf' / 'survey_pptx' / 'oaf' → chart XML extractor (file_bytes)
+      - 'implementation_ppt' with content → slide text extractor + optional chart merge
     """
     filename_lower = file.filename.lower()
 
@@ -743,7 +771,10 @@ def export_knowledge():
         buffer = io.BytesIO(json_bytes)
         buffer.seek(0)
         filename = f"shiftwork_knowledge_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        return send_file(buffer, mimetype='application/json', as_attachment=True, download_name=filename)
+        return send_file(
+            buffer, mimetype='application/json',
+            as_attachment=True, download_name=filename
+        )
     except Exception as e:
         import traceback
         return jsonify({
