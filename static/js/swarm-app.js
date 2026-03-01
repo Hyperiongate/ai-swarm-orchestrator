@@ -5,6 +5,22 @@ Shiftwork Solutions LLC
 =============================================================================
 CHANGE LOG:
 
+- March 1, 2026: FIXED COPY BUTTON "[object PointerEvent]" BUG
+  * Root cause: copyToClipboard(event, msgId) used event.currentTarget inside
+    a navigator.clipboard async callback, where currentTarget is null.
+    The inline onclick passed the raw DOM event object; when serialized or
+    accessed asynchronously it became "[object PointerEvent]".
+  * Fix: Renamed function to copyMessageToClipboard(btn, msgId). The button
+    element is now passed directly via `this` in the inline onclick, so
+    the reference is stable across the async clipboard callback.
+  * Changed all 3 inline onclick strings in addMessage(),
+    addMessageFromHistory(), and addMessageFromHistoryWithMetadata()
+    from copyToClipboard(event, ...) to copyMessageToClipboard(this, ...).
+  * NOTE: index.html's copyToClipboard(text, btnId) function is a SEPARATE
+    function used for the Website Ready Package copy buttons. It was NOT
+    changed and is NOT affected by this fix.
+  * All other functionality unchanged.
+
 - February 23, 2026: ADDED BLOG POST GENERATOR MODE SUPPORT
   * Added blogpostsModeBtn toggle in switchMode()
   * Added blogpostsInfo panel show/hide in switchMode()
@@ -334,9 +350,12 @@ function addMessageFromHistory(role, content, timestamp) {
     var header = role === 'user' ? '👤 You' : '🤖 AI Swarm';
     var timeStr = timestamp ? formatMessageTime(timestamp) : '';
     
+    // FIX March 1, 2026: Pass 'this' (the button element) instead of 'event'
+    // so copyMessageToClipboard receives a stable element reference, not an
+    // event object that becomes null in async clipboard callbacks.
     var copyBtn = '';
     if (role === 'assistant') {
-        copyBtn = '<button onclick="copyToClipboard(event, \'' + msgId + '\')" style="background: none; border: 1px solid #e0e0e0; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; color: #666; margin-left: auto;">📋 Copy</button>';
+        copyBtn = '<button onclick="copyMessageToClipboard(this, \'' + msgId + '\')" style="background: none; border: 1px solid #e0e0e0; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; color: #666; margin-left: auto;">📋 Copy</button>';
     }
     
     messageDiv.innerHTML = '<div class="message-header">' + header + copyBtn + '</div>' +
@@ -357,9 +376,10 @@ function addMessageFromHistoryWithMetadata(role, content, timestamp, metadata) {
     var header = role === 'user' ? '👤 You' : '🤖 AI Swarm';
     var timeStr = timestamp ? formatMessageTime(timestamp) : '';
     
+    // FIX March 1, 2026: Pass 'this' instead of 'event' — see copyMessageToClipboard
     var copyBtn = '';
     if (role === 'assistant') {
-        copyBtn = '<button onclick="copyToClipboard(event, \'' + msgId + '\')" style="background: none; border: 1px solid #e0e0e0; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; color: #666; margin-left: auto;">📋 Copy</button>';
+        copyBtn = '<button onclick="copyMessageToClipboard(this, \'' + msgId + '\')" style="background: none; border: 1px solid #e0e0e0; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; color: #666; margin-left: auto;">📋 Copy</button>';
     }
     
     var downloadSection = '';
@@ -704,22 +724,57 @@ function formatFileSize(bytes) {
 // 5. CLIPBOARD FUNCTIONS
 // =============================================================================
 
-function copyToClipboard(event, msgId) {
+/**
+ * copyMessageToClipboard - Copies the text content of an AI message bubble.
+ *
+ * FIX March 1, 2026: Previously named copyToClipboard(event, msgId).
+ * That version used event.currentTarget inside navigator.clipboard's async
+ * .then() callback. By the time the promise resolved, currentTarget was null
+ * (the event had been recycled by the browser), causing the visual feedback
+ * to silently fail and "event" to serialize as "[object PointerEvent]" if
+ * accidentally pasted.
+ *
+ * Solution: Accept the button element directly (passed as `this` from the
+ * inline onclick). The element reference is stable across async callbacks.
+ *
+ * @param {HTMLElement} btn   - The Copy button element (pass as `this`)
+ * @param {string}      msgId - The message ID (e.g. "msg_3")
+ */
+function copyMessageToClipboard(btn, msgId) {
     var content = document.getElementById('content_' + msgId);
     if (!content) return;
     
     var text = content.innerText || content.textContent;
     
     navigator.clipboard.writeText(text).then(function() {
-        var button = event.currentTarget;
-        var originalText = button.innerHTML;
-        button.innerHTML = '✓ Copied!';
-        button.style.background = '#4caf50';
-        button.style.color = 'white';
+        var originalText = btn.innerHTML;
+        btn.innerHTML = '✓ Copied!';
+        btn.style.background = '#4caf50';
+        btn.style.color = 'white';
         setTimeout(function() {
-            button.innerHTML = originalText;
-            button.style.background = 'none';
-            button.style.color = '#666';
+            btn.innerHTML = originalText;
+            btn.style.background = 'none';
+            btn.style.color = '#666';
+        }, 2000);
+    }).catch(function() {
+        // Fallback for browsers without Clipboard API write access
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        
+        var originalText = btn.innerHTML;
+        btn.innerHTML = '✓ Copied!';
+        btn.style.background = '#4caf50';
+        btn.style.color = 'white';
+        setTimeout(function() {
+            btn.innerHTML = originalText;
+            btn.style.background = 'none';
+            btn.style.color = '#666';
         }, 2000);
     });
 }
@@ -1190,9 +1245,10 @@ function addMessage(role, content, taskId, mode, data) {
     
     var header = role === 'user' ? '👤 You' : '🤖 AI Swarm';
     
+    // FIX March 1, 2026: Pass 'this' instead of 'event' — see copyMessageToClipboard
     var copyBtn = '';
     if (role === 'assistant') {
-        copyBtn = '<button onclick="copyToClipboard(event, \'' + msgId + '\')" style="background: none; border: 1px solid #e0e0e0; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; color: #666; margin-left: auto;">📋 Copy</button>';
+        copyBtn = '<button onclick="copyMessageToClipboard(this, \'' + msgId + '\')" style="background: none; border: 1px solid #e0e0e0; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; color: #666; margin-left: auto;">📋 Copy</button>';
     }
     
     var feedbackSection = (role === 'assistant' && taskId) ? buildFeedbackSection(msgId, taskId) : '';
@@ -2034,7 +2090,7 @@ function initializeApp() {
     
     setInterval(function() { loadStats(); loadDocuments(); }, 30000);
     
-    console.log('🚀 AI Swarm Interface initialized - Blog Posts mode added - February 23, 2026');
+    console.log('🚀 AI Swarm Interface initialized - Copy button fix applied - March 1, 2026');
 }
 
 if (document.readyState === 'loading') {
