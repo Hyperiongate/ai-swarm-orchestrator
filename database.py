@@ -43,8 +43,13 @@ def init_db():
     Delegates to the migration script which is the authoritative schema source.
     Safe to call multiple times — all tables use CREATE TABLE IF NOT EXISTS.
     """
-    from migrations.migration_001_initial_schema import run_migration
-    run_migration()
+    import importlib.util
+    import os
+    migration_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'migrations', 'migration_001_initial_schema.py')
+    spec = importlib.util.spec_from_file_location("migration_001_initial_schema", migration_path)
+    migration_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration_module)
+    migration_module.run_migration()
     print("✅ Database initialized via migration 001_initial_schema")
 
 
