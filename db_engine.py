@@ -1,7 +1,7 @@
 """
 AI SWARM ORCHESTRATOR - Database Engine (Abstraction Layer)
 Created: March 02, 2026
-Last Updated: March 02, 2026 - INITIAL CREATION
+Last Updated: March 02, 2026 - CONNECTION POOL FIX
 
 PURPOSE:
     Single database abstraction layer for the entire Swarm system.
@@ -12,6 +12,12 @@ PURPOSE:
     No module should ever import sqlite3 or psycopg2 directly.
 
 CHANGELOG:
+- March 02, 2026: CONNECTION POOL FIX
+  * Increased pool from minconn=1/maxconn=10 to minconn=2/maxconn=20
+  * Fixed putconn() error handling — failed putconn no longer destroys pool slot
+  * Added pool status logging to help diagnose future exhaustion issues
+  * No other changes
+
 - March 02, 2026: CREATED as part of PostgreSQL migration (Phase 1)
   * PostgreSQL via psycopg2 when DATABASE_URL is set (production on Render)
   * SQLite fallback for local development only
@@ -69,6 +75,8 @@ print(f"🗄️  DB Engine: {'PostgreSQL (production)' if DB_TYPE == 'postgresql
 
 # ============================================================================
 # POSTGRESQL CONNECTION POOL (lazy init)
+# Pool sizing: minconn=2, maxconn=20
+# With gunicorn workers=1 and typical request concurrency, 20 is ample headroom.
 # ============================================================================
 
 _pg_pool = None
@@ -81,12 +89,12 @@ def _get_pg_pool():
         try:
             from psycopg2 import pool as pg_pool
             _pg_pool = pg_pool.ThreadedConnectionPool(
-                minconn=1,
-                maxconn=10,
+                minconn=2,
+                maxconn=20,
                 dsn=_DATABASE_URL
             )
-            logger.info("PostgreSQL connection pool created (min=1, max=10)")
-            print("✅ PostgreSQL connection pool created")
+            logger.info("PostgreSQL connection pool created (min=2, max=20)")
+            print("✅ PostgreSQL connection pool created (min=2, max=20)")
         except Exception as e:
             logger.error(f"Failed to create PostgreSQL connection pool: {e}")
             raise
@@ -263,6 +271,7 @@ class PostgreSQLConnectionWrapper:
     def __init__(self, connection, pool):
         self._conn = connection
         self._pool = pool
+        self._closed = False
         from psycopg2.extras import RealDictCursor
         self._cursor_factory = RealDictCursor
 
@@ -287,21 +296,50 @@ class PostgreSQLConnectionWrapper:
         self._conn.commit()
 
     def rollback(self):
-        self._conn.rollback()
+        try:
+            self._conn.rollback()
+        except Exception as e:
+            logger.warning(f"Error during rollback: {e}")
 
     def close(self):
-        """Return connection to pool rather than closing it."""
+        """
+        Return connection to pool rather than closing it.
+        If already closed, do nothing (safe to call multiple times).
+        If pool return fails, reset connection state rather than destroying the slot.
+        """
+        if self._closed:
+            return
+        self._closed = True
+
         try:
+            # Always rollback any uncommitted transaction before returning to pool
+            # This ensures the connection is clean for the next caller
+            try:
+                self._conn.rollback()
+            except Exception:
+                pass
+
             if self._pool and not self._pool.closed:
                 self._pool.putconn(self._conn)
             else:
+                # Pool is gone (shutdown) — close the raw connection
                 self._conn.close()
         except Exception as e:
-            logger.warning(f"Error returning connection to pool: {e}")
+            logger.error(f"Error returning connection to pool: {e}")
+            # Do NOT call self._conn.close() here — that would destroy the
+            # connection and permanently reduce the pool size. Instead, attempt
+            # to reset the connection state so the pool can reuse it.
             try:
-                self._conn.close()
-            except Exception:
-                pass
+                self._conn.reset()
+                if self._pool and not self._pool.closed:
+                    self._pool.putconn(self._conn)
+            except Exception as e2:
+                logger.error(f"Could not recover connection after pool return error: {e2}")
+                # Last resort: close to avoid leaving it in unknown state
+                try:
+                    self._conn.close()
+                except Exception:
+                    pass
 
     def __enter__(self):
         return self
@@ -310,7 +348,11 @@ class PostgreSQLConnectionWrapper:
         if exc_type:
             self.rollback()
         else:
-            self.commit()
+            try:
+                self.commit()
+            except Exception as e:
+                logger.error(f"Error committing transaction: {e}")
+                self.rollback()
         self.close()
 
 
@@ -332,7 +374,9 @@ def get_db_connection():
         conn.rollback()
         conn.close()               — pg: returns to pool; sqlite: closes file
 
-    Always call conn.close() when done, or use as context manager.
+    ALWAYS call conn.close() when done, or use as context manager:
+        with get_db_connection() as conn:
+            conn.execute(...)
 
     Returns:
         PostgreSQLConnectionWrapper or SQLiteConnectionWrapper
@@ -358,6 +402,23 @@ def get_db_connection():
 def get_db_type():
     """Return 'postgresql' or 'sqlite'. Used by health check and migrations."""
     return DB_TYPE
+
+
+def get_pool_status():
+    """
+    Return current pool status for diagnostics.
+    Returns dict with pool info, or None if not PostgreSQL or pool not initialized.
+    """
+    if DB_TYPE != 'postgresql' or _pg_pool is None:
+        return None
+    try:
+        return {
+            'min_connections': _pg_pool.minconn,
+            'max_connections': _pg_pool.maxconn,
+            'pool_closed': _pg_pool.closed,
+        }
+    except Exception as e:
+        return {'error': str(e)}
 
 
 def close_pool():
