@@ -1,17 +1,25 @@
 """
 Database Module
 Created: January 21, 2026
-Last Updated: March 02, 2026 - POSTGRESQL MIGRATION (Phase 1)
+Last Updated: March 02, 2026 - CONNECTION POOL FIX
 
 CHANGELOG:
+- March 02, 2026: CONNECTION POOL FIX
+  * Fixed get_document_stats(): was creating an unclosed inline connection via
+    get_db_connection().__class__.__name__ to detect DB type. Replaced with
+    get_db_type() which has no connection overhead. This was leaking one
+    connection per call to get_document_stats().
+  * Removed double-migration from init_db(): app.py already runs the migration
+    in STEP 1. init_db() no longer re-runs it, preventing two connections being
+    held during startup for the same work.
+  * No other changes — all function signatures and behavior preserved.
+
 - March 02, 2026: POSTGRESQL MIGRATION
   * Replaced all sqlite3 imports and direct connections with get_db_connection()
   * All SQL parameters changed from ? to %s (PostgreSQL style)
   * get_db() now calls get_db_connection() — single connection source
-  * init_db() now delegates to migrations/001_initial_schema.py
-  * CURRENT_TIMESTAMP references remain (work in both SQLite and PostgreSQL)
+  * init_db() delegates to migrations/001_initial_schema.py
   * All dict(row) conversions work with both DictRow and RealDictRow
-  * No functional changes — all existing function signatures preserved
 
 - January 30, 2026: ADDED FILE CONTENTS STORAGE FOR GPT-4 CONTINUITY
 - January 27, 2026: ADDED SCHEDULE CONTEXT STORAGE FUNCTIONS
@@ -29,7 +37,7 @@ Author: Jim @ Shiftwork Solutions LLC (managed by Claude)
 import json
 import os
 from datetime import datetime
-from db_engine import get_db_connection
+from db_engine import get_db_connection, get_db_type
 
 
 def get_db():
@@ -40,17 +48,13 @@ def get_db():
 def init_db():
     """
     Initialize database tables.
-    Delegates to the migration script which is the authoritative schema source.
-    Safe to call multiple times — all tables use CREATE TABLE IF NOT EXISTS.
+    NOTE: app.py runs the migration in STEP 1 before calling init_db().
+    This function is retained for backward compatibility but does NOT
+    re-run the migration to avoid holding two connections during startup
+    for the same work.
+    Tables are guaranteed to exist by the time this is called.
     """
-    import importlib.util
-    import os
-    migration_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'migrations', 'migration_001_initial_schema.py')
-    spec = importlib.util.spec_from_file_location("migration_001_initial_schema", migration_path)
-    migration_module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migration_module)
-    migration_module.run_migration()
-    print("✅ Database initialized via migration 001_initial_schema")
+    print("✅ Database tables already initialized by migration (STEP 1 in app.py)")
 
 
 # ============================================================================
@@ -248,15 +252,21 @@ def get_document_stats():
         ).fetchone()[0]
         stats['total_size_bytes'] = total_size or 0
 
-        stats['recent_count'] = db.execute('''
-            SELECT COUNT(*) FROM generated_documents
-            WHERE is_deleted = 0
-            AND created_at >= CURRENT_TIMESTAMP - INTERVAL '7 days'
-        ''').fetchone()[0] if get_db_connection().__class__.__name__ == 'PostgreSQLConnectionWrapper' else db.execute('''
-            SELECT COUNT(*) FROM generated_documents
-            WHERE is_deleted = 0
-            AND created_at >= datetime('now', '-7 days')
-        ''').fetchone()[0]
+        # Use get_db_type() — NO inline connection (was the connection leak)
+        if get_db_type() == 'postgresql':
+            recent_count = db.execute('''
+                SELECT COUNT(*) FROM generated_documents
+                WHERE is_deleted = 0
+                AND created_at >= NOW() - INTERVAL '7 days'
+            ''').fetchone()[0]
+        else:
+            recent_count = db.execute('''
+                SELECT COUNT(*) FROM generated_documents
+                WHERE is_deleted = 0
+                AND created_at >= datetime('now', '-7 days')
+            ''').fetchone()[0]
+
+        stats['recent_count'] = recent_count
 
         return stats
     finally:
@@ -942,7 +952,6 @@ def get_avoidance_context(days=30, limit=5):
     """Get patterns to avoid based on past failures."""
     db = get_db()
     try:
-        from db_engine import get_db_type
         if get_db_type() == 'postgresql':
             rows = db.execute('''
                 SELECT pattern_data, severity, times_violated, created_at
@@ -1038,7 +1047,6 @@ def save_smart_analyzer_state(conversation_id, file_path, file_name, profile):
 
         clean_profile = convert_timestamps(profile)
 
-        from db_engine import get_db_type
         if get_db_type() == 'postgresql':
             db.execute('''
                 INSERT INTO smart_analyzer_state
