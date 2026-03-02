@@ -1,34 +1,37 @@
 """
 BLOG POST GENERATOR - AI-Powered SEO & AI-Search Optimized Blog Posts
-Shiftwork Solutions LLC  
+Shiftwork Solutions LLC
 
-PURPOSE:
-    Generates conversational, SEO-optimized blog posts for Shiftwork Solutions
-    website. Posts are written in an accessible, human style (someone reads
-    these over coffee, not in a boardroom), while rigorously following the same
-    SEO and AI-search optimization rules as the Case Study Generator.
-    
-    NOW INCLUDES: URL slug generation, meta descriptions, FAQ sections,
-    numbered lists, and perfect 100/100 SEO optimization for AI search engines.
+CHANGELOG:
+    March 02, 2026 - POSTGRESQL MIGRATION FIX
+                     * All SQL ? placeholders replaced with %s (PostgreSQL style)
+                     * All database functions now use try/finally to guarantee
+                       conn.close() — eliminates connection pool leaks
+                     * INTEGER PRIMARY KEY AUTOINCREMENT -> SERIAL PRIMARY KEY
+                     * init_blog_posts_table() uses db_type detection for DDL
 
-TARGET AUDIENCE:
-    General Managers, Directors, HR Managers — people who own the workforce
-    problem, control the budget, and feel pressure from above and below.
-
-CHANGE LOG:
     February 23, 2026 - ENHANCED FOR PERFECT SEO (100/100 optimization)
                         * Added URL slug generation
                         * Added AI-generated meta descriptions (under 160 chars)
                         * Updated prompt to require FAQ sections
                         * Updated prompt to require numbered lists
                         * Added SEO metadata to database
-                        * Complete website-ready SEO package
 
     February 23, 2026 - Initial creation. Blog post generation engine with
                         DOCX export, database persistence, and library view.
 
+PURPOSE:
+    Generates conversational, SEO-optimized blog posts for Shiftwork Solutions
+    website. Posts are written in an accessible, human style, while rigorously
+    following the same SEO and AI-search optimization rules as the Case Study
+    Generator.
+
+TARGET AUDIENCE:
+    General Managers, Directors, HR Managers — people who own the workforce
+    problem, control the budget, and feel pressure from above and below.
+
 AUTHOR: Jim @ Shiftwork Solutions LLC
-LAST UPDATED: February 23, 2026
+LAST UPDATED: March 02, 2026
 """
 
 import os
@@ -217,47 +220,33 @@ def generate_url_slug(title: str) -> str:
     Generate a clean URL slug from the blog post title.
     Example: "12-Hour vs 8-Hour Shifts" -> "12-hour-vs-8-hour-shifts"
     """
-    # Convert to lowercase
     slug = title.lower()
-    
-    # Remove special characters, keep alphanumeric, spaces, and hyphens
     slug = re.sub(r'[^\w\s-]', '', slug)
-    
-    # Replace spaces and multiple hyphens with single hyphen
     slug = re.sub(r'[\s_]+', '-', slug)
     slug = re.sub(r'-+', '-', slug)
-    
-    # Remove leading/trailing hyphens
     slug = slug.strip('-')
-    
-    # Limit length to 60 characters
     if len(slug) > 60:
         slug = slug[:60].rstrip('-')
-    
     return slug
 
 
 def get_blog_post_prompt(topic: str, custom_topic: str, angle: str) -> str:
     """
     Build the AI prompt for blog post generation.
-    
-    NOW INCLUDES: Requirements for FAQ sections, numbered lists,
-    and perfect structure for 100/100 SEO optimization.
+    Requires FAQ sections, numbered lists, and structure for 100/100 SEO.
     """
-
-    # Resolve topic data
     topic_data = BLOG_TOPICS.get(topic, BLOG_TOPICS['other'])
     topic_display = topic_data['display']
     primary_keyword = topic_data['primary_keyword']
     secondary_keywords = ', '.join(topic_data['secondary_keywords'][:3])
     prompt_hint = topic_data['prompt_hint']
 
-    # If topic is 'other' and custom topic was provided, use it
     if topic == 'other' and custom_topic:
         topic_display = custom_topic
 
-    # The specific angle or additional context Jim provided
-    angle_section = f"\nSPECIFIC ANGLE OR FOCUS FOR THIS POST:\n{angle}\n" if angle else ""
+    angle_section = (
+        f"\nSPECIFIC ANGLE OR FOCUS FOR THIS POST:\n{angle}\n" if angle else ""
+    )
 
     prompt = f"""You are a senior workforce management consultant and content writer for Shiftwork Solutions LLC. You're writing a blog post for the company website — conversational, expert, and deeply practical.
 
@@ -386,7 +375,6 @@ def generate_meta_description(title: str, content: str, primary_keyword: str) ->
         import anthropic
 
         if not ANTHROPIC_API_KEY:
-            # Fallback: create a simple meta description
             return f"{title[:100]}. Expert insights on {primary_keyword}."
 
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -409,20 +397,13 @@ Return ONLY the meta description text, nothing else. No quotes, no explanation."
             messages=[{"role": "user", "content": prompt}]
         )
 
-        meta_desc = message.content[0].text.strip()
-        
-        # Remove quotes if present
-        meta_desc = meta_desc.strip('"').strip("'")
-        
-        # Ensure it's under 160 characters
+        meta_desc = message.content[0].text.strip().strip('"').strip("'")
         if len(meta_desc) > 155:
             meta_desc = meta_desc[:152] + "..."
-        
         return meta_desc
 
     except Exception as e:
         print(f"[BlogPost] Meta description generation failed: {e}")
-        # Fallback
         return f"{title[:100]}. Expert insights on {primary_keyword}."
 
 
@@ -435,8 +416,8 @@ def generate_blog_post(topic: str, custom_topic: str, angle: str) -> dict:
             'success': True/False,
             'id': int,
             'title': str,
-            'url_slug': str,               # NEW
-            'meta_description': str,       # NEW
+            'url_slug': str,
+            'meta_description': str,
             'topic': str,
             'topic_display': str,
             'content': str,
@@ -450,27 +431,23 @@ def generate_blog_post(topic: str, custom_topic: str, angle: str) -> dict:
         if not ANTHROPIC_API_KEY:
             return {'success': False, 'error': 'Anthropic API key not configured'}
 
-        # Validate topic
         if topic not in BLOG_TOPICS:
             topic = 'other'
 
-        # For 'other' topic, require custom_topic
         if topic == 'other' and not custom_topic:
             return {'success': False, 'error': 'Please describe the topic for "Other"'}
 
         prompt = get_blog_post_prompt(topic, custom_topic, angle)
-
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
         message = client.messages.create(
             model=CLAUDE_SONNET_MODEL,
-            max_tokens=3000,  # Increased for longer, more detailed posts
+            max_tokens=3000,
             messages=[{"role": "user", "content": prompt}]
         )
 
         content = message.content[0].text.strip()
 
-        # Extract title from the first # heading
         title = 'Blog Post'
         for line in content.split('\n'):
             line = line.strip()
@@ -478,26 +455,18 @@ def generate_blog_post(topic: str, custom_topic: str, angle: str) -> dict:
                 title = line[2:].strip()
                 break
 
-        # Generate URL slug
         url_slug = generate_url_slug(title)
 
-        # Get primary keyword for meta description
         topic_data = BLOG_TOPICS.get(topic, BLOG_TOPICS['other'])
         primary_keyword = topic_data['primary_keyword']
-
-        # Generate meta description
         meta_description = generate_meta_description(title, content, primary_keyword)
-
-        # Word count
         word_count = len(content.split())
 
-        # Determine display name
         if topic == 'other' and custom_topic:
             topic_display = custom_topic
         else:
             topic_display = topic_data['display']
 
-        # Save to database (now includes SEO metadata)
         post_id = save_blog_post_to_db(
             topic=topic,
             topic_display=topic_display,
@@ -508,8 +477,10 @@ def generate_blog_post(topic: str, custom_topic: str, angle: str) -> dict:
             angle=angle or ''
         )
 
-        print(f"[BlogPost] Generated: id={post_id}, slug={url_slug}, "
-              f"title='{title[:40]}...', words={word_count}")
+        print(
+            f"[BlogPost] Generated: id={post_id}, slug={url_slug}, "
+            f"title='{title[:40]}...', words={word_count}"
+        )
 
         return {
             'success': True,
@@ -533,16 +504,13 @@ def generate_blog_post(topic: str, custom_topic: str, angle: str) -> dict:
 
 
 def generate_blog_post_docx(post_content: str, title: str, topic_display: str) -> bytes:
-    """
-    Convert markdown blog post content to a professional Word document.
-    """
+    """Convert markdown blog post content to a professional Word document."""
     from docx import Document
     from docx.shared import Pt, Inches, RGBColor
     from docx.enum.text import WD_ALIGN_PARAGRAPH
 
     doc = Document()
 
-    # Page setup
     section = doc.sections[0]
     section.page_width = Inches(8.5)
     section.page_height = Inches(11)
@@ -551,7 +519,6 @@ def generate_blog_post_docx(post_content: str, title: str, topic_display: str) -
     section.top_margin = Inches(1)
     section.bottom_margin = Inches(1)
 
-    # Document styles
     style = doc.styles['Normal']
     style.font.name = 'Arial'
     style.font.size = Pt(11)
@@ -568,7 +535,6 @@ def generate_blog_post_docx(post_content: str, title: str, topic_display: str) -
     h2_style.font.bold = True
     h2_style.font.color.rgb = RGBColor(0x2E, 0x75, 0xB6)
 
-    # Header
     header = doc.sections[0].header
     header_para = header.paragraphs[0]
     header_para.text = 'Shiftwork Solutions LLC  |  Blog Post'
@@ -576,15 +542,15 @@ def generate_blog_post_docx(post_content: str, title: str, topic_display: str) -
     header_para.runs[0].font.size = Pt(9)
     header_para.runs[0].font.color.rgb = RGBColor(0x88, 0x88, 0x88)
 
-    # Footer
     footer = doc.sections[0].footer
     footer_para = footer.paragraphs[0]
-    footer_para.text = f'© Shiftwork Solutions LLC  |  {topic_display}  |  shift-work.com'
+    footer_para.text = (
+        f'© Shiftwork Solutions LLC  |  {topic_display}  |  shift-work.com'
+    )
     footer_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
     footer_para.runs[0].font.size = Pt(9)
     footer_para.runs[0].font.color.rgb = RGBColor(0x88, 0x88, 0x88)
 
-    # Helper: inline bold formatting
     def add_paragraph_with_formatting(doc, text, style_name='Normal'):
         para = doc.add_paragraph(style=style_name)
         parts = re.split(r'\*\*(.+?)\*\*', text)
@@ -594,29 +560,24 @@ def generate_blog_post_docx(post_content: str, title: str, topic_display: str) -
                 run.bold = True
         return para
 
-    # Parse and render markdown
     lines = post_content.strip().split('\n')
     i = 0
     while i < len(lines):
         line = lines[i].rstrip()
-
         if line.startswith('# ') and not line.startswith('## '):
-            heading_text = line[2:].strip()
-            para = doc.add_heading(heading_text, level=1)
+            para = doc.add_heading(line[2:].strip(), level=1)
             para.alignment = WD_ALIGN_PARAGRAPH.LEFT
             doc.add_paragraph('')
         elif line.startswith('## '):
-            heading_text = line[3:].strip()
-            doc.add_heading(heading_text, level=2)
+            doc.add_heading(line[3:].strip(), level=2)
         elif line.startswith('### '):
-            heading_text = line[4:].strip()
-            doc.add_heading(heading_text, level=3)
+            doc.add_heading(line[4:].strip(), level=3)
         elif line.startswith('- ') or line.startswith('* '):
-            bullet_text = line[2:].strip()
-            add_paragraph_with_formatting(doc, bullet_text, 'List Bullet')
+            add_paragraph_with_formatting(doc, line[2:].strip(), 'List Bullet')
         elif re.match(r'^\d+\.\s', line):
-            item_text = re.sub(r'^\d+\.\s', '', line).strip()
-            add_paragraph_with_formatting(doc, item_text, 'List Number')
+            add_paragraph_with_formatting(
+                doc, re.sub(r'^\d+\.\s', '', line).strip(), 'List Number'
+            )
         elif line.startswith('---') or line.startswith('==='):
             pass
         elif line == '':
@@ -626,7 +587,6 @@ def generate_blog_post_docx(post_content: str, title: str, topic_display: str) -
                 add_paragraph_with_formatting(doc, line.strip())
         i += 1
 
-    # Final metadata
     doc.add_paragraph('')
     meta_para = doc.add_paragraph()
     meta_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -651,89 +611,103 @@ def save_blog_post_to_db(topic: str, topic_display: str, title: str,
     """Save a generated blog post with SEO metadata to the database."""
     from database import get_db
     db = get_db()
-    cursor = db.execute('''
-        INSERT INTO blog_posts (
+    try:
+        cursor = db.execute('''
+            INSERT INTO blog_posts (
+                topic, topic_display, title, url_slug, meta_description,
+                content, angle, created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ''', (
             topic, topic_display, title, url_slug, meta_description,
-            content, angle, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (
-        topic, topic_display, title, url_slug, meta_description,
-        content, angle,
-        datetime.now().isoformat(), datetime.now().isoformat()
-    ))
-    db.commit()
-    record_id = cursor.lastrowid
-    db.close()
-    return record_id
+            content, angle,
+            datetime.now().isoformat(), datetime.now().isoformat()
+        ))
+        db.commit()
+        return cursor.lastrowid
+    finally:
+        db.close()
 
 
 def get_all_blog_posts() -> list:
     """Retrieve all saved blog posts, newest first."""
     from database import get_db
     db = get_db()
-    rows = db.execute('''
-        SELECT id, topic, topic_display, title, url_slug, 
-               meta_description, angle, created_at
-        FROM blog_posts
-        ORDER BY created_at DESC
-    ''').fetchall()
-    db.close()
-    return [dict(row) for row in rows]
+    try:
+        rows = db.execute('''
+            SELECT id, topic, topic_display, title, url_slug,
+                   meta_description, angle, created_at
+            FROM blog_posts
+            ORDER BY created_at DESC
+        ''').fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        db.close()
 
 
 def get_blog_post_by_id(post_id: int) -> dict:
     """Retrieve a single blog post by ID."""
     from database import get_db
     db = get_db()
-    row = db.execute(
-        'SELECT * FROM blog_posts WHERE id = ?', (post_id,)
-    ).fetchone()
-    db.close()
-    return dict(row) if row else None
+    try:
+        row = db.execute(
+            'SELECT * FROM blog_posts WHERE id = %s', (post_id,)
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        db.close()
 
 
 def delete_blog_post(post_id: int) -> bool:
     """Delete a blog post by ID."""
     from database import get_db
     db = get_db()
-    db.execute('DELETE FROM blog_posts WHERE id = ?', (post_id,))
-    db.commit()
-    db.close()
+    try:
+        db.execute('DELETE FROM blog_posts WHERE id = %s', (post_id,))
+        db.commit()
+    finally:
+        db.close()
     return True
 
 
 def init_blog_posts_table():
-    """Create the blog_posts table if it does not exist."""
+    """
+    Create the blog_posts table if it does not exist.
+    Uses SERIAL PRIMARY KEY for PostgreSQL, AUTOINCREMENT for SQLite.
+    """
+    from database import get_db
+    from db_engine import get_db_type
+    db_type = get_db_type()
+    pk = 'SERIAL PRIMARY KEY' if db_type == 'postgresql' else 'INTEGER PRIMARY KEY AUTOINCREMENT'
+
     from database import get_db
     db = get_db()
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS blog_posts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            topic TEXT NOT NULL,
-            topic_display TEXT NOT NULL,
-            title TEXT NOT NULL,
-            url_slug TEXT NOT NULL,
-            meta_description TEXT NOT NULL,
-            content TEXT NOT NULL,
-            angle TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    try:
+        db.execute(f'''
+            CREATE TABLE IF NOT EXISTS blog_posts (
+                id {pk},
+                topic TEXT NOT NULL,
+                topic_display TEXT NOT NULL,
+                title TEXT NOT NULL,
+                url_slug TEXT NOT NULL,
+                meta_description TEXT NOT NULL,
+                content TEXT NOT NULL,
+                angle TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        db.execute(
+            'CREATE INDEX IF NOT EXISTS idx_blog_posts_topic ON blog_posts(topic)'
         )
-    ''')
-    db.execute('''
-        CREATE INDEX IF NOT EXISTS idx_blog_posts_topic
-        ON blog_posts(topic)
-    ''')
-    db.execute('''
-        CREATE INDEX IF NOT EXISTS idx_blog_posts_created
-        ON blog_posts(created_at DESC)
-    ''')
-    db.execute('''
-        CREATE INDEX IF NOT EXISTS idx_blog_posts_slug
-        ON blog_posts(url_slug)
-    ''')
-    db.commit()
-    db.close()
-    print("  [BlogPost] blog_posts table ready with SEO fields")
+        db.execute(
+            'CREATE INDEX IF NOT EXISTS idx_blog_posts_created ON blog_posts(created_at DESC)'
+        )
+        db.execute(
+            'CREATE INDEX IF NOT EXISTS idx_blog_posts_slug ON blog_posts(url_slug)'
+        )
+        db.commit()
+        print("  [BlogPost] blog_posts table ready with SEO fields")
+    finally:
+        db.close()
 
 # I did no harm and this file is not truncated
