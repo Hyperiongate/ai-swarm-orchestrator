@@ -45,20 +45,22 @@ app.config['SESSION_TYPE'] = 'filesystem'
 
 # ============================================================================
 # STEP 1: RUN DATABASE MIGRATION FIRST — before anything else
-# This creates all tables in PostgreSQL (or SQLite for local dev).
-# Must run before init_db(), ProjectManager, and all blueprints.
 # ============================================================================
 print("=" * 60)
 print("🔄 STEP 1: Running database migration...")
 try:
-    from migrations.migration_001_initial_schema import run_migration
-    run_migration()
+    import importlib.util
+    import os as _os
+    _migration_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'migrations', 'migration_001_initial_schema.py')
+    _spec = importlib.util.spec_from_file_location("migration_001_initial_schema", _migration_path)
+    _migration_module = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_migration_module)
+    _migration_module.run_migration()
     print("✅ Database migration complete")
 except Exception as e:
     print(f"❌ CRITICAL: Database migration failed: {e}")
     import traceback
     traceback.print_exc()
-    # Continue startup — tables may already exist from a previous deploy
 print("=" * 60)
 
 # ============================================================================
