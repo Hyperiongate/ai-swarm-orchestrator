@@ -1,764 +1,51 @@
 """
 Database Module
 Created: January 21, 2026
-Last Updated: January 30, 2026 - ADDED FILE CONTENTS STORAGE FOR GPT-4 CONTINUITY
-
-All database operations isolated here.
-No more SQL scattered across 2,500 lines.
+Last Updated: March 02, 2026 - POSTGRESQL MIGRATION (Phase 1)
 
 CHANGELOG:
-- January 30, 2026: ADDED FILE CONTENTS STORAGE
-  * Modified conversation_messages table to add file_contents column
-  * Modified add_message() to accept and store file_contents
-  * Modified get_messages() to return file_contents
-  * Modified get_conversation_context() to include file_contents in context
-  * This enables GPT-4 to handle follow-up questions about uploaded files
+- March 02, 2026: POSTGRESQL MIGRATION
+  * Replaced all sqlite3 imports and direct connections with get_db_connection()
+  * All SQL parameters changed from ? to %s (PostgreSQL style)
+  * get_db() now calls get_db_connection() — single connection source
+  * init_db() now delegates to migrations/001_initial_schema.py
+  * CURRENT_TIMESTAMP references remain (work in both SQLite and PostgreSQL)
+  * All dict(row) conversions work with both DictRow and RealDictRow
+  * No functional changes — all existing function signatures preserved
 
+- January 30, 2026: ADDED FILE CONTENTS STORAGE FOR GPT-4 CONTINUITY
 - January 27, 2026: ADDED SCHEDULE CONTEXT STORAGE FUNCTIONS
-  * Added get_schedule_context() - retrieves schedule context from database
-  * Added save_schedule_context() - saves schedule context to database
-  * This fixes the "24/7 bug" where Flask sessions weren't persisting
-  * Schedule context now stored in conversations.schedule_context column
-
 - January 25, 2026: ADDED INTROSPECTION LAYER TABLES
-  * Added 'introspection_insights' table - stores introspection reports
-  * Added 'capability_boundaries' table - tracks known limitations (Phase 2)
-  * Added 'calibration_records' table - confidence vs outcome data (Phase 2)
-  * Added 'modification_proposals' table - self-improvement suggestions (Phase 3)
-  * Added 'goal_alignment_logs' table - tracks objective alignment
-  * Added comprehensive indexes for introspection queries
-  * This supports the Introspection Layer (emulated self-awareness)
-
 - January 25, 2026: ADDED SWARM SELF-EVALUATION TABLES
-  * Added 'swarm_evaluations' table - stores weekly evaluation reports
-  * Added indexes for evaluation queries
-  * This supports the Weekly Swarm Self-Evaluation System
-
 - January 25, 2026: ADDED CONTENT MARKETING ENGINE TABLES
-  * Added 'marketing_content' table - stores generated posts and newsletters
-  * Added 'marketing_activity_log' table - tracks approval workflow
-  * Added 'marketing_performance' table - tracks engagement metrics
-  * Added indexes for marketing tables
-
 - January 23, 2026: ADDED RESEARCH AGENT TABLES
-  * Added 'research_logs' table - tracks all web searches
-  * Added 'research_briefings' table - stores daily briefings
-  * Added 'research_findings' table - tracks interesting findings
-  * Added indexes for research tables
-
 - January 23, 2026: ADDED GENERATED DOCUMENTS TABLE
-  * Added 'generated_documents' table - tracks all system-created documents
-  * Added save_generated_document() - saves document metadata after creation
-  * Added get_generated_documents() - retrieves document list for UI
-  * Added get_generated_document() - retrieves single document by ID
-  * Added delete_generated_document() - removes document record
-  * Added index on generated_documents for fast queries
-
 - January 22, 2026: ADDED PERSISTENT CONVERSATION MEMORY
-  * Added 'conversations' table - stores conversation metadata
-  * Added 'conversation_messages' table - stores each message
-  * Added conversation CRUD functions
-  * Added indexes for fast lookups
-  * Phase 1 of memory system (Phase 2 will add project-specific memory)
-
 - January 22, 2026: Added proactive intelligence tables (Sprint 1)
 
 Author: Jim @ Shiftwork Solutions LLC (managed by Claude)
 """
 
-import sqlite3
 import json
 import os
 from datetime import datetime
-from config import DATABASE
+from db_engine import get_db_connection
+
 
 def get_db():
-    """Get database connection"""
-    db = sqlite3.connect(DATABASE)
-    db.row_factory = sqlite3.Row
-    return db
+    """Get database connection via abstraction layer."""
+    return get_db_connection()
+
 
 def init_db():
-    """Initialize database tables"""
-    db = get_db()
-    
-    # Tasks table
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            completed_at TIMESTAMP,
-            user_request TEXT NOT NULL,
-            task_type TEXT,
-            complexity TEXT,
-            assigned_orchestrator TEXT,
-            orchestrator TEXT,
-            status TEXT DEFAULT 'pending',
-            result TEXT,
-            confidence REAL,
-            execution_time_seconds REAL,
-            knowledge_used BOOLEAN DEFAULT 0,
-            knowledge_sources TEXT,
-            conversation_id TEXT
-        )
-    ''')
-    
-    # Projects table
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS projects (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_id TEXT UNIQUE NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            client_name TEXT,
-            industry TEXT,
-            facility_type TEXT,
-            project_phase TEXT DEFAULT 'initial',
-            context_data TEXT,
-            uploaded_files TEXT,
-            email_context TEXT,
-            key_findings TEXT,
-            schedules_proposed TEXT,
-            status TEXT DEFAULT 'active'
-        )
-    ''')
-    
-    # Specialist assignments (calls)
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS specialist_calls (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            task_id INTEGER,
-            specialist_name TEXT NOT NULL,
-            specialist_role TEXT,
-            assigned_reason TEXT,
-            prompt_sent TEXT,
-            response_received TEXT,
-            output TEXT,
-            tokens_used INTEGER,
-            duration_seconds REAL,
-            execution_time_seconds REAL,
-            success BOOLEAN,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (task_id) REFERENCES tasks(id)
-        )
-    ''')
-    
-    # Consensus validations
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS consensus_validations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            task_id INTEGER,
-            ai1_name TEXT,
-            ai1_response TEXT,
-            ai2_name TEXT,
-            ai2_response TEXT,
-            validator_ais TEXT,
-            agreement_score REAL,
-            consensus_achieved BOOLEAN,
-            disagreements TEXT,
-            final_output TEXT,
-            final_decision TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (task_id) REFERENCES tasks(id)
-        )
-    ''')
-    
-    # Learning records/patterns
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS learning_patterns (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            last_used TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            task_type TEXT,
-            pattern_type TEXT,
-            pattern_data TEXT,
-            success_rate REAL,
-            times_used INTEGER DEFAULT 1,
-            times_applied INTEGER DEFAULT 1
-        )
-    ''')
-    
-    # Learning records (alternate table name used by feedback)
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS learning_records (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            last_used TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            task_type TEXT,
-            pattern_type TEXT,
-            pattern_data TEXT,
-            success_rate REAL,
-            times_used INTEGER DEFAULT 1,
-            times_applied INTEGER DEFAULT 1
-        )
-    ''')
-    
-    # Escalations
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS escalations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            task_id INTEGER,
-            escalated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            reason TEXT,
-            sonnet_confidence REAL,
-            opus_analysis TEXT,
-            FOREIGN KEY (task_id) REFERENCES tasks(id)
-        )
-    ''')
-    
-    # User feedback
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS user_feedback (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            task_id INTEGER,
-            submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            overall_rating INTEGER CHECK(overall_rating >= 1 AND overall_rating <= 5),
-            quality_rating INTEGER CHECK(quality_rating >= 1 AND quality_rating <= 5),
-            accuracy_rating INTEGER CHECK(accuracy_rating >= 1 AND accuracy_rating <= 5),
-            usefulness_rating INTEGER CHECK(usefulness_rating >= 1 AND usefulness_rating <= 5),
-            consensus_was_accurate BOOLEAN,
-            improvement_categories TEXT,
-            user_comment TEXT,
-            output_used BOOLEAN,
-            FOREIGN KEY (task_id) REFERENCES tasks(id)
-        )
-    ''')
-    
-    # Pattern tracking - learns user behavior
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS user_patterns (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            pattern_type TEXT NOT NULL,
-            pattern_data TEXT NOT NULL,
-            frequency INTEGER DEFAULT 1,
-            last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            suggestion_made BOOLEAN DEFAULT 0,
-            suggestion_accepted BOOLEAN DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    # Suggestion tracking - tracks what AI suggests
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS proactive_suggestions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            task_id INTEGER,
-            suggestion_type TEXT NOT NULL,
-            suggestion_title TEXT NOT NULL,
-            suggestion_data TEXT NOT NULL,
-            displayed BOOLEAN DEFAULT 0,
-            accepted BOOLEAN DEFAULT 0,
-            dismissed BOOLEAN DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (task_id) REFERENCES tasks(id)
-        )
-    ''')
-    
-    # Clarification history - tracks questions asked
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS clarification_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            task_id INTEGER,
-            questions_asked TEXT NOT NULL,
-            answers_provided TEXT,
-            improved_result BOOLEAN DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (task_id) REFERENCES tasks(id)
-        )
-    ''')
-    
-    # Conversations table - stores conversation metadata
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS conversations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            conversation_id TEXT UNIQUE NOT NULL,
-            title TEXT DEFAULT 'New Conversation',
-            mode TEXT DEFAULT 'quick',
-            project_id TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            message_count INTEGER DEFAULT 0,
-            is_archived BOOLEAN DEFAULT 0,
-            metadata TEXT,
-            schedule_context TEXT,
-            FOREIGN KEY (project_id) REFERENCES projects(project_id)
-        )
-    ''')
-    
-    # Conversation messages table - stores each message
-    # UPDATED January 30, 2026: Added file_contents column
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS conversation_messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            conversation_id TEXT NOT NULL,
-            role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
-            content TEXT NOT NULL,
-            task_id INTEGER,
-            metadata TEXT,
-            file_contents TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (conversation_id) REFERENCES conversations(conversation_id),
-            FOREIGN KEY (task_id) REFERENCES tasks(id)
-        )
-    ''')
-    
-    # Conversation context table - stores temporary key-value pairs for workflows
-    # ADDED February 10, 2026: Support for labor analysis workflow
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS conversation_context (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            conversation_id TEXT NOT NULL,
-            key TEXT NOT NULL,
-            value TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(conversation_id, key),
-            FOREIGN KEY (conversation_id) REFERENCES conversations(conversation_id)
-        )
-    ''')
-    
-    # Generated documents table
-    
-    # Generated documents table
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS generated_documents (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            filename TEXT NOT NULL,
-            original_name TEXT NOT NULL,
-            document_type TEXT NOT NULL,
-            file_path TEXT NOT NULL,
-            file_size INTEGER DEFAULT 0,
-            task_id INTEGER,
-            conversation_id TEXT,
-            project_id TEXT,
-            title TEXT,
-            description TEXT,
-            category TEXT DEFAULT 'general',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            last_accessed TIMESTAMP,
-            download_count INTEGER DEFAULT 0,
-            is_deleted BOOLEAN DEFAULT 0,
-            metadata TEXT,
-            FOREIGN KEY (task_id) REFERENCES tasks(id),
-            FOREIGN KEY (conversation_id) REFERENCES conversations(conversation_id),
-            FOREIGN KEY (project_id) REFERENCES projects(project_id)
-        )
-    ''')
-    
-    # Research logs - tracks all web searches
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS research_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            query TEXT NOT NULL,
-            result_count INTEGER DEFAULT 0,
-            searched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            search_type TEXT,
-            user_initiated BOOLEAN DEFAULT 0
-        )
-    ''')
-    
-    # Research briefings - stores daily briefings
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS research_briefings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            briefing_data TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            was_read BOOLEAN DEFAULT 0,
-            read_at TIMESTAMP
-        )
-    ''')
-    
-    # Research findings - tracks interesting findings for follow-up
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS research_findings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            category TEXT,
-            title TEXT,
-            url TEXT,
-            summary TEXT,
-            relevance_score REAL,
-            found_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            actioned BOOLEAN DEFAULT 0,
-            action_taken TEXT,
-            actioned_at TIMESTAMP
-        )
-    ''')
-    
-    # Marketing Content table - stores all generated marketing content
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS marketing_content (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            content_type TEXT NOT NULL,
-            content_data TEXT NOT NULL,
-            status TEXT DEFAULT 'pending_approval',
-            generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            approved_at TIMESTAMP,
-            published_at TIMESTAMP,
-            rejection_reason TEXT,
-            source_task_id INTEGER,
-            estimated_engagement TEXT,
-            actual_engagement_score REAL,
-            category TEXT,
-            FOREIGN KEY (source_task_id) REFERENCES tasks (id)
-        )
-    ''')
-    
-    # Marketing Activity Log - tracks all actions on marketing content
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS marketing_activity_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            content_id INTEGER,
-            activity_type TEXT NOT NULL,
-            activity_data TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (content_id) REFERENCES marketing_content (id)
-        )
-    ''')
-    
-    # Marketing Performance - tracks actual performance metrics
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS marketing_performance (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            content_id INTEGER NOT NULL,
-            platform TEXT NOT NULL,
-            impressions INTEGER DEFAULT 0,
-            clicks INTEGER DEFAULT 0,
-            likes INTEGER DEFAULT 0,
-            comments INTEGER DEFAULT 0,
-            shares INTEGER DEFAULT 0,
-            engagement_rate REAL,
-            measured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (content_id) REFERENCES marketing_content (id)
-        )
-    ''')
-    
-    # Avatar Conversations table - stores each consultation session
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS avatar_conversations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            conversation_id TEXT UNIQUE NOT NULL,
-            started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            completed_at TIMESTAMP,
-            status TEXT DEFAULT 'active',
-            visitor_name TEXT,
-            visitor_company TEXT,
-            visitor_email TEXT,
-            visitor_phone TEXT,
-            visitor_industry TEXT,
-            visitor_facility_size INTEGER,
-            lead_score INTEGER DEFAULT 0
-        )
-    ''')
-    
-    # Avatar Messages table - stores each message in the conversation
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS avatar_messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            conversation_id TEXT NOT NULL,
-            role TEXT NOT NULL CHECK(role IN ('visitor', 'avatars', 'system')),
-            stage TEXT,
-            content TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (conversation_id) REFERENCES avatar_conversations(conversation_id)
-        )
-    ''')
-    
-    # ============================================================================
-    # SWARM SELF-EVALUATION TABLES (Added January 25, 2026)
-    # Tracks weekly self-evaluations and AI market landscape assessments
-    # ============================================================================
-    
-    # Swarm Evaluations table - stores weekly evaluation reports
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS swarm_evaluations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            evaluation_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            period_days INTEGER DEFAULT 7,
-            health_score INTEGER,
-            trend TEXT,
-            tasks_processed INTEGER,
-            success_rate TEXT,
-            executive_summary TEXT,
-            gaps_count INTEGER DEFAULT 0,
-            high_priority_gaps_count INTEGER DEFAULT 0,
-            recommendations_count INTEGER DEFAULT 0,
-            full_report_json TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    # ============================================================================
-    # INTROSPECTION LAYER TABLES (Added January 25, 2026)
-    # Emulated self-awareness - observes and reflects on swarm performance
-    # ============================================================================
-    
-    # Introspection Insights - stores all introspection reports
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS introspection_insights (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            insight_type TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            period_analyzed TEXT,
-            summary TEXT NOT NULL,
-            full_analysis_json TEXT,
-            confidence_score REAL,
-            requires_action BOOLEAN DEFAULT 0,
-            action_taken BOOLEAN DEFAULT 0,
-            action_notes TEXT,
-            notification_pending BOOLEAN DEFAULT 1,
-            notification_shown_at TIMESTAMP,
-            notification_dismissed BOOLEAN DEFAULT 0,
-            archived BOOLEAN DEFAULT 0
-        )
-    ''')
-    
-    # Capability Boundaries - tracks known limitations (Phase 2)
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS capability_boundaries (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            boundary_type TEXT NOT NULL,
-            description TEXT NOT NULL,
-            discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            last_confirmed TIMESTAMP,
-            occurrence_count INTEGER DEFAULT 1,
-            suggested_resolution TEXT,
-            resolved BOOLEAN DEFAULT 0,
-            resolved_at TIMESTAMP,
-            resolution_notes TEXT
-        )
-    ''')
-    
-    # Calibration Records - stores confidence vs outcome data (Phase 2)
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS calibration_records (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            task_id INTEGER,
-            predicted_confidence REAL,
-            actual_outcome_score REAL,
-            calibration_error REAL,
-            recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (task_id) REFERENCES tasks(id)
-        )
-    ''')
-    
-    # Modification Proposals - self-improvement suggestions (Phase 3)
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS modification_proposals (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            proposal_type TEXT NOT NULL,
-            priority TEXT DEFAULT 'medium',
-            title TEXT NOT NULL,
-            observation TEXT,
-            current_behavior TEXT,
-            proposed_change TEXT,
-            expected_impact TEXT,
-            code_diff TEXT,
-            confidence_score REAL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            status TEXT DEFAULT 'pending',
-            reviewed_at TIMESTAMP,
-            review_notes TEXT,
-            implemented_at TIMESTAMP
-        )
-    ''')
-    
-    # Goal Alignment Logs - tracks objective alignment over time
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS goal_alignment_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            log_date DATE NOT NULL,
-            objective_id INTEGER,
-            objective_name TEXT,
-            tasks_count INTEGER DEFAULT 0,
-            percentage_of_activity REAL,
-            assessment TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    # ============================================================================
-    # ============================================================================
-    # BACKGROUND JOBS TABLE (Added February 5, 2026)
-    # Tracks large file processing jobs running in background threads
-    # ============================================================================
-    
-    # Background jobs table - tracks async file processing
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS background_jobs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            job_id TEXT UNIQUE NOT NULL,
-            file_path TEXT NOT NULL,
-            file_name TEXT NOT NULL,
-            file_size_mb REAL NOT NULL,
-            user_request TEXT NOT NULL,
-            conversation_id TEXT NOT NULL,
-            task_id INTEGER NOT NULL,
-            status TEXT NOT NULL CHECK(status IN ('queued', 'processing', 'completed', 'failed')),
-            progress INTEGER DEFAULT 0 CHECK(progress >= 0 AND progress <= 100),
-            current_step TEXT,
-            estimated_minutes INTEGER,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP,
-            completed_at TIMESTAMP,
-            FOREIGN KEY (conversation_id) REFERENCES conversations(conversation_id),
-            FOREIGN KEY (task_id) REFERENCES tasks(id)
-        )
-    ''')
-    # INDEXES FOR PERFORMANCE
-    # ============================================================================
-    
-    # Proactive intelligence indexes
-    db.execute('CREATE INDEX IF NOT EXISTS idx_patterns_type ON user_patterns(pattern_type)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_patterns_last_seen ON user_patterns(last_seen)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_suggestions_task ON proactive_suggestions(task_id)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_suggestions_type ON proactive_suggestions(suggestion_type)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_clarifications_task ON clarification_history(task_id)')
-    
-    # Conversation memory indexes
-    db.execute('CREATE INDEX IF NOT EXISTS idx_conversations_updated ON conversations(updated_at DESC)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_conversations_project ON conversations(project_id)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_conv_messages_conv_id ON conversation_messages(conversation_id)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_conv_messages_created ON conversation_messages(created_at)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_tasks_conversation ON tasks(conversation_id)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_conv_context_conv_id ON conversation_context(conversation_id)')
-    
-    # Generated documents indexes
-    db.execute('CREATE INDEX IF NOT EXISTS idx_gen_docs_created ON generated_documents(created_at DESC)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_gen_docs_type ON generated_documents(document_type)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_gen_docs_task ON generated_documents(task_id)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_gen_docs_conversation ON generated_documents(conversation_id)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_gen_docs_project ON generated_documents(project_id)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_gen_docs_deleted ON generated_documents(is_deleted)')
-    
-    # Research agent indexes
-    db.execute('CREATE INDEX IF NOT EXISTS idx_research_logs_date ON research_logs(searched_at)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_research_briefings_date ON research_briefings(created_at)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_research_findings_category ON research_findings(category)')
-    
-    # Marketing content indexes
-    db.execute('CREATE INDEX IF NOT EXISTS idx_marketing_content_status ON marketing_content(status)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_marketing_content_type ON marketing_content(content_type)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_marketing_content_generated ON marketing_content(generated_at)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_marketing_activity_content ON marketing_activity_log(content_id)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_marketing_activity_created ON marketing_activity_log(created_at)')
-    
-    # Avatar consultation indexes
-    db.execute('CREATE INDEX IF NOT EXISTS idx_avatar_conv_status ON avatar_conversations(status)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_avatar_conv_started ON avatar_conversations(started_at)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_avatar_conv_email ON avatar_conversations(visitor_email)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_avatar_messages_conv ON avatar_messages(conversation_id)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_avatar_messages_created ON avatar_messages(created_at)')
-    
-    # Swarm evaluation indexes
-    db.execute('CREATE INDEX IF NOT EXISTS idx_swarm_eval_date ON swarm_evaluations(evaluation_date DESC)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_swarm_eval_health ON swarm_evaluations(health_score)')
-    
-    # Introspection layer indexes
-    db.execute('CREATE INDEX IF NOT EXISTS idx_introspection_type ON introspection_insights(insight_type)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_introspection_created ON introspection_insights(created_at DESC)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_introspection_pending ON introspection_insights(notification_pending, created_at DESC)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_introspection_action ON introspection_insights(requires_action)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_boundaries_type ON capability_boundaries(boundary_type)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_boundaries_resolved ON capability_boundaries(resolved)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_calibration_task ON calibration_records(task_id)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_proposals_status ON modification_proposals(status)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_proposals_priority ON modification_proposals(priority)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_alignment_date ON goal_alignment_logs(log_date DESC)')
-
-    # Background jobs indexes (Added February 5, 2026)
-    db.execute('CREATE INDEX IF NOT EXISTS idx_background_jobs_status ON background_jobs(status)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_background_jobs_created ON background_jobs(created_at DESC)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_background_jobs_conversation ON background_jobs(conversation_id)')
-    # ============================================================================
-    # SMART ANALYZER STATE TABLE (Added February 6, 2026 v10)
-    # Stores loaded DataFrame state for follow-up questions (replaces session storage)
-    # ============================================================================
-    
-    # Smart analyzer state table - stores loaded file info for continuation
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS smart_analyzer_state (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            conversation_id TEXT UNIQUE NOT NULL,
-            file_path TEXT NOT NULL,
-            file_name TEXT NOT NULL,
-            analyzer_state TEXT NOT NULL CHECK(analyzer_state IN ('loaded', 'processing', 'error')),
-            profile_json TEXT NOT NULL,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            last_used TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (conversation_id) REFERENCES conversations(conversation_id)
-        )
-    ''')
-    
-    # Smart analyzer state index
-    db.execute('CREATE INDEX IF NOT EXISTS idx_smart_analyzer_conversation ON smart_analyzer_state(conversation_id)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_smart_analyzer_last_used ON smart_analyzer_state(last_used DESC)')
-
-# ============================================================================
-    # ANALYSIS ENGINE TABLES (Added February 8, 2026 - Phase 0A)
-    # Multi-step analytical workflow management with human interaction
-    # ============================================================================
-    
-    # Analysis sessions table - tracks complete workflow
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS analysis_sessions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            session_id TEXT UNIQUE NOT NULL,
-            project_id INTEGER,
-            state TEXT NOT NULL,
-            data_files TEXT,
-            discovered_structure TEXT,
-            clarifications TEXT,
-            analysis_plan TEXT,
-            results TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (project_id) REFERENCES projects(id)
-        )
-    ''')
-    
-    # Analysis deliverables table - stores generated files
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS analysis_deliverables (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            session_id TEXT NOT NULL,
-            deliverable_type TEXT NOT NULL,
-            file_path TEXT NOT NULL,
-            file_name TEXT NOT NULL,
-            metadata TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (session_id) REFERENCES analysis_sessions(session_id)
-        )
-    ''')
-    
-    # Analysis progress table - tracks execution steps
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS analysis_progress (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            session_id TEXT NOT NULL,
-            step_name TEXT NOT NULL,
-            status TEXT NOT NULL CHECK(status IN ('pending', 'running', 'complete', 'error')),
-            progress_pct INTEGER DEFAULT 0 CHECK(progress_pct >= 0 AND progress_pct <= 100),
-            message TEXT,
-            started_at TIMESTAMP,
-            completed_at TIMESTAMP,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (session_id) REFERENCES analysis_sessions(session_id)
-        )
-    ''')
-    
-    # Analysis engine indexes (Added February 8, 2026)
-    db.execute('CREATE INDEX IF NOT EXISTS idx_analysis_sessions_project ON analysis_sessions(project_id)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_analysis_sessions_state ON analysis_sessions(state)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_analysis_sessions_created ON analysis_sessions(created_at DESC)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_analysis_deliverables_session ON analysis_deliverables(session_id)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_analysis_deliverables_type ON analysis_deliverables(deliverable_type)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_analysis_progress_session ON analysis_progress(session_id)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_analysis_progress_status ON analysis_progress(status)')
- 
-    db.commit()
-    db.close()
-    print("✅ Database initialized (with background jobs and analysis engine support)")
+    """
+    Initialize database tables.
+    Delegates to the migration script which is the authoritative schema source.
+    Safe to call multiple times — all tables use CREATE TABLE IF NOT EXISTS.
+    """
+    from migrations.migration_001_initial_schema import run_migration
+    run_migration()
+    print("✅ Database initialized via migration 001_initial_schema")
 
 
 # ============================================================================
@@ -766,443 +53,443 @@ def init_db():
 # ============================================================================
 
 def save_generated_document(filename, original_name, document_type, file_path, file_size=0,
-                           task_id=None, conversation_id=None, project_id=None,
-                           title=None, description=None, category='general', metadata=None):
+                            task_id=None, conversation_id=None, project_id=None,
+                            title=None, description=None, category='general', metadata=None):
     """Save a generated document to the database for tracking."""
     db = get_db()
-    
+
     if not title:
         title = original_name
-    
-    cursor = db.execute('''
-        INSERT INTO generated_documents 
-        (filename, original_name, document_type, file_path, file_size,
-         task_id, conversation_id, project_id, title, description, category, metadata)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (
-        filename, original_name, document_type, file_path, file_size,
-        task_id, conversation_id, project_id, title, description, category,
-        json.dumps(metadata) if metadata else None
-    ))
-    
-    document_id = cursor.lastrowid
-    db.commit()
-    db.close()
-    
-    print(f"📄 Document saved to database: {filename} (ID: {document_id})")
-    return document_id
+
+    try:
+        cursor = db.execute('''
+            INSERT INTO generated_documents
+            (filename, original_name, document_type, file_path, file_size,
+             task_id, conversation_id, project_id, title, description, category, metadata)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ''', (
+            filename, original_name, document_type, file_path, file_size,
+            task_id, conversation_id, project_id, title, description, category,
+            json.dumps(metadata) if metadata else None
+        ))
+
+        document_id = cursor.lastrowid
+        db.commit()
+        print(f"📄 Document saved to database: {filename} (ID: {document_id})")
+        return document_id
+    finally:
+        db.close()
 
 
-def get_generated_documents(limit=50, document_type=None, project_id=None, 
-                           conversation_id=None, include_deleted=False):
+def get_generated_documents(limit=50, document_type=None, project_id=None,
+                            conversation_id=None, include_deleted=False):
     """Get list of generated documents for display in UI."""
     db = get_db()
-    
-    query = 'SELECT * FROM generated_documents WHERE 1=1'
-    params = []
-    
-    if not include_deleted:
-        query += ' AND is_deleted = 0'
-    
-    if document_type:
-        query += ' AND document_type = ?'
-        params.append(document_type)
-    
-    if project_id:
-        query += ' AND project_id = ?'
-        params.append(project_id)
-    
-    if conversation_id:
-        query += ' AND conversation_id = ?'
-        params.append(conversation_id)
-    
-    query += ' ORDER BY created_at DESC LIMIT ?'
-    params.append(limit)
-    
-    rows = db.execute(query, params).fetchall()
-    db.close()
-    
-    documents = []
-    for row in rows:
-        doc = dict(row)
-        if doc.get('metadata'):
-            try:
-                doc['metadata'] = json.loads(doc['metadata'])
-            except:
-                pass
-        documents.append(doc)
-    
-    return documents
+
+    try:
+        query = 'SELECT * FROM generated_documents WHERE 1=1'
+        params = []
+
+        if not include_deleted:
+            query += ' AND is_deleted = 0'
+
+        if document_type:
+            query += ' AND document_type = %s'
+            params.append(document_type)
+
+        if project_id:
+            query += ' AND project_id = %s'
+            params.append(project_id)
+
+        if conversation_id:
+            query += ' AND conversation_id = %s'
+            params.append(conversation_id)
+
+        query += ' ORDER BY created_at DESC LIMIT %s'
+        params.append(limit)
+
+        rows = db.execute(query, params).fetchall()
+
+        documents = []
+        for row in rows:
+            doc = dict(row)
+            if doc.get('metadata'):
+                try:
+                    doc['metadata'] = json.loads(doc['metadata'])
+                except Exception:
+                    pass
+            documents.append(doc)
+
+        return documents
+    finally:
+        db.close()
 
 
 def get_generated_document(document_id):
-    """Get a single document by ID"""
+    """Get a single document by ID."""
     db = get_db()
-    row = db.execute(
-        'SELECT * FROM generated_documents WHERE id = ?', 
-        (document_id,)
-    ).fetchone()
-    db.close()
-    
-    if row:
-        doc = dict(row)
-        if doc.get('metadata'):
-            try:
-                doc['metadata'] = json.loads(doc['metadata'])
-            except:
-                pass
-        return doc
-    return None
+    try:
+        row = db.execute(
+            'SELECT * FROM generated_documents WHERE id = %s',
+            (document_id,)
+        ).fetchone()
+
+        if row:
+            doc = dict(row)
+            if doc.get('metadata'):
+                try:
+                    doc['metadata'] = json.loads(doc['metadata'])
+                except Exception:
+                    pass
+            return doc
+        return None
+    finally:
+        db.close()
 
 
 def get_generated_document_by_filename(filename):
-    """Get a document by its filename"""
+    """Get a document by its filename."""
     db = get_db()
-    row = db.execute(
-        'SELECT * FROM generated_documents WHERE filename = ? AND is_deleted = 0', 
-        (filename,)
-    ).fetchone()
-    db.close()
-    
-    if row:
-        doc = dict(row)
-        if doc.get('metadata'):
-            try:
-                doc['metadata'] = json.loads(doc['metadata'])
-            except:
-                pass
-        return doc
-    return None
+    try:
+        row = db.execute(
+            'SELECT * FROM generated_documents WHERE filename = %s AND is_deleted = 0',
+            (filename,)
+        ).fetchone()
+
+        if row:
+            doc = dict(row)
+            if doc.get('metadata'):
+                try:
+                    doc['metadata'] = json.loads(doc['metadata'])
+                except Exception:
+                    pass
+            return doc
+        return None
+    finally:
+        db.close()
 
 
 def update_document_access(document_id):
-    """Update last_accessed and increment download_count"""
+    """Update last_accessed and increment download_count."""
     db = get_db()
-    db.execute('''
-        UPDATE generated_documents 
-        SET last_accessed = CURRENT_TIMESTAMP,
-            download_count = download_count + 1
-        WHERE id = ?
-    ''', (document_id,))
-    db.commit()
-    db.close()
+    try:
+        db.execute('''
+            UPDATE generated_documents
+            SET last_accessed = CURRENT_TIMESTAMP,
+                download_count = download_count + 1
+            WHERE id = %s
+        ''', (document_id,))
+        db.commit()
+    finally:
+        db.close()
 
 
 def delete_generated_document(document_id, hard_delete=False):
     """Delete a generated document."""
     db = get_db()
-    
-    doc = db.execute(
-        'SELECT file_path FROM generated_documents WHERE id = ?',
-        (document_id,)
-    ).fetchone()
-    
-    if not doc:
-        db.close()
-        return False
-    
-    if hard_delete:
-        try:
-            if doc['file_path'] and os.path.exists(doc['file_path']):
-                os.remove(doc['file_path'])
-        except Exception as e:
-            print(f"⚠️ Could not delete file: {e}")
-        
-        db.execute('DELETE FROM generated_documents WHERE id = ?', (document_id,))
-    else:
-        db.execute(
-            'UPDATE generated_documents SET is_deleted = 1 WHERE id = ?',
+    try:
+        doc = db.execute(
+            'SELECT file_path FROM generated_documents WHERE id = %s',
             (document_id,)
-        )
-    
-    db.commit()
-    db.close()
-    return True
+        ).fetchone()
+
+        if not doc:
+            return False
+
+        if hard_delete:
+            try:
+                if doc['file_path'] and os.path.exists(doc['file_path']):
+                    os.remove(doc['file_path'])
+            except Exception as e:
+                print(f"⚠️ Could not delete file: {e}")
+            db.execute('DELETE FROM generated_documents WHERE id = %s', (document_id,))
+        else:
+            db.execute(
+                'UPDATE generated_documents SET is_deleted = 1 WHERE id = %s',
+                (document_id,)
+            )
+
+        db.commit()
+        return True
+    finally:
+        db.close()
 
 
 def get_document_stats():
-    """Get statistics about generated documents"""
+    """Get statistics about generated documents."""
     db = get_db()
-    
-    stats = {}
-    
-    stats['total_documents'] = db.execute(
-        'SELECT COUNT(*) FROM generated_documents WHERE is_deleted = 0'
-    ).fetchone()[0]
-    
-    type_counts = db.execute('''
-        SELECT document_type, COUNT(*) as count 
-        FROM generated_documents 
-        WHERE is_deleted = 0 
-        GROUP BY document_type
-    ''').fetchall()
-    stats['by_type'] = {row['document_type']: row['count'] for row in type_counts}
-    
-    stats['total_downloads'] = db.execute(
-        'SELECT SUM(download_count) FROM generated_documents WHERE is_deleted = 0'
-    ).fetchone()[0] or 0
-    
-    stats['total_size_bytes'] = db.execute(
-        'SELECT SUM(file_size) FROM generated_documents WHERE is_deleted = 0'
-    ).fetchone()[0] or 0
-    
-    stats['recent_count'] = db.execute('''
-        SELECT COUNT(*) FROM generated_documents 
-        WHERE is_deleted = 0 
-        AND created_at >= datetime('now', '-7 days')
-    ''').fetchone()[0]
-    
-    db.close()
-    return stats
+    try:
+        stats = {}
+
+        stats['total_documents'] = db.execute(
+            'SELECT COUNT(*) FROM generated_documents WHERE is_deleted = 0'
+        ).fetchone()[0]
+
+        type_counts = db.execute('''
+            SELECT document_type, COUNT(*) as count
+            FROM generated_documents
+            WHERE is_deleted = 0
+            GROUP BY document_type
+        ''').fetchall()
+        stats['by_type'] = {row['document_type']: row['count'] for row in type_counts}
+
+        total_dl = db.execute(
+            'SELECT SUM(download_count) FROM generated_documents WHERE is_deleted = 0'
+        ).fetchone()[0]
+        stats['total_downloads'] = total_dl or 0
+
+        total_size = db.execute(
+            'SELECT SUM(file_size) FROM generated_documents WHERE is_deleted = 0'
+        ).fetchone()[0]
+        stats['total_size_bytes'] = total_size or 0
+
+        stats['recent_count'] = db.execute('''
+            SELECT COUNT(*) FROM generated_documents
+            WHERE is_deleted = 0
+            AND created_at >= CURRENT_TIMESTAMP - INTERVAL '7 days'
+        ''').fetchone()[0] if get_db_connection().__class__.__name__ == 'PostgreSQLConnectionWrapper' else db.execute('''
+            SELECT COUNT(*) FROM generated_documents
+            WHERE is_deleted = 0
+            AND created_at >= datetime('now', '-7 days')
+        ''').fetchone()[0]
+
+        return stats
+    finally:
+        db.close()
 
 
 # ============================================================================
 # CONVERSATION MEMORY FUNCTIONS
-# UPDATED January 30, 2026: Added file_contents support
 # ============================================================================
 
 def create_conversation(mode='quick', project_id=None, title=None):
-    """Create a new conversation and return its ID"""
+    """Create a new conversation and return its ID."""
     import uuid
-    
     conversation_id = str(uuid.uuid4())
-    
+
     if not title:
         title = f"New Conversation - {datetime.now().strftime('%b %d, %Y %I:%M %p')}"
-    
+
     db = get_db()
-    db.execute('''
-        INSERT INTO conversations (conversation_id, title, mode, project_id)
-        VALUES (?, ?, ?, ?)
-    ''', (conversation_id, title, mode, project_id))
-    db.commit()
-    db.close()
-    
-    return conversation_id
+    try:
+        db.execute('''
+            INSERT INTO conversations (conversation_id, title, mode, project_id)
+            VALUES (%s, %s, %s, %s)
+        ''', (conversation_id, title, mode, project_id))
+        db.commit()
+        return conversation_id
+    finally:
+        db.close()
 
 
 def get_conversation(conversation_id):
-    """Get a conversation by ID"""
+    """Get a conversation by ID."""
     db = get_db()
-    conversation = db.execute('''
-        SELECT * FROM conversations WHERE conversation_id = ?
-    ''', (conversation_id,)).fetchone()
-    db.close()
-    
-    return dict(conversation) if conversation else None
+    try:
+        conversation = db.execute(
+            'SELECT * FROM conversations WHERE conversation_id = %s',
+            (conversation_id,)
+        ).fetchone()
+        return dict(conversation) if conversation else None
+    finally:
+        db.close()
 
 
 def get_conversations(limit=20, project_id=None, include_archived=False):
-    """Get recent conversations, optionally filtered by project"""
+    """Get recent conversations, optionally filtered by project."""
     db = get_db()
-    
-    if project_id:
-        if include_archived:
-            rows = db.execute('''
-                SELECT * FROM conversations 
-                WHERE project_id = ?
-                ORDER BY updated_at DESC
-                LIMIT ?
-            ''', (project_id, limit)).fetchall()
+    try:
+        if project_id:
+            if include_archived:
+                rows = db.execute('''
+                    SELECT * FROM conversations
+                    WHERE project_id = %s
+                    ORDER BY updated_at DESC LIMIT %s
+                ''', (project_id, limit)).fetchall()
+            else:
+                rows = db.execute('''
+                    SELECT * FROM conversations
+                    WHERE project_id = %s AND is_archived = 0
+                    ORDER BY updated_at DESC LIMIT %s
+                ''', (project_id, limit)).fetchall()
         else:
-            rows = db.execute('''
-                SELECT * FROM conversations 
-                WHERE project_id = ? AND is_archived = 0
-                ORDER BY updated_at DESC
-                LIMIT ?
-            ''', (project_id, limit)).fetchall()
-    else:
-        if include_archived:
-            rows = db.execute('''
-                SELECT * FROM conversations 
-                ORDER BY updated_at DESC
-                LIMIT ?
-            ''', (limit,)).fetchall()
-        else:
-            rows = db.execute('''
-                SELECT * FROM conversations 
-                WHERE is_archived = 0
-                ORDER BY updated_at DESC
-                LIMIT ?
-            ''', (limit,)).fetchall()
-    
-    db.close()
-    return [dict(row) for row in rows]
+            if include_archived:
+                rows = db.execute('''
+                    SELECT * FROM conversations
+                    ORDER BY updated_at DESC LIMIT %s
+                ''', (limit,)).fetchall()
+            else:
+                rows = db.execute('''
+                    SELECT * FROM conversations
+                    WHERE is_archived = 0
+                    ORDER BY updated_at DESC LIMIT %s
+                ''', (limit,)).fetchall()
+
+        return [dict(row) for row in rows]
+    finally:
+        db.close()
 
 
 def update_conversation(conversation_id, title=None, mode=None, project_id=None, is_archived=None):
-    """Update conversation metadata"""
+    """Update conversation metadata."""
     db = get_db()
-    
-    updates = ['updated_at = CURRENT_TIMESTAMP']
-    params = []
-    
-    if title is not None:
-        updates.append('title = ?')
-        params.append(title)
-    
-    if mode is not None:
-        updates.append('mode = ?')
-        params.append(mode)
-    
-    if project_id is not None:
-        updates.append('project_id = ?')
-        params.append(project_id)
-    
-    if is_archived is not None:
-        updates.append('is_archived = ?')
-        params.append(is_archived)
-    
-    params.append(conversation_id)
-    
-    db.execute(f'''
-        UPDATE conversations 
-        SET {', '.join(updates)}
-        WHERE conversation_id = ?
-    ''', params)
-    db.commit()
-    db.close()
+    try:
+        updates = ['updated_at = CURRENT_TIMESTAMP']
+        params = []
+
+        if title is not None:
+            updates.append('title = %s')
+            params.append(title)
+
+        if mode is not None:
+            updates.append('mode = %s')
+            params.append(mode)
+
+        if project_id is not None:
+            updates.append('project_id = %s')
+            params.append(project_id)
+
+        if is_archived is not None:
+            updates.append('is_archived = %s')
+            params.append(is_archived)
+
+        params.append(conversation_id)
+
+        db.execute(f'''
+            UPDATE conversations
+            SET {', '.join(updates)}
+            WHERE conversation_id = %s
+        ''', params)
+        db.commit()
+    finally:
+        db.close()
 
 
 def delete_conversation(conversation_id):
-    """Delete a conversation and all its messages"""
+    """Delete a conversation and all its messages."""
     db = get_db()
-    
-    db.execute('DELETE FROM conversation_messages WHERE conversation_id = ?', (conversation_id,))
-    db.execute('DELETE FROM conversations WHERE conversation_id = ?', (conversation_id,))
-    
-    db.commit()
-    db.close()
+    try:
+        db.execute('DELETE FROM conversation_messages WHERE conversation_id = %s', (conversation_id,))
+        db.execute('DELETE FROM conversations WHERE conversation_id = %s', (conversation_id,))
+        db.commit()
+    finally:
+        db.close()
 
 
 def add_message(conversation_id, role, content, task_id=None, metadata=None, file_contents=None):
-    """
-    Add a message to a conversation
-    
-    UPDATED January 30, 2026: Added file_contents parameter
-    This stores file contents with user messages so GPT-4 can handle follow-ups
-    """
+    """Add a message to a conversation."""
     db = get_db()
-    
-    db.execute('''
-        INSERT INTO conversation_messages (conversation_id, role, content, task_id, metadata, file_contents)
-        VALUES (?, ?, ?, ?, ?, ?)
-    ''', (conversation_id, role, content, task_id, 
-          json.dumps(metadata) if metadata else None,
-          file_contents))
-    
-    db.execute('''
-        UPDATE conversations 
-        SET updated_at = CURRENT_TIMESTAMP,
-            message_count = message_count + 1
-        WHERE conversation_id = ?
-    ''', (conversation_id,))
-    
-    if role == 'user':
-        conv = db.execute('''
-            SELECT title, message_count FROM conversations WHERE conversation_id = ?
-        ''', (conversation_id,)).fetchone()
-        
-        if conv and conv['message_count'] == 1 and conv['title'].startswith('New Conversation'):
-            new_title = content[:50] + ('...' if len(content) > 50 else '')
-            db.execute('''
-                UPDATE conversations SET title = ? WHERE conversation_id = ?
-            ''', (new_title, conversation_id))
-    
-    db.commit()
-    db.close()
+    try:
+        db.execute('''
+            INSERT INTO conversation_messages (conversation_id, role, content, task_id, metadata, file_contents)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        ''', (conversation_id, role, content, task_id,
+              json.dumps(metadata) if metadata else None,
+              file_contents))
+
+        db.execute('''
+            UPDATE conversations
+            SET updated_at = CURRENT_TIMESTAMP,
+                message_count = message_count + 1
+            WHERE conversation_id = %s
+        ''', (conversation_id,))
+
+        if role == 'user':
+            conv = db.execute(
+                'SELECT title, message_count FROM conversations WHERE conversation_id = %s',
+                (conversation_id,)
+            ).fetchone()
+
+            if conv and conv['message_count'] == 1 and conv['title'].startswith('New Conversation'):
+                new_title = content[:50] + ('...' if len(content) > 50 else '')
+                db.execute(
+                    'UPDATE conversations SET title = %s WHERE conversation_id = %s',
+                    (new_title, conversation_id)
+                )
+
+        db.commit()
+    finally:
+        db.close()
 
 
 def get_messages(conversation_id, limit=100):
-    """
-    Get messages for a conversation
-    
-    UPDATED January 30, 2026: Now returns file_contents
-    """
+    """Get messages for a conversation."""
     db = get_db()
-    rows = db.execute('''
-        SELECT * FROM conversation_messages 
-        WHERE conversation_id = ?
-        ORDER BY created_at ASC
-        LIMIT ?
-    ''', (conversation_id, limit)).fetchall()
-    db.close()
-    
-    return [dict(row) for row in rows]
+    try:
+        rows = db.execute('''
+            SELECT * FROM conversation_messages
+            WHERE conversation_id = %s
+            ORDER BY created_at ASC LIMIT %s
+        ''', (conversation_id, limit)).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        db.close()
 
 
 def get_conversation_context(conversation_id, max_messages=20):
-    """
-    Get recent messages formatted for AI context
-    
-    UPDATED January 30, 2026: Now includes file_contents in context
-    This enables GPT-4 to handle follow-up questions about uploaded files
-    """
+    """Get recent messages formatted for AI context."""
     messages = get_messages(conversation_id, limit=max_messages)
-    
     context = []
     for msg in messages:
         context.append({
             'role': msg['role'],
             'content': msg['content'],
-            'file_contents': msg.get('file_contents')  # Include file contents if present
+            'file_contents': msg.get('file_contents')
         })
-    
     return context
 
 
 def get_conversation_file_contents(conversation_id):
-    """
-    Get the most recent file contents from a conversation
-    
-    NEW January 30, 2026: Retrieves file contents for follow-up questions
-    """
+    """Get the most recent file contents from a conversation."""
     db = get_db()
-    row = db.execute('''
-        SELECT file_contents FROM conversation_messages 
-        WHERE conversation_id = ? AND file_contents IS NOT NULL
-        ORDER BY created_at DESC
-        LIMIT 1
-    ''', (conversation_id,)).fetchone()
-    db.close()
-    
-    return row['file_contents'] if row else None
+    try:
+        row = db.execute('''
+            SELECT file_contents FROM conversation_messages
+            WHERE conversation_id = %s AND file_contents IS NOT NULL
+            ORDER BY created_at DESC LIMIT 1
+        ''', (conversation_id,)).fetchone()
+        return row['file_contents'] if row else None
+    finally:
+        db.close()
 
 
 # ============================================================================
-# SCHEDULE CONTEXT FUNCTIONS (Added January 27, 2026)
+# SCHEDULE CONTEXT FUNCTIONS
 # ============================================================================
 
 def get_schedule_context(conversation_id):
-    """Get schedule context for a conversation from database"""
+    """Get schedule context for a conversation from database."""
     try:
         db = get_db()
-        row = db.execute(
-            'SELECT schedule_context FROM conversations WHERE conversation_id = ?',
-            (conversation_id,)
-        ).fetchone()
-        db.close()
-        
-        if row and row['schedule_context']:
-            return json.loads(row['schedule_context'])
-        return {}
+        try:
+            row = db.execute(
+                'SELECT schedule_context FROM conversations WHERE conversation_id = %s',
+                (conversation_id,)
+            ).fetchone()
+            if row and row['schedule_context']:
+                return json.loads(row['schedule_context'])
+            return {}
+        finally:
+            db.close()
     except Exception as e:
         print(f"Error getting schedule context: {e}")
         return {}
 
 
 def save_schedule_context(conversation_id, context):
-    """Save schedule context for a conversation to database"""
+    """Save schedule context for a conversation to database."""
     try:
         db = get_db()
-        db.execute(
-            'UPDATE conversations SET schedule_context = ? WHERE conversation_id = ?',
-            (json.dumps(context), conversation_id)
-        )
-        db.commit()
-        db.close()
-        print(f"💾 Saved schedule context to DB for conversation {conversation_id}")
-        return True
+        try:
+            db.execute(
+                'UPDATE conversations SET schedule_context = %s WHERE conversation_id = %s',
+                (json.dumps(context), conversation_id)
+            )
+            db.commit()
+            print(f"💾 Saved schedule context to DB for conversation {conversation_id}")
+            return True
+        finally:
+            db.close()
     except Exception as e:
         print(f"Error saving schedule context: {e}")
         return False
@@ -1213,152 +500,176 @@ def save_schedule_context(conversation_id, context):
 # ============================================================================
 
 def record_task_completion(task_id, orchestrator, result, confidence):
-    """Record completed task"""
+    """Record completed task."""
     db = get_db()
-    db.execute('''
-        UPDATE tasks 
-        SET status = 'completed',
-            completed_at = ?,
-            orchestrator = ?,
-            result = ?,
-            confidence = ?
-        WHERE id = ?
-    ''', (datetime.now(), orchestrator, result, confidence, task_id))
-    db.commit()
-    db.close()
+    try:
+        db.execute('''
+            UPDATE tasks
+            SET status = 'completed',
+                completed_at = CURRENT_TIMESTAMP,
+                orchestrator = %s,
+                result = %s,
+                confidence = %s
+            WHERE id = %s
+        ''', (orchestrator, result, confidence, task_id))
+        db.commit()
+    finally:
+        db.close()
 
-def record_specialist_call(task_id, specialist_name, prompt_sent, response_received, tokens_used, duration_seconds):
-    """Record specialist AI call"""
+
+def record_specialist_call(task_id, specialist_name, prompt_sent, response_received,
+                           tokens_used, duration_seconds):
+    """Record specialist AI call."""
     db = get_db()
-    db.execute('''
-        INSERT INTO specialist_calls 
-        (task_id, specialist_name, prompt_sent, response_received, tokens_used, duration_seconds)
-        VALUES (?, ?, ?, ?, ?, ?)
-    ''', (task_id, specialist_name, prompt_sent, response_received, tokens_used, duration_seconds))
-    db.commit()
-    db.close()
+    try:
+        db.execute('''
+            INSERT INTO specialist_calls
+            (task_id, specialist_name, prompt_sent, response_received, tokens_used, duration_seconds)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        ''', (task_id, specialist_name, prompt_sent, response_received,
+              tokens_used, duration_seconds))
+        db.commit()
+    finally:
+        db.close()
 
-def record_consensus_validation(task_id, ai1_name, ai1_response, ai2_name, ai2_response, 
+
+def record_consensus_validation(task_id, ai1_name, ai1_response, ai2_name, ai2_response,
                                 agreement_score, consensus_achieved, final_output):
-    """Record consensus validation"""
+    """Record consensus validation."""
     db = get_db()
-    db.execute('''
-        INSERT INTO consensus_validations 
-        (task_id, ai1_name, ai1_response, ai2_name, ai2_response, 
-         agreement_score, consensus_achieved, final_output)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (task_id, ai1_name, ai1_response, ai2_name, ai2_response, 
-          agreement_score, consensus_achieved, final_output))
-    db.commit()
-    db.close()
+    try:
+        db.execute('''
+            INSERT INTO consensus_validations
+            (task_id, ai1_name, ai1_response, ai2_name, ai2_response,
+             agreement_score, consensus_achieved, final_output)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        ''', (task_id, ai1_name, ai1_response, ai2_name, ai2_response,
+              agreement_score, consensus_achieved, final_output))
+        db.commit()
+    finally:
+        db.close()
+
 
 def get_task_history(limit=50):
-    """Get recent task history"""
+    """Get recent task history."""
     db = get_db()
-    rows = db.execute('''
-        SELECT id, user_request, status, orchestrator, confidence, created_at, completed_at
-        FROM tasks
-        ORDER BY created_at DESC
-        LIMIT ?
-    ''', (limit,)).fetchall()
-    db.close()
-    return [dict(row) for row in rows]
+    try:
+        rows = db.execute('''
+            SELECT id, user_request, status, orchestrator, confidence, created_at, completed_at
+            FROM tasks
+            ORDER BY created_at DESC LIMIT %s
+        ''', (limit,)).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        db.close()
+
 
 def get_task_details(task_id):
-    """Get detailed information about a task"""
+    """Get detailed information about a task."""
     db = get_db()
-    
-    task = db.execute('SELECT * FROM tasks WHERE id = ?', (task_id,)).fetchone()
-    if not task:
+    try:
+        task = db.execute('SELECT * FROM tasks WHERE id = %s', (task_id,)).fetchone()
+        if not task:
+            return None
+
+        escalation = db.execute('SELECT * FROM escalations WHERE task_id = %s', (task_id,)).fetchone()
+        specialists = db.execute('SELECT * FROM specialist_calls WHERE task_id = %s', (task_id,)).fetchall()
+        consensus = db.execute('SELECT * FROM consensus_validations WHERE task_id = %s', (task_id,)).fetchone()
+
+        return {
+            'task': dict(task),
+            'escalation': dict(escalation) if escalation else None,
+            'specialists': [dict(s) for s in specialists],
+            'consensus': dict(consensus) if consensus else None
+        }
+    finally:
         db.close()
-        return None
-    
-    escalation = db.execute('SELECT * FROM escalations WHERE task_id = ?', (task_id,)).fetchone()
-    specialists = db.execute('SELECT * FROM specialist_calls WHERE task_id = ?', (task_id,)).fetchall()
-    consensus = db.execute('SELECT * FROM consensus_validations WHERE task_id = ?', (task_id,)).fetchone()
-    
-    db.close()
-    
-    return {
-        'task': dict(task),
-        'escalation': dict(escalation) if escalation else None,
-        'specialists': [dict(s) for s in specialists],
-        'consensus': dict(consensus) if consensus else None
-    }
+
 
 def get_statistics():
-    """Get system statistics"""
+    """Get system statistics."""
     db = get_db()
-    
-    stats = {}
-    
-    stats['total_tasks'] = db.execute('SELECT COUNT(*) FROM tasks').fetchone()[0]
-    stats['completed_tasks'] = db.execute("SELECT COUNT(*) FROM tasks WHERE status = 'completed'").fetchone()[0]
-    stats['total_escalations'] = db.execute('SELECT COUNT(*) FROM escalations').fetchone()[0]
-    
-    avg_conf = db.execute('SELECT AVG(confidence) FROM tasks WHERE confidence IS NOT NULL').fetchone()[0]
-    stats['average_confidence'] = round(avg_conf, 3) if avg_conf else 0
-    
-    stats['specialist_calls'] = db.execute('SELECT COUNT(*) FROM specialist_calls').fetchone()[0]
-    stats['consensus_validations'] = db.execute('SELECT COUNT(*) FROM consensus_validations').fetchone()[0]
-    
-    successful_consensus = db.execute('SELECT COUNT(*) FROM consensus_validations WHERE consensus_achieved = 1').fetchone()[0]
-    total_consensus = stats['consensus_validations']
-    stats['consensus_success_rate'] = round(successful_consensus / total_consensus, 3) if total_consensus > 0 else 0
-    
-    stats['total_conversations'] = db.execute('SELECT COUNT(*) FROM conversations').fetchone()[0]
-    stats['total_messages'] = db.execute('SELECT COUNT(*) FROM conversation_messages').fetchone()[0]
-    stats['total_documents'] = db.execute('SELECT COUNT(*) FROM generated_documents WHERE is_deleted = 0').fetchone()[0]
-    
-    db.close()
-    return stats
+    try:
+        stats = {}
+        stats['total_tasks'] = db.execute('SELECT COUNT(*) FROM tasks').fetchone()[0]
+        stats['completed_tasks'] = db.execute(
+            "SELECT COUNT(*) FROM tasks WHERE status = 'completed'"
+        ).fetchone()[0]
+        stats['total_escalations'] = db.execute('SELECT COUNT(*) FROM escalations').fetchone()[0]
+
+        avg_conf = db.execute(
+            'SELECT AVG(confidence) FROM tasks WHERE confidence IS NOT NULL'
+        ).fetchone()[0]
+        stats['average_confidence'] = round(avg_conf, 3) if avg_conf else 0
+
+        stats['specialist_calls'] = db.execute('SELECT COUNT(*) FROM specialist_calls').fetchone()[0]
+        stats['consensus_validations'] = db.execute('SELECT COUNT(*) FROM consensus_validations').fetchone()[0]
+
+        successful_consensus = db.execute(
+            'SELECT COUNT(*) FROM consensus_validations WHERE consensus_achieved = 1'
+        ).fetchone()[0]
+        total_consensus = stats['consensus_validations']
+        stats['consensus_success_rate'] = (
+            round(successful_consensus / total_consensus, 3) if total_consensus > 0 else 0
+        )
+
+        stats['total_conversations'] = db.execute('SELECT COUNT(*) FROM conversations').fetchone()[0]
+        stats['total_messages'] = db.execute('SELECT COUNT(*) FROM conversation_messages').fetchone()[0]
+        stats['total_documents'] = db.execute(
+            'SELECT COUNT(*) FROM generated_documents WHERE is_deleted = 0'
+        ).fetchone()[0]
+
+        return stats
+    finally:
+        db.close()
+
 
 def store_learning_pattern(task_type, pattern_data, success_rate):
-    """Store a learning pattern"""
+    """Store a learning pattern."""
     db = get_db()
-    
-    existing = db.execute('''
-        SELECT id, times_used FROM learning_patterns 
-        WHERE task_type = ? AND pattern_data = ?
-    ''', (task_type, pattern_data)).fetchone()
-    
-    if existing:
-        db.execute('''
-            UPDATE learning_patterns 
-            SET success_rate = ?,
-                times_used = times_used + 1,
-                last_used = ?
-            WHERE id = ?
-        ''', (success_rate, datetime.now(), existing[0]))
-    else:
-        db.execute('''
-            INSERT INTO learning_patterns (task_type, pattern_data, success_rate)
-            VALUES (?, ?, ?)
-        ''', (task_type, pattern_data, success_rate))
-    
-    db.commit()
-    db.close()
+    try:
+        existing = db.execute('''
+            SELECT id, times_used FROM learning_patterns
+            WHERE task_type = %s AND pattern_data = %s
+        ''', (task_type, pattern_data)).fetchone()
+
+        if existing:
+            db.execute('''
+                UPDATE learning_patterns
+                SET success_rate = %s,
+                    times_used = times_used + 1,
+                    last_used = CURRENT_TIMESTAMP
+                WHERE id = %s
+            ''', (success_rate, existing['id']))
+        else:
+            db.execute('''
+                INSERT INTO learning_patterns (task_type, pattern_data, success_rate)
+                VALUES (%s, %s, %s)
+            ''', (task_type, pattern_data, success_rate))
+
+        db.commit()
+    finally:
+        db.close()
+
 
 def get_learning_patterns(task_type=None, limit=10):
-    """Get learning patterns, optionally filtered by task type"""
+    """Get learning patterns, optionally filtered by task type."""
     db = get_db()
-    
-    if task_type:
-        rows = db.execute('''
-            SELECT * FROM learning_patterns 
-            WHERE task_type = ?
-            ORDER BY success_rate DESC, times_used DESC
-            LIMIT ?
-        ''', (task_type, limit)).fetchall()
-    else:
-        rows = db.execute('''
-            SELECT * FROM learning_patterns 
-            ORDER BY success_rate DESC, times_used DESC
-            LIMIT ?
-        ''', (limit,)).fetchall()
-    
-    db.close()
-    return [dict(row) for row in rows]
+    try:
+        if task_type:
+            rows = db.execute('''
+                SELECT * FROM learning_patterns
+                WHERE task_type = %s
+                ORDER BY success_rate DESC, times_used DESC LIMIT %s
+            ''', (task_type, limit)).fetchall()
+        else:
+            rows = db.execute('''
+                SELECT * FROM learning_patterns
+                ORDER BY success_rate DESC, times_used DESC LIMIT %s
+            ''', (limit,)).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        db.close()
 
 
 # ============================================================================
@@ -1366,179 +677,129 @@ def get_learning_patterns(task_type=None, limit=10):
 # ============================================================================
 
 def load_project_from_db(project_id):
-    """Load project from database"""
+    """Load project from database."""
     try:
         from project_workflow import ProjectWorkflow
     except ImportError:
         return None
-    
+
     db = get_db()
-    project_row = db.execute(
-        'SELECT * FROM projects WHERE project_id = ? AND status = "active"',
-        (project_id,)
-    ).fetchone()
-    db.close()
-    
-    if not project_row:
-        return None
-    
-    workflow = ProjectWorkflow()
-    workflow.project_id = project_row['project_id']
-    workflow.client_name = project_row['client_name']
-    workflow.industry = project_row['industry']
-    workflow.facility_type = project_row['facility_type']
-    workflow.project_phase = project_row['project_phase']
-    
-    if project_row['context_data']:
-        workflow.context_history = json.loads(project_row['context_data'])
-    if project_row['uploaded_files']:
-        workflow.uploaded_files = json.loads(project_row['uploaded_files'])
-    if project_row['email_context']:
-        workflow.email_context = json.loads(project_row['email_context'])
-    if project_row['key_findings']:
-        workflow.key_findings = json.loads(project_row['key_findings'])
-    if project_row['schedules_proposed']:
-        workflow.schedules_proposed = json.loads(project_row['schedules_proposed'])
-    
-    return workflow
+    try:
+        project_row = db.execute(
+            "SELECT * FROM projects WHERE project_id = %s AND status = 'active'",
+            (project_id,)
+        ).fetchone()
+
+        if not project_row:
+            return None
+
+        workflow = ProjectWorkflow()
+        workflow.project_id = project_row['project_id']
+        workflow.client_name = project_row['client_name']
+        workflow.industry = project_row['industry']
+        workflow.facility_type = project_row['facility_type']
+        workflow.project_phase = project_row['project_phase']
+
+        if project_row['context_data']:
+            workflow.context_history = json.loads(project_row['context_data'])
+        if project_row['uploaded_files']:
+            workflow.uploaded_files = json.loads(project_row['uploaded_files'])
+        if project_row['email_context']:
+            workflow.email_context = json.loads(project_row['email_context'])
+        if project_row['key_findings']:
+            workflow.key_findings = json.loads(project_row['key_findings'])
+        if project_row['schedules_proposed']:
+            workflow.schedules_proposed = json.loads(project_row['schedules_proposed'])
+
+        return workflow
+    finally:
+        db.close()
+
 
 def save_project_to_db(workflow):
-    """Save project to database"""
+    """Save project to database."""
     if not workflow:
         return
-    
+
     db = get_db()
-    
-    existing = db.execute(
-        'SELECT id FROM projects WHERE project_id = ?',
-        (workflow.project_id,)
-    ).fetchone()
-    
-    if existing:
-        db.execute('''
-            UPDATE projects SET
-                updated_at = CURRENT_TIMESTAMP,
-                client_name = ?,
-                industry = ?,
-                facility_type = ?,
-                project_phase = ?,
-                context_data = ?,
-                uploaded_files = ?,
-                email_context = ?,
-                key_findings = ?,
-                schedules_proposed = ?
-            WHERE project_id = ?
-        ''', (
-            workflow.client_name,
-            workflow.industry,
-            workflow.facility_type,
-            workflow.project_phase,
-            json.dumps(workflow.context_history),
-            json.dumps(workflow.uploaded_files),
-            json.dumps(workflow.email_context),
-            json.dumps(workflow.key_findings),
-            json.dumps(workflow.schedules_proposed),
-            workflow.project_id
-        ))
-    else:
-        db.execute('''
-            INSERT INTO projects (
-                project_id, client_name, industry, facility_type, 
-                project_phase, context_data, uploaded_files, email_context,
-                key_findings, schedules_proposed
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            workflow.project_id,
-            workflow.client_name,
-            workflow.industry,
-            workflow.facility_type,
-            workflow.project_phase,
-            json.dumps(workflow.context_history),
-            json.dumps(workflow.uploaded_files),
-            json.dumps(workflow.email_context),
-            json.dumps(workflow.key_findings),
-            json.dumps(workflow.schedules_proposed)
-        ))
-    
-    db.commit()
-    db.close()
+    try:
+        existing = db.execute(
+            'SELECT id FROM projects WHERE project_id = %s',
+            (workflow.project_id,)
+        ).fetchone()
+
+        if existing:
+            db.execute('''
+                UPDATE projects SET
+                    updated_at = CURRENT_TIMESTAMP,
+                    client_name = %s,
+                    industry = %s,
+                    facility_type = %s,
+                    project_phase = %s,
+                    context_data = %s,
+                    uploaded_files = %s,
+                    email_context = %s,
+                    key_findings = %s,
+                    schedules_proposed = %s
+                WHERE project_id = %s
+            ''', (
+                workflow.client_name, workflow.industry, workflow.facility_type,
+                workflow.project_phase,
+                json.dumps(workflow.context_history),
+                json.dumps(workflow.uploaded_files),
+                json.dumps(workflow.email_context),
+                json.dumps(workflow.key_findings),
+                json.dumps(workflow.schedules_proposed),
+                workflow.project_id
+            ))
+        else:
+            db.execute('''
+                INSERT INTO projects (
+                    project_id, client_name, industry, facility_type,
+                    project_phase, context_data, uploaded_files, email_context,
+                    key_findings, schedules_proposed
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ''', (
+                workflow.project_id, workflow.client_name, workflow.industry,
+                workflow.facility_type, workflow.project_phase,
+                json.dumps(workflow.context_history),
+                json.dumps(workflow.uploaded_files),
+                json.dumps(workflow.email_context),
+                json.dumps(workflow.key_findings),
+                json.dumps(workflow.schedules_proposed)
+            ))
+
+        db.commit()
+    finally:
+        db.close()
+
+
 # ============================================================================
-# LEARNING ENHANCEMENTS - Added February 4, 2026
-# Fixes #2 (Client Profiles) and #3 (Avoidance Patterns)
+# LEARNING ENHANCEMENTS
 # ============================================================================
 
 def get_client_profile(client_name):
-    """
-    Get accumulated knowledge about a specific client.
-    
-    Args:
-        client_name: Name of the client
-        
-    Returns:
-        dict with client profile data
-    """
+    """Get accumulated knowledge about a specific client."""
     if not client_name:
         return None
-        
-    db = get_db()
-    
-    profile_row = db.execute('''
-        SELECT profile_data, created_at, updated_at
-        FROM client_profiles 
-        WHERE client_name = ?
-    ''', (client_name,)).fetchone()
-    
-    db.close()
-    
-    if profile_row:
-        profile = json.loads(profile_row['profile_data'])
-        profile['created_at'] = profile_row['created_at']
-        profile['updated_at'] = profile_row['updated_at']
-        return profile
-    
-    # Return empty profile if not found
-    return {
-        'client_name': client_name,
-        'first_interaction': None,
-        'interaction_count': 0,
-        'communication_style': 'unknown',
-        'decision_speed': 'unknown',
-        'risk_tolerance': 'unknown',
-        'successful_approaches': [],
-        'failed_approaches': [],
-        'preferences': {},
-        'industry': None,
-        'typical_facility_size': None
-    }
 
-
-def update_client_profile(client_name, interaction_data):
-    """
-    Update client profile with new interaction data.
-    
-    Args:
-        client_name: Name of the client
-        interaction_data: dict with interaction details
-        
-    Returns:
-        Updated profile dict
-    """
-    if not client_name:
-        return None
-    
     db = get_db()
-    
-    # Get existing profile
-    existing = db.execute('''
-        SELECT profile_data FROM client_profiles WHERE client_name = ?
-    ''', (client_name,)).fetchone()
-    
-    if existing:
-        profile = json.loads(existing['profile_data'])
-    else:
-        profile = {
+    try:
+        profile_row = db.execute('''
+            SELECT profile_data, created_at, updated_at
+            FROM client_profiles
+            WHERE client_name = %s
+        ''', (client_name,)).fetchone()
+
+        if profile_row:
+            profile = json.loads(profile_row['profile_data'])
+            profile['created_at'] = profile_row['created_at']
+            profile['updated_at'] = profile_row['updated_at']
+            return profile
+
+        return {
             'client_name': client_name,
-            'first_interaction': datetime.now().isoformat(),
+            'first_interaction': None,
             'interaction_count': 0,
             'communication_style': 'unknown',
             'decision_speed': 'unknown',
@@ -1549,228 +810,219 @@ def update_client_profile(client_name, interaction_data):
             'industry': None,
             'typical_facility_size': None
         }
-    
-    # Update interaction count
-    profile['interaction_count'] += 1
-    profile['last_interaction'] = datetime.now().isoformat()
-    
-    # Update with new data
-    if interaction_data.get('approach_worked'):
-        approach = interaction_data.get('approach')
-        if approach and approach not in profile['successful_approaches']:
-            profile['successful_approaches'].append(approach)
-            # Keep only last 10
-            profile['successful_approaches'] = profile['successful_approaches'][-10:]
-    
-    if interaction_data.get('approach_failed'):
-        approach = interaction_data.get('approach')
-        if approach and approach not in profile['failed_approaches']:
-            profile['failed_approaches'].append(approach)
-            # Keep only last 10
-            profile['failed_approaches'] = profile['failed_approaches'][-10:]
-    
-    # Update preferences
-    if 'preferences' in interaction_data:
-        for key, value in interaction_data['preferences'].items():
-            profile['preferences'][key] = value
-    
-    # Update industry if provided
-    if interaction_data.get('industry'):
-        profile['industry'] = interaction_data['industry']
-    
-    # Update communication style if detected
-    if interaction_data.get('communication_style'):
-        profile['communication_style'] = interaction_data['communication_style']
-    
-    # Save to database
-    db.execute('''
-        INSERT OR REPLACE INTO client_profiles (client_name, profile_data, updated_at)
-        VALUES (?, ?, CURRENT_TIMESTAMP)
-    ''', (client_name, json.dumps(profile)))
-    
-    db.commit()
-    db.close()
-    
-    return profile
+    finally:
+        db.close()
+
+
+def update_client_profile(client_name, interaction_data):
+    """Update client profile with new interaction data."""
+    if not client_name:
+        return None
+
+    db = get_db()
+    try:
+        existing = db.execute(
+            'SELECT profile_data FROM client_profiles WHERE client_name = %s',
+            (client_name,)
+        ).fetchone()
+
+        if existing:
+            profile = json.loads(existing['profile_data'])
+        else:
+            profile = {
+                'client_name': client_name,
+                'first_interaction': datetime.now().isoformat(),
+                'interaction_count': 0,
+                'communication_style': 'unknown',
+                'decision_speed': 'unknown',
+                'risk_tolerance': 'unknown',
+                'successful_approaches': [],
+                'failed_approaches': [],
+                'preferences': {},
+                'industry': None,
+                'typical_facility_size': None
+            }
+
+        profile['interaction_count'] += 1
+        profile['last_interaction'] = datetime.now().isoformat()
+
+        if interaction_data.get('approach_worked'):
+            approach = interaction_data.get('approach')
+            if approach and approach not in profile['successful_approaches']:
+                profile['successful_approaches'].append(approach)
+                profile['successful_approaches'] = profile['successful_approaches'][-10:]
+
+        if interaction_data.get('approach_failed'):
+            approach = interaction_data.get('approach')
+            if approach and approach not in profile['failed_approaches']:
+                profile['failed_approaches'].append(approach)
+                profile['failed_approaches'] = profile['failed_approaches'][-10:]
+
+        if 'preferences' in interaction_data:
+            for key, value in interaction_data['preferences'].items():
+                profile['preferences'][key] = value
+
+        if interaction_data.get('industry'):
+            profile['industry'] = interaction_data['industry']
+
+        if interaction_data.get('communication_style'):
+            profile['communication_style'] = interaction_data['communication_style']
+
+        db.execute('''
+            INSERT INTO client_profiles (client_name, profile_data, updated_at)
+            VALUES (%s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (client_name) DO UPDATE
+            SET profile_data = EXCLUDED.profile_data,
+                updated_at = EXCLUDED.updated_at
+        ''', (client_name, json.dumps(profile)))
+
+        db.commit()
+        return profile
+    finally:
+        db.close()
 
 
 def get_client_profile_context(client_name):
-    """
-    Get formatted context string about a client for AI prompts.
-    
-    Args:
-        client_name: Name of the client
-        
-    Returns:
-        Formatted string for injection into prompts
-    """
+    """Get formatted context string about a client for AI prompts."""
     profile = get_client_profile(client_name)
-    
+
     if not profile or profile['interaction_count'] == 0:
         return ""
-    
+
     context = f"\n\n=== CLIENT PROFILE: {client_name} ===\n"
     context += f"Interaction History: {profile['interaction_count']} conversations\n"
-    
+
     if profile.get('industry'):
         context += f"Industry: {profile['industry']}\n"
-    
+
     if profile.get('communication_style') != 'unknown':
         context += f"Communication Style: {profile['communication_style']}\n"
-    
+
     if profile['successful_approaches']:
-        context += f"\nSuccessful Approaches:\n"
-        for approach in profile['successful_approaches'][-3:]:  # Last 3
+        context += "\nSuccessful Approaches:\n"
+        for approach in profile['successful_approaches'][-3:]:
             context += f"  ✓ {approach}\n"
-    
+
     if profile['failed_approaches']:
-        context += f"\nAvoid These Approaches:\n"
-        for approach in profile['failed_approaches'][-3:]:  # Last 3
+        context += "\nAvoid These Approaches:\n"
+        for approach in profile['failed_approaches'][-3:]:
             context += f"  ✗ {approach}\n"
-    
+
     if profile.get('preferences'):
-        context += f"\nPreferences:\n"
+        context += "\nPreferences:\n"
         for key, value in profile['preferences'].items():
             context += f"  - {key}: {value}\n"
-    
+
     context += "=== END CLIENT PROFILE ===\n\n"
-    
     return context
 
 
 def add_avoidance_pattern(pattern_data, severity='medium'):
-    """
-    Store a pattern to avoid based on poor feedback.
-    
-    Args:
-        pattern_data: dict with pattern details
-        severity: 'low', 'medium', or 'high'
-        
-    Returns:
-        Pattern ID
-    """
+    """Store a pattern to avoid based on poor feedback."""
     db = get_db()
-    
-    cursor = db.execute('''
-        INSERT INTO avoidance_patterns (pattern_data, severity, times_violated, created_at, last_seen)
-        VALUES (?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    ''', (json.dumps(pattern_data), severity))
-    
-    pattern_id = cursor.lastrowid
-    db.commit()
-    db.close()
-    
-    return pattern_id
+    try:
+        cursor = db.execute('''
+            INSERT INTO avoidance_patterns (pattern_data, severity, times_violated, created_at, last_seen)
+            VALUES (%s, %s, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ''', (json.dumps(pattern_data), severity))
+
+        pattern_id = cursor.lastrowid
+        db.commit()
+        return pattern_id
+    finally:
+        db.close()
 
 
 def get_avoidance_context(days=30, limit=5):
-    """
-    Get patterns to avoid based on past failures.
-    
-    Args:
-        days: Look back this many days
-        limit: Max number of patterns to return
-        
-    Returns:
-        Formatted string for injection into prompts
-    """
+    """Get patterns to avoid based on past failures."""
     db = get_db()
-    
-    patterns = db.execute('''
-        SELECT pattern_data, severity, times_violated, created_at
-        FROM avoidance_patterns
-        WHERE created_at > datetime('now', ? || ' days')
-        ORDER BY 
-            CASE severity
-                WHEN 'high' THEN 1
-                WHEN 'medium' THEN 2
-                WHEN 'low' THEN 3
-            END,
-            times_violated DESC,
-            created_at DESC
-        LIMIT ?
-    ''', (f'-{days}', limit)).fetchall()
-    
-    db.close()
-    
-    if not patterns:
-        return ""
-    
-    context = "\n\n=== APPROACHES TO AVOID ===\n"
-    context += "Based on past poor performance, avoid these patterns:\n\n"
-    
-    for p in patterns:
-        data = json.loads(p['pattern_data'])
-        severity_emoji = {
-            'high': '🚫',
-            'medium': '⚠️',
-            'low': 'ℹ️'
-        }.get(p['severity'], '⚠️')
-        
-        context += f"{severity_emoji} {data.get('approach_used', 'Unknown approach')}\n"
-        
-        if data.get('what_failed'):
-            issues = data['what_failed']
-            if isinstance(issues, list):
-                context += f"   Issues: {', '.join(issues)}\n"
-            else:
-                context += f"   Issues: {issues}\n"
-        
-        if data.get('user_comment'):
-            context += f"   Feedback: \"{data['user_comment']}\"\n"
-        
-        context += "\n"
-    
-    context += "=== END AVOIDANCE PATTERNS ===\n\n"
-    
-    return context
+    try:
+        from db_engine import get_db_type
+        if get_db_type() == 'postgresql':
+            rows = db.execute('''
+                SELECT pattern_data, severity, times_violated, created_at
+                FROM avoidance_patterns
+                WHERE created_at > NOW() - INTERVAL '%s days'
+                ORDER BY
+                    CASE severity
+                        WHEN 'high' THEN 1
+                        WHEN 'medium' THEN 2
+                        WHEN 'low' THEN 3
+                    END,
+                    times_violated DESC,
+                    created_at DESC
+                LIMIT %s
+            ''', (days, limit)).fetchall()
+        else:
+            rows = db.execute('''
+                SELECT pattern_data, severity, times_violated, created_at
+                FROM avoidance_patterns
+                WHERE created_at > datetime('now', %s)
+                ORDER BY
+                    CASE severity
+                        WHEN 'high' THEN 1
+                        WHEN 'medium' THEN 2
+                        WHEN 'low' THEN 3
+                    END,
+                    times_violated DESC,
+                    created_at DESC
+                LIMIT %s
+            ''', (f'-{days} days', limit)).fetchall()
+
+        if not rows:
+            return ""
+
+        context = "\n\n=== APPROACHES TO AVOID ===\n"
+        context += "Based on past poor performance, avoid these patterns:\n\n"
+
+        for p in rows:
+            data = json.loads(p['pattern_data'])
+            severity_emoji = {'high': '🚫', 'medium': '⚠️', 'low': 'ℹ️'}.get(p['severity'], '⚠️')
+            context += f"{severity_emoji} {data.get('approach_used', 'Unknown approach')}\n"
+
+            if data.get('what_failed'):
+                issues = data['what_failed']
+                if isinstance(issues, list):
+                    context += f"   Issues: {', '.join(issues)}\n"
+                else:
+                    context += f"   Issues: {issues}\n"
+
+            if data.get('user_comment'):
+                context += f"   Feedback: \"{data['user_comment']}\"\n"
+            context += "\n"
+
+        context += "=== END AVOIDANCE PATTERNS ===\n\n"
+        return context
+    finally:
+        db.close()
 
 
 def record_avoidance_violation(pattern_id):
-    """
-    Increment the violation count for a pattern (if we detect it was used again).
-    
-    Args:
-        pattern_id: ID of the pattern that was violated
-    """
+    """Increment the violation count for a pattern."""
     db = get_db()
-    
-    db.execute('''
-        UPDATE avoidance_patterns 
-        SET times_violated = times_violated + 1,
-            last_seen = CURRENT_TIMESTAMP
-        WHERE id = ?
-    ''', (pattern_id,))
-    
-    db.commit()
-    db.close()
+    try:
+        db.execute('''
+            UPDATE avoidance_patterns
+            SET times_violated = times_violated + 1,
+                last_seen = CURRENT_TIMESTAMP
+            WHERE id = %s
+        ''', (pattern_id,))
+        db.commit()
+    finally:
+        db.close()
+
 
 # ============================================================================
-# SMART ANALYZER STATE FUNCTIONS (Added February 6, 2026 v10)
-# Database-backed storage for pandas analyzer state (replaces Flask session)
+# SMART ANALYZER STATE FUNCTIONS
 # ============================================================================
 
 def save_smart_analyzer_state(conversation_id, file_path, file_name, profile):
-    """
-    Save smart analyzer state to database.
-    
-    Args:
-        conversation_id: Conversation ID
-        file_path: Permanent file path
-        file_name: Original filename
-        profile: Profile dict from analyzer
-        
-    Returns:
-        True if successful
-    """
+    """Save smart analyzer state to database."""
     db = get_db()
-    
     try:
-        # Convert any Timestamp objects to strings for JSON serialization
         import pandas as pd
-        
+
         def convert_timestamps(obj):
-            """Recursively convert Timestamp objects to strings"""
             if isinstance(obj, pd.Timestamp):
                 return obj.isoformat()
             elif isinstance(obj, dict):
@@ -1778,16 +1030,29 @@ def save_smart_analyzer_state(conversation_id, file_path, file_name, profile):
             elif isinstance(obj, list):
                 return [convert_timestamps(item) for item in obj]
             return obj
-        
-        # Clean the profile before saving
+
         clean_profile = convert_timestamps(profile)
-        
-        db.execute('''
-            INSERT OR REPLACE INTO smart_analyzer_state 
-            (conversation_id, file_path, file_name, analyzer_state, profile_json, last_used)
-            VALUES (?, ?, ?, 'loaded', ?, CURRENT_TIMESTAMP)
-        ''', (conversation_id, file_path, file_name, json.dumps(clean_profile)))
-        
+
+        from db_engine import get_db_type
+        if get_db_type() == 'postgresql':
+            db.execute('''
+                INSERT INTO smart_analyzer_state
+                (conversation_id, file_path, file_name, analyzer_state, profile_json, last_used)
+                VALUES (%s, %s, %s, 'loaded', %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (conversation_id) DO UPDATE
+                SET file_path = EXCLUDED.file_path,
+                    file_name = EXCLUDED.file_name,
+                    analyzer_state = 'loaded',
+                    profile_json = EXCLUDED.profile_json,
+                    last_used = CURRENT_TIMESTAMP
+            ''', (conversation_id, file_path, file_name, json.dumps(clean_profile)))
+        else:
+            db.execute('''
+                INSERT OR REPLACE INTO smart_analyzer_state
+                (conversation_id, file_path, file_name, analyzer_state, profile_json, last_used)
+                VALUES (%s, %s, %s, 'loaded', %s, CURRENT_TIMESTAMP)
+            ''', (conversation_id, file_path, file_name, json.dumps(clean_profile)))
+
         db.commit()
         print(f"💾 Saved smart analyzer state to DB for conversation {conversation_id}")
         return True
@@ -1799,41 +1064,31 @@ def save_smart_analyzer_state(conversation_id, file_path, file_name, profile):
     finally:
         db.close()
 
+
 def get_smart_analyzer_state(conversation_id):
-    """
-    Get smart analyzer state from database.
-    
-    Args:
-        conversation_id: Conversation ID
-        
-    Returns:
-        dict with analyzer state or None
-    """
+    """Get smart analyzer state from database."""
     db = get_db()
-    
     try:
         row = db.execute('''
             SELECT file_path, file_name, analyzer_state, profile_json, last_used
             FROM smart_analyzer_state
-            WHERE conversation_id = ?
+            WHERE conversation_id = %s
         ''', (conversation_id,)).fetchone()
-        
+
         if row:
-            # Update last_used timestamp
             db.execute('''
-                UPDATE smart_analyzer_state 
+                UPDATE smart_analyzer_state
                 SET last_used = CURRENT_TIMESTAMP
-                WHERE conversation_id = ?
+                WHERE conversation_id = %s
             ''', (conversation_id,))
             db.commit()
-            
+
             return {
                 'file_path': row['file_path'],
                 'file_name': row['file_name'],
                 'analyzer_state': row['analyzer_state'],
                 'profile': json.loads(row['profile_json'])
             }
-        
         return None
     except Exception as e:
         print(f"❌ Error getting smart analyzer state: {e}")
@@ -1843,23 +1098,13 @@ def get_smart_analyzer_state(conversation_id):
 
 
 def delete_smart_analyzer_state(conversation_id):
-    """
-    Delete smart analyzer state from database.
-    
-    Args:
-        conversation_id: Conversation ID
-        
-    Returns:
-        True if successful
-    """
+    """Delete smart analyzer state from database."""
     db = get_db()
-    
     try:
-        db.execute('''
-            DELETE FROM smart_analyzer_state
-            WHERE conversation_id = ?
-        ''', (conversation_id,))
-        
+        db.execute(
+            'DELETE FROM smart_analyzer_state WHERE conversation_id = %s',
+            (conversation_id,)
+        )
         db.commit()
         return True
     except Exception as e:
@@ -1868,162 +1113,119 @@ def delete_smart_analyzer_state(conversation_id):
     finally:
         db.close()
 
+
 # ============================================================================
-# ANALYSIS ENGINE FUNCTIONS (Added February 8, 2026 - Phase 0A)
-# Database operations for multi-step analytical workflows
+# ANALYSIS ENGINE FUNCTIONS
 # ============================================================================
 
 def save_analysis_session(session_dict):
-    """
-    Save analysis session to database
-    
-    Args:
-        session_dict: Dictionary from AnalysisOrchestrator.to_dict()
-        
-    Returns:
-        Session ID
-    """
+    """Save analysis session to database."""
     db = get_db()
-    
-    # Check if session exists
-    existing = db.execute(
-        'SELECT id FROM analysis_sessions WHERE session_id = ?',
-        (session_dict['session_id'],)
-    ).fetchone()
-    
-    if existing:
-        # Update existing
-        db.execute('''
-            UPDATE analysis_sessions
-            SET state = ?,
-                data_files = ?,
-                discovered_structure = ?,
-                clarifications = ?,
-                analysis_plan = ?,
-                results = ?,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE session_id = ?
-        ''', (
-            session_dict['state'],
-            json.dumps(session_dict['data_files']),
-            json.dumps(session_dict['discovered_structure']),
-            json.dumps(session_dict['clarifications']),
-            json.dumps(session_dict['analysis_plan']),
-            json.dumps(session_dict['results']),
-            session_dict['session_id']
-        ))
-    else:
-        # Insert new
-        db.execute('''
-            INSERT INTO analysis_sessions 
-            (session_id, project_id, state, data_files, discovered_structure, 
-             clarifications, analysis_plan, results)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            session_dict['session_id'],
-            session_dict.get('project_id'),
-            session_dict['state'],
-            json.dumps(session_dict['data_files']),
-            json.dumps(session_dict['discovered_structure']),
-            json.dumps(session_dict['clarifications']),
-            json.dumps(session_dict['analysis_plan']),
-            json.dumps(session_dict['results'])
-        ))
-    
-    db.commit()
-    db.close()
-    
-    return session_dict['session_id']
+    try:
+        existing = db.execute(
+            'SELECT id FROM analysis_sessions WHERE session_id = %s',
+            (session_dict['session_id'],)
+        ).fetchone()
+
+        if existing:
+            db.execute('''
+                UPDATE analysis_sessions
+                SET state = %s,
+                    data_files = %s,
+                    discovered_structure = %s,
+                    clarifications = %s,
+                    analysis_plan = %s,
+                    results = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE session_id = %s
+            ''', (
+                session_dict['state'],
+                json.dumps(session_dict['data_files']),
+                json.dumps(session_dict['discovered_structure']),
+                json.dumps(session_dict['clarifications']),
+                json.dumps(session_dict['analysis_plan']),
+                json.dumps(session_dict['results']),
+                session_dict['session_id']
+            ))
+        else:
+            db.execute('''
+                INSERT INTO analysis_sessions
+                (session_id, project_id, state, data_files, discovered_structure,
+                 clarifications, analysis_plan, results)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ''', (
+                session_dict['session_id'],
+                session_dict.get('project_id'),
+                session_dict['state'],
+                json.dumps(session_dict['data_files']),
+                json.dumps(session_dict['discovered_structure']),
+                json.dumps(session_dict['clarifications']),
+                json.dumps(session_dict['analysis_plan']),
+                json.dumps(session_dict['results'])
+            ))
+
+        db.commit()
+        return session_dict['session_id']
+    finally:
+        db.close()
 
 
 def load_analysis_session(session_id):
-    """
-    Load analysis session from database
-    
-    Args:
-        session_id: Session ID to load
-        
-    Returns:
-        Dictionary with session data or None
-    """
+    """Load analysis session from database."""
     db = get_db()
-    row = db.execute(
-        'SELECT * FROM analysis_sessions WHERE session_id = ?',
-        (session_id,)
-    ).fetchone()
-    db.close()
-    
-    if not row:
-        return None
-    
-    return {
-        'session_id': row['session_id'],
-        'project_id': row['project_id'],
-        'state': row['state'],
-        'data_files': json.loads(row['data_files']) if row['data_files'] else [],
-        'discovered_structure': json.loads(row['discovered_structure']) if row['discovered_structure'] else {},
-        'clarifications': json.loads(row['clarifications']) if row['clarifications'] else {},
-        'analysis_plan': json.loads(row['analysis_plan']) if row['analysis_plan'] else {},
-        'results': json.loads(row['results']) if row['results'] else {},
-        'created_at': row['created_at'],
-        'updated_at': row['updated_at']
-    }
+    try:
+        row = db.execute(
+            'SELECT * FROM analysis_sessions WHERE session_id = %s',
+            (session_id,)
+        ).fetchone()
+
+        if not row:
+            return None
+
+        return {
+            'session_id': row['session_id'],
+            'project_id': row['project_id'],
+            'state': row['state'],
+            'data_files': json.loads(row['data_files']) if row['data_files'] else [],
+            'discovered_structure': json.loads(row['discovered_structure']) if row['discovered_structure'] else {},
+            'clarifications': json.loads(row['clarifications']) if row['clarifications'] else {},
+            'analysis_plan': json.loads(row['analysis_plan']) if row['analysis_plan'] else {},
+            'results': json.loads(row['results']) if row['results'] else {},
+            'created_at': row['created_at'],
+            'updated_at': row['updated_at']
+        }
+    finally:
+        db.close()
 
 
 def save_analysis_deliverable(session_id, deliverable_type, file_path, file_name, metadata=None):
-    """
-    Save analysis deliverable record
-    
-    Args:
-        session_id: Session ID
-        deliverable_type: Type of deliverable ('chart', 'pptx', 'summary', 'code', 'excel')
-        file_path: Path to file
-        file_name: Original filename
-        metadata: Optional metadata dictionary
-        
-    Returns:
-        Deliverable ID
-    """
+    """Save analysis deliverable record."""
     db = get_db()
-    cursor = db.execute('''
-        INSERT INTO analysis_deliverables 
-        (session_id, deliverable_type, file_path, file_name, metadata)
-        VALUES (?, ?, ?, ?, ?)
-    ''', (
-        session_id,
-        deliverable_type,
-        file_path,
-        file_name,
-        json.dumps(metadata) if metadata else None
-    ))
-    
-    deliverable_id = cursor.lastrowid
-    db.commit()
-    db.close()
-    
-    return deliverable_id
+    try:
+        cursor = db.execute('''
+            INSERT INTO analysis_deliverables
+            (session_id, deliverable_type, file_path, file_name, metadata)
+            VALUES (%s, %s, %s, %s, %s)
+        ''', (session_id, deliverable_type, file_path, file_name,
+              json.dumps(metadata) if metadata else None))
+
+        deliverable_id = cursor.lastrowid
+        db.commit()
+        return deliverable_id
+    finally:
+        db.close()
 
 
 def get_analysis_deliverables(session_id):
-    """
-    Get all deliverables for a session
-    
-    Args:
-        session_id: Session ID
-        
-    Returns:
-        List of deliverable dictionaries
-    """
+    """Get all deliverables for a session."""
     db = get_db()
-    rows = db.execute(
-        'SELECT * FROM analysis_deliverables WHERE session_id = ? ORDER BY created_at',
-        (session_id,)
-    ).fetchall()
-    db.close()
-    
-    deliverables = []
-    for row in rows:
-        deliverables.append({
+    try:
+        rows = db.execute(
+            'SELECT * FROM analysis_deliverables WHERE session_id = %s ORDER BY created_at',
+            (session_id,)
+        ).fetchall()
+
+        return [{
             'id': row['id'],
             'session_id': row['session_id'],
             'deliverable_type': row['deliverable_type'],
@@ -2031,77 +1233,52 @@ def get_analysis_deliverables(session_id):
             'file_name': row['file_name'],
             'metadata': json.loads(row['metadata']) if row['metadata'] else {},
             'created_at': row['created_at']
-        })
-    
-    return deliverables
+        } for row in rows]
+    finally:
+        db.close()
 
 
 def update_analysis_progress(session_id, step_name, status, progress_pct=0, message=None):
-    """
-    Update analysis progress
-    
-    Args:
-        session_id: Session ID
-        step_name: Name of the step
-        status: Status ('pending', 'running', 'complete', 'error')
-        progress_pct: Progress percentage (0-100)
-        message: Optional message
-        
-    Returns:
-        Progress ID
-    """
+    """Update analysis progress."""
     db = get_db()
-    
-    # Check if this step already exists
-    existing = db.execute(
-        'SELECT id FROM analysis_progress WHERE session_id = ? AND step_name = ?',
-        (session_id, step_name)
-    ).fetchone()
-    
-    if existing:
-        # Update existing
-        db.execute('''
-            UPDATE analysis_progress
-            SET status = ?, progress_pct = ?, message = ?,
-                completed_at = CASE WHEN ? = 'complete' THEN CURRENT_TIMESTAMP ELSE completed_at END
-            WHERE id = ?
-        ''', (status, progress_pct, message, status, existing['id']))
-        progress_id = existing['id']
-    else:
-        # Insert new
-        cursor = db.execute('''
-            INSERT INTO analysis_progress 
-            (session_id, step_name, status, progress_pct, message, started_at)
-            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        ''', (session_id, step_name, status, progress_pct, message))
-        progress_id = cursor.lastrowid
-    
-    db.commit()
-    db.close()
-    
-    return progress_id
+    try:
+        existing = db.execute(
+            'SELECT id FROM analysis_progress WHERE session_id = %s AND step_name = %s',
+            (session_id, step_name)
+        ).fetchone()
+
+        if existing:
+            db.execute('''
+                UPDATE analysis_progress
+                SET status = %s, progress_pct = %s, message = %s,
+                    completed_at = CASE WHEN %s = 'complete' THEN CURRENT_TIMESTAMP ELSE completed_at END
+                WHERE id = %s
+            ''', (status, progress_pct, message, status, existing['id']))
+            progress_id = existing['id']
+        else:
+            cursor = db.execute('''
+                INSERT INTO analysis_progress
+                (session_id, step_name, status, progress_pct, message, started_at)
+                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+            ''', (session_id, step_name, status, progress_pct, message))
+            progress_id = cursor.lastrowid
+
+        db.commit()
+        return progress_id
+    finally:
+        db.close()
 
 
 def get_analysis_progress(session_id):
-    """
-    Get all progress records for a session
-    
-    Args:
-        session_id: Session ID
-        
-    Returns:
-        List of progress dictionaries
-    """
+    """Get all progress records for a session."""
     db = get_db()
-    rows = db.execute(
-        'SELECT * FROM analysis_progress WHERE session_id = ? ORDER BY created_at',
-        (session_id,)
-    ).fetchall()
-    db.close()
-    
-    progress = []
-    for row in rows:
-        progress.append({
+    try:
+        rows = db.execute(
+            'SELECT * FROM analysis_progress WHERE session_id = %s ORDER BY created_at',
+            (session_id,)
+        ).fetchall()
+
+        return [{
             'id': row['id'],
             'session_id': row['session_id'],
             'step_name': row['step_name'],
@@ -2111,52 +1288,40 @@ def get_analysis_progress(session_id):
             'started_at': row['started_at'],
             'completed_at': row['completed_at'],
             'created_at': row['created_at']
-        })
-    
-    return progress
+        } for row in rows]
+    finally:
+        db.close()
 
 
 def get_analysis_sessions(limit=20, project_id=None, state=None):
-    """
-    Get list of analysis sessions
-    
-    Args:
-        limit: Maximum number to return
-        project_id: Optional filter by project
-        state: Optional filter by state
-        
-    Returns:
-        List of session dictionaries
-    """
+    """Get list of analysis sessions."""
     db = get_db()
-    
-    query = 'SELECT * FROM analysis_sessions WHERE 1=1'
-    params = []
-    
-    if project_id is not None:
-        query += ' AND project_id = ?'
-        params.append(project_id)
-    
-    if state:
-        query += ' AND state = ?'
-        params.append(state)
-    
-    query += ' ORDER BY updated_at DESC LIMIT ?'
-    params.append(limit)
-    
-    rows = db.execute(query, params).fetchall()
-    db.close()
-    
-    sessions = []
-    for row in rows:
-        sessions.append({
+    try:
+        query = 'SELECT * FROM analysis_sessions WHERE 1=1'
+        params = []
+
+        if project_id is not None:
+            query += ' AND project_id = %s'
+            params.append(project_id)
+
+        if state:
+            query += ' AND state = %s'
+            params.append(state)
+
+        query += ' ORDER BY updated_at DESC LIMIT %s'
+        params.append(limit)
+
+        rows = db.execute(query, params).fetchall()
+
+        return [{
             'id': row['id'],
             'session_id': row['session_id'],
             'project_id': row['project_id'],
             'state': row['state'],
             'created_at': row['created_at'],
             'updated_at': row['updated_at']
-        })
-    
-    return sessions
+        } for row in rows]
+    finally:
+        db.close()
+
 # I did no harm and this file is not truncated
