@@ -1,88 +1,90 @@
 """
-DATABASE ADDITIONS FOR SURVEY MODULE
+AI SWARM ORCHESTRATOR - Database Additions for Survey Module
 Created: January 28, 2026
-Last Updated: January 28, 2026
+Last Updated: March 02, 2026 - POSTGRESQL MIGRATION (Phase 1)
+
+CHANGELOG:
+- March 02, 2026: POSTGRESQL MIGRATION
+  * Removed hardcoded db_path='swarm_intelligence.db' parameter
+  * Now uses get_db_connection() from db_engine
+  * All SQL parameters changed from ? to %s
+  * add_surveys_table() is now a no-op wrapper — survey tables are created
+    by migrations/001_initial_schema.py on every startup
+  * Preserved for backward compatibility (app.py calls add_surveys_table())
 
 PURPOSE:
-Add surveys table to existing database for storing created surveys.
-This is ADDITIVE - it doesn't replace existing tables.
+    Survey tables are now created by the main migration script.
+    This module retained for backward compatibility only.
 
-USAGE:
-Import this and call add_surveys_table() in your database.py init_db() function
-
-AUTHOR: Jim @ Shiftwork Solutions LLC
+AUTHOR: Jim @ Shiftwork Solutions LLC (managed by Claude)
 """
 
-import sqlite3
+from db_engine import get_db_connection
 
-def add_surveys_table(db_path='swarm_intelligence.db'):
+
+def add_surveys_table():
     """
-    Add surveys table to existing database
-    
-    Table schema:
-    - id: Primary key
-    - project_name: Name of project/client
-    - company_name: Client company name
-    - created_date: When survey was created
-    - created_by: Who created it (always "Jim @ Shiftwork Solutions LLC")
-    - survey_data: JSON blob containing full survey structure
-    - status: draft, finalized, deployed
-    - response_count: Number of responses received
+    Ensure survey tables exist.
+
+    Tables are now created by migrations/001_initial_schema.py on startup.
+    This function is retained for backward compatibility since app.py calls it.
+    It verifies the tables exist and creates them if somehow missing.
     """
-    
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    
-    # Create surveys table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS surveys (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_name TEXT NOT NULL,
-            company_name TEXT NOT NULL,
-            created_date TEXT NOT NULL,
-            created_by TEXT DEFAULT 'Jim @ Shiftwork Solutions LLC',
-            survey_data TEXT NOT NULL,
-            status TEXT DEFAULT 'draft',
-            response_count INTEGER DEFAULT 0,
-            notes TEXT,
-            last_updated TEXT
-        )
-    ''')
-    
-    # Create survey_responses table for future use
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS survey_responses (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            survey_id INTEGER NOT NULL,
-            employee_id TEXT,
-            response_date TEXT NOT NULL,
-            response_data TEXT NOT NULL,
-            FOREIGN KEY (survey_id) REFERENCES surveys(id)
-        )
-    ''')
-    
-    # Create normative_data table for benchmarking
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS normative_data (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            question_id TEXT NOT NULL,
-            industry TEXT,
-            facility_type TEXT,
-            response_option TEXT NOT NULL,
-            percentage REAL NOT NULL,
-            sample_size INTEGER NOT NULL,
-            last_updated TEXT NOT NULL
-        )
-    ''')
-    
-    conn.commit()
-    conn.close()
-    
-    print("✅ Survey tables added to database")
+    db = get_db_connection()
+    try:
+        from db_engine import get_db_type
+        db_type = get_db_type()
+
+        if db_type == 'postgresql':
+            pk = 'SERIAL PRIMARY KEY'
+        else:
+            pk = 'INTEGER PRIMARY KEY AUTOINCREMENT'
+
+        db.execute(f'''
+            CREATE TABLE IF NOT EXISTS surveys (
+                id {pk},
+                project_name TEXT NOT NULL,
+                company_name TEXT NOT NULL,
+                created_date TEXT NOT NULL,
+                created_by TEXT DEFAULT 'Jim @ Shiftwork Solutions LLC',
+                survey_data TEXT NOT NULL,
+                status TEXT DEFAULT 'draft',
+                response_count INTEGER DEFAULT 0,
+                notes TEXT,
+                last_updated TEXT
+            )
+        ''')
+
+        db.execute(f'''
+            CREATE TABLE IF NOT EXISTS survey_responses (
+                id {pk},
+                survey_id INTEGER NOT NULL,
+                employee_id TEXT,
+                response_date TEXT NOT NULL,
+                response_data TEXT NOT NULL
+            )
+        ''')
+
+        db.execute(f'''
+            CREATE TABLE IF NOT EXISTS normative_data (
+                id {pk},
+                question_id TEXT NOT NULL,
+                industry TEXT,
+                facility_type TEXT,
+                response_option TEXT NOT NULL,
+                percentage REAL NOT NULL,
+                sample_size INTEGER NOT NULL,
+                last_updated TEXT NOT NULL
+            )
+        ''')
+
+        db.commit()
+        print("✅ Survey tables verified/initialized")
+    finally:
+        db.close()
 
 
 if __name__ == '__main__':
-    # Test the function
     add_surveys_table()
     print("Survey tables created successfully!")
 
