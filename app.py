@@ -944,12 +944,12 @@ if __name__ == '__main__':
     app.run(host='0.0.0.0', port=port, debug=debug)
 
 # I did no harm and this file is not truncated
-```
+
 
 ---
 
 ### FILE 8 of 8 — **REPLACE: `requirements.txt`**
-```
+
 # AI SWARM ORCHESTRATOR - Requirements
 # Last Updated: March 02, 2026
 #
