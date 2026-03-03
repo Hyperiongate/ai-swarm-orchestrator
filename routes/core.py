@@ -1,9 +1,24 @@
 """
 Core Routes
 Created: January 21, 2026
-Last Updated: March 03, 2026 - CONNECTION POOL FIX (Phase 4)
+Last Updated: March 03, 2026 - SCHEMA FIX: facility_type -> facility_size
 
 CHANGELOG:
+- March 03, 2026: SCHEMA FIX - facility_type -> facility_size
+  * All references to 'facility_type' in projects queries replaced with
+    'facility_size' to match the authoritative schema in
+    migration_001_initial_schema.py.
+  * The projects table was created with 'facility_size' (not 'facility_type').
+    core.py was using the wrong column name everywhere, causing:
+      column "facility_type" does not exist
+      column "facility_type" of relation "projects" does not exist
+  * Affected functions (all changed facility_type -> facility_size):
+      - list_projects():           SELECT column + dict key
+      - create_project():          data.get() + INSERT column
+      - start_project_legacy():    data.get() + INSERT column
+      - get_project_context_legacy(): dict key in response
+  * No other changes — all other functionality preserved exactly.
+
 - March 03, 2026: CONNECTION POOL FIX (Phase 4)
   * Fixed ALL 14 functions with connection leaks — root cause of PostgreSQL pool exhaustion
   * Rule applied universally: db = get_db() ALWAYS inside try/finally: db.close()
@@ -275,7 +290,7 @@ def list_projects():
         try:
             if status_filter and status_filter != 'all':
                 projects = db.execute('''
-                    SELECT id, project_id, client_name, industry, facility_type,
+                    SELECT id, project_id, client_name, industry, facility_size,
                            project_phase, status, created_at, updated_at
                     FROM projects
                     WHERE status = %s
@@ -284,7 +299,7 @@ def list_projects():
                 ''', (status_filter, limit)).fetchall()
             else:
                 projects = db.execute('''
-                    SELECT id, project_id, client_name, industry, facility_type,
+                    SELECT id, project_id, client_name, industry, facility_size,
                            project_phase, status, created_at, updated_at
                     FROM projects
                     ORDER BY created_at DESC
@@ -298,7 +313,7 @@ def list_projects():
                     'project_id': proj['project_id'],
                     'client_name': proj['client_name'],
                     'industry': proj['industry'],
-                    'facility_type': proj['facility_type'],
+                    'facility_size': proj['facility_size'],
                     'project_phase': proj['project_phase'],
                     'status': proj['status'],
                     'created_at': proj['created_at'],
@@ -333,14 +348,16 @@ def create_project():
 
         client_name = data.get('client_name', 'New Client')
         industry = data.get('industry', 'Manufacturing')
-        facility_type = data.get('facility_type', 'Production')
+        # Accept either facility_size or facility_type from the caller —
+        # the DB column is facility_size (authoritative schema Mar 02 2026)
+        facility_size = data.get('facility_size') or data.get('facility_type', 'Production')
 
         db = get_db()
         try:
             db.execute('''
-                INSERT INTO projects (project_id, client_name, industry, facility_type, status, project_phase)
+                INSERT INTO projects (project_id, client_name, industry, facility_size, status, project_phase)
                 VALUES (%s, %s, %s, %s, 'active', 'initial')
-            ''', (project_id, client_name, industry, facility_type))
+            ''', (project_id, client_name, industry, facility_size))
             db.commit()
         finally:
             db.close()
@@ -373,14 +390,16 @@ def start_project_legacy():
 
         client_name = data.get('client_name', 'New Client')
         industry = data.get('industry', 'Manufacturing')
-        facility_type = data.get('facility_type', 'Production')
+        # Accept either facility_size or facility_type from the caller —
+        # the DB column is facility_size (authoritative schema Mar 02 2026)
+        facility_size = data.get('facility_size') or data.get('facility_type', 'Production')
 
         db = get_db()
         try:
             db.execute('''
-                INSERT INTO projects (project_id, client_name, industry, facility_type, status, project_phase)
+                INSERT INTO projects (project_id, client_name, industry, facility_size, status, project_phase)
                 VALUES (%s, %s, %s, %s, 'active', 'initial')
-            ''', (project_id, client_name, industry, facility_type))
+            ''', (project_id, client_name, industry, facility_size))
             db.commit()
         finally:
             db.close()
@@ -420,7 +439,7 @@ def get_project_context_legacy(project_id):
             'project_id': project['project_id'],
             'client_name': project['client_name'],
             'industry': project['industry'],
-            'facility_type': project['facility_type'],
+            'facility_size': project['facility_size'],
             'phase': project['project_phase'],
             'project_phase': project['project_phase'],
             'status': project['status'],
@@ -475,6 +494,13 @@ def update_project(project_id):
         if 'project_phase' in data:
             updates.append('project_phase = %s')
             values.append(data['project_phase'])
+        # Accept facility_size or legacy facility_type key from callers
+        if 'facility_size' in data:
+            updates.append('facility_size = %s')
+            values.append(data['facility_size'])
+        elif 'facility_type' in data:
+            updates.append('facility_size = %s')
+            values.append(data['facility_type'])
 
         updates.append('updated_at = CURRENT_TIMESTAMP')
 
