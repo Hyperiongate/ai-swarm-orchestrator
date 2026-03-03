@@ -1,9 +1,19 @@
 """
 ALERT SYSTEM - Autonomous Monitoring & Notification Engine
 Created: January 23, 2026
-Last Updated: March 02, 2026 - POSTGRESQL MIGRATION FIX
+Last Updated: March 03, 2026 - KEYERROR FIX in get_alert_counts()
 
 CHANGELOG:
+- March 03, 2026: KEYERROR FIX
+  * get_alert_counts(): SELECT COUNT(*) had no alias — fetchone()[0] used
+    integer index which raises KeyError: 0 on psycopg2 RealDictCursor.
+    Fixed by:
+      1. Adding AS count alias: SELECT COUNT(*) AS count
+      2. Changing fetchone()[0] to row = fetchone() then row['count']
+    This fix is compatible with both PostgreSQL (RealDictRow) and
+    SQLite (DictRow wrapper which already supports named key access).
+  * No other changes — all other functionality preserved exactly.
+
 - March 02, 2026: POSTGRESQL MIGRATION FIX
   * All SQL ? placeholders replaced with %s (PostgreSQL style)
   * All database functions now use try/finally to guarantee conn.close()
@@ -12,7 +22,7 @@ CHANGELOG:
     via _ensure_tables_initialized() guard.
   * INTEGER PRIMARY KEY AUTOINCREMENT -> SERIAL PRIMARY KEY
   * BOOLEAN DEFAULT 0/1 -> BOOLEAN DEFAULT FALSE/TRUE
-  * is_read = 0 comparisons -> is_read = FALSE (or cast-safe)
+  * is_read = 0 comparisons -> is_read = FALSE
   * is_enabled = 1 comparisons -> is_enabled = TRUE
   * _init_default_jobs() now uses %s and its own try/finally
 
@@ -534,7 +544,14 @@ View all alerts: https://ai-swarm-orchestrator.onrender.com/
             db.close()
 
     def get_alert_counts(self):
-        """Get counts of alerts by category and priority."""
+        """
+        Get counts of alerts by category and priority.
+
+        FIX (March 03, 2026): psycopg2 RealDictCursor returns dict-like rows.
+        Integer index access (fetchone()[0]) raises KeyError: 0 on PostgreSQL.
+        All COUNT(*) queries now use AS count alias so rows can be accessed
+        by name (row['count']), which works on both PostgreSQL and SQLite.
+        """
         _ensure_tables_initialized()
 
         counts = {
@@ -547,14 +564,16 @@ View all alerts: https://ai-swarm-orchestrator.onrender.com/
 
         db = get_db()
         try:
-            counts['total_unread'] = db.execute('''
-                SELECT COUNT(*) FROM alerts
+            # COUNT(*) AS count — named alias required for psycopg2 RealDictCursor
+            row = db.execute('''
+                SELECT COUNT(*) AS count FROM alerts
                 WHERE is_read = FALSE AND dismissed_at IS NULL
                 AND (snoozed_until IS NULL OR snoozed_until < %s)
-            ''', (datetime.now(),)).fetchone()[0]
+            ''', (datetime.now(),)).fetchone()
+            counts['total_unread'] = row['count'] if row else 0
 
             cat_rows = db.execute('''
-                SELECT category, COUNT(*) as count FROM alerts
+                SELECT category, COUNT(*) AS count FROM alerts
                 WHERE dismissed_at IS NULL AND is_read = FALSE
                 GROUP BY category
             ''').fetchall()
@@ -562,7 +581,7 @@ View all alerts: https://ai-swarm-orchestrator.onrender.com/
                 counts['by_category'][row['category']] = row['count']
 
             pri_rows = db.execute('''
-                SELECT priority, COUNT(*) as count FROM alerts
+                SELECT priority, COUNT(*) AS count FROM alerts
                 WHERE dismissed_at IS NULL AND is_read = FALSE
                 GROUP BY priority
             ''').fetchall()
