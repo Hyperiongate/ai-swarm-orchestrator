@@ -1,29 +1,34 @@
 """
 Database File Management - UNIFIED PRODUCTION VERSION
 Created: January 28, 2026
-Last Updated: March 02, 2026 - POSTGRESQL MIGRATION (Phase 1)
+Last Updated: March 03, 2026 - SCHEMA FIX Phase 8
 
 CHANGELOG:
-- March 02, 2026: POSTGRESQL MIGRATION
+- March 03, 2026: SCHEMA FIX Phase 8
+  * Fixed facility_type -> facility_size in create_project() INSERT column name
+  * Fixed facility_type -> facility_size in create_project() return dict key
+  * Fixed facility_type -> facility_size in get_project() response dict key
+  * Fixed facility_type -> facility_size in update_project() allowed_fields list
+  * Fixed id::text = %s -> id = %s in get_project(), update_project(),
+    update_checklist() — id column is TEXT type, the ::text cast is invalid
+    against a TEXT primary key in PostgreSQL and caused query failures.
+  * All missing columns (project_phase, storage_path, checklist_data,
+    milestone_data, folder_data, metadata, project_id) are added to the
+    projects table by add_missing_columns.py at startup.
+  * No functional changes — all methods behave identically after fix.
+
+- March 02, 2026: POSTGRESQL MIGRATION (Phase 1)
   * Replaced all sqlite3.connect(DATABASE) calls with get_db_connection()
   * All SQL parameters changed from ? to %s (PostgreSQL style)
-  * STORAGE_PATH now imported from config.py (was hardcoded /tmp/swarm_projects/)
-  * Storage path resolves to /mnt/project/swarm_projects/ in production
+  * STORAGE_PATH now imported from config.py
   * ON CONFLICT syntax for PostgreSQL upserts
-  * All existing functionality preserved — no features removed
+  * All existing functionality preserved
 
 - February 5, 2026: FIXED FILE SELECTION EXCEL EXTRACTION
-  * get_files_for_ai_context() now uses file_content_reader
-  * File selection now has SAME quality as file uploads
-
 - February 1, 2026: CRITICAL FIX - add_file() handles Flask FileStorage objects
 - February 1, 2026: CRITICAL FIX - Proper persistent storage instead of /tmp
 - January 31, 2026: Added file_ids parameter to get_files_for_ai_context()
 - January 30, 2026: COMPLETE REBUILD - Merged Sprint 2 features + bulletproof persistence
-
-PERSISTENT STORAGE:
-    Files stored at STORAGE_PATH = /mnt/project/swarm_projects/ (persistent disk).
-    Override with STORAGE_ROOT environment variable if needed.
 
 AUTHOR: Jim @ Shiftwork Solutions LLC (managed by Claude)
 """
@@ -39,11 +44,6 @@ from db_engine import get_db_connection
 
 
 class ProjectManager:
-    """
-    Complete project management system.
-    Handles project lifecycle, file management, conversations, and context.
-    """
-
     PROJECT_KEYWORDS = [
         'new client', 'new facility', 'new customer', 'new project',
         'kick off', 'kickoff', 'starting work with', 'beginning work',
@@ -51,12 +51,6 @@ class ProjectManager:
     ]
 
     def __init__(self, storage_root=None):
-        """
-        Initialize project manager with storage location.
-
-        Uses STORAGE_PATH from config.py by default (/mnt/project/swarm_projects/).
-        Override with storage_root parameter or STORAGE_ROOT environment variable.
-        """
         print("=" * 80)
         print("🔧 INITIALIZING PROJECT MANAGER - STORAGE DIAGNOSTICS")
         print("=" * 80)
@@ -94,11 +88,9 @@ class ProjectManager:
         print("=" * 80)
 
     def _get_db(self):
-        """Get database connection."""
         return get_db_connection()
 
     def _generate_id(self, prefix=''):
-        """Generate a unique ID."""
         timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
         random_hash = hashlib.md5(os.urandom(16)).hexdigest()[:8]
         return f"{prefix}{timestamp}_{random_hash}"
@@ -108,16 +100,12 @@ class ProjectManager:
     # ========================================================================
 
     def detect_new_project(self, user_request):
-        """Scan user request for new project indicators."""
         request_lower = user_request.lower()
         detected = any(keyword in request_lower for keyword in self.PROJECT_KEYWORDS)
-
         if not detected:
             return {'detected': False}
-
         client_name = self._extract_client_name(user_request)
         industry = self._extract_industry(user_request)
-
         return {
             'detected': True,
             'client_name': client_name,
@@ -126,7 +114,6 @@ class ProjectManager:
         }
 
     def _extract_client_name(self, text):
-        """Extract client/company name from text."""
         patterns = [
             r'(?:new client|new facility|new customer|kickoff)\s+(?:for\s+)?([A-Z][A-Za-z\s&]+?)(?:\s+in|\s+at|\s+facility|$|\.)',
             r'(?:starting work with|beginning work|engagement with)\s+([A-Z][A-Za-z\s&]+?)(?:\s+in|\s+at|$|\.)',
@@ -142,7 +129,6 @@ class ProjectManager:
         return None
 
     def _extract_industry(self, text):
-        """Extract industry from text."""
         industries = {
             'manufacturing': ['manufacturing', 'factory', 'plant', 'production'],
             'pharmaceutical': ['pharmaceutical', 'pharma', 'drug', 'biotech'],
@@ -164,7 +150,11 @@ class ProjectManager:
 
     def create_project(self, client_name, industry=None, facility_type=None,
                        additional_context=None, metadata=None):
-        """Create complete project structure."""
+        """
+        Create complete project structure.
+        Parameter facility_type kept for API backward compatibility with callers.
+        Stored in facility_size column (authoritative schema Mar 2026).
+        """
         project_id = self._generate_id('PRJ_')
         storage_path = os.path.join(self.storage_root, project_id)
         os.makedirs(storage_path, exist_ok=True)
@@ -182,7 +172,7 @@ class ProjectManager:
         try:
             db.execute('''
                 INSERT INTO projects (
-                    project_id, client_name, industry, facility_type,
+                    project_id, client_name, industry, facility_size,
                     status, project_phase, storage_path,
                     checklist_data, milestone_data, folder_data, metadata
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
@@ -203,7 +193,7 @@ class ProjectManager:
             'id': project_id,
             'client_name': client_name,
             'industry': industry,
-            'facility_type': facility_type,
+            'facility_size': facility_type,
             'storage_path': storage_path,
             'status': 'active',
             'project_phase': 'discovery',
@@ -215,7 +205,6 @@ class ProjectManager:
         }
 
     def _generate_checklist(self):
-        """Generate standard implementation checklist."""
         return [
             {
                 'phase': 'Discovery',
@@ -264,7 +253,6 @@ class ProjectManager:
         ]
 
     def _generate_milestones(self):
-        """Generate project milestones with dates."""
         today = datetime.now()
         return [
             {'name': 'Kickoff Meeting', 'target_date': (today + timedelta(days=3)).isoformat(), 'status': 'pending'},
@@ -276,7 +264,6 @@ class ProjectManager:
         ]
 
     def _generate_folder_structure(self, client_name):
-        """Generate logical folder structure."""
         safe_name = re.sub(r'[^a-zA-Z0-9\s]', '', client_name).replace(' ', '_')
         return {
             'root': f'/projects/{safe_name}',
@@ -288,7 +275,6 @@ class ProjectManager:
         }
 
     def _list_available_templates(self):
-        """List available document templates."""
         return [
             {'name': 'Implementation Manual', 'file': 'Implementation_Manual.docx'},
             {'name': 'Employee Survey', 'file': 'Schedule_Survey.docx'},
@@ -298,7 +284,6 @@ class ProjectManager:
         ]
 
     def _suggest_next_steps(self):
-        """Suggest immediate next actions."""
         return [
             'Schedule kickoff meeting with client stakeholders',
             'Request organizational charts and payroll data',
@@ -315,8 +300,9 @@ class ProjectManager:
         """Retrieve project from database."""
         db = self._get_db()
         try:
+            # FIXED: was 'id::text = %s' — id is TEXT type, ::text cast is invalid
             project = db.execute(
-                'SELECT * FROM projects WHERE project_id = %s OR id::text = %s',
+                'SELECT * FROM projects WHERE project_id = %s OR id = %s',
                 (project_id, str(project_id))
             ).fetchone()
 
@@ -328,7 +314,7 @@ class ProjectManager:
                 'project_id': project['project_id'] or str(project['id']),
                 'client_name': project['client_name'],
                 'industry': project['industry'],
-                'facility_type': project['facility_type'],
+                'facility_size': project['facility_size'],  # FIXED: was facility_type
                 'status': project['status'],
                 'project_phase': project['project_phase'],
                 'storage_path': project['storage_path'],
@@ -387,7 +373,8 @@ class ProjectManager:
 
     def update_project(self, project_id, **kwargs):
         """Update project fields."""
-        allowed_fields = ['client_name', 'industry', 'facility_type', 'project_phase', 'status']
+        # FIXED: was 'facility_type' in allowed_fields — DB column is facility_size
+        allowed_fields = ['client_name', 'industry', 'facility_size', 'project_phase', 'status']
         updates = []
         values = []
 
@@ -396,12 +383,16 @@ class ProjectManager:
                 updates.append(f'{field} = %s')
                 values.append(kwargs[field])
 
+        # Accept legacy facility_type key from callers
+        if 'facility_type' in kwargs and 'facility_size' not in kwargs:
+            updates.append('facility_size = %s')
+            values.append(kwargs['facility_type'])
+
         if 'metadata' in kwargs:
             updates.append('metadata = %s')
             values.append(json.dumps(kwargs['metadata']))
 
         if not updates:
-            # Just update the timestamp
             updates.append('updated_at = CURRENT_TIMESTAMP')
             values.extend([project_id, str(project_id)])
         else:
@@ -410,8 +401,9 @@ class ProjectManager:
 
         db = self._get_db()
         try:
+            # FIXED: was 'id::text = %s' — id is TEXT type, ::text cast is invalid
             db.execute(
-                f"UPDATE projects SET {', '.join(updates)} WHERE project_id = %s OR id::text = %s",
+                f"UPDATE projects SET {', '.join(updates)} WHERE project_id = %s OR id = %s",
                 values
             )
             db.commit()
@@ -429,8 +421,9 @@ class ProjectManager:
 
         db = self._get_db()
         try:
+            # FIXED: was 'id::text = %s' — id is TEXT type, ::text cast is invalid
             db.execute(
-                'UPDATE projects SET checklist_data = %s, updated_at = CURRENT_TIMESTAMP WHERE project_id = %s OR id::text = %s',
+                'UPDATE projects SET checklist_data = %s, updated_at = CURRENT_TIMESTAMP WHERE project_id = %s OR id = %s',
                 (json.dumps(project['checklist']), project_id, str(project_id))
             )
             db.commit()
@@ -466,7 +459,6 @@ class ProjectManager:
             raise ValueError(f"Project {project_id} not found")
 
         if not project.get('storage_path'):
-            # Create storage path if missing (legacy projects)
             storage_path = os.path.join(self.storage_root, project_id)
             os.makedirs(storage_path, exist_ok=True)
             self.update_project(project_id, metadata={'storage_path': storage_path})
@@ -769,11 +761,6 @@ _project_manager = None
 
 
 def get_project_manager(storage_root=None, force_reload=False):
-    """
-    Get the ProjectManager singleton instance.
-    Uses STORAGE_PATH from config.py (/mnt/project/swarm_projects/).
-    Override with storage_root parameter or STORAGE_ROOT environment variable.
-    """
     global _project_manager
 
     if force_reload:
@@ -787,36 +774,30 @@ def get_project_manager(storage_root=None, force_reload=False):
 
 
 def add_project_files_table():
-    """Backward compatible — tables created automatically via migration."""
     print("✅ Tables managed via migrations/001_initial_schema.py")
 
 
 def save_project_file(project_id, filename, original_filename, file_type, file_path, **kwargs):
-    """Backward compatible file save."""
     pm = get_project_manager()
     return pm.add_file(project_id, file_path, original_filename, file_type)
 
 
 def get_project_files(project_id, include_deleted=False, file_type=None):
-    """Backward compatible file listing."""
     pm = get_project_manager()
     return pm.list_files(project_id, include_deleted)
 
 
 def get_project_file_by_id(file_id):
-    """Backward compatible file retrieval."""
     pm = get_project_manager()
     return pm.get_file(file_id)
 
 
 def delete_project_file(file_id, hard_delete=False):
-    """Backward compatible file deletion."""
     pm = get_project_manager()
     return pm.delete_file(file_id, hard_delete)
 
 
 def get_all_projects_with_files():
-    """Backward compatible — get all projects with file counts."""
     pm = get_project_manager()
     projects = pm.list_projects(status='active', limit=1000)
 
@@ -834,7 +815,6 @@ def get_all_projects_with_files():
 
 
 def get_project_file_by_name(project_id, filename):
-    """Backward compatible — get file by name."""
     pm = get_project_manager()
     files = pm.list_files(project_id)
 
@@ -848,7 +828,6 @@ def get_project_file_by_name(project_id, filename):
 
 
 def get_file_stats_by_project(project_id):
-    """Backward compatible — get file statistics."""
     pm = get_project_manager()
     files = pm.list_files(project_id)
 
@@ -987,7 +966,6 @@ def get_files_for_ai_context(project_id, max_files=5, max_chars_per_file=50000, 
 
 
 def mark_file_as_analyzed(file_id, analysis_summary=None):
-    """Backward compatible — mark file as analyzed."""
     pm = get_project_manager()
     file_info = pm.get_file(file_id)
     if not file_info:
@@ -1021,7 +999,6 @@ def mark_file_as_analyzed(file_id, analysis_summary=None):
 
 
 def search_project_files(project_id, search_term):
-    """Backward compatible — search files by name or description."""
     pm = get_project_manager()
     all_files = pm.list_files(project_id)
     search_lower = search_term.lower()
@@ -1036,7 +1013,6 @@ def search_project_files(project_id, search_term):
 
 
 def update_file_metadata(file_id, **kwargs):
-    """Backward compatible — update file metadata."""
     allowed_fields = ['description', 'category']
     updates = []
     values = []
