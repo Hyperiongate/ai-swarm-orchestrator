@@ -1,9 +1,16 @@
 """
 CLIENT INTELLIGENCE MODULE - Lead Scoring & Pipeline Management
 Created: January 23, 2026
-Last Updated: March 02, 2026 - POSTGRESQL MIGRATION FIX
+Last Updated: March 03, 2026 - POSTGRESQL BOOLEAN FIX
 
 CHANGELOG:
+- March 03, 2026: POSTGRESQL BOOLEAN FIX
+  * is_archived = 0 comparisons -> is_archived = FALSE (PostgreSQL boolean)
+  * is_archived = 1 assignments -> is_archived = TRUE (PostgreSQL boolean)
+  * Affects: get_leads(), get_pipeline_summary() (x2), archive_lead()
+  * No other changes - try/finally and %s placeholders already correct
+    from March 02 migration
+
 - March 02, 2026: POSTGRESQL MIGRATION FIX
   * All SQL ? placeholders replaced with %s (PostgreSQL style)
   * All database functions now use try/finally to guarantee conn.close()
@@ -452,7 +459,7 @@ class LeadManager:
             params = []
 
             if not include_archived:
-                query += ' AND is_archived = 0'
+                query += ' AND is_archived = FALSE'
             if stage:
                 query += ' AND pipeline_stage = %s'
                 params.append(stage)
@@ -611,7 +618,7 @@ class LeadManager:
         try:
             db.execute('''
                 UPDATE leads
-                SET is_archived = 1, archive_reason = %s, updated_at = CURRENT_TIMESTAMP
+                SET is_archived = TRUE, archive_reason = %s, updated_at = CURRENT_TIMESTAMP
                 WHERE id = %s
             ''', (reason, lead_id))
             db.execute('''
@@ -634,7 +641,7 @@ class LeadManager:
             rows = db.execute('''
                 SELECT pipeline_stage, COUNT(*) as count, AVG(score) as avg_score
                 FROM leads
-                WHERE is_archived = 0
+                WHERE is_archived = FALSE
                 GROUP BY pipeline_stage
             ''').fetchall()
 
@@ -648,7 +655,7 @@ class LeadManager:
                 SELECT COUNT(*) as total, AVG(score) as avg,
                        SUM(CASE WHEN score >= 70 THEN 1 ELSE 0 END) as high
                 FROM leads
-                WHERE is_archived = 0
+                WHERE is_archived = FALSE
             ''').fetchone()
 
             summary['total_active'] = stats['total'] or 0
