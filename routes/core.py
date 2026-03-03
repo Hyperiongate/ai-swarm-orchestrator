@@ -1,13 +1,35 @@
 """
 Core Routes
-Created: January 21, 2026 
-Last Updated: January 26, 2026 - REPLACED OLD SCHEDULE SYSTEM WITH PATTERN-BASED
+Created: January 21, 2026
+Last Updated: March 03, 2026 - CONNECTION POOL FIX (Phase 4)
 
-CHANGES IN THIS VERSION:
+CHANGELOG:
+- March 03, 2026: CONNECTION POOL FIX (Phase 4)
+  * Fixed ALL 14 functions with connection leaks — root cause of PostgreSQL pool exhaustion
+  * Rule applied universally: db = get_db() ALWAYS inside try/finally: db.close()
+  * db.close() NEVER called inside try block without matching finally
+  * ALL '?' placeholders replaced with '%s' (PostgreSQL syntax)
+  * Functions fixed:
+    - list_projects(): '?' -> '%s', db.close() moved to finally
+    - create_project(): '?' -> '%s', db.close() moved to finally
+    - start_project_legacy(): '?' -> '%s', db.close() moved to finally
+    - get_project_context_legacy(): '?' -> '%s', db.close() moved to finally
+    - get_project(): '?' -> '%s', db.close() moved to finally
+    - update_project(): '?' -> '%s', db.close() moved to finally
+    - upload_project_files(): '?' -> '%s', db.close() moved to finally
+    - list_project_files(): '?' -> '%s', db.close() moved to finally
+    - create_document_in_project(): '?' -> '%s', db.close() moved to finally
+    - get_tasks(): '?' -> '%s', db.close() moved to finally
+    - get_task(): '?' -> '%s', db.close() moved to finally
+    - get_stats(): '?' -> '%s', db.close() moved to finally
+    - submit_feedback(): ALL '?' -> '%s', inner try/finally preserved
+    - get_learning_stats(): db.close() moved to finally
+  * No functional changes - all endpoints behave identically
+
 - January 26, 2026: COMPLETE SCHEDULE SYSTEM REPLACEMENT
   * Removed old named-schedule system (DuPont, Panama, Pitman buttons)
   * Integrated new pattern-based conversational system
-  * Now asks: shift length → pattern selection
+  * Now asks: shift length -> pattern selection
   * Only DuPont and Southern Swing keep their names (industry standards)
   * All other patterns described by work/off rhythm (2-2-3, 4-4, etc.)
   * Added session management for multi-turn schedule conversations
@@ -59,9 +81,9 @@ import shutil
 from datetime import datetime
 from schedule_request_handler_combined import get_combined_schedule_handler
 from database import (
-    get_db, 
-    create_conversation, 
-    get_conversation, 
+    get_db,
+    create_conversation,
+    get_conversation,
     get_conversations,
     update_conversation,
     delete_conversation as db_delete_conversation,
@@ -75,8 +97,8 @@ from database import (
     update_document_access,
     delete_generated_document,
     get_document_stats,
-    get_schedule_context,        
-    save_schedule_context,    
+    get_schedule_context,
+    save_schedule_context,
     add_avoidance_pattern
 )
 from orchestration import (
@@ -116,11 +138,11 @@ try:
     from survey_builder import get_survey_builder
     survey_builder = get_survey_builder()
     SURVEY_BUILDER_AVAILABLE = True
-    print("✅ Survey Builder loaded for API endpoints")
+    print("Survey Builder loaded for API endpoints")
 except ImportError:
-    print("ℹ️  Survey Builder not available")
+    print("Survey Builder not available")
 except Exception as e:
-    print(f"⚠️  Survey Builder error: {e}")
+    print(f"Survey Builder error: {e}")
 
 # Marketing Hub
 MARKETING_HUB_AVAILABLE = False
@@ -129,11 +151,11 @@ try:
     from marketing_hub import get_marketing_hub
     marketing_hub = get_marketing_hub()
     MARKETING_HUB_AVAILABLE = True
-    print("✅ Marketing Hub loaded for API endpoints")
+    print("Marketing Hub loaded for API endpoints")
 except ImportError:
-    print("ℹ️  Marketing Hub not available")
+    print("Marketing Hub not available")
 except Exception as e:
-    print(f"⚠️  Marketing Hub error: {e}")
+    print(f"Marketing Hub error: {e}")
 
 # Opportunity Finder
 OPPORTUNITY_FINDER_AVAILABLE = False
@@ -142,11 +164,11 @@ try:
     from opportunity_finder import get_opportunity_finder
     opportunity_finder = get_opportunity_finder()
     OPPORTUNITY_FINDER_AVAILABLE = True
-    print("✅ Opportunity Finder loaded for API endpoints")
+    print("Opportunity Finder loaded for API endpoints")
 except ImportError:
-    print("ℹ️  Opportunity Finder not available")
+    print("Opportunity Finder not available")
 except Exception as e:
-    print(f"⚠️  Opportunity Finder error: {e}")
+    print(f"Opportunity Finder error: {e}")
 
 # Project Manager
 PROJECT_MANAGER_AVAILABLE = False
@@ -155,11 +177,11 @@ try:
     from project_manager import ProjectManager
     project_manager = ProjectManager()
     PROJECT_MANAGER_AVAILABLE = True
-    print("✅ Project Manager loaded for API endpoints")
+    print("Project Manager loaded for API endpoints")
 except ImportError:
-    print("ℹ️  Project Manager not available")
+    print("Project Manager not available")
 except Exception as e:
-    print(f"⚠️  Project Manager error: {e}")
+    print(f"Project Manager error: {e}")
 
 
 # ============================================================================
@@ -248,48 +270,48 @@ def list_projects():
     try:
         status_filter = request.args.get('status', 'all')
         limit = request.args.get('limit', 50, type=int)
-        
+
         db = get_db()
-        
-        if status_filter and status_filter != 'all':
-            projects = db.execute('''
-                SELECT id, project_id, client_name, industry, facility_type, 
-                       project_phase, status, created_at, updated_at
-                FROM projects
-                WHERE status = ?
-                ORDER BY created_at DESC
-                LIMIT ?
-            ''', (status_filter, limit)).fetchall()
-        else:
-            projects = db.execute('''
-                SELECT id, project_id, client_name, industry, facility_type,
-                       project_phase, status, created_at, updated_at
-                FROM projects
-                ORDER BY created_at DESC
-                LIMIT ?
-            ''', (limit,)).fetchall()
-        
-        db.close()
-        
-        project_list = []
-        for proj in projects:
-            project_list.append({
-                'id': proj['id'],
-                'project_id': proj['project_id'],
-                'client_name': proj['client_name'],
-                'industry': proj['industry'],
-                'facility_type': proj['facility_type'],
-                'project_phase': proj['project_phase'],
-                'status': proj['status'],
-                'created_at': proj['created_at'],
-                'updated_at': proj['updated_at']
+        try:
+            if status_filter and status_filter != 'all':
+                projects = db.execute('''
+                    SELECT id, project_id, client_name, industry, facility_type,
+                           project_phase, status, created_at, updated_at
+                    FROM projects
+                    WHERE status = %s
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                ''', (status_filter, limit)).fetchall()
+            else:
+                projects = db.execute('''
+                    SELECT id, project_id, client_name, industry, facility_type,
+                           project_phase, status, created_at, updated_at
+                    FROM projects
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                ''', (limit,)).fetchall()
+
+            project_list = []
+            for proj in projects:
+                project_list.append({
+                    'id': proj['id'],
+                    'project_id': proj['project_id'],
+                    'client_name': proj['client_name'],
+                    'industry': proj['industry'],
+                    'facility_type': proj['facility_type'],
+                    'project_phase': proj['project_phase'],
+                    'status': proj['status'],
+                    'created_at': proj['created_at'],
+                    'updated_at': proj['updated_at']
+                })
+
+            return jsonify({
+                'success': True,
+                'projects': project_list,
+                'count': len(project_list)
             })
-        
-        return jsonify({
-            'success': True,
-            'projects': project_list,
-            'count': len(project_list)
-        })
+        finally:
+            db.close()
     except Exception as e:
         print(f"Error listing projects: {e}")
         return jsonify({
@@ -305,22 +327,24 @@ def create_project():
     """Create a new project"""
     try:
         data = request.json or {}
-        
+
         import uuid
         project_id = str(uuid.uuid4())[:8]
-        
+
         client_name = data.get('client_name', 'New Client')
         industry = data.get('industry', 'Manufacturing')
         facility_type = data.get('facility_type', 'Production')
-        
+
         db = get_db()
-        db.execute('''
-            INSERT INTO projects (project_id, client_name, industry, facility_type, status, project_phase)
-            VALUES (?, ?, ?, ?, 'active', 'initial')
-        ''', (project_id, client_name, industry, facility_type))
-        db.commit()
-        db.close()
-        
+        try:
+            db.execute('''
+                INSERT INTO projects (project_id, client_name, industry, facility_type, status, project_phase)
+                VALUES (%s, %s, %s, %s, 'active', 'initial')
+            ''', (project_id, client_name, industry, facility_type))
+            db.commit()
+        finally:
+            db.close()
+
         return jsonify({
             'success': True,
             'project_id': project_id,
@@ -343,22 +367,24 @@ def start_project_legacy():
     """
     try:
         data = request.json or {}
-        
+
         import uuid
         project_id = str(uuid.uuid4())[:8]
-        
+
         client_name = data.get('client_name', 'New Client')
         industry = data.get('industry', 'Manufacturing')
         facility_type = data.get('facility_type', 'Production')
-        
+
         db = get_db()
-        db.execute('''
-            INSERT INTO projects (project_id, client_name, industry, facility_type, status, project_phase)
-            VALUES (?, ?, ?, ?, 'active', 'initial')
-        ''', (project_id, client_name, industry, facility_type))
-        db.commit()
-        db.close()
-        
+        try:
+            db.execute('''
+                INSERT INTO projects (project_id, client_name, industry, facility_type, status, project_phase)
+                VALUES (%s, %s, %s, %s, 'active', 'initial')
+            ''', (project_id, client_name, industry, facility_type))
+            db.commit()
+        finally:
+            db.close()
+
         return jsonify({
             'success': True,
             'project_id': project_id,
@@ -379,16 +405,16 @@ def get_project_context_legacy(project_id):
     """
     try:
         db = get_db()
-        
-        project = db.execute('''
-            SELECT * FROM projects WHERE project_id = ? OR id = ?
-        ''', (project_id, project_id)).fetchone()
-        
-        db.close()
-        
+        try:
+            project = db.execute('''
+                SELECT * FROM projects WHERE project_id = %s OR id = %s
+            ''', (project_id, project_id)).fetchone()
+        finally:
+            db.close()
+
         if not project:
             return jsonify({'success': False, 'error': 'Project not found'}), 404
-        
+
         return jsonify({
             'success': True,
             'project_id': project['project_id'],
@@ -404,21 +430,22 @@ def get_project_context_legacy(project_id):
         print(f"Error getting project context: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+
 @core_bp.route('/api/projects/<project_id>', methods=['GET'])
 def get_project(project_id):
     """Get a specific project by ID"""
     try:
         db = get_db()
-        
-        project = db.execute('''
-            SELECT * FROM projects WHERE project_id = ? OR id = ?
-        ''', (project_id, project_id)).fetchone()
-        
-        db.close()
-        
+        try:
+            project = db.execute('''
+                SELECT * FROM projects WHERE project_id = %s OR id = %s
+            ''', (project_id, project_id)).fetchone()
+        finally:
+            db.close()
+
         if not project:
             return jsonify({'success': False, 'error': 'Project not found'}), 404
-        
+
         return jsonify({
             'success': True,
             'project': dict(project)
@@ -432,37 +459,36 @@ def update_project(project_id):
     """Update a project"""
     try:
         data = request.json or {}
-        
-        db = get_db()
-        
+
         updates = []
         values = []
-        
+
         if 'client_name' in data:
-            updates.append('client_name = ?')
+            updates.append('client_name = %s')
             values.append(data['client_name'])
         if 'industry' in data:
-            updates.append('industry = ?')
+            updates.append('industry = %s')
             values.append(data['industry'])
         if 'status' in data:
-            updates.append('status = ?')
+            updates.append('status = %s')
             values.append(data['status'])
         if 'project_phase' in data:
-            updates.append('project_phase = ?')
+            updates.append('project_phase = %s')
             values.append(data['project_phase'])
-        
+
         updates.append('updated_at = CURRENT_TIMESTAMP')
-        
+
         if updates:
-            values.append(project_id)
-            db.execute(f'''
-                UPDATE projects SET {', '.join(updates)}
-                WHERE project_id = ? OR id = ?
-            ''', values + [project_id])
-            db.commit()
-        
-        db.close()
-        
+            db = get_db()
+            try:
+                db.execute(f'''
+                    UPDATE projects SET {', '.join(updates)}
+                    WHERE project_id = %s OR id = %s
+                ''', values + [project_id, project_id])
+                db.commit()
+            finally:
+                db.close()
+
         return jsonify({'success': True, 'message': 'Project updated'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -484,10 +510,10 @@ def get_survey_questions():
                 'total_count': 0,
                 'message': 'Survey Builder not available'
             })
-        
+
         questions = []
         categories = set()
-        
+
         for q_id, q_data in survey_builder.question_bank.items():
             questions.append({
                 'id': q_id,
@@ -498,7 +524,7 @@ def get_survey_questions():
                 'options': q_data.get('options', [])
             })
             categories.add(q_data.get('category', 'general'))
-        
+
         return jsonify({
             'success': True,
             'questions': questions,
@@ -522,18 +548,18 @@ def create_survey():
     try:
         if not SURVEY_BUILDER_AVAILABLE or not survey_builder:
             return jsonify({'success': False, 'error': 'Survey Builder not available'}), 503
-        
+
         data = request.json or {}
         project_name = data.get('project_name', 'New Survey')
         selected_questions = data.get('questions', [])
         custom_questions = data.get('custom_questions', [])
-        
+
         survey = survey_builder.create_survey(
             project_name=project_name,
             selected_questions=selected_questions,
             custom_questions=custom_questions
         )
-        
+
         return jsonify({
             'success': True,
             'survey': survey
@@ -548,12 +574,12 @@ def get_survey(survey_id):
     try:
         if not SURVEY_BUILDER_AVAILABLE or not survey_builder:
             return jsonify({'success': False, 'error': 'Survey Builder not available'}), 503
-        
+
         survey = survey_builder.get_survey(survey_id)
-        
+
         if not survey:
             return jsonify({'success': False, 'error': 'Survey not found'}), 404
-        
+
         return jsonify({
             'success': True,
             'survey': survey
@@ -568,13 +594,13 @@ def submit_survey_response(survey_id):
     try:
         if not SURVEY_BUILDER_AVAILABLE or not survey_builder:
             return jsonify({'success': False, 'error': 'Survey Builder not available'}), 503
-        
+
         data = request.json or {}
         answers = data.get('answers', {})
         respondent_id = data.get('respondent_id')
-        
+
         result = survey_builder.submit_response(survey_id, answers, respondent_id)
-        
+
         return jsonify(result)
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -586,9 +612,9 @@ def analyze_survey(survey_id):
     try:
         if not SURVEY_BUILDER_AVAILABLE or not survey_builder:
             return jsonify({'success': False, 'error': 'Survey Builder not available'}), 503
-        
+
         analysis = survey_builder.analyze_responses(survey_id)
-        
+
         return jsonify(analysis)
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -624,9 +650,9 @@ def get_marketing_status():
                 },
                 'message': 'Marketing Hub not available'
             })
-        
+
         status = marketing_hub.get_status()
-        
+
         return jsonify({
             'success': True,
             'available': True,
@@ -650,18 +676,18 @@ def generate_marketing_content():
     try:
         if not MARKETING_HUB_AVAILABLE or not marketing_hub:
             return jsonify({'success': False, 'error': 'Marketing Hub not available'}), 503
-        
+
         data = request.json or {}
         topic = data.get('topic', '')
         platform = data.get('platform', 'linkedin')
-        
+
         if not topic:
             return jsonify({'success': False, 'error': 'Topic is required'}), 400
-        
+
         from orchestration.ai_clients import call_claude_sonnet
-        
+
         result = marketing_hub.generate_social_content(topic, platform, call_claude_sonnet)
-        
+
         return jsonify(result)
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -673,19 +699,19 @@ def post_to_social():
     try:
         if not MARKETING_HUB_AVAILABLE or not marketing_hub:
             return jsonify({'success': False, 'error': 'Marketing Hub not available'}), 503
-        
+
         data = request.json or {}
         content = data.get('content', '')
         platform = data.get('platform', 'linkedin')
-        
+
         if not content:
             return jsonify({'success': False, 'error': 'Content is required'}), 400
-        
+
         if platform == 'linkedin':
             result = marketing_hub.post_to_linkedin(content)
         else:
             result = {'success': False, 'error': f'Platform {platform} not supported yet'}
-        
+
         return jsonify(result)
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -697,17 +723,17 @@ def conduct_market_research():
     try:
         if not MARKETING_HUB_AVAILABLE or not marketing_hub:
             return jsonify({'success': False, 'error': 'Marketing Hub not available'}), 503
-        
+
         data = request.json or {}
         topic = data.get('topic', '')
-        
+
         if not topic:
             return jsonify({'success': False, 'error': 'Topic is required'}), 400
-        
+
         from orchestration.ai_clients import call_claude_sonnet
-        
+
         result = marketing_hub.conduct_market_research(topic, call_claude_sonnet)
-        
+
         return jsonify(result)
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -727,7 +753,7 @@ def list_opportunities():
                 'opportunities': [],
                 'message': 'Opportunity Finder not available'
             })
-        
+
         opportunities = []
         for opp in opportunity_finder.opportunity_templates:
             opportunities.append({
@@ -738,7 +764,7 @@ def list_opportunities():
                 'estimated_revenue': opp['estimated_revenue'],
                 'effort_to_launch': opp['effort_to_launch']
             })
-        
+
         return jsonify({
             'success': True,
             'opportunities': opportunities,
@@ -762,9 +788,9 @@ def get_opportunities_status():
                 'metrics_count': 0,
                 'message': 'Opportunity Finder not available'
             })
-        
+
         stats = opportunity_finder.get_stats()
-        
+
         return jsonify({
             'success': True,
             'available': True,
@@ -793,11 +819,11 @@ def get_top_opportunities():
     try:
         if not OPPORTUNITY_FINDER_AVAILABLE or not opportunity_finder:
             return jsonify({'success': False, 'error': 'Opportunity Finder not available'}), 503
-        
+
         limit = request.args.get('limit', 5, type=int)
-        
+
         top_opps = opportunity_finder.get_top_opportunities(limit=limit)
-        
+
         return jsonify({
             'success': True,
             'opportunities': top_opps
@@ -812,12 +838,12 @@ def generate_opportunity_pitch():
     try:
         if not OPPORTUNITY_FINDER_AVAILABLE or not opportunity_finder:
             return jsonify({'success': False, 'error': 'Opportunity Finder not available'}), 503
-        
+
         data = request.json or {}
         opportunity_name = data.get('name')
-        
+
         pitch = opportunity_finder.generate_pitch(opportunity_name)
-        
+
         return jsonify({
             'success': True,
             'pitch': pitch
@@ -832,24 +858,24 @@ def analyze_opportunity():
     try:
         if not OPPORTUNITY_FINDER_AVAILABLE or not opportunity_finder:
             return jsonify({'success': False, 'error': 'Opportunity Finder not available'}), 503
-        
+
         data = request.json or {}
         opportunity_name = data.get('name')
-        
+
         if not opportunity_name:
             return jsonify({'success': False, 'error': 'Opportunity name required'}), 400
-        
+
         opportunity = next(
-            (o for o in opportunity_finder.opportunity_templates 
+            (o for o in opportunity_finder.opportunity_templates
              if o['name'].lower() == opportunity_name.lower()),
             None
         )
-        
+
         if not opportunity:
             return jsonify({'success': False, 'error': 'Opportunity not found'}), 404
-        
+
         analysis = opportunity_finder.analyze_market_fit(opportunity)
-        
+
         return jsonify({
             'success': True,
             'analysis': analysis
@@ -870,14 +896,14 @@ def list_generated_documents():
         document_type = request.args.get('type')
         project_id = request.args.get('project_id')
         conversation_id = request.args.get('conversation_id')
-        
+
         documents = get_generated_documents(
             limit=limit,
             document_type=document_type,
             project_id=project_id,
             conversation_id=conversation_id
         )
-        
+
         formatted_docs = []
         for doc in documents:
             formatted_docs.append({
@@ -892,7 +918,7 @@ def list_generated_documents():
                 'download_url': f"/api/generated-documents/{doc['id']}/download",
                 'print_url': f"/api/generated-documents/{doc['id']}/print"
             })
-        
+
         return jsonify({
             'success': True,
             'documents': formatted_docs,
@@ -909,7 +935,7 @@ def get_document_info(document_id):
         doc = get_generated_document(document_id)
         if not doc:
             return jsonify({'success': False, 'error': 'Document not found'}), 404
-        
+
         return jsonify({
             'success': True,
             'document': {
@@ -941,7 +967,7 @@ def download_generated_document(document_id):
         doc = get_generated_document(document_id)
         if not doc:
             return jsonify({'error': 'Document not found'}), 404
-        
+
         file_path = doc['file_path']
         if not os.path.exists(file_path):
             alternative_paths = [
@@ -956,9 +982,9 @@ def download_generated_document(document_id):
                     break
             if not file_path:
                 return jsonify({'error': 'File not found on server'}), 404
-        
+
         update_document_access(document_id)
-        
+
         mime_types = {
             'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             'pdf': 'application/pdf',
@@ -968,7 +994,7 @@ def download_generated_document(document_id):
             'csv': 'text/csv'
         }
         mime_type = mime_types.get(doc['document_type'], 'application/octet-stream')
-        
+
         return send_file(file_path, as_attachment=True, download_name=doc['filename'], mimetype=mime_type)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -981,7 +1007,7 @@ def print_generated_document(document_id):
         doc = get_generated_document(document_id)
         if not doc:
             return jsonify({'error': 'Document not found'}), 404
-        
+
         file_path = doc['file_path']
         if not os.path.exists(file_path):
             alternative_paths = [
@@ -996,9 +1022,9 @@ def print_generated_document(document_id):
                     break
             if not file_path:
                 return jsonify({'error': 'File not found on server'}), 404
-        
+
         update_document_access(document_id)
-        
+
         if doc['document_type'] == 'docx':
             try:
                 from docx import Document
@@ -1011,7 +1037,7 @@ def print_generated_document(document_id):
                     else:
                         if para.text.strip():
                             content_html += f"<p>{para.text}</p>\n"
-                
+
                 print_html = f'''<!DOCTYPE html>
 <html>
 <head>
@@ -1056,7 +1082,7 @@ def print_generated_document(document_id):
                     'error': 'Could not create printable version. Please download the document instead.',
                     'download_url': f"/api/generated-documents/{document_id}/download"
                 }), 400
-        
+
         return jsonify({
             'success': False,
             'error': f'{doc["document_type"].upper()} files must be downloaded and printed from the native application.',
@@ -1073,10 +1099,10 @@ def delete_document(document_id):
         doc = get_generated_document(document_id)
         if not doc:
             return jsonify({'success': False, 'error': 'Document not found'}), 404
-        
+
         hard_delete = request.args.get('hard', 'false').lower() == 'true'
         success = delete_generated_document(document_id, hard_delete=hard_delete)
-        
+
         if success:
             return jsonify({'success': True, 'message': 'Document deleted successfully'})
         else:
@@ -1148,7 +1174,7 @@ def update_single_conversation(conversation_id):
             return jsonify({'success': False, 'error': 'Conversation not found'}), 404
         data = request.json or {}
         update_conversation(conversation_id, title=data.get('title'), mode=data.get('mode'),
-                          project_id=data.get('project_id'), is_archived=data.get('is_archived'))
+                            project_id=data.get('project_id'), is_archived=data.get('is_archived'))
         return jsonify({'success': True, 'message': 'Conversation updated successfully'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -1188,9 +1214,8 @@ def add_conversation_message(conversation_id):
 
 
 # ============================================================================
-# MAIN ORCHESTRATION ENDPOINT - UPDATED January 26, 2026
+# TASK HISTORY ENDPOINTS
 # ============================================================================
-
 
 @core_bp.route('/api/tasks', methods=['GET'])
 def get_tasks():
@@ -1198,9 +1223,14 @@ def get_tasks():
     try:
         limit = request.args.get('limit', 20, type=int)
         db = get_db()
-        tasks = db.execute('SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?', (limit,)).fetchall()
-        db.close()
-        return jsonify({'tasks': [dict(task) for task in tasks]})
+        try:
+            tasks = db.execute(
+                'SELECT * FROM tasks ORDER BY created_at DESC LIMIT %s',
+                (limit,)
+            ).fetchall()
+            return jsonify({'tasks': [dict(task) for task in tasks]})
+        finally:
+            db.close()
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -1210,11 +1240,16 @@ def get_task(task_id):
     """Get specific task details"""
     try:
         db = get_db()
-        task = db.execute('SELECT * FROM tasks WHERE id = ?', (task_id,)).fetchone()
-        db.close()
-        if not task:
-            return jsonify({'error': 'Task not found'}), 404
-        return jsonify(dict(task))
+        try:
+            task = db.execute(
+                'SELECT * FROM tasks WHERE id = %s',
+                (task_id,)
+            ).fetchone()
+            if not task:
+                return jsonify({'error': 'Task not found'}), 404
+            return jsonify(dict(task))
+        finally:
+            db.close()
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -1224,20 +1259,27 @@ def get_stats():
     """Get system statistics"""
     try:
         db = get_db()
-        total_tasks = db.execute('SELECT COUNT(*) FROM tasks').fetchone()[0]
-        completed_tasks = db.execute('SELECT COUNT(*) FROM tasks WHERE status = ?', ('completed',)).fetchone()[0]
-        total_conversations = db.execute('SELECT COUNT(*) FROM conversations').fetchone()[0]
-        total_messages = db.execute('SELECT COUNT(*) FROM conversation_messages').fetchone()[0]
-        total_documents = db.execute('SELECT COUNT(*) FROM generated_documents WHERE is_deleted = 0').fetchone()[0]
-        db.close()
-        return jsonify({
-            'total_tasks': total_tasks,
-            'completed_tasks': completed_tasks,
-            'success_rate': (completed_tasks / total_tasks * 100) if total_tasks > 0 else 0,
-            'total_conversations': total_conversations,
-            'total_messages': total_messages,
-            'total_documents': total_documents
-        })
+        try:
+            total_tasks = db.execute('SELECT COUNT(*) FROM tasks').fetchone()[0]
+            completed_tasks = db.execute(
+                "SELECT COUNT(*) FROM tasks WHERE status = %s",
+                ('completed',)
+            ).fetchone()[0]
+            total_conversations = db.execute('SELECT COUNT(*) FROM conversations').fetchone()[0]
+            total_messages = db.execute('SELECT COUNT(*) FROM conversation_messages').fetchone()[0]
+            total_documents = db.execute(
+                'SELECT COUNT(*) FROM generated_documents WHERE is_deleted = 0'
+            ).fetchone()[0]
+            return jsonify({
+                'total_tasks': total_tasks,
+                'completed_tasks': completed_tasks,
+                'success_rate': (completed_tasks / total_tasks * 100) if total_tasks > 0 else 0,
+                'total_conversations': total_conversations,
+                'total_messages': total_messages,
+                'total_documents': total_documents
+            })
+        finally:
+            db.close()
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -1249,7 +1291,7 @@ def get_documents():
         import sys
         app_module = sys.modules.get('app')
         knowledge_base = getattr(app_module, 'knowledge_base', None) if app_module else None
-        
+
         kb_documents = []
         if knowledge_base:
             for filename, doc_data in knowledge_base.knowledge_index.items():
@@ -1262,7 +1304,7 @@ def get_documents():
                     'category': doc_data.get('category', 'reference'),
                     'source': 'knowledge_base'
                 })
-        
+
         generated_docs = get_generated_documents(limit=50)
         gen_documents = []
         for doc in generated_docs:
@@ -1278,7 +1320,7 @@ def get_documents():
                 'print_url': f"/api/generated-documents/{doc['id']}/print",
                 'source': 'generated'
             })
-        
+
         return jsonify({
             'success': True,
             'knowledge_base_documents': kb_documents,
@@ -1304,19 +1346,25 @@ def submit_feedback():
         improvement_categories = data.get('improvement_categories', [])
         user_comment = data.get('user_comment', '')
         output_used = data.get('output_used', False)
-        
+
         if not task_id or not overall_rating:
             return jsonify({'error': 'task_id and overall_rating required'}), 400
-        
+
         db = get_db()
         try:
-            task = db.execute('SELECT * FROM tasks WHERE id = ?', (task_id,)).fetchone()
+            task = db.execute(
+                'SELECT * FROM tasks WHERE id = %s',
+                (task_id,)
+            ).fetchone()
             if not task:
                 return jsonify({'error': 'Task not found'}), 404
-            
-            consensus = db.execute('SELECT agreement_score FROM consensus_validations WHERE task_id = ?', (task_id,)).fetchone()
+
+            consensus = db.execute(
+                'SELECT agreement_score FROM consensus_validations WHERE task_id = %s',
+                (task_id,)
+            ).fetchone()
             consensus_score = consensus['agreement_score'] if consensus else None
-            
+
             consensus_was_accurate = None
             if consensus_score is not None:
                 avg_rating = (quality_rating + accuracy_rating + usefulness_rating) / 3
@@ -1326,28 +1374,40 @@ def submit_feedback():
                     consensus_was_accurate = True
                 else:
                     consensus_was_accurate = False
-            
-            db.execute('''INSERT INTO user_feedback 
+
+            db.execute('''INSERT INTO user_feedback
                 (task_id, overall_rating, quality_rating, accuracy_rating, usefulness_rating,
                  consensus_was_accurate, improvement_categories, user_comment, output_used)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)''',
                 (task_id, overall_rating, quality_rating, accuracy_rating, usefulness_rating,
                  consensus_was_accurate, json.dumps(improvement_categories), user_comment, output_used))
-            
+
             orchestrator = task['assigned_orchestrator']
             task_type = 'general'
             avg_rating = (quality_rating + accuracy_rating + usefulness_rating) / 3
             pattern_key = f"{orchestrator}_{task_type}"
-            
-            existing_pattern = db.execute('SELECT * FROM learning_records WHERE pattern_type = ?', (pattern_key,)).fetchone()
+
+            existing_pattern = db.execute(
+                'SELECT * FROM learning_records WHERE pattern_type = %s',
+                (pattern_key,)
+            ).fetchone()
             if existing_pattern:
                 new_avg = (existing_pattern['success_rate'] * existing_pattern['times_applied'] + avg_rating / 5.0) / (existing_pattern['times_applied'] + 1)
-                db.execute('UPDATE learning_records SET success_rate = ?, times_applied = times_applied + 1 WHERE pattern_type = ?',
-                          (new_avg, pattern_key))
+                db.execute(
+                    'UPDATE learning_records SET success_rate = %s, times_applied = times_applied + 1 WHERE pattern_type = %s',
+                    (new_avg, pattern_key)
+                )
             else:
-                db.execute('INSERT INTO learning_records (pattern_type, success_rate, times_applied, pattern_data) VALUES (?, ?, ?, ?)',
-                          (pattern_key, avg_rating / 5.0, 1, json.dumps({'orchestrator': orchestrator, 'task_type': task_type,
-                                                                        'last_rating': avg_rating, 'last_consensus': consensus_score})))
+                db.execute(
+                    'INSERT INTO learning_records (pattern_type, success_rate, times_applied, pattern_data) VALUES (%s, %s, %s, %s)',
+                    (pattern_key, avg_rating / 5.0, 1, json.dumps({
+                        'orchestrator': orchestrator,
+                        'task_type': task_type,
+                        'last_rating': avg_rating,
+                        'last_consensus': consensus_score
+                    }))
+                )
+
             # ================================================================
             # FIX #3: Store Poor Performance as Avoidance Pattern
             # February 4, 2026
@@ -1361,7 +1421,7 @@ def submit_feedback():
                     'timestamp': datetime.now().isoformat(),
                     'avg_rating': avg_rating
                 }
-                
+
                 # Determine severity based on rating
                 if avg_rating < 1.5:
                     severity = 'high'
@@ -1369,18 +1429,20 @@ def submit_feedback():
                     severity = 'medium'
                 else:
                     severity = 'low'
-                
+
                 try:
                     add_avoidance_pattern(avoid_pattern, severity)
-                    print(f"🚫 Added avoidance pattern (severity: {severity})")
+                    print(f"Added avoidance pattern (severity: {severity})")
                 except Exception as avoid_error:
-                    print(f"⚠️ Could not add avoidance pattern: {avoid_error}")
-            
+                    print(f"Could not add avoidance pattern: {avoid_error}")
+
             db.commit()
-         
-            db.commit()
-            return jsonify({'success': True, 'message': 'Feedback recorded - system is learning!',
-                           'consensus_was_accurate': consensus_was_accurate, 'learning_updated': True})
+            return jsonify({
+                'success': True,
+                'message': 'Feedback recorded - system is learning!',
+                'consensus_was_accurate': consensus_was_accurate,
+                'learning_updated': True
+            })
         except Exception as e:
             db.rollback()
             import traceback
@@ -1397,23 +1459,25 @@ def get_learning_stats():
     """Get learning system statistics"""
     try:
         db = get_db()
-        total_feedback = db.execute('SELECT COUNT(*) as count FROM user_feedback').fetchone()
-        avg_overall = db.execute('SELECT AVG(overall_rating) as avg FROM user_feedback').fetchone()
-        consensus_accuracy = db.execute('''SELECT COUNT(*) as total,
-            SUM(CASE WHEN consensus_was_accurate = 1 THEN 1 ELSE 0 END) as accurate
-            FROM user_feedback WHERE consensus_was_accurate IS NOT NULL''').fetchone()
-        
-        consensus_accuracy_rate = None
-        if consensus_accuracy and consensus_accuracy['total'] > 0:
-            consensus_accuracy_rate = int((consensus_accuracy['accurate'] / consensus_accuracy['total']) * 100)
-        
-        db.close()
-        return jsonify({
-            'success': True,
-            'total_feedback_count': total_feedback['count'] if total_feedback else 0,
-            'average_overall_rating': round(avg_overall['avg'], 2) if avg_overall and avg_overall['avg'] else 0,
-            'consensus_accuracy_rate': consensus_accuracy_rate
-        })
+        try:
+            total_feedback = db.execute('SELECT COUNT(*) as count FROM user_feedback').fetchone()
+            avg_overall = db.execute('SELECT AVG(overall_rating) as avg FROM user_feedback').fetchone()
+            consensus_accuracy = db.execute('''SELECT COUNT(*) as total,
+                SUM(CASE WHEN consensus_was_accurate = 1 THEN 1 ELSE 0 END) as accurate
+                FROM user_feedback WHERE consensus_was_accurate IS NOT NULL''').fetchone()
+
+            consensus_accuracy_rate = None
+            if consensus_accuracy and consensus_accuracy['total'] > 0:
+                consensus_accuracy_rate = int((consensus_accuracy['accurate'] / consensus_accuracy['total']) * 100)
+
+            return jsonify({
+                'success': True,
+                'total_feedback_count': total_feedback['count'] if total_feedback else 0,
+                'average_overall_rating': round(avg_overall['avg'], 2) if avg_overall and avg_overall['avg'] else 0,
+                'consensus_accuracy_rate': consensus_accuracy_rate
+            })
+        finally:
+            db.close()
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -1433,64 +1497,59 @@ def upload_project_files(project_id):
         from werkzeug.utils import secure_filename
         from file_analysis_agent import get_file_analysis_agent
         from orchestration.ai_clients import call_claude_sonnet
-        
+
         # Check if project exists
         db = get_db()
-        project = db.execute(
-            'SELECT * FROM projects WHERE project_id = ?',
-            (project_id,)
-        ).fetchone()
-        db.close()
-        
+        try:
+            project = db.execute(
+                'SELECT * FROM projects WHERE project_id = %s',
+                (project_id,)
+            ).fetchone()
+        finally:
+            db.close()
+
         if not project:
             return jsonify({'success': False, 'error': 'Project not found'}), 404
-        
+
         # Check if files were uploaded
         if 'files' not in request.files:
             return jsonify({'success': False, 'error': 'No files provided'}), 400
-        
+
         files = request.files.getlist('files')
-        
+
         if not files or files[0].filename == '':
             return jsonify({'success': False, 'error': 'No files selected'}), 400
-        
+
         # Check for auto-analyze flag
         auto_analyze = request.form.get('auto_analyze', 'true').lower() == 'true'
-        
+
         # Create project directory
         project_dir = f'/tmp/projects/{project_id}'
         os.makedirs(project_dir, exist_ok=True)
-        
+
         uploaded_files = []
         file_paths = []
-        
+
         for file in files:
             if file and file.filename:
-                # Secure the filename
                 original_filename = file.filename
                 filename = secure_filename(original_filename)
-                
+
                 # Add timestamp to avoid collisions
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                 name, ext = os.path.splitext(filename)
                 filename = f"{name}_{timestamp}{ext}"
-                
-                # Save file to disk
+
                 file_path = os.path.join(project_dir, filename)
                 file.save(file_path)
-                
-                # Get file size
+
                 file_size = os.path.getsize(file_path)
-                
-                # Determine file type
                 file_type = ext[1:].lower() if ext else 'unknown'
-                
-                # Get optional metadata from request
+
                 conversation_id = request.form.get('conversation_id')
                 task_id = request.form.get('task_id')
                 description = request.form.get('description')
-                
-                # Save to database
+
                 file_id = save_project_file(
                     project_id=project_id,
                     filename=filename,
@@ -1504,7 +1563,7 @@ def upload_project_files(project_id):
                     conversation_id=conversation_id,
                     description=description
                 )
-                
+
                 uploaded_files.append({
                     'id': file_id,
                     'filename': filename,
@@ -1513,40 +1572,36 @@ def upload_project_files(project_id):
                     'file_size': file_size,
                     'download_url': f'/api/projects/{project_id}/files/{file_id}/download'
                 })
-                
+
                 file_paths.append(file_path)
-        
-        # AUTO-ANALYZE FILES (NEW FEATURE)
+
+        # AUTO-ANALYZE FILES
         analysis_result = None
         if auto_analyze and file_paths:
             try:
                 file_agent = get_file_analysis_agent()
-                
+
                 if len(file_paths) == 1:
-                    # Analyze single file
                     analysis = file_agent.analyze_file(
                         file_paths[0],
                         "Provide a summary and key insights from this file",
                         call_claude_sonnet
                     )
-                    
+
                     if analysis['success']:
                         analysis_result = {
                             'type': 'single',
                             'summary': analysis['analysis']
                         }
-                        
-                        # Mark file as analyzed
                         from database_file_management import mark_file_as_analyzed
                         mark_file_as_analyzed(uploaded_files[0]['id'], analysis['analysis'][:500])
                 else:
-                    # Analyze multiple files together
                     analysis = file_agent.analyze_multiple_files(
                         file_paths,
                         "Provide a summary and key insights from these files",
                         call_claude_sonnet
                     )
-                    
+
                     if analysis['success']:
                         analysis_result = {
                             'type': 'multiple',
@@ -1556,7 +1611,7 @@ def upload_project_files(project_id):
             except Exception as analysis_error:
                 print(f"Auto-analysis failed: {analysis_error}")
                 analysis_result = None
-        
+
         return jsonify({
             'success': True,
             'files': uploaded_files,
@@ -1564,7 +1619,7 @@ def upload_project_files(project_id):
             'message': f'Uploaded {len(uploaded_files)} file(s) to project',
             'analysis': analysis_result
         })
-        
+
     except Exception as e:
         import traceback
         print(f"File upload error: {traceback.format_exc()}")
@@ -1579,25 +1634,22 @@ def list_project_files(project_id):
     """
     try:
         from database_file_management import get_project_files, get_file_stats_by_project
-        
-        # Check if project exists
+
         db = get_db()
-        project = db.execute(
-            'SELECT * FROM projects WHERE project_id = ?',
-            (project_id,)
-        ).fetchone()
-        db.close()
-        
+        try:
+            project = db.execute(
+                'SELECT * FROM projects WHERE project_id = %s',
+                (project_id,)
+            ).fetchone()
+        finally:
+            db.close()
+
         if not project:
             return jsonify({'success': False, 'error': 'Project not found'}), 404
-        
-        # Get all files for this project
+
         files = get_project_files(project_id)
-        
-        # Get file statistics
         stats = get_file_stats_by_project(project_id)
-        
-        # Format files for UI
+
         formatted_files = []
         for file in files:
             formatted_files.append({
@@ -1612,7 +1664,7 @@ def list_project_files(project_id):
                 'description': file['description'],
                 'download_url': f'/api/projects/{project_id}/files/{file["id"]}/download'
             })
-        
+
         return jsonify({
             'success': True,
             'project_id': project_id,
@@ -1621,7 +1673,7 @@ def list_project_files(project_id):
             'count': len(formatted_files),
             'stats': stats
         })
-        
+
     except Exception as e:
         import traceback
         print(f"List files error: {traceback.format_exc()}")
@@ -1636,9 +1688,9 @@ def list_project_folders():
     """
     try:
         from database_file_management import get_all_projects_with_files
-        
+
         projects = get_all_projects_with_files()
-        
+
         formatted_projects = []
         for project in projects:
             formatted_projects.append({
@@ -1650,13 +1702,13 @@ def list_project_folders():
                 'folder_icon': '📁',
                 'view_url': f'/api/projects/{project["project_id"]}/files'
             })
-        
+
         return jsonify({
             'success': True,
             'projects': formatted_projects,
             'count': len(formatted_projects)
         })
-        
+
     except Exception as e:
         import traceback
         print(f"List folders error: {traceback.format_exc()}")
@@ -1668,29 +1720,25 @@ def download_project_file(project_id, file_id):
     """Download a file from a project"""
     try:
         from database_file_management import get_project_file_by_id
-        
-        # Get file from database
+
         file = get_project_file_by_id(file_id)
-        
+
         if not file:
             return jsonify({'error': 'File not found'}), 404
-        
-        # Verify file belongs to this project
+
         if file['project_id'] != project_id:
             return jsonify({'error': 'File does not belong to this project'}), 403
-        
-        # Check if file exists on disk
+
         file_path = file['file_path']
         if not os.path.exists(file_path):
             return jsonify({'error': 'File not found on server'}), 404
-        
-        # Send file
+
         return send_file(
             file_path,
             as_attachment=True,
             download_name=file['original_filename']
         )
-        
+
     except Exception as e:
         import traceback
         print(f"Download error: {traceback.format_exc()}")
@@ -1702,26 +1750,23 @@ def delete_project_file_endpoint(project_id, file_id):
     """Delete a file from a project"""
     try:
         from database_file_management import get_project_file_by_id, delete_project_file
-        
-        # Get file from database
+
         file = get_project_file_by_id(file_id)
-        
+
         if not file:
             return jsonify({'success': False, 'error': 'File not found'}), 404
-        
-        # Verify file belongs to this project
+
         if file['project_id'] != project_id:
             return jsonify({'success': False, 'error': 'File does not belong to this project'}), 403
-        
-        # Delete file (soft delete by default)
+
         hard_delete = request.args.get('hard', 'false').lower() == 'true'
         delete_project_file(file_id, hard_delete=hard_delete)
-        
+
         return jsonify({
             'success': True,
             'message': 'File deleted successfully'
         })
-        
+
     except Exception as e:
         import traceback
         print(f"Delete error: {traceback.format_exc()}")
@@ -1736,24 +1781,22 @@ def find_project_file(project_id):
     """
     try:
         from database_file_management import get_project_file_by_name
-        
+
         data = request.json or {}
         filename = data.get('filename', '').strip()
-        
+
         if not filename:
             return jsonify({'success': False, 'error': 'Filename required'}), 400
-        
-        # Find file
+
         file = get_project_file_by_name(project_id, filename)
-        
+
         if not file:
             return jsonify({
                 'success': False,
                 'found': False,
                 'message': f'No file matching "{filename}" found in this project'
             })
-        
-        # Return file info and content path
+
         return jsonify({
             'success': True,
             'found': True,
@@ -1768,7 +1811,7 @@ def find_project_file(project_id):
                 'description': file['description']
             }
         })
-        
+
     except Exception as e:
         import traceback
         print(f"Find file error: {traceback.format_exc()}")
@@ -1779,8 +1822,8 @@ def find_project_file(project_id):
 # HELPER: Save generated files to project
 # ============================================================================
 
-def save_generated_file_to_project(project_id, filename, file_path, file_type, 
-                                   task_id=None, conversation_id=None, 
+def save_generated_file_to_project(project_id, filename, file_path, file_type,
+                                   task_id=None, conversation_id=None,
                                    description=None):
     """
     Helper function to save AI-generated files to a project.
@@ -1789,26 +1832,22 @@ def save_generated_file_to_project(project_id, filename, file_path, file_type,
     try:
         from database_file_management import save_project_file
         from werkzeug.utils import secure_filename
-        
+
         if not os.path.exists(file_path):
-            print(f"⚠️ File does not exist: {file_path}")
+            print(f"File does not exist: {file_path}")
             return None
-        
-        # Create project directory
+
         project_dir = f'/tmp/projects/{project_id}'
         os.makedirs(project_dir, exist_ok=True)
-        
-        # Copy file to project directory
+
         secure_name = secure_filename(filename)
         new_path = os.path.join(project_dir, secure_name)
-        
+
         import shutil
         shutil.copy2(file_path, new_path)
-        
-        # Get file size
+
         file_size = os.path.getsize(new_path)
-        
-        # Save to database
+
         file_id = save_project_file(
             project_id=project_id,
             filename=secure_name,
@@ -1822,12 +1861,13 @@ def save_generated_file_to_project(project_id, filename, file_path, file_type,
             conversation_id=conversation_id,
             description=description
         )
-        
+
         return file_id
-        
+
     except Exception as e:
         print(f"Error saving generated file to project: {e}")
         return None
+
 
 # ============================================================================
 # FILE ANALYSIS AND REFORMATTING ENDPOINTS - Added January 29, 2026
@@ -1842,20 +1882,20 @@ def analyze_specific_file(project_id, file_id):
         from database_file_management import get_project_file_by_id, mark_file_as_analyzed
         from file_analysis_agent import get_file_analysis_agent
         from orchestration.ai_clients import call_claude_sonnet
-        
+
         file = get_project_file_by_id(file_id)
         if not file or file['project_id'] != project_id:
             return jsonify({'success': False, 'error': 'File not found'}), 404
-        
+
         data = request.json or {}
         user_request = data.get('request', 'Analyze this file and provide key insights')
-        
+
         agent = get_file_analysis_agent()
         result = agent.analyze_file(file['file_path'], user_request, call_claude_sonnet)
-        
+
         if result['success']:
             mark_file_as_analyzed(file_id, result['analysis'][:500])
-            
+
             return jsonify({
                 'success': True,
                 'analysis': result['analysis'],
@@ -1864,7 +1904,7 @@ def analyze_specific_file(project_id, file_id):
             })
         else:
             return jsonify({'success': False, 'error': result['error']}), 500
-    
+
     except Exception as e:
         import traceback
         print(f"Analysis error: {traceback.format_exc()}")
@@ -1880,23 +1920,23 @@ def reformat_file(project_id, file_id):
         from database_file_management import get_project_file_by_id, save_project_file
         from file_analysis_agent import get_file_analysis_agent
         from orchestration.ai_clients import call_claude_sonnet
-        
+
         file = get_project_file_by_id(file_id)
         if not file or file['project_id'] != project_id:
             return jsonify({'success': False, 'error': 'File not found'}), 404
-        
+
         data = request.json or {}
         user_request = data.get('request', 'Reformat this document professionally')
         output_format = data.get('format', 'docx')
-        
+
         agent = get_file_analysis_agent()
         result = agent.reformat_document(
-            file['file_path'], 
-            user_request, 
+            file['file_path'],
+            user_request,
             call_claude_sonnet,
             output_format=output_format
         )
-        
+
         if result['success']:
             file_size = os.path.getsize(result['output_path'])
             new_file_id = save_project_file(
@@ -1910,7 +1950,7 @@ def reformat_file(project_id, file_id):
                 is_generated=True,
                 description=f"AI reformatted version of {file['original_filename']}"
             )
-            
+
             return jsonify({
                 'success': True,
                 'new_file_id': new_file_id,
@@ -1919,7 +1959,7 @@ def reformat_file(project_id, file_id):
             })
         else:
             return jsonify({'success': False, 'error': result['error']}), 500
-    
+
     except Exception as e:
         import traceback
         print(f"Reformat error: {traceback.format_exc()}")
@@ -1935,21 +1975,26 @@ def create_document_in_project(project_id):
         from database_file_management import save_project_file
         from file_analysis_agent import get_file_analysis_agent
         from orchestration.ai_clients import call_claude_sonnet
-        
+
         db = get_db()
-        project = db.execute('SELECT * FROM projects WHERE project_id = ?', (project_id,)).fetchone()
-        db.close()
-        
+        try:
+            project = db.execute(
+                'SELECT * FROM projects WHERE project_id = %s',
+                (project_id,)
+            ).fetchone()
+        finally:
+            db.close()
+
         if not project:
             return jsonify({'success': False, 'error': 'Project not found'}), 404
-        
+
         data = request.json or {}
         user_request = data.get('request', '')
         file_format = data.get('format', 'docx')
-        
+
         if not user_request:
             return jsonify({'success': False, 'error': 'Request is required'}), 400
-        
+
         agent = get_file_analysis_agent()
         result = agent.create_document_from_request(
             user_request,
@@ -1957,7 +2002,7 @@ def create_document_in_project(project_id):
             project_id=project_id,
             file_format=file_format
         )
-        
+
         if result['success']:
             file_size = os.path.getsize(result['output_path'])
             file_id = save_project_file(
@@ -1971,17 +2016,17 @@ def create_document_in_project(project_id):
                 is_generated=True,
                 description=f"AI created: {user_request[:100]}"
             )
-            
+
             return jsonify({
                 'success': True,
                 'file_id': file_id,
                 'filename': result['output_filename'],
                 'download_url': f'/api/projects/{project_id}/files/{file_id}/download',
-                'message': f'Document created and saved to project folder'
+                'message': 'Document created and saved to project folder'
             })
         else:
             return jsonify({'success': False, 'error': result['error']}), 500
-    
+
     except Exception as e:
         import traceback
         print(f"Create document error: {traceback.format_exc()}")
@@ -1995,14 +2040,14 @@ def search_files_in_project(project_id):
     """
     try:
         from database_file_management import search_project_files
-        
+
         search_term = request.args.get('q', '').strip()
-        
+
         if not search_term:
             return jsonify({'success': False, 'error': 'Search term required'}), 400
-        
+
         files = search_project_files(project_id, search_term)
-        
+
         formatted_files = []
         for file in files:
             formatted_files.append({
@@ -2015,19 +2060,22 @@ def search_files_in_project(project_id):
                 'description': file['description'],
                 'download_url': f'/api/projects/{project_id}/files/{file["id"]}/download'
             })
-        
+
         return jsonify({
             'success': True,
             'results': formatted_files,
             'count': len(formatted_files),
             'search_term': search_term
         })
-    
+
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
 # ============================================================================
 # KNOWLEDGE BASE DIAGNOSTIC ENDPOINT - Added February 19, 2026
 # ============================================================================
+
 @core_bp.route('/api/admin/kb-diagnostic', methods=['GET'])
 def kb_diagnostic():
     """
