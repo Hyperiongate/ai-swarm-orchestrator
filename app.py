@@ -1,9 +1,17 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: March 02, 2026 - POSTGRESQL MIGRATION (Phase 1)
+Last Updated: March 03, 2026 - SCHEMA MIGRATION: add_missing_columns
 
 CHANGELOG:
+- March 03, 2026: SCHEMA MIGRATION
+  * Added add_missing_columns() call in STEP 3 (legacy migrations)
+  * Fixes three UndefinedColumn errors from deployment logs:
+      - case_studies: problem_summary, solution_summary
+      - blog_posts:   topic_display, url_slug, meta_description (+ 4 more)
+      - projects:     project_id
+  * No other changes — all routes, blueprints, and features unchanged
+
 - March 02, 2026: POSTGRESQL MIGRATION
   * Added migration runner at the very top of startup sequence
   * migrations/001_initial_schema.py now runs BEFORE init_db() and ProjectManager
@@ -147,6 +155,17 @@ try:
     add_integration_logs_table()
 except Exception as e:
     print(f"Integration logs migration: {e}")
+
+# ----------------------------------------------------------------------------
+# ADD MISSING COLUMNS — fixes UndefinedColumn errors on case_studies,
+# blog_posts, and projects tables (columns existed in code but not in DB)
+# Added: March 03, 2026
+# ----------------------------------------------------------------------------
+try:
+    from add_missing_columns import add_missing_columns
+    add_missing_columns()
+except Exception as e:
+    print(f"Missing columns migration: {e}")
 
 print("Database migrations complete!")
 
@@ -640,7 +659,7 @@ def health():
 
     return jsonify({
         'status': 'healthy',
-        'version': 'PostgreSQL Migration Mar02 + Sprint 3 + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator + LinkedIn Poster + Bulletproof Projects + 100MB Upload + Background KB + NameError Fix Feb18 + Blueprint Fix Feb20 + Case Studies Feb21 + Blog Posts Feb23 + KB Safety Guard + KB Diagnose Feb25 + Clear KB Feb26 + Restore KB Feb27',
+        'version': 'Schema Migration Mar03 + PostgreSQL Migration Mar02 + Sprint 3 + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator + LinkedIn Poster + Bulletproof Projects + 100MB Upload + Background KB + NameError Fix Feb18 + Blueprint Fix Feb20 + Case Studies Feb21 + Blog Posts Feb23 + KB Safety Guard + KB Diagnose Feb25 + Clear KB Feb26 + Restore KB Feb27',
         'database': {
             'type': get_db_type(),
             'backend': 'PostgreSQL (persistent)' if get_db_type() == 'postgresql' else 'SQLite (local dev)'
@@ -944,5 +963,3 @@ if __name__ == '__main__':
     app.run(host='0.0.0.0', port=port, debug=debug)
 
 # I did no harm and this file is not truncated
-
-
