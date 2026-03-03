@@ -41,11 +41,20 @@ INDUSTRIES SUPPORTED:
     Government/Mint, Gaming & Hospitality, Other
 
 CHANGE LOG:
-    February 21, 2026 - Initial creation. Core generation, DOCX export, DB CRUD.
-    February 22, 2026 - Added generate_website_ready_package(). Produces SEO
-                        title (<=60 chars), meta description (<=160 chars), URL
-                        slug, 3-5 FAQ Q&A pairs, and combined Article+FAQPage
-                        JSON-LD schema markup for direct website publishing.
+    March 03, 2026 - POSTGRESQL MIGRATION FIX
+                     * All SQL ? placeholders replaced with %s (PostgreSQL style)
+                     * All database functions now use try/finally to guarantee
+                       conn.close() — eliminates connection pool leaks
+                     * INTEGER PRIMARY KEY AUTOINCREMENT -> SERIAL PRIMARY KEY
+                       (detected dynamically via get_db_type())
+                     * init_case_studies_table() now detects db type at runtime
+                     * save_case_study_to_db() wrapped in try/finally
+                     * get_all_case_studies() wrapped in try/finally
+                     * get_case_study_by_id() uses %s and try/finally
+                     * delete_case_study() uses %s and try/finally
+                     * No functional changes - all prompts, generation logic,
+                       DOCX export, and website package unchanged
+
     February 23, 2026 - MAJOR PROMPT REWRITE.
                         * Audience now explicitly GM/Director/HR Manager
                         * Employee engagement process baked in as non-negotiable
@@ -61,8 +70,15 @@ CHANGE LOG:
                         * Improved SEO keyword density in opening paragraph
                         * AI-search quotable facts in Results section
 
+    February 22, 2026 - Added generate_website_ready_package(). Produces SEO
+                        title (<=60 chars), meta description (<=160 chars), URL
+                        slug, 3-5 FAQ Q&A pairs, and combined Article+FAQPage
+                        JSON-LD schema markup for direct website publishing.
+
+    February 21, 2026 - Initial creation. Core generation, DOCX export, DB CRUD.
+
 AUTHOR: Jim @ Shiftwork Solutions LLC
-LAST UPDATED: February 23, 2026
+LAST UPDATED: March 03, 2026
 """
 
 import os
@@ -731,87 +747,124 @@ def generate_case_study_docx(case_study_content: str, title: str, industry: str)
     return buffer.read()
 
 
+# ============================================================================
+# DATABASE FUNCTIONS
+# All functions use %s placeholders (PostgreSQL) and try/finally to guarantee
+# connection return to pool on every code path.
+# ============================================================================
+
+def init_case_studies_table():
+    """
+    Create the case_studies table if it does not exist.
+    Uses SERIAL PRIMARY KEY for PostgreSQL, AUTOINCREMENT for SQLite.
+    Called at app startup.
+    """
+    from database import get_db
+    from db_engine import get_db_type
+
+    db_type = get_db_type()
+    pk = 'SERIAL PRIMARY KEY' if db_type == 'postgresql' else 'INTEGER PRIMARY KEY AUTOINCREMENT'
+
+    db = get_db()
+    try:
+        db.execute(f'''
+            CREATE TABLE IF NOT EXISTS case_studies (
+                id {pk},
+                industry TEXT NOT NULL,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                problem_summary TEXT,
+                solution_summary TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        db.execute('''
+            CREATE INDEX IF NOT EXISTS idx_case_studies_industry
+            ON case_studies(industry)
+        ''')
+        db.execute('''
+            CREATE INDEX IF NOT EXISTS idx_case_studies_created
+            ON case_studies(created_at DESC)
+        ''')
+        db.commit()
+        print("  [CaseStudy] case_studies table ready")
+    finally:
+        db.close()
+
+
 def save_case_study_to_db(industry: str, title: str, content: str,
                            problem: str, solution: str) -> int:
-    """Save a generated case study to the database. Returns the new record ID."""
+    """
+    Save a generated case study to the database.
+    Returns the new record ID.
+    Uses %s placeholders and try/finally for guaranteed connection cleanup.
+    """
     from database import get_db
     db = get_db()
-    cursor = db.execute('''
-        INSERT INTO case_studies (
-            industry, title, content, problem_summary,
-            solution_summary, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    ''', (
-        industry, title, content, problem, solution,
-        datetime.now().isoformat(), datetime.now().isoformat()
-    ))
-    db.commit()
-    record_id = cursor.lastrowid
-    db.close()
-    return record_id
+    try:
+        cursor = db.execute('''
+            INSERT INTO case_studies (
+                industry, title, content, problem_summary,
+                solution_summary, created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ''', (
+            industry, title, content, problem, solution,
+            datetime.now().isoformat(), datetime.now().isoformat()
+        ))
+        db.commit()
+        return cursor.lastrowid
+    finally:
+        db.close()
 
 
 def get_all_case_studies() -> list:
-    """Retrieve all saved case studies, newest first."""
+    """
+    Retrieve all saved case studies, newest first.
+    Uses try/finally for guaranteed connection cleanup.
+    """
     from database import get_db
     db = get_db()
-    rows = db.execute('''
-        SELECT id, industry, title, problem_summary, solution_summary,
-               created_at
-        FROM case_studies
-        ORDER BY created_at DESC
-    ''').fetchall()
-    db.close()
-    return [dict(row) for row in rows]
+    try:
+        rows = db.execute('''
+            SELECT id, industry, title, problem_summary, solution_summary,
+                   created_at
+            FROM case_studies
+            ORDER BY created_at DESC
+        ''').fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        db.close()
 
 
 def get_case_study_by_id(study_id: int) -> dict:
-    """Retrieve a single case study by ID."""
+    """
+    Retrieve a single case study by ID.
+    Uses %s placeholder and try/finally for guaranteed connection cleanup.
+    """
     from database import get_db
     db = get_db()
-    row = db.execute(
-        'SELECT * FROM case_studies WHERE id = ?', (study_id,)
-    ).fetchone()
-    db.close()
-    return dict(row) if row else None
+    try:
+        row = db.execute(
+            'SELECT * FROM case_studies WHERE id = %s', (study_id,)
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        db.close()
 
 
 def delete_case_study(study_id: int) -> bool:
-    """Delete a case study by ID."""
+    """
+    Delete a case study by ID.
+    Uses %s placeholder and try/finally for guaranteed connection cleanup.
+    """
     from database import get_db
     db = get_db()
-    db.execute('DELETE FROM case_studies WHERE id = ?', (study_id,))
-    db.commit()
-    db.close()
+    try:
+        db.execute('DELETE FROM case_studies WHERE id = %s', (study_id,))
+        db.commit()
+    finally:
+        db.close()
     return True
-
-
-def init_case_studies_table():
-    """Create the case_studies table if it does not exist. Called at app startup."""
-    from database import get_db
-    db = get_db()
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS case_studies (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            industry TEXT NOT NULL,
-            title TEXT NOT NULL,
-            content TEXT NOT NULL,
-            problem_summary TEXT,
-            solution_summary TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    db.execute('''
-        CREATE INDEX IF NOT EXISTS idx_case_studies_industry
-        ON case_studies(industry)
-    ''')
-    db.execute('''
-        CREATE INDEX IF NOT EXISTS idx_case_studies_created
-        ON case_studies(created_at DESC)
-    ''')
-    db.commit()
-    db.close()
-    print("  [CaseStudy] case_studies table ready")
 
 # I did no harm and this file is not truncated
