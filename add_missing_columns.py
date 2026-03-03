@@ -1,52 +1,61 @@
 """
 ADD MISSING COLUMNS - Schema Migration
 Created: March 03, 2026
-Last Updated: March 03, 2026
+Last Updated: March 03, 2026 - PHASE 8 EXPANSION
+
+CHANGELOG:
+- March 03, 2026 (Phase 8): EXPANDED projects table migrations
+  * Added project_phase, storage_path, checklist_data, milestone_data,
+    folder_data, metadata columns to projects table.
+  * These columns are all referenced by database_file_management.py
+    (ProjectManager class) but were never created in production because
+    migrate_projects_table.py hardcodes SQLite fallback and never ran
+    against the PostgreSQL database on Render.
+  * project_id was already present from Phase 6 deployment (earlier today).
+  * All entries are fully idempotent (IF NOT EXISTS for PG, PRAGMA for SQLite).
+
+- March 03, 2026 (Phase 6): INITIAL VERSION
+  * Added project_id to projects table.
+  * Added problem_summary, solution_summary to case_studies.
+  * Added topic_display, url_slug, meta_description, word_count,
+    seo_title, author_name, tags to blog_posts.
 
 PURPOSE:
-    Adds columns to existing PostgreSQL tables that were added to the
-    CREATE TABLE definitions over time but never applied to the already-
-    existing tables on Render (because CREATE TABLE IF NOT EXISTS skips
-    re-creation and does not add new columns).
-
-    All ALTER TABLE statements use IF NOT EXISTS (PostgreSQL 9.6+) so
-    this migration is fully idempotent — safe to run on every startup
-    with no side effects after the first run.
-
-    Existing data is never modified.
+    Adds columns to existing PostgreSQL tables that were added to
+    application code over time but never applied to the production DB.
+    All ALTER TABLE statements use IF NOT EXISTS so this migration is
+    fully idempotent — safe to run on every startup.
+    Existing data is NEVER modified.
 
 TABLES AND COLUMNS ADDED:
     case_studies:
-        - problem_summary TEXT   (was missing, caused UndefinedColumn error)
-        - solution_summary TEXT  (was missing, caused UndefinedColumn error)
+        - problem_summary TEXT
+        - solution_summary TEXT
 
     blog_posts:
-        - topic_display    TEXT    (was missing, caused UndefinedColumn error)
-        - url_slug         TEXT    (was missing, caused UndefinedColumn error)
-        - meta_description TEXT    (was missing, caused UndefinedColumn error)
-        - word_count       INTEGER (added proactively — referenced in generator)
-        - seo_title        TEXT    (added proactively — referenced in generator)
-        - author_name      TEXT    (added proactively — referenced in generator)
-        - tags             TEXT    (added proactively — referenced in generator)
+        - topic_display TEXT
+        - url_slug TEXT
+        - meta_description TEXT
+        - word_count INTEGER
+        - seo_title TEXT
+        - author_name TEXT
+        - tags TEXT
 
     projects:
-        - project_id TEXT  (was missing, caused "column project_id does not exist" error)
+        - project_id TEXT      (referenced by ProjectManager + core routes)
+        - project_phase TEXT   (DB was created with 'phase' but all app code
+                                uses 'project_phase')
+        - storage_path TEXT    (referenced by ProjectManager.create_project)
+        - checklist_data TEXT  (referenced by ProjectManager.create_project)
+        - milestone_data TEXT  (referenced by ProjectManager.create_project)
+        - folder_data TEXT     (referenced by ProjectManager.create_project)
+        - metadata TEXT        (referenced by ProjectManager.create_project)
 
 ERRORS FIXED:
-    psycopg2.errors.UndefinedColumn: column "problem_summary" does not exist
-    psycopg2.errors.UndefinedColumn: column "topic_display" does not exist
-    Error listing projects: column "project_id" does not exist
-
-HOW TO WIRE INTO app.py (STEP 3 legacy migrations section):
-    try:
-        from add_missing_columns import add_missing_columns
-        add_missing_columns()
-    except Exception as e:
-        print(f"Missing columns migration: {e}")
-
-CHANGELOG:
-    March 03, 2026 - Created. Fixes three schema mismatch errors from
-                     deployment logs after PostgreSQL pool fix.
+    Error listing projects: column "project_phase" does not exist
+    Error starting project: column "project_phase" of relation "projects" does not exist
+    Error in ProjectManager.create_project: column "storage_path" does not exist
+    Error in ProjectManager.create_project: column "checklist_data" does not exist
 
 AUTHOR: Jim @ Shiftwork Solutions LLC (managed by Claude)
 """
@@ -76,32 +85,88 @@ def _migrate_postgresql():
     Each column gets its own connection+commit so one failure does not
     block the remaining columns from being added.
     """
+
     migrations = [
-        # case_studies
-        ('case_studies', 'problem_summary',
-         'ALTER TABLE case_studies ADD COLUMN IF NOT EXISTS problem_summary TEXT'),
-        ('case_studies', 'solution_summary',
-         'ALTER TABLE case_studies ADD COLUMN IF NOT EXISTS solution_summary TEXT'),
 
-        # blog_posts
-        ('blog_posts', 'topic_display',
-         'ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS topic_display TEXT'),
-        ('blog_posts', 'url_slug',
-         'ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS url_slug TEXT'),
-        ('blog_posts', 'meta_description',
-         'ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS meta_description TEXT'),
-        ('blog_posts', 'word_count',
-         'ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS word_count INTEGER DEFAULT 0'),
-        ('blog_posts', 'seo_title',
-         'ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS seo_title TEXT'),
-        ('blog_posts', 'author_name',
-         "ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS author_name TEXT DEFAULT 'Shiftwork Solutions LLC'"),
-        ('blog_posts', 'tags',
-         'ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS tags TEXT'),
+        # -------------------------------------------------------------
+        # case_studies table
+        # -------------------------------------------------------------
+        (
+            'case_studies', 'problem_summary',
+            'ALTER TABLE case_studies ADD COLUMN IF NOT EXISTS problem_summary TEXT'
+        ),
+        (
+            'case_studies', 'solution_summary',
+            'ALTER TABLE case_studies ADD COLUMN IF NOT EXISTS solution_summary TEXT'
+        ),
 
-        # projects
-        ('projects', 'project_id',
-         'ALTER TABLE projects ADD COLUMN IF NOT EXISTS project_id TEXT'),
+        # -------------------------------------------------------------
+        # blog_posts table
+        # -------------------------------------------------------------
+        (
+            'blog_posts', 'topic_display',
+            'ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS topic_display TEXT'
+        ),
+        (
+            'blog_posts', 'url_slug',
+            'ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS url_slug TEXT'
+        ),
+        (
+            'blog_posts', 'meta_description',
+            'ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS meta_description TEXT'
+        ),
+        (
+            'blog_posts', 'word_count',
+            'ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS word_count INTEGER DEFAULT 0'
+        ),
+        (
+            'blog_posts', 'seo_title',
+            'ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS seo_title TEXT'
+        ),
+        (
+            'blog_posts', 'author_name',
+            "ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS author_name TEXT DEFAULT 'Shiftwork Solutions LLC'"
+        ),
+        (
+            'blog_posts', 'tags',
+            'ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS tags TEXT'
+        ),
+
+        # -------------------------------------------------------------
+        # projects table — all columns referenced by application code
+        # that were missing from the original CREATE TABLE statement.
+        #
+        # NOTE: project_id may already exist from a previous deployment.
+        # All entries are idempotent (IF NOT EXISTS).
+        # -------------------------------------------------------------
+        (
+            'projects', 'project_id',
+            'ALTER TABLE projects ADD COLUMN IF NOT EXISTS project_id TEXT'
+        ),
+        (
+            'projects', 'project_phase',
+            "ALTER TABLE projects ADD COLUMN IF NOT EXISTS project_phase TEXT DEFAULT 'discovery'"
+        ),
+        (
+            'projects', 'storage_path',
+            'ALTER TABLE projects ADD COLUMN IF NOT EXISTS storage_path TEXT'
+        ),
+        (
+            'projects', 'checklist_data',
+            'ALTER TABLE projects ADD COLUMN IF NOT EXISTS checklist_data TEXT'
+        ),
+        (
+            'projects', 'milestone_data',
+            'ALTER TABLE projects ADD COLUMN IF NOT EXISTS milestone_data TEXT'
+        ),
+        (
+            'projects', 'folder_data',
+            'ALTER TABLE projects ADD COLUMN IF NOT EXISTS folder_data TEXT'
+        ),
+        (
+            'projects', 'metadata',
+            'ALTER TABLE projects ADD COLUMN IF NOT EXISTS metadata TEXT'
+        ),
     ]
 
     added = []
@@ -142,11 +207,15 @@ def _migrate_sqlite():
     SQLite does not support ADD COLUMN IF NOT EXISTS.
     Use PRAGMA table_info() to check column existence before each ALTER.
     """
+
     migrations = [
+        # case_studies
         ('case_studies', 'problem_summary',
          'ALTER TABLE case_studies ADD COLUMN problem_summary TEXT'),
         ('case_studies', 'solution_summary',
          'ALTER TABLE case_studies ADD COLUMN solution_summary TEXT'),
+
+        # blog_posts
         ('blog_posts', 'topic_display',
          'ALTER TABLE blog_posts ADD COLUMN topic_display TEXT'),
         ('blog_posts', 'url_slug',
@@ -161,8 +230,22 @@ def _migrate_sqlite():
          "ALTER TABLE blog_posts ADD COLUMN author_name TEXT DEFAULT 'Shiftwork Solutions LLC'"),
         ('blog_posts', 'tags',
          'ALTER TABLE blog_posts ADD COLUMN tags TEXT'),
+
+        # projects — all columns referenced by application code
         ('projects', 'project_id',
          'ALTER TABLE projects ADD COLUMN project_id TEXT'),
+        ('projects', 'project_phase',
+         "ALTER TABLE projects ADD COLUMN project_phase TEXT DEFAULT 'discovery'"),
+        ('projects', 'storage_path',
+         'ALTER TABLE projects ADD COLUMN storage_path TEXT'),
+        ('projects', 'checklist_data',
+         'ALTER TABLE projects ADD COLUMN checklist_data TEXT'),
+        ('projects', 'milestone_data',
+         'ALTER TABLE projects ADD COLUMN milestone_data TEXT'),
+        ('projects', 'folder_data',
+         'ALTER TABLE projects ADD COLUMN folder_data TEXT'),
+        ('projects', 'metadata',
+         'ALTER TABLE projects ADD COLUMN metadata TEXT'),
     ]
 
     added = []
