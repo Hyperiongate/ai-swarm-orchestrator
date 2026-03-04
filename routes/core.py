@@ -1,87 +1,38 @@
 """
 Core Routes
 Created: January 21, 2026
-Last Updated: March 03, 2026 - SCHEMA FIX: facility_type -> facility_size
+Last Updated: March 04, 2026 - POSTGRESQL BOOLEAN FIX
 
 CHANGELOG:
+- March 04, 2026: POSTGRESQL BOOLEAN FIX
+  * PostgreSQL BOOLEAN columns require TRUE/FALSE, not 1/0
+  * Fixed all SQL queries using boolean columns:
+      - is_deleted = 0 -> is_deleted = FALSE
+      - is_deleted = 1 -> is_deleted = TRUE
+      - is_archived = 0 -> is_archived = FALSE
+      - consensus_was_accurate = 1 -> consensus_was_accurate = TRUE
+  * This fixes three 500 errors:
+      - /api/stats -> is_deleted = 0 failed on generated_documents
+      - /api/documents -> is_deleted = 0 failed via get_generated_documents()
+      - /api/learning/stats -> consensus_was_accurate = 1 failed on user_feedback
+  * No other changes — all routes, functions, and features unchanged
+
 - March 03, 2026: SCHEMA FIX - facility_type -> facility_size
   * All references to 'facility_type' in projects queries replaced with
     'facility_size' to match the authoritative schema in
     migration_001_initial_schema.py.
-  * The projects table was created with 'facility_size' (not 'facility_type').
-    core.py was using the wrong column name everywhere, causing:
-      column "facility_type" does not exist
-      column "facility_type" of relation "projects" does not exist
-  * Affected functions (all changed facility_type -> facility_size):
-      - list_projects():           SELECT column + dict key
-      - create_project():          data.get() + INSERT column
-      - start_project_legacy():    data.get() + INSERT column
-      - get_project_context_legacy(): dict key in response
-  * No other changes — all other functionality preserved exactly.
 
 - March 03, 2026: CONNECTION POOL FIX (Phase 4)
-  * Fixed ALL 14 functions with connection leaks — root cause of PostgreSQL pool exhaustion
-  * Rule applied universally: db = get_db() ALWAYS inside try/finally: db.close()
-  * db.close() NEVER called inside try block without matching finally
-  * ALL '?' placeholders replaced with '%s' (PostgreSQL syntax)
-  * Functions fixed:
-    - list_projects(): '?' -> '%s', db.close() moved to finally
-    - create_project(): '?' -> '%s', db.close() moved to finally
-    - start_project_legacy(): '?' -> '%s', db.close() moved to finally
-    - get_project_context_legacy(): '?' -> '%s', db.close() moved to finally
-    - get_project(): '?' -> '%s', db.close() moved to finally
-    - update_project(): '?' -> '%s', db.close() moved to finally
-    - upload_project_files(): '?' -> '%s', db.close() moved to finally
-    - list_project_files(): '?' -> '%s', db.close() moved to finally
-    - create_document_in_project(): '?' -> '%s', db.close() moved to finally
-    - get_tasks(): '?' -> '%s', db.close() moved to finally
-    - get_task(): '?' -> '%s', db.close() moved to finally
-    - get_stats(): '?' -> '%s', db.close() moved to finally
-    - submit_feedback(): ALL '?' -> '%s', inner try/finally preserved
-    - get_learning_stats(): db.close() moved to finally
-  * No functional changes - all endpoints behave identically
+  * Fixed ALL 14 functions with connection leaks
+  * All '?' placeholders replaced with '%s' (PostgreSQL syntax)
 
 - January 26, 2026: COMPLETE SCHEDULE SYSTEM REPLACEMENT
-  * Removed old named-schedule system (DuPont, Panama, Pitman buttons)
-  * Integrated new pattern-based conversational system
-  * Now asks: shift length -> pattern selection
-  * Only DuPont and Southern Swing keep their names (industry standards)
-  * All other patterns described by work/off rhythm (2-2-3, 4-4, etc.)
-  * Added session management for multi-turn schedule conversations
-  * Generates visual Excel schedules with color-coded shifts
-
 - January 23, 2026: FIXED CLARIFICATION LOOP BUG
-  * Added clarification_answers parsing from request (JSON and form data)
-  * Modified proactive pre-check to SKIP when clarification_answers provided
-  * This fixes the infinite loop where AI kept asking same questions
-  * User answers now bypass the SmartQuestioner and go straight to task execution
-
 - January 23, 2026: ADDED MISSING API ENDPOINTS TO FIX FRONTEND ERRORS
-  * Added /api/projects - List projects (was causing 404)
-  * Added /api/projects/<id> - Get single project
-  * Added /api/survey/questions - Get survey questions (was causing 404)
-  * Added /api/survey/create - Create new survey
-  * Added /api/survey/<id>/responses - Get survey responses
-  * Added /api/marketing/status - Get marketing hub status (was causing 404)
-  * Added /api/marketing/generate - Generate social content
-  * Added /api/marketing/post - Post to social media
-  * Added /api/opportunities - List opportunities
-  * Added /api/opportunities/status - Get opportunity finder status (was causing 404)
-  * Added /api/opportunities/top - Get top opportunities
-  * Added /api/opportunities/pitch - Generate opportunity pitch
-  * These endpoints integrate with existing utility classes
-
 - January 23, 2026: DOCUMENT MANAGEMENT ENDPOINTS
-  * Added GET /api/generated-documents - List all generated documents
-  * Added GET /api/generated-documents/<id> - Get single document info
-  * Added GET /api/generated-documents/<id>/download - Download document
-  * Added GET /api/generated-documents/<id>/print - Get printable version
-  * Added DELETE /api/generated-documents/<id> - Delete document
-  * Added GET /api/documents/stats - Get document statistics
-
 - January 22, 2026: PERSISTENT CONVERSATION MEMORY
 - January 22, 2026: CRITICAL BUG FIX - AI now actually completes tasks
-- January 22, 2026: Added proactive intelligence (smart questioning + suggestions)
+- January 22, 2026: Added proactive intelligence
 - January 21, 2026: Added feedback endpoint and learning stats
 
 Author: Jim @ Shiftwork Solutions LLC
@@ -1294,7 +1245,7 @@ def get_stats():
             total_conversations = db.execute('SELECT COUNT(*) FROM conversations').fetchone()[0]
             total_messages = db.execute('SELECT COUNT(*) FROM conversation_messages').fetchone()[0]
             total_documents = db.execute(
-                'SELECT COUNT(*) FROM generated_documents WHERE is_deleted = 0'
+                'SELECT COUNT(*) FROM generated_documents WHERE is_deleted = FALSE'
             ).fetchone()[0]
             return jsonify({
                 'total_tasks': total_tasks,
@@ -1489,7 +1440,7 @@ def get_learning_stats():
             total_feedback = db.execute('SELECT COUNT(*) as count FROM user_feedback').fetchone()
             avg_overall = db.execute('SELECT AVG(overall_rating) as avg FROM user_feedback').fetchone()
             consensus_accuracy = db.execute('''SELECT COUNT(*) as total,
-                SUM(CASE WHEN consensus_was_accurate = 1 THEN 1 ELSE 0 END) as accurate
+                SUM(CASE WHEN consensus_was_accurate = TRUE THEN 1 ELSE 0 END) as accurate
                 FROM user_feedback WHERE consensus_was_accurate IS NOT NULL''').fetchone()
 
             consensus_accuracy_rate = None
