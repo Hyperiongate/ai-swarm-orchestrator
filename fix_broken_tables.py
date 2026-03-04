@@ -1,11 +1,17 @@
 """
-AI SWARM ORCHESTRATOR - Fix Broken Tables (Phase 9b)
+AI SWARM ORCHESTRATOR - Fix Broken Tables (Phase 9b + 9c)
 File: fix_broken_tables.py
 Created: March 03, 2026
+Last Updated: March 04, 2026 - Phase 9c: SERIAL sequence fix
 
 PURPOSE:
     One-time cleanup to DROP and RECREATE tables that were created by the
     old migration_001_initial_schema.py with wrong column structures.
+
+    Phase 9b: Drops and recreates tables with wrong column names.
+    Phase 9c: Fixes missing SERIAL sequences on id columns for tables
+              that were created by legacy code before migration_001 ran.
+              This fixes: "null value in column id violates not-null constraint"
 
     The old migration created tables with wrong column names. The Phase 9
     migration used CREATE TABLE IF NOT EXISTS which SKIPPED these tables
@@ -616,6 +622,108 @@ def fix_broken_tables():
                 print(f"     ❌ {err}")
             results['success'] = False
         print("=" * 60)
+
+        # =================================================================
+        # PHASE 9c: Fix missing SERIAL sequences on id columns
+        # March 04, 2026
+        #
+        # Problem: Tables created by legacy code (ProjectManager, etc.)
+        # have id INTEGER NOT NULL but no SERIAL sequence. CREATE TABLE
+        # IF NOT EXISTS in migration_001 skipped them because they exist.
+        # INSERT without specifying id fails with:
+        #   "null value in column id violates not-null constraint"
+        #
+        # Fix: For each table, check if the id column has a default.
+        # If not, create a sequence and attach it.
+        # =================================================================
+
+        if db_type == 'postgresql':
+            print()
+            print("=" * 60)
+            print("🔧 Phase 9c: Fixing missing SERIAL sequences...")
+            print("=" * 60)
+
+            # All tables that use id SERIAL PRIMARY KEY in the migration
+            serial_tables = [
+                'tasks', 'specialist_calls', 'consensus_validations',
+                'escalations', 'learning_patterns', 'learning_records',
+                'user_feedback', 'conversations', 'conversation_messages',
+                'conversation_context', 'generated_documents', 'projects',
+                'project_files', 'project_conversations', 'project_context',
+                'client_profiles', 'avoidance_patterns', 'smart_analyzer_state',
+                'analysis_sessions', 'analysis_deliverables', 'analysis_progress',
+                'research_sessions', 'resource_searches', 'marketing_campaigns',
+                'content_pieces', 'improvement_reports', 'avatar_sessions',
+                'swarm_evaluations', 'introspection_reports',
+                'introspection_insights', 'surveys', 'survey_responses',
+                'blog_posts', 'case_studies', 'user_profiles', 'workflows',
+                'workflow_executions', 'integration_logs', 'memory_store',
+                'routing_preferences', 'alerts', 'scheduled_jobs',
+                'job_executions', 'alert_subscriptions', 'monitored_entities',
+                'leads', 'lead_activities', 'lead_documents',
+                'industry_benchmarks', 'background_jobs',
+                'conversation_summaries', 'proactive_suggestions',
+                'user_patterns', 'modification_proposals', 'goal_alignment_logs',
+            ]
+
+            sequences_fixed = 0
+            sequences_ok = 0
+
+            for table_name in serial_tables:
+                try:
+                    # Check if the id column has a default (sequence)
+                    cursor.execute("""
+                        SELECT column_default
+                        FROM information_schema.columns
+                        WHERE table_name = %s
+                          AND column_name = 'id'
+                          AND table_schema = 'public'
+                    """, (table_name,))
+                    row = cursor.fetchone()
+
+                    if row is None:
+                        # Table doesn't exist — skip
+                        continue
+
+                    col_default = row['column_default'] if row else None
+
+                    if col_default and 'nextval' in str(col_default):
+                        # Already has a sequence — OK
+                        sequences_ok += 1
+                        continue
+
+                    # No sequence — fix it
+                    seq_name = f"{table_name}_id_seq"
+
+                    cursor.execute(f"CREATE SEQUENCE IF NOT EXISTS {seq_name}")
+                    cursor.execute(
+                        f"ALTER TABLE {table_name} "
+                        f"ALTER COLUMN id SET DEFAULT nextval('{seq_name}')"
+                    )
+                    cursor.execute(
+                        f"SELECT setval('{seq_name}', "
+                        f"COALESCE((SELECT MAX(id) FROM {table_name}), 0) + 1, false)"
+                    )
+                    cursor.execute(
+                        f"ALTER TABLE {table_name} ALTER COLUMN id SET NOT NULL"
+                    )
+
+                    # Link sequence ownership to the column (so DROP TABLE cascades)
+                    cursor.execute(
+                        f"ALTER SEQUENCE {seq_name} OWNED BY {table_name}.id"
+                    )
+
+                    sequences_fixed += 1
+                    print(f"  🔧 {table_name}.id: attached sequence {seq_name}")
+
+                except Exception as seq_err:
+                    print(f"  ⚠️  {table_name}.id: {seq_err}")
+
+            conn.commit()
+
+            print(f"  Sequences fixed: {sequences_fixed}")
+            print(f"  Sequences OK:    {sequences_ok}")
+            print("=" * 60)
 
     except Exception as e:
         import traceback
