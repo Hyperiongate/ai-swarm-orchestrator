@@ -1,9 +1,16 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026 
-Last Updated: March 03, 2026 - SCHEMA MIGRATION: add_missing_columns
+Last Updated: March 03, 2026 - Phase 9b: FIX BROKEN TABLE SCHEMAS
 
 CHANGELOG:
+- March 03, 2026: Phase 9b - FIX BROKEN TABLE SCHEMAS
+  * Added fix_broken_tables() call in STEP 3 (after add_missing_columns)
+  * Drops and recreates tables that have wrong column structures from
+    the old migration (generated_documents, user_feedback,
+    introspection_insights, conversations, tasks, etc.)
+  * Safe to run every startup — checks before dropping
+
 - March 03, 2026: SCHEMA MIGRATION
   * Added add_missing_columns() call in STEP 3 (legacy migrations)
   * Fixes three UndefinedColumn errors from deployment logs:
@@ -166,6 +173,18 @@ try:
     add_missing_columns()
 except Exception as e:
     print(f"Missing columns migration: {e}")
+
+# ----------------------------------------------------------------------------
+# FIX BROKEN TABLE SCHEMAS — Phase 9b
+# Drops and recreates tables that have wrong column structures from the
+# old migration. Safe to run every startup (checks before dropping).
+# Added: March 03, 2026
+# ----------------------------------------------------------------------------
+try:
+    from fix_broken_tables import fix_broken_tables
+    fix_broken_tables()
+except Exception as e:
+    print(f"Fix broken tables: {e}")
 
 print("Database migrations complete!")
 
@@ -659,7 +678,7 @@ def health():
 
     return jsonify({
         'status': 'healthy',
-        'version': 'Schema Migration Mar03 + PostgreSQL Migration Mar02 + Sprint 3 + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator + LinkedIn Poster + Bulletproof Projects + 100MB Upload + Background KB + NameError Fix Feb18 + Blueprint Fix Feb20 + Case Studies Feb21 + Blog Posts Feb23 + KB Safety Guard + KB Diagnose Feb25 + Clear KB Feb26 + Restore KB Feb27',
+        'version': 'Phase 9b Schema Fix Mar03 + PostgreSQL Migration Mar02 + Sprint 3 + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator + LinkedIn Poster + Bulletproof Projects + 100MB Upload + Background KB + NameError Fix Feb18 + Blueprint Fix Feb20 + Case Studies Feb21 + Blog Posts Feb23 + KB Safety Guard + KB Diagnose Feb25 + Clear KB Feb26 + Restore KB Feb27',
         'database': {
             'type': get_db_type(),
             'backend': 'PostgreSQL (persistent)' if get_db_type() == 'postgresql' else 'SQLite (local dev)'
