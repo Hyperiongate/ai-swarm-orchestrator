@@ -628,13 +628,17 @@ def fix_broken_tables():
         # March 04, 2026
         #
         # Problem: Tables created by legacy code (ProjectManager, etc.)
-        # have id INTEGER NOT NULL but no SERIAL sequence. CREATE TABLE
-        # IF NOT EXISTS in migration_001 skipped them because they exist.
+        # have id without a SERIAL sequence. CREATE TABLE IF NOT EXISTS
+        # in migration_001 skipped them because they exist.
         # INSERT without specifying id fails with:
         #   "null value in column id violates not-null constraint"
         #
         # Fix: For each table, check if the id column has a default.
         # If not, create a sequence and attach it.
+        # Uses SAVEPOINTs so one table's error doesn't abort all others.
+        #
+        # March 04, 2026 v2: Fixed TEXT→INTEGER type mismatch.
+        # Some legacy tables have id as TEXT. Must ALTER to INTEGER first.
         # =================================================================
 
         if db_type == 'postgresql':
@@ -668,12 +672,16 @@ def fix_broken_tables():
 
             sequences_fixed = 0
             sequences_ok = 0
+            sequences_errors = 0
 
             for table_name in serial_tables:
                 try:
-                    # Check if the id column has a default (sequence)
+                    # Use SAVEPOINT so errors don't abort the whole transaction
+                    cursor.execute(f"SAVEPOINT sp_{table_name}")
+
+                    # Check if the table exists and has an id column
                     cursor.execute("""
-                        SELECT column_default
+                        SELECT column_default, data_type
                         FROM information_schema.columns
                         WHERE table_name = %s
                           AND column_name = 'id'
@@ -682,17 +690,47 @@ def fix_broken_tables():
                     row = cursor.fetchone()
 
                     if row is None:
-                        # Table doesn't exist — skip
+                        # Table doesn't exist or has no id column — skip
+                        cursor.execute(f"RELEASE SAVEPOINT sp_{table_name}")
                         continue
 
                     col_default = row['column_default'] if row else None
+                    data_type = row['data_type'] if row else None
 
                     if col_default and 'nextval' in str(col_default):
                         # Already has a sequence — OK
                         sequences_ok += 1
+                        cursor.execute(f"RELEASE SAVEPOINT sp_{table_name}")
                         continue
 
-                    # No sequence — fix it
+                    # If id is TEXT type, convert to INTEGER first
+                    if data_type and data_type.lower() in ('text', 'character varying'):
+                        # Check if table has any rows with non-numeric ids
+                        cursor.execute(f"SELECT COUNT(*) as cnt FROM {table_name}")
+                        row_count = cursor.fetchone()['cnt']
+
+                        if row_count == 0:
+                            # Empty table — safe to change type
+                            cursor.execute(
+                                f"ALTER TABLE {table_name} "
+                                f"ALTER COLUMN id TYPE INTEGER USING 0"
+                            )
+                            print(f"  🔄 {table_name}.id: converted TEXT → INTEGER (empty table)")
+                        else:
+                            # Table has data — try casting
+                            try:
+                                cursor.execute(
+                                    f"ALTER TABLE {table_name} "
+                                    f"ALTER COLUMN id TYPE INTEGER USING id::INTEGER"
+                                )
+                                print(f"  🔄 {table_name}.id: converted TEXT → INTEGER ({row_count} rows)")
+                            except Exception as cast_err:
+                                print(f"  ⚠️  {table_name}.id: cannot convert TEXT→INTEGER ({cast_err})")
+                                cursor.execute(f"ROLLBACK TO SAVEPOINT sp_{table_name}")
+                                sequences_errors += 1
+                                continue
+
+                    # Now create and attach the sequence
                     seq_name = f"{table_name}_id_seq"
 
                     cursor.execute(f"CREATE SEQUENCE IF NOT EXISTS {seq_name}")
@@ -700,6 +738,7 @@ def fix_broken_tables():
                         f"ALTER TABLE {table_name} "
                         f"ALTER COLUMN id SET DEFAULT nextval('{seq_name}')"
                     )
+                    # Set sequence to start after max existing id
                     cursor.execute(
                         f"SELECT setval('{seq_name}', "
                         f"COALESCE((SELECT MAX(id) FROM {table_name}), 0) + 1, false)"
@@ -707,22 +746,30 @@ def fix_broken_tables():
                     cursor.execute(
                         f"ALTER TABLE {table_name} ALTER COLUMN id SET NOT NULL"
                     )
-
-                    # Link sequence ownership to the column (so DROP TABLE cascades)
+                    # Link sequence ownership to the column
                     cursor.execute(
                         f"ALTER SEQUENCE {seq_name} OWNED BY {table_name}.id"
                     )
 
+                    cursor.execute(f"RELEASE SAVEPOINT sp_{table_name}")
                     sequences_fixed += 1
                     print(f"  🔧 {table_name}.id: attached sequence {seq_name}")
 
                 except Exception as seq_err:
+                    # Rollback just this table's changes
+                    try:
+                        cursor.execute(f"ROLLBACK TO SAVEPOINT sp_{table_name}")
+                    except Exception:
+                        pass
+                    sequences_errors += 1
                     print(f"  ⚠️  {table_name}.id: {seq_err}")
 
             conn.commit()
 
             print(f"  Sequences fixed: {sequences_fixed}")
             print(f"  Sequences OK:    {sequences_ok}")
+            if sequences_errors:
+                print(f"  Errors:          {sequences_errors}")
             print("=" * 60)
 
     except Exception as e:
