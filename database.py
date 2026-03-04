@@ -1,9 +1,18 @@
 """
 Database Module
 Created: January 21, 2026
-Last Updated: March 04, 2026 - POSTGRESQL BOOLEAN FIX
+Last Updated: March 04, 2026 - REALDICTCURSOR + BOOLEAN FIX
 
 CHANGELOG:
+- March 04, 2026: REALDICTCURSOR FIX
+  * psycopg2 RealDictCursor returns RealDictRow (dict-only, no integer indexing)
+  * All fetchone()[0] calls replaced with named column aliases:
+      - SELECT COUNT(*) ... fetchone()[0]  →  SELECT COUNT(*) as cnt ... fetchone()['cnt']
+      - SELECT SUM(...) ... fetchone()[0]   →  SELECT COALESCE(SUM(...), 0) as total ... fetchone()['total']
+      - SELECT AVG(...) ... fetchone()[0]   →  SELECT AVG(...) as avg_conf ... fetchone()['avg_conf']
+  * 15 instances fixed across get_document_stats() and get_statistics()
+  * This was causing KeyError(0) → {"error":"0"} on any endpoint using these functions
+
 - March 04, 2026: POSTGRESQL BOOLEAN FIX
   * PostgreSQL BOOLEAN columns cannot be compared with integers (0/1).
   * Changed ALL boolean comparisons to use TRUE/FALSE instead of 1/0:
@@ -180,28 +189,28 @@ def get_document_stats():
     try:
         stats = {}
         stats['total_documents'] = db.execute(
-            'SELECT COUNT(*) FROM generated_documents WHERE is_deleted = FALSE').fetchone()[0]
+            'SELECT COUNT(*) as cnt FROM generated_documents WHERE is_deleted = FALSE').fetchone()['cnt']
         type_counts = db.execute('''
             SELECT document_type, COUNT(*) as count FROM generated_documents
             WHERE is_deleted = FALSE GROUP BY document_type
         ''').fetchall()
         stats['by_type'] = {row['document_type']: row['count'] for row in type_counts}
         total_dl = db.execute(
-            'SELECT SUM(download_count) FROM generated_documents WHERE is_deleted = FALSE').fetchone()[0]
+            'SELECT COALESCE(SUM(download_count), 0) as total FROM generated_documents WHERE is_deleted = FALSE').fetchone()['total']
         stats['total_downloads'] = total_dl or 0
         total_size = db.execute(
-            'SELECT SUM(file_size) FROM generated_documents WHERE is_deleted = FALSE').fetchone()[0]
+            'SELECT COALESCE(SUM(file_size), 0) as total FROM generated_documents WHERE is_deleted = FALSE').fetchone()['total']
         stats['total_size_bytes'] = total_size or 0
         if get_db_type() == 'postgresql':
             recent_count = db.execute('''
-                SELECT COUNT(*) FROM generated_documents
+                SELECT COUNT(*) as cnt FROM generated_documents
                 WHERE is_deleted = FALSE AND created_at >= NOW() - INTERVAL '7 days'
-            ''').fetchone()[0]
+            ''').fetchone()['cnt']
         else:
             recent_count = db.execute('''
-                SELECT COUNT(*) FROM generated_documents
+                SELECT COUNT(*) as cnt FROM generated_documents
                 WHERE is_deleted = FALSE AND created_at >= datetime('now', '-7 days')
-            ''').fetchone()[0]
+            ''').fetchone()['cnt']
         stats['recent_count'] = recent_count
         return stats
     finally:
@@ -472,24 +481,24 @@ def get_statistics():
     db = get_db()
     try:
         stats = {}
-        stats['total_tasks'] = db.execute('SELECT COUNT(*) FROM tasks').fetchone()[0]
+        stats['total_tasks'] = db.execute('SELECT COUNT(*) as cnt FROM tasks').fetchone()['cnt']
         stats['completed_tasks'] = db.execute(
-            "SELECT COUNT(*) FROM tasks WHERE status = 'completed'").fetchone()[0]
-        stats['total_escalations'] = db.execute('SELECT COUNT(*) FROM escalations').fetchone()[0]
+            "SELECT COUNT(*) as cnt FROM tasks WHERE status = 'completed'").fetchone()['cnt']
+        stats['total_escalations'] = db.execute('SELECT COUNT(*) as cnt FROM escalations').fetchone()['cnt']
         avg_conf = db.execute(
-            'SELECT AVG(confidence) FROM tasks WHERE confidence IS NOT NULL').fetchone()[0]
+            'SELECT AVG(confidence) as avg_conf FROM tasks WHERE confidence IS NOT NULL').fetchone()['avg_conf']
         stats['average_confidence'] = round(avg_conf, 3) if avg_conf else 0
-        stats['specialist_calls'] = db.execute('SELECT COUNT(*) FROM specialist_calls').fetchone()[0]
-        stats['consensus_validations'] = db.execute('SELECT COUNT(*) FROM consensus_validations').fetchone()[0]
+        stats['specialist_calls'] = db.execute('SELECT COUNT(*) as cnt FROM specialist_calls').fetchone()['cnt']
+        stats['consensus_validations'] = db.execute('SELECT COUNT(*) as cnt FROM consensus_validations').fetchone()['cnt']
         successful_consensus = db.execute(
-            'SELECT COUNT(*) FROM consensus_validations WHERE consensus_achieved = TRUE').fetchone()[0]
+            'SELECT COUNT(*) as cnt FROM consensus_validations WHERE consensus_achieved = TRUE').fetchone()['cnt']
         total_consensus = stats['consensus_validations']
         stats['consensus_success_rate'] = (
             round(successful_consensus / total_consensus, 3) if total_consensus > 0 else 0)
-        stats['total_conversations'] = db.execute('SELECT COUNT(*) FROM conversations').fetchone()[0]
-        stats['total_messages'] = db.execute('SELECT COUNT(*) FROM conversation_messages').fetchone()[0]
+        stats['total_conversations'] = db.execute('SELECT COUNT(*) as cnt FROM conversations').fetchone()['cnt']
+        stats['total_messages'] = db.execute('SELECT COUNT(*) as cnt FROM conversation_messages').fetchone()['cnt']
         stats['total_documents'] = db.execute(
-            'SELECT COUNT(*) FROM generated_documents WHERE is_deleted = FALSE').fetchone()[0]
+            'SELECT COUNT(*) as cnt FROM generated_documents WHERE is_deleted = FALSE').fetchone()['cnt']
         return stats
     finally:
         db.close()
