@@ -1,9 +1,16 @@
 """
 Core Routes
 Created: January 21, 2026
-Last Updated: March 04, 2026 - POSTGRESQL BOOLEAN FIX
+Last Updated: March 04, 2026 - REALDICTCURSOR + BOOLEAN FIX
 
 CHANGELOG:
+- March 04, 2026: REALDICTCURSOR FIX
+  * psycopg2 RealDictCursor returns dict-only rows (no integer indexing)
+  * All fetchone()[0] in get_stats() replaced with named aliases:
+      - SELECT COUNT(*) as cnt ... fetchone()['cnt']
+  * 5 instances fixed in get_stats()
+  * This was causing KeyError(0) → {"error":"0"} on /api/stats
+
 - March 04, 2026: POSTGRESQL BOOLEAN FIX
   * PostgreSQL BOOLEAN columns require TRUE/FALSE, not 1/0
   * Fixed all SQL queries using boolean columns:
@@ -1237,16 +1244,16 @@ def get_stats():
     try:
         db = get_db()
         try:
-            total_tasks = db.execute('SELECT COUNT(*) FROM tasks').fetchone()[0]
+            total_tasks = db.execute('SELECT COUNT(*) as cnt FROM tasks').fetchone()['cnt']
             completed_tasks = db.execute(
-                "SELECT COUNT(*) FROM tasks WHERE status = %s",
+                "SELECT COUNT(*) as cnt FROM tasks WHERE status = %s",
                 ('completed',)
-            ).fetchone()[0]
-            total_conversations = db.execute('SELECT COUNT(*) FROM conversations').fetchone()[0]
-            total_messages = db.execute('SELECT COUNT(*) FROM conversation_messages').fetchone()[0]
+            ).fetchone()['cnt']
+            total_conversations = db.execute('SELECT COUNT(*) as cnt FROM conversations').fetchone()['cnt']
+            total_messages = db.execute('SELECT COUNT(*) as cnt FROM conversation_messages').fetchone()['cnt']
             total_documents = db.execute(
-                'SELECT COUNT(*) FROM generated_documents WHERE is_deleted = FALSE'
-            ).fetchone()[0]
+                'SELECT COUNT(*) as cnt FROM generated_documents WHERE is_deleted = FALSE'
+            ).fetchone()['cnt']
             return jsonify({
                 'total_tasks': total_tasks,
                 'completed_tasks': completed_tasks,
