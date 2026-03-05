@@ -911,7 +911,7 @@ try:
     app.register_blueprint(knowledge_backup_bp)
     print("Knowledge Backup System API registered")
 except ImportError as e:
-    print(f"Knowledge Backup routes not found: {e}")
+    print("Knowledge Backup: module not enabled (knowledge_backup_system not installed)")
 except Exception as e:
     print(f"Knowledge Backup registration failed: {e}")
 
