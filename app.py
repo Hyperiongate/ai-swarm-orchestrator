@@ -1,9 +1,22 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: March 05, 2026 - Phase 2A Memory System
+Last Updated: March 05, 2026 - Phase 2A Memory Schema Fix
 
 CHANGELOG:
+- March 05, 2026: Phase 2A Memory Schema Fix
+  * Added /api/admin/fix-memory-schema endpoint.
+  * ROOT CAUSE: The memory_store table was created in Phase 1 with columns
+    memory_key (NOT NULL) and memory_value (NOT NULL). Phase 2A added the
+    correct columns (category, content, source_task_id, updated_at) via
+    fix-memory-store, but did NOT remove the old NOT NULL columns.
+    Every INSERT from memory_store.py failed with:
+    "null value in column 'memory_key' violates not-null constraint"
+  * FIX: New endpoint drops the 5 orphaned Phase 1 columns from memory_store:
+    memory_key, memory_value, expires_at, access_count, last_accessed.
+    Uses DROP COLUMN IF EXISTS — safe to run multiple times.
+  * No other changes. All existing routes, blueprints, features unchanged.
+
 - March 05, 2026: Phase 2A - Registered memory blueprint (routes/memory.py)
 - March 05, 2026: Phase 1 Log Cleanup (Opus direction pre-Phase 2)
   * Removed 8 legacy SQLite-era migration try/except blocks from STEP 3.
@@ -651,7 +664,7 @@ def health():
 
     return jsonify({
         'status': 'healthy',
-        'version': 'Phase 2A Memory Mar05 + Phase 1 Log Cleanup Mar05 + Phase 9b Schema Fix Mar03 + PostgreSQL Migration Mar02 + Sprint 3 + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator + LinkedIn Poster + Bulletproof Projects + 100MB Upload + Background KB',
+        'version': 'Phase 2A Memory Schema Fix Mar05 + Phase 2A Memory Mar05 + Phase 1 Log Cleanup Mar05 + Phase 9b Schema Fix Mar03 + PostgreSQL Migration Mar02 + Sprint 3 + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator + LinkedIn Poster + Bulletproof Projects + 100MB Upload + Background KB',
         'database': {
             'type': get_db_type(),
             'backend': 'PostgreSQL (persistent)' if get_db_type() == 'postgresql' else 'SQLite (local dev)'
@@ -965,6 +978,9 @@ try:
 except ImportError:
     print("Integration Hub not found")
 
+# ============================================================================
+# ADMIN: FIX MEMORY STORE COLUMNS (Phase 2A - Add new columns)
+# ============================================================================
 @app.route('/api/admin/fix-memory-store', methods=['GET'])
 def fix_memory_store():
     """One-time fix: add Phase 2A columns to memory_store table."""
@@ -993,6 +1009,112 @@ def fix_memory_store():
     except Exception as e:
         import traceback
         return jsonify({'success': False, 'error': str(e), 'traceback': traceback.format_exc()}), 500
+
+# ============================================================================
+# ADMIN: FIX MEMORY SCHEMA (Phase 2A - Drop orphaned Phase 1 columns)
+#
+# PURPOSE:
+#   The memory_store table was created in Phase 1 with columns:
+#     memory_key (NOT NULL), memory_value (NOT NULL), access_count,
+#     last_accessed, expires_at
+#   Phase 2A added the correct columns via fix-memory-store above, but those
+#   old NOT NULL columns remained. Every INSERT from memory_store.py fails:
+#     "null value in column 'memory_key' violates not-null constraint"
+#   This endpoint drops the 5 orphaned columns, leaving exactly the schema
+#   that memory_store.py expects:
+#     id, memory_type, category, content, relevance_score,
+#     source_task_id, created_at, updated_at
+#
+# HOW TO RUN:
+#   Visit: https://ai-swarm-orchestrator.onrender.com/api/admin/fix-memory-schema
+#   Run ONCE after deploying this app.py update.
+#   Safe to run multiple times (uses DROP COLUMN IF EXISTS).
+#
+# ADDED: March 05, 2026
+# ============================================================================
+@app.route('/api/admin/fix-memory-schema', methods=['GET'])
+def fix_memory_schema():
+    """
+    One-time migration: drop Phase 1 orphan columns from memory_store.
+    Run once after deploying this update. Safe to run multiple times.
+    """
+    try:
+        from db_engine import get_db_connection
+        results = []
+        orphan_columns = [
+            'memory_key',
+            'memory_value',
+            'expires_at',
+            'access_count',
+            'last_accessed',
+        ]
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            # Show current columns before the change
+            cursor.execute("""
+                SELECT column_name, data_type, is_nullable
+                FROM information_schema.columns
+                WHERE table_name = 'memory_store'
+                ORDER BY ordinal_position
+            """)
+            before_cols = [
+                {
+                    'column': r['column_name'],
+                    'type': r['data_type'],
+                    'nullable': r['is_nullable']
+                }
+                for r in cursor.fetchall()
+            ]
+
+            # Drop each orphan column
+            for col in orphan_columns:
+                try:
+                    cursor.execute(
+                        f"ALTER TABLE memory_store DROP COLUMN IF EXISTS {col}"
+                    )
+                    results.append(f"DROPPED: {col}")
+                except Exception as col_err:
+                    results.append(f"ERROR dropping {col}: {col_err}")
+
+            # Show columns after the change
+            cursor.execute("""
+                SELECT column_name, data_type, is_nullable
+                FROM information_schema.columns
+                WHERE table_name = 'memory_store'
+                ORDER BY ordinal_position
+            """)
+            after_cols = [
+                {
+                    'column': r['column_name'],
+                    'type': r['data_type'],
+                    'nullable': r['is_nullable']
+                }
+                for r in cursor.fetchall()
+            ]
+
+        return jsonify({
+            'success': True,
+            'message': (
+                'Phase 1 orphan columns removed. '
+                'Memory system should now store memories correctly.'
+            ),
+            'operations': results,
+            'schema_before': before_cols,
+            'schema_after': after_cols,
+            'next_step': (
+                'Send a message to /api/orchestrate, '
+                'then check /api/memory/recent to confirm memories are being stored.'
+            )
+        })
+
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
