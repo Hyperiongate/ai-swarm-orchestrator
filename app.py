@@ -1,9 +1,10 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: March 05, 2026 - Phase 1 Log Cleanup
+Last Updated: March 05, 2026 - Phase 2A Memory System
 
 CHANGELOG:
+- March 05, 2026: Phase 2A - Registered memory blueprint (routes/memory.py)
 - March 05, 2026: Phase 1 Log Cleanup (Opus direction pre-Phase 2)
   * Removed 8 legacy SQLite-era migration try/except blocks from STEP 3.
     These scripts (migrate_projects_table, upgrade_database_sprint2,
@@ -15,7 +16,7 @@ CHANGELOG:
     by migrations/001_initial_schema.py (56 tables verified at startup).
     These legacy scripts are no longer needed.
   * Kept: add_blog_posts_table, add_missing_columns, fix_broken_tables
-    — these three still perform real work on the PostgreSQL schema.
+    - these three still perform real work on the PostgreSQL schema.
   * self_optimization_engine.py replaced with a Phase 4 stub so that
     routes/optimization.py registers cleanly without ImportError warning.
   * No functional changes to any routes, blueprints, or features.
@@ -25,7 +26,7 @@ CHANGELOG:
   * Drops and recreates tables that have wrong column structures from
     the old migration (generated_documents, user_feedback,
     introspection_insights, conversations, tasks, etc.)
-  * Safe to run every startup — checks before dropping
+  * Safe to run every startup - checks before dropping
 
 - March 03, 2026: SCHEMA MIGRATION
   * Added add_missing_columns() call in STEP 3 (legacy migrations)
@@ -33,14 +34,14 @@ CHANGELOG:
       - case_studies: problem_summary, solution_summary
       - blog_posts:   topic_display, url_slug, meta_description (+ 4 more)
       - projects:     project_id
-  * No other changes — all routes, blueprints, and features unchanged
+  * No other changes - all routes, blueprints, and features unchanged
 
 - March 02, 2026: POSTGRESQL MIGRATION
   * Added migration runner at the very top of startup sequence
   * migrations/001_initial_schema.py now runs BEFORE init_db() and ProjectManager
   * This ensures all tables exist before any blueprint or module tries to use them
   * Added database type reporting to health check
-  * No other changes — all routes, blueprints, and features unchanged
+  * No other changes - all routes, blueprints, and features unchanged
 
 - February 27, 2026: ADDED /api/admin/restore-knowledge ENDPOINT
 - February 26, 2026: ADDED /api/admin/clear-knowledge-db ENDPOINT
@@ -75,10 +76,10 @@ app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-i
 app.config['SESSION_TYPE'] = 'filesystem'
 
 # ============================================================================
-# STEP 1: RUN DATABASE MIGRATION FIRST — before anything else
+# STEP 1: RUN DATABASE MIGRATION FIRST - before anything else
 # ============================================================================
 print("=" * 60)
-print("🔄 STEP 1: Running database migration...")
+print("STEP 1: Running database migration...")
 try:
     import importlib.util
     import os as _os
@@ -87,9 +88,9 @@ try:
     _migration_module = importlib.util.module_from_spec(_spec)
     _spec.loader.exec_module(_migration_module)
     _migration_module.run_migration()
-    print("✅ Database migration complete")
+    print("Database migration complete")
 except Exception as e:
-    print(f"❌ CRITICAL: Database migration failed: {e}")
+    print(f"CRITICAL: Database migration failed: {e}")
     import traceback
     traceback.print_exc()
 print("=" * 60)
@@ -136,7 +137,7 @@ except Exception as e:
     traceback.print_exc()
 
 # ----------------------------------------------------------------------------
-# ADD MISSING COLUMNS — fixes UndefinedColumn errors on case_studies,
+# ADD MISSING COLUMNS - fixes UndefinedColumn errors on case_studies,
 # blog_posts, and projects tables (columns existed in code but not in DB)
 # Added: March 03, 2026
 # ----------------------------------------------------------------------------
@@ -147,7 +148,7 @@ except Exception as e:
     print(f"Missing columns migration: {e}")
 
 # ----------------------------------------------------------------------------
-# FIX BROKEN TABLE SCHEMAS — Phase 9b
+# FIX BROKEN TABLE SCHEMAS - Phase 9b
 # Drops and recreates tables that have wrong column structures from the
 # old migration. Safe to run every startup (checks before dropping).
 # Added: March 03, 2026
@@ -650,7 +651,7 @@ def health():
 
     return jsonify({
         'status': 'healthy',
-        'version': 'Phase 1 Log Cleanup Mar05 + Phase 9b Schema Fix Mar03 + PostgreSQL Migration Mar02 + Sprint 3 + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator + LinkedIn Poster + Bulletproof Projects + 100MB Upload + Background KB',
+        'version': 'Phase 2A Memory Mar05 + Phase 1 Log Cleanup Mar05 + Phase 9b Schema Fix Mar03 + PostgreSQL Migration Mar02 + Sprint 3 + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator + LinkedIn Poster + Bulletproof Projects + 100MB Upload + Background KB',
         'database': {
             'type': get_db_type(),
             'backend': 'PostgreSQL (persistent)' if get_db_type() == 'postgresql' else 'SQLite (local dev)'
@@ -897,6 +898,13 @@ except ImportError as e:
 except Exception as e:
     print(f"Blog Post Generator registration failed: {e}")
 
+# ----------------------------------------------------------------------------
+# Phase 2A: Memory System API
+# Provides /api/memory/health, /api/memory/stats, /api/memory/recent,
+# /api/memory/search endpoints. Safe to deploy before memory package exists
+# - if routes/memory.py is missing, this block silently skips.
+# Added: March 05, 2026
+# ----------------------------------------------------------------------------
 try:
     from routes.memory import memory_bp
     app.register_blueprint(memory_bp)
@@ -905,17 +913,6 @@ except ImportError as e:
     print(f"Memory System routes not found: {e}")
 except Exception as e:
     print(f"Memory System registration failed: {e}")
-```
-
-Then scroll to the top of the file and add one line to the changelog. Find:
-```
-- March 05, 2026: Phase 1 Log Cleanup (Opus direction pre-Phase 2)
-```
-
-And change it to:
-```
-- March 05, 2026: Phase 2A - Added memory blueprint registration
-- March 05, 2026: Phase 1 Log Cleanup (Opus direction pre-Phase 2)
 
 try:
     from routes.background_jobs import background_jobs_bp
