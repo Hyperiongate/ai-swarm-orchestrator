@@ -2,7 +2,7 @@
 AI SWARM ORCHESTRATOR - Database Migration 001
 File: migrations/migration_001_initial_schema.py
 Created: March 02, 2026
-Last Updated: March 05, 2026 - Phase 9b: PROJECT_FILES COLUMN FIX
+Last Updated: March 05, 2026 - Phase 2A: MEMORY_STORE SCHEMA FIX
 
 PURPOSE:
     Authoritative schema definition for the entire AI Swarm Orchestrator system.
@@ -10,6 +10,22 @@ PURPOSE:
     Safe to run multiple times — all statements use CREATE TABLE IF NOT EXISTS.
 
 CHANGELOG:
+    - March 05, 2026 (Phase 2A): MEMORY_STORE SCHEMA FIX
+      * Root cause: memory_store table was created with wrong columns
+        (memory_key, memory_value, access_count, last_accessed, expires_at)
+        from the original Phase 1 migration. Phase 2A code expects:
+        category, content, source_task_id, updated_at.
+      * Fix 1: Updated CREATE TABLE IF NOT EXISTS memory_store definition
+        to the correct Phase 2A schema. New installs get the right table.
+      * Fix 2: Added 4 missing columns to extra_columns ALTER TABLE section
+        so the existing production table gets patched on next startup:
+          - category        TEXT
+          - content         TEXT
+          - source_task_id  INTEGER
+          - updated_at      TIMESTAMP
+      * No other changes. All other table definitions, indexes, and ALTER
+        TABLE entries are identical to Phase 9b.
+
     - March 05, 2026 (Phase 9b): PROJECT_FILES COLUMN FIX
       * Root cause: project_files table was created by an earlier migration version
         before all columns were defined. CREATE TABLE IF NOT EXISTS skips the table
@@ -111,7 +127,7 @@ def run_migration():
     from db_engine import get_db_connection, get_db_type
 
     db_type = get_db_type()
-    print(f"🔄 Running migration 001_initial_schema (Phase 9b) on {db_type}...")
+    print(f"Running migration 001_initial_schema (Phase 2A) on {db_type}...")
 
     pk = _pk(db_type)
     bool_false = _bool(db_type, False)
@@ -715,17 +731,23 @@ def run_migration():
         )
     """)
 
+    # -------------------------------------------------------------------------
+    # MEMORY STORE - Phase 2A schema
+    # NOTE: The original Phase 1 schema had wrong columns (memory_key,
+    # memory_value, access_count, last_accessed, expires_at). Phase 2A
+    # corrects this. The extra_columns section below patches any existing
+    # production table that was created with the old schema.
+    # -------------------------------------------------------------------------
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS memory_store (
             id {pk},
             memory_type TEXT NOT NULL,
-            memory_key TEXT NOT NULL,
-            memory_value TEXT,
+            category TEXT NOT NULL,
+            content TEXT NOT NULL,
             relevance_score REAL DEFAULT 1.0,
-            access_count INTEGER DEFAULT 0,
-            last_accessed {ts},
+            source_task_id INTEGER,
             created_at {ts},
-            expires_at TIMESTAMP
+            updated_at {ts}
         )
     """)
 
@@ -1014,6 +1036,9 @@ def run_migration():
         "CREATE INDEX IF NOT EXISTS idx_introspection_insights_created ON introspection_insights(created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_introspection_insights_read ON introspection_insights(is_read)",
         "CREATE INDEX IF NOT EXISTS idx_project_files_uploaded ON project_files(uploaded_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_memory_store_type ON memory_store(memory_type)",
+        "CREATE INDEX IF NOT EXISTS idx_memory_store_category ON memory_store(category)",
+        "CREATE INDEX IF NOT EXISTS idx_memory_store_created ON memory_store(created_at DESC)",
     ]
 
     # =========================================================================
@@ -1039,7 +1064,7 @@ def run_migration():
                         table_name = match.group(1)
                 except Exception:
                     pass
-                print(f"  ⚠️  Table '{table_name}' warning: {e}")
+                print(f"  Table '{table_name}' warning: {e}")
 
         for index_sql in indexes:
             try:
@@ -1140,6 +1165,16 @@ def run_migration():
             ("introspection_insights", "category", "TEXT"),
             ("introspection_insights", "title", "TEXT"),
             ("introspection_insights", "description", "TEXT"),
+            # -----------------------------------------------------------------
+            # memory_store — Phase 2A column patch
+            # The original Phase 1 table had memory_key/memory_value/etc.
+            # These ALTER TABLE statements add the Phase 2A columns to any
+            # existing production table. Safe to re-run (IF NOT EXISTS).
+            # -----------------------------------------------------------------
+            ("memory_store", "category", "TEXT DEFAULT 'general'"),
+            ("memory_store", "content", "TEXT DEFAULT ''"),
+            ("memory_store", "source_task_id", "INTEGER"),
+            ("memory_store", "updated_at", "TIMESTAMP DEFAULT NOW()"),
         ]
 
         for table_name, col_name, col_type in extra_columns:
@@ -1184,9 +1219,9 @@ def run_migration():
     finally:
         conn.close()
 
-    print(f"✅ Migration 001 (Phase 9b) complete: {tables_created}/{len(tables)} tables verified on {db_type}")
+    print(f"Migration 001 (Phase 2A) complete: {tables_created}/{len(tables)} tables verified on {db_type}")
     if errors > 0:
-        print(f"   ⚠️  {errors} table(s) had warnings (likely already exist with different schema)")
+        print(f"  {errors} table(s) had warnings (likely already exist with different schema)")
     return True
 
 
