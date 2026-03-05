@@ -1,7 +1,21 @@
 """
 Introspection Engine
 Created: January 25, 2026
-Last Updated: January 25, 2026
+Last Updated: March 04, 2026 - POSTGRESQL COMPATIBILITY FIX
+
+CHANGELOG:
+- March 04, 2026: POSTGRESQL COMPATIBILITY FIX
+  * Fixed column names to match actual introspection_insights table schema:
+      - summary → description
+      - full_analysis_json → data
+      - requires_action → is_actioned
+      - notification_pending → is_read (inverted: unread = pending)
+      - period_analyzed → category
+      - notification_shown_at → updated_at
+  * Changed all ? parameter placeholders to %s (PostgreSQL via db_engine)
+  * Fixed fetchone()[0] → fetchone()['cnt'] for RealDictCursor compatibility
+  * Fixed connection leaks (added try/finally with db.close() everywhere)
+  * No functionality changes — all introspection features preserved
 
 PURPOSE:
 Main orchestrator for the Introspection Layer.
@@ -38,7 +52,7 @@ INTROSPECTION_TRIGGERS = [
     'self evaluate',
     'self-evaluate',
     'evaluate yourself',
-    
+
     # Questions about performance
     'how are you doing',
     'how are you performing',
@@ -46,7 +60,7 @@ INTROSPECTION_TRIGGERS = [
     'how is the swarm performing',
     'swarm status',
     'swarm health',
-    
+
     # Report requests
     'show introspection',
     'introspection report',
@@ -54,14 +68,14 @@ INTROSPECTION_TRIGGERS = [
     'self assessment',
     'show me your assessment',
     'what did you find about yourself',
-    
+
     # Proposal related
     'any self-improvement suggestions',
     'show me your proposals',
     'pending proposals',
     'improvement proposals',
     'what improvements do you suggest',
-    
+
     # Reflection requests
     'reflect on your performance',
     'what have you learned about yourself',
@@ -72,7 +86,7 @@ INTROSPECTION_TRIGGERS = [
 def is_introspection_request(user_request: str) -> Dict[str, Any]:
     """
     Detect if a user request is related to introspection.
-    
+
     Returns:
         Dict with:
         - is_introspection: bool
@@ -80,7 +94,7 @@ def is_introspection_request(user_request: str) -> Dict[str, Any]:
         - confidence: float
     """
     request_lower = user_request.lower().strip()
-    
+
     # Check for exact or near matches
     for trigger in INTROSPECTION_TRIGGERS:
         if trigger in request_lower:
@@ -90,14 +104,14 @@ def is_introspection_request(user_request: str) -> Dict[str, Any]:
                 action = 'show_latest'
             if any(word in request_lower for word in ['proposal', 'suggestion', 'improvement']):
                 action = 'show_proposals'
-            
+
             return {
                 'is_introspection': True,
                 'action': action,
                 'confidence': 0.9,
                 'matched_trigger': trigger
             }
-    
+
     # Check for partial matches with lower confidence
     introspection_words = ['introspect', 'self-aware', 'self aware', 'reflect', 'assessment']
     for word in introspection_words:
@@ -108,7 +122,7 @@ def is_introspection_request(user_request: str) -> Dict[str, Any]:
                 'confidence': 0.7,
                 'matched_trigger': word
             }
-    
+
     return {
         'is_introspection': False,
         'action': None,
@@ -121,76 +135,85 @@ def check_introspection_notifications() -> Dict[str, Any]:
     """
     Check if there's a pending introspection notification.
     Called at the start of orchestrate() to notify Jim of updates.
-    
+
+    COLUMN MAPPING (March 04, 2026):
+        introspection_insights actual columns:
+        id, insight_type, category, title, description, severity,
+        confidence_score, data, is_read, is_actioned, action_taken,
+        created_at, updated_at
+
     Returns:
         Dict with notification details or has_notification: False
     """
     try:
         db = get_db()
-        
-        # Get the most recent unshown notification
-        pending = db.execute('''
-            SELECT 
-                id, 
-                created_at, 
-                summary,
-                confidence_score,
-                requires_action,
-                full_analysis_json
-            FROM introspection_insights 
-            WHERE notification_pending = 1 
-            ORDER BY created_at DESC 
-            LIMIT 1
-        ''').fetchone()
-        
-        if not pending:
-            db.close()
-            return {'has_notification': False}
-        
-        # Parse the full analysis to get health score
-        health_score = 0
-        trend = 'stable'
         try:
-            analysis = json.loads(pending['full_analysis_json'])
-            health_score = analysis.get('health_score', 0)
-            trend = analysis.get('trend_direction', 'stable')
-        except:
-            pass
-        
-        # Count pending proposals
-        pending_proposals = db.execute('''
-            SELECT COUNT(*) FROM modification_proposals WHERE status = 'pending'
-        ''').fetchone()[0]
-        
-        db.close()
-        
-        return {
-            'has_notification': True,
-            'introspection_id': pending['id'],
-            'created_at': pending['created_at'],
-            'summary': pending['summary'],
-            'health_score': health_score,
-            'trend': trend,
-            'requires_action': bool(pending['requires_action']),
-            'pending_proposals': pending_proposals or 0
-        }
+            # is_read = FALSE means notification is still pending
+            pending = db.execute('''
+                SELECT
+                    id,
+                    created_at,
+                    description,
+                    confidence_score,
+                    is_actioned,
+                    data
+                FROM introspection_insights
+                WHERE is_read = FALSE
+                ORDER BY created_at DESC
+                LIMIT 1
+            ''').fetchone()
+
+            if not pending:
+                return {'has_notification': False}
+
+            # Parse the full analysis to get health score
+            health_score = 0
+            trend = 'stable'
+            try:
+                if pending['data']:
+                    analysis = json.loads(pending['data'])
+                    health_score = analysis.get('health_score', 0)
+                    trend = analysis.get('trend_direction', 'stable')
+            except Exception:
+                pass
+
+            # Count pending proposals
+            pending_proposals_row = db.execute('''
+                SELECT COUNT(*) as cnt FROM modification_proposals WHERE status = %s
+            ''', ('pending',)).fetchone()
+            pending_proposals = pending_proposals_row['cnt'] if pending_proposals_row else 0
+
+            return {
+                'has_notification': True,
+                'introspection_id': pending['id'],
+                'created_at': pending['created_at'],
+                'summary': pending['description'],
+                'health_score': health_score,
+                'trend': trend,
+                'requires_action': bool(pending['is_actioned']),
+                'pending_proposals': pending_proposals or 0
+            }
+        finally:
+            db.close()
     except Exception as e:
         print(f"Error checking introspection notifications: {e}")
         return {'has_notification': False, 'error': str(e)}
 
 
 def mark_notification_shown(introspection_id: int) -> bool:
-    """Mark an introspection notification as shown."""
+    """Mark an introspection notification as shown (read)."""
     try:
         db = get_db()
-        db.execute('''
-            UPDATE introspection_insights 
-            SET notification_pending = 0, notification_shown_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-        ''', (introspection_id,))
-        db.commit()
-        db.close()
-        return True
+        try:
+            db.execute('''
+                UPDATE introspection_insights
+                SET is_read = TRUE, updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+            ''', (introspection_id,))
+            db.commit()
+            return True
+        finally:
+            db.close()
     except Exception as e:
         print(f"Error marking notification shown: {e}")
         return False
@@ -211,7 +234,7 @@ BUSINESS_OBJECTIVES = [
     {
         'id': 2,
         'name': 'Project Delivery Efficiency',
-        'description': 'Reduce manual work in project delivery (target: 40-50 hours → 4-6 hours)',
+        'description': 'Reduce manual work in project delivery (target: 40-50 hours to 4-6 hours)',
         'keywords': ['project', 'schedule', 'proposal', 'report', 'document', 'create', 'generate', 'analysis'],
         'weight': 0.30
     },
@@ -248,42 +271,42 @@ class IntrospectionEngine:
     Main orchestrator for swarm self-awareness.
     Coordinates all introspection components and generates comprehensive reports.
     """
-    
+
     def __init__(self):
         self.last_evaluation = None
         self.business_objectives = BUSINESS_OBJECTIVES
-    
+
     def run_introspection(self, days: int = 7, is_monthly: bool = False) -> Dict[str, Any]:
         """
         Run a complete introspection cycle.
-        
+
         Args:
             days: Number of days to analyze (7 for weekly, 30 for monthly)
             is_monthly: Whether this is the monthly deep-dive
-            
+
         Returns:
             Complete introspection report
         """
         print(f"🔍 Starting Introspection Cycle ({'Monthly Deep-Dive' if is_monthly else 'Weekly'})...")
-        
+
         report = {
             'introspection_type': 'monthly' if is_monthly else 'weekly',
             'generated_at': datetime.now().isoformat(),
             'period_days': days,
             'components': {}
         }
-        
+
         # Component 1: Self-Monitoring
         print("  📊 Component 1: Self-Monitoring...")
         try:
             from introspection.self_monitor import get_self_monitor
             monitor = get_self_monitor()
-            
+
             metrics = monitor.collect_metrics(days=days)
             trends = monitor.analyze_trends(metrics)
             anomalies = monitor.detect_anomalies(metrics)
             monitoring_insight = monitor.generate_monitoring_insight(metrics, trends, anomalies)
-            
+
             report['components']['self_monitoring'] = {
                 'status': 'complete',
                 'health_score': monitoring_insight.get('health_score', 0),
@@ -297,28 +320,28 @@ class IntrospectionEngine:
         except Exception as e:
             print(f"    ⚠️ Self-Monitoring failed: {e}")
             report['components']['self_monitoring'] = {'status': 'failed', 'error': str(e)}
-        
+
         # Component 2: Capability Boundaries (stub for Phase 1)
         print("  🚧 Component 2: Capability Boundaries (Phase 2)...")
         report['components']['capability_boundaries'] = {
             'status': 'pending_phase_2',
             'message': 'Capability boundary tracking will be added in Phase 2'
         }
-        
+
         # Component 3: Confidence Calibration (stub for Phase 1)
         print("  🚧 Component 3: Confidence Calibration (Phase 2)...")
         report['components']['confidence_calibration'] = {
             'status': 'pending_phase_2',
             'message': 'Confidence calibration will be added in Phase 2'
         }
-        
+
         # Component 4: Self-Modification Proposals (stub for Phase 1)
         print("  🚧 Component 4: Proposals (Phase 3)...")
         report['components']['proposals'] = {
             'status': 'pending_phase_3',
             'message': 'Self-modification proposals will be added in Phase 3'
         }
-        
+
         # Component 5: Goal Alignment
         print("  🎯 Component 5: Goal Alignment...")
         try:
@@ -333,7 +356,7 @@ class IntrospectionEngine:
         except Exception as e:
             print(f"    ⚠️ Goal Alignment failed: {e}")
             report['components']['goal_alignment'] = {'status': 'failed', 'error': str(e)}
-        
+
         # Generate synthesized reflection
         print("  💭 Generating reflection narrative...")
         try:
@@ -342,110 +365,110 @@ class IntrospectionEngine:
         except Exception as e:
             print(f"    ⚠️ Reflection generation failed: {e}")
             report['reflection'] = f"Unable to generate reflection: {e}"
-        
+
         # Calculate overall summary
         report['summary'] = self._generate_summary(report)
-        
+
         # Save to database
         print("  💾 Saving introspection report...")
         insight_id = self._save_introspection(report)
         report['insight_id'] = insight_id
-        
+
         self.last_evaluation = report
-        
+
         health_score = report.get('components', {}).get('self_monitoring', {}).get('health_score', 'N/A')
         print(f"✅ Introspection complete! Health Score: {health_score}/100")
-        
+
         return report
-    
+
     def _analyze_goal_alignment(self, days: int) -> Dict[str, Any]:
         """Analyze how well swarm activities align with business objectives."""
         db = get_db()
-        cutoff_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d %H:%M:%S')
-        
-        # Get all tasks from the period
-        tasks = db.execute('''
-            SELECT id, user_request, task_type, status 
-            FROM tasks 
-            WHERE created_at >= ?
-        ''', (cutoff_date,)).fetchall()
-        
-        db.close()
-        
-        total_tasks = len(tasks)
-        if total_tasks == 0:
-            return {
-                'alignment_score': 0,
-                'by_objective': [],
-                'unaligned_tasks': 0,
-                'observations': ['No tasks to analyze in this period']
-            }
-        
-        # Categorize tasks by objective
-        objective_counts = {obj['id']: 0 for obj in self.business_objectives}
-        unaligned_count = 0
-        
-        for task in tasks:
-            request_lower = (task['user_request'] or '').lower()
-            matched = False
-            
-            for obj in self.business_objectives:
-                for keyword in obj['keywords']:
-                    if keyword in request_lower:
-                        objective_counts[obj['id']] += 1
-                        matched = True
+        try:
+            cutoff_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d %H:%M:%S')
+
+            # Get all tasks from the period
+            tasks = db.execute('''
+                SELECT id, user_request, task_type, status
+                FROM tasks
+                WHERE created_at >= %s
+            ''', (cutoff_date,)).fetchall()
+
+            total_tasks = len(tasks)
+            if total_tasks == 0:
+                return {
+                    'alignment_score': 0,
+                    'by_objective': [],
+                    'unaligned_tasks': 0,
+                    'observations': ['No tasks to analyze in this period']
+                }
+
+            # Categorize tasks by objective
+            objective_counts = {obj['id']: 0 for obj in self.business_objectives}
+            unaligned_count = 0
+
+            for task in tasks:
+                request_lower = (task['user_request'] or '').lower()
+                matched = False
+
+                for obj in self.business_objectives:
+                    for keyword in obj['keywords']:
+                        if keyword in request_lower:
+                            objective_counts[obj['id']] += 1
+                            matched = True
+                            break
+                    if matched:
                         break
-                if matched:
-                    break
-            
-            if not matched:
-                unaligned_count += 1
-        
-        # Build objective breakdown
-        by_objective = []
-        weighted_score = 0
-        
-        for obj in self.business_objectives:
-            count = objective_counts[obj['id']]
-            percentage = round((count / total_tasks * 100), 1) if total_tasks > 0 else 0
-            
-            # Score based on how well usage matches weight expectation
-            expected_percentage = obj['weight'] * 100
-            usage_score = min(100, (percentage / expected_percentage * 100)) if expected_percentage > 0 else 0
-            weighted_score += usage_score * obj['weight']
-            
-            by_objective.append({
-                'id': obj['id'],
-                'name': obj['name'],
-                'task_count': count,
-                'percentage': percentage,
-                'expected_percentage': round(expected_percentage, 1),
-                'assessment': self._assess_objective_usage(percentage, expected_percentage)
-            })
-        
-        # Generate observations
-        observations = []
-        
-        # Find most and least used objectives
-        most_used = max(by_objective, key=lambda x: x['percentage'])
-        least_used = min(by_objective, key=lambda x: x['percentage'])
-        
-        observations.append(f"Most activity: {most_used['name']} ({most_used['percentage']}% of tasks)")
-        
-        if least_used['percentage'] < 5:
-            observations.append(f"Underutilized: {least_used['name']} ({least_used['percentage']}% - consider more focus)")
-        
-        if unaligned_count > total_tasks * 0.2:
-            observations.append(f"{unaligned_count} tasks ({round(unaligned_count/total_tasks*100, 1)}%) didn't map to known objectives")
-        
-        return {
-            'alignment_score': round(weighted_score),
-            'by_objective': by_objective,
-            'unaligned_tasks': unaligned_count,
-            'total_tasks': total_tasks,
-            'observations': observations
-        }
-    
+
+                if not matched:
+                    unaligned_count += 1
+
+            # Build objective breakdown
+            by_objective = []
+            weighted_score = 0
+
+            for obj in self.business_objectives:
+                count = objective_counts[obj['id']]
+                percentage = round((count / total_tasks * 100), 1) if total_tasks > 0 else 0
+
+                # Score based on how well usage matches weight expectation
+                expected_percentage = obj['weight'] * 100
+                usage_score = min(100, (percentage / expected_percentage * 100)) if expected_percentage > 0 else 0
+                weighted_score += usage_score * obj['weight']
+
+                by_objective.append({
+                    'id': obj['id'],
+                    'name': obj['name'],
+                    'task_count': count,
+                    'percentage': percentage,
+                    'expected_percentage': round(expected_percentage, 1),
+                    'assessment': self._assess_objective_usage(percentage, expected_percentage)
+                })
+
+            # Generate observations
+            observations = []
+
+            most_used = max(by_objective, key=lambda x: x['percentage'])
+            least_used = min(by_objective, key=lambda x: x['percentage'])
+
+            observations.append(f"Most activity: {most_used['name']} ({most_used['percentage']}% of tasks)")
+
+            if least_used['percentage'] < 5:
+                observations.append(f"Underutilized: {least_used['name']} ({least_used['percentage']}% - consider more focus)")
+
+            if unaligned_count > total_tasks * 0.2:
+                observations.append(f"{unaligned_count} tasks ({round(unaligned_count/total_tasks*100, 1)}%) didn't map to known objectives")
+
+            return {
+                'alignment_score': round(weighted_score),
+                'by_objective': by_objective,
+                'unaligned_tasks': unaligned_count,
+                'total_tasks': total_tasks,
+                'observations': observations
+            }
+        finally:
+            db.close()
+
     def _assess_objective_usage(self, actual: float, expected: float) -> str:
         """Assess how well actual usage matches expected."""
         if expected == 0:
@@ -457,31 +480,29 @@ class IntrospectionEngine:
             return 'below_target'
         else:
             return 'underutilized'
-    
+
     def _generate_reflection(self, report: Dict) -> str:
         """
         Generate a first-person narrative reflection synthesizing all components.
         Uses AI to create a thoughtful, human-like self-assessment.
         """
-        # Gather data for reflection
         monitoring = report.get('components', {}).get('self_monitoring', {})
         alignment = report.get('components', {}).get('goal_alignment', {})
-        
+
         health_score = monitoring.get('health_score', 'unknown')
         trend = monitoring.get('trend_direction', 'stable')
         anomalies = monitoring.get('anomalies_detected', 0)
         metrics = monitoring.get('metrics', {})
-        
+
         tasks = metrics.get('tasks', {})
         total_tasks = tasks.get('total', 0)
         success_rate = tasks.get('success_rate', 0)
-        
+
         alignment_score = alignment.get('alignment_score', 0)
         unaligned = alignment.get('unaligned_tasks', 0)
         by_objective = alignment.get('by_objective', [])
-        
-        # Build reflection prompt
-        reflection_prompt = f"""You are the AI Swarm Orchestrator reflecting on your own performance. 
+
+        reflection_prompt = f"""You are the AI Swarm Orchestrator reflecting on your own performance.
 Write a first-person narrative (2-3 paragraphs) about how you're doing, using this data:
 
 PERFORMANCE DATA:
@@ -513,51 +534,50 @@ Write the reflection now:"""
             if response and not response.get('error'):
                 return response.get('content', '')
             else:
-                # Fallback to template-based reflection
                 return self._generate_template_reflection(report)
         except Exception as e:
             print(f"AI reflection failed: {e}")
             return self._generate_template_reflection(report)
-    
+
     def _generate_template_reflection(self, report: Dict) -> str:
         """Generate a template-based reflection as fallback."""
         monitoring = report.get('components', {}).get('self_monitoring', {})
         alignment = report.get('components', {}).get('goal_alignment', {})
-        
+
         health_score = monitoring.get('health_score', 0)
         metrics = monitoring.get('metrics', {})
         tasks = metrics.get('tasks', {})
-        
+
         reflection = f"This week I processed {tasks.get('total', 0)} tasks with a {tasks.get('success_rate', 0)}% success rate. "
-        
+
         if health_score >= 80:
             reflection += f"My health score of {health_score}/100 indicates I'm performing well. "
         elif health_score >= 60:
             reflection += f"My health score of {health_score}/100 suggests room for improvement. "
         else:
             reflection += f"My health score of {health_score}/100 indicates I need attention in several areas. "
-        
+
         anomalies = monitoring.get('anomalies_detected', 0)
         if anomalies > 0:
             reflection += f"I detected {anomalies} anomalies that warrant investigation. "
-        
+
         alignment_score = alignment.get('alignment_score', 0)
         reflection += f"\n\nRegarding goal alignment, I scored {alignment_score}/100. "
-        
+
         by_objective = alignment.get('by_objective', [])
         if by_objective:
             most_used = max(by_objective, key=lambda x: x['percentage'])
             reflection += f"Most of my activity ({most_used['percentage']}%) focused on {most_used['name']}. "
-        
+
         reflection += "\n\nI'll continue monitoring my performance and looking for ways to better serve the business objectives."
-        
+
         return reflection
-    
+
     def _generate_summary(self, report: Dict) -> Dict[str, Any]:
         """Generate a high-level summary of the introspection."""
         monitoring = report.get('components', {}).get('self_monitoring', {})
         alignment = report.get('components', {}).get('goal_alignment', {})
-        
+
         return {
             'health_score': monitoring.get('health_score', 0),
             'trend': monitoring.get('trend_direction', 'stable'),
@@ -567,29 +587,42 @@ Write the reflection now:"""
             'alignment_score': alignment.get('alignment_score', 0),
             'requires_attention': monitoring.get('anomalies_detected', 0) > 0 or monitoring.get('health_score', 100) < 70
         }
-    
+
     def _save_introspection(self, report: Dict) -> int:
-        """Save the introspection report to the database."""
+        """
+        Save the introspection report to the database.
+
+        COLUMN MAPPING to actual introspection_insights table:
+            insight_type → insight_type
+            category → period info (was period_analyzed)
+            title → introspection type label
+            description → reflection text (was summary)
+            severity → 'info'
+            confidence_score → health_score / 100
+            data → full JSON report (was full_analysis_json)
+            is_read → FALSE (notification pending)
+            is_actioned → requires_attention flag
+        """
         db = get_db()
-        
         try:
             summary = report.get('summary', {})
-            
+
             cursor = db.execute('''
                 INSERT INTO introspection_insights (
-                    insight_type, period_analyzed, summary, full_analysis_json,
-                    confidence_score, requires_action, notification_pending
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    insight_type, category, title, description, severity,
+                    confidence_score, data, is_read, is_actioned
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, FALSE, %s)
             ''', (
                 report.get('introspection_type', 'weekly'),
                 f"{report.get('period_days', 7)} days ending {report.get('generated_at', '')}",
-                report.get('reflection', '')[:500],  # First 500 chars of reflection
-                json.dumps(report),
+                f"Introspection Report - {report.get('introspection_type', 'weekly').title()}",
+                (report.get('reflection', '') or '')[:500],
+                'info',
                 summary.get('health_score', 0) / 100.0,
-                1 if summary.get('requires_attention') else 0,
-                1  # Set notification pending
+                json.dumps(report),
+                summary.get('requires_attention', False)
             ))
-            
+
             insight_id = cursor.lastrowid
             db.commit()
             return insight_id
@@ -598,28 +631,27 @@ Write the reflection now:"""
             return 0
         finally:
             db.close()
-    
+
     def get_latest_introspection(self) -> Optional[Dict[str, Any]]:
         """Get the most recent introspection report."""
         db = get_db()
-        
         try:
             row = db.execute('''
-                SELECT * FROM introspection_insights 
-                ORDER BY created_at DESC 
+                SELECT * FROM introspection_insights
+                ORDER BY created_at DESC
                 LIMIT 1
             ''').fetchone()
-            
+
             if row:
                 return {
                     'id': row['id'],
                     'insight_type': row['insight_type'],
                     'created_at': row['created_at'],
-                    'summary': row['summary'],
+                    'summary': row['description'],
                     'confidence_score': row['confidence_score'],
-                    'requires_action': bool(row['requires_action']),
-                    'notification_pending': bool(row['notification_pending']),
-                    'full_report': json.loads(row['full_analysis_json']) if row['full_analysis_json'] else None
+                    'requires_action': bool(row['is_actioned']),
+                    'notification_pending': not bool(row['is_read']),
+                    'full_report': json.loads(row['data']) if row['data'] else None
                 }
             return None
         except Exception as e:
@@ -627,39 +659,44 @@ Write the reflection now:"""
             return None
         finally:
             db.close()
-    
+
     def get_introspection_history(self, limit: int = 10) -> List[Dict[str, Any]]:
         """Get history of introspection reports."""
         db = get_db()
-        
         try:
             rows = db.execute('''
-                SELECT id, insight_type, created_at, summary, confidence_score, requires_action
-                FROM introspection_insights 
-                ORDER BY created_at DESC 
-                LIMIT ?
+                SELECT id, insight_type, created_at, description, confidence_score, is_actioned
+                FROM introspection_insights
+                ORDER BY created_at DESC
+                LIMIT %s
             ''', (limit,)).fetchall()
-            
-            return [dict(row) for row in rows]
+
+            return [{
+                'id': row['id'],
+                'insight_type': row['insight_type'],
+                'created_at': row['created_at'],
+                'summary': row['description'],
+                'confidence_score': row['confidence_score'],
+                'requires_action': bool(row['is_actioned'])
+            } for row in rows]
         except Exception as e:
             print(f"Error fetching introspection history: {e}")
             return []
         finally:
             db.close()
-    
+
     def format_notification_message(self, notification: Dict) -> str:
         """Format a notification for display in the swarm interface."""
         if not notification.get('has_notification'):
             return ""
-        
+
         health = notification.get('health_score', 0)
         trend = notification.get('trend', 'stable')
         proposals = notification.get('pending_proposals', 0)
         created_at = notification.get('created_at', '')
-        
-        # Format trend indicator
+
         trend_emoji = '📈' if trend == 'improving' else '📉' if trend == 'declining' else '➡️'
-        
+
         message = f"""📊 **Introspection Update Available**
 
 My weekly self-evaluation completed {created_at}.
@@ -667,7 +704,7 @@ Health Score: {health}/100 {trend_emoji} ({trend})
 {f'{proposals} proposal(s) pending your review' if proposals > 0 else 'No pending proposals'}
 
 Say **'show introspection'** to see my full self-reflection."""
-        
+
         return message
 
 
@@ -680,6 +717,5 @@ def get_introspection_engine() -> IntrospectionEngine:
     if _introspection_engine_instance is None:
         _introspection_engine_instance = IntrospectionEngine()
     return _introspection_engine_instance
-
 
 # I did no harm and this file is not truncated
