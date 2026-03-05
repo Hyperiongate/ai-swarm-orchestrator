@@ -772,6 +772,76 @@ def fix_broken_tables():
                 print(f"  Errors:          {sequences_errors}")
             print("=" * 60)
 
+        # =================================================================
+        # PHASE 9d: Add missing boolean columns to project_files
+        # March 05, 2026
+        #
+        # Problem: project_files table was created by legacy code without
+        # boolean columns (is_deleted, is_generated, is_analyzed).
+        # migration_001's ALTER TABLE ADD COLUMN may have failed silently.
+        # database_file_management.py queries these columns.
+        # =================================================================
+
+        if db_type == 'postgresql':
+            print()
+            print("=" * 60)
+            print("🔧 Phase 9d: Adding missing boolean columns...")
+            print("=" * 60)
+
+            bool_columns_needed = [
+                ('project_files', 'is_deleted', 'BOOLEAN DEFAULT FALSE'),
+                ('project_files', 'is_generated', 'BOOLEAN DEFAULT FALSE'),
+                ('project_files', 'is_analyzed', 'BOOLEAN DEFAULT FALSE'),
+                ('project_files', 'analysis_summary', 'TEXT'),
+                ('project_files', 'analysis_result', 'TEXT'),
+                ('project_files', 'analyzed_at', 'TIMESTAMP'),
+                ('project_files', 'uploaded_by', "TEXT DEFAULT 'user'"),
+                ('project_files', 'task_id', 'INTEGER'),
+                ('project_files', 'conversation_id', 'TEXT'),
+                ('project_files', 'description', 'TEXT'),
+                ('project_files', 'category', "TEXT DEFAULT 'general'"),
+            ]
+
+            cols_added = 0
+            cols_ok = 0
+
+            for table_name, col_name, col_type in bool_columns_needed:
+                try:
+                    cursor.execute(f"SAVEPOINT sp_col_{col_name}")
+
+                    # Check if column exists
+                    cursor.execute("""
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_schema = 'public'
+                          AND table_name = %s
+                          AND column_name = %s
+                    """, (table_name, col_name))
+
+                    if cursor.fetchone():
+                        cols_ok += 1
+                        cursor.execute(f"RELEASE SAVEPOINT sp_col_{col_name}")
+                        continue
+
+                    # Column doesn't exist — add it
+                    cursor.execute(
+                        f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}"
+                    )
+                    cursor.execute(f"RELEASE SAVEPOINT sp_col_{col_name}")
+                    cols_added += 1
+                    print(f"  🔧 Added {table_name}.{col_name} ({col_type})")
+
+                except Exception as col_err:
+                    try:
+                        cursor.execute(f"ROLLBACK TO SAVEPOINT sp_col_{col_name}")
+                    except Exception:
+                        pass
+                    print(f"  ⚠️  {table_name}.{col_name}: {col_err}")
+
+            conn.commit()
+            print(f"  Columns added: {cols_added}")
+            print(f"  Columns OK:    {cols_ok}")
+            print("=" * 60)
+
     except Exception as e:
         import traceback
         print(f"❌ Phase 9b failed: {e}")
