@@ -1,10 +1,24 @@
 """
 Database File Management - UNIFIED PRODUCTION VERSION
 Created: January 28, 2026
-Last Updated: March 05, 2026 - POSTGRESQL BOOLEAN FIX (minimal)
+Last Updated: March 05, 2026 - FIXED OR id = %s integer type mismatch
 
 CHANGELOG:
-- March 05, 2026: POSTGRESQL BOOLEAN FIX (minimal change only)
+- March 05, 2026 (Session 2): FIXED OR id = %s integer type mismatch
+  PROBLEM: get_project(), update_project(), and update_checklist() all used
+    WHERE project_id = %s OR id = %s with parameters (project_id, str(project_id)).
+    The projects.id column is SERIAL (integer primary key). Passing a text string
+    like "PRJ_20260305134536_3356887e" to an integer column causes PostgreSQL to
+    raise: invalid input syntax for type integer.
+    This caused every file upload to fail with HTTP 500 at the project lookup step.
+  FIX: Removed OR id = %s from all three methods. projects.project_id is TEXT
+    UNIQUE and is the correct lookup key. No caller ever passes integer IDs —
+    all callers pass PRJ_... text strings. The OR id = %s fallback was never
+    needed and is now removed entirely.
+  METHODS CHANGED: get_project(), update_project(), update_checklist()
+  NO OTHER CHANGES from the March 05 Session 1 version.
+
+- March 05, 2026 (Session 1): POSTGRESQL BOOLEAN FIX (minimal change only)
   * is_deleted = 0 → is_deleted = FALSE (get_file, list_files)
   * is_deleted = 1 → is_deleted = TRUE (delete_file)
   * is_analyzed = 1 → is_analyzed = TRUE (mark_file_as_analyzed)
@@ -305,13 +319,18 @@ class ProjectManager:
     # ========================================================================
 
     def get_project(self, project_id):
-        """Retrieve project from database."""
+        """
+        Retrieve project from database by project_id (TEXT UNIQUE).
+        FIXED March 05, 2026: Removed OR id = %s — projects.id is SERIAL
+        (integer). Passing a PRJ_... text string to an integer column causes
+        PostgreSQL to raise 'invalid input syntax for type integer'.
+        project_id TEXT is the correct and only lookup key needed.
+        """
         db = self._get_db()
         try:
-            # FIXED: was 'id::text = %s' — id is TEXT type, ::text cast is invalid
             project = db.execute(
-                'SELECT * FROM projects WHERE project_id = %s OR id = %s',
-                (project_id, str(project_id))
+                'SELECT * FROM projects WHERE project_id = %s',
+                (project_id,)
             ).fetchone()
 
             if not project:
@@ -380,8 +399,12 @@ class ProjectManager:
         }
 
     def update_project(self, project_id, **kwargs):
-        """Update project fields."""
-        # FIXED: was 'facility_type' in allowed_fields — DB column is facility_size
+        """
+        Update project fields.
+        FIXED March 05, 2026: Removed OR id = %s and str(project_id) from
+        parameter list — same root cause as get_project() fix above.
+        WHERE project_id = %s is sufficient for all callers.
+        """
         allowed_fields = ['client_name', 'industry', 'facility_size', 'project_phase', 'status']
         updates = []
         values = []
@@ -400,18 +423,13 @@ class ProjectManager:
             updates.append('metadata = %s')
             values.append(json.dumps(kwargs['metadata']))
 
-        if not updates:
-            updates.append('updated_at = CURRENT_TIMESTAMP')
-            values.extend([project_id, str(project_id)])
-        else:
-            updates.append('updated_at = CURRENT_TIMESTAMP')
-            values.extend([project_id, str(project_id)])
+        updates.append('updated_at = CURRENT_TIMESTAMP')
+        values.append(project_id)
 
         db = self._get_db()
         try:
-            # FIXED: was 'id::text = %s' — id is TEXT type, ::text cast is invalid
             db.execute(
-                f"UPDATE projects SET {', '.join(updates)} WHERE project_id = %s OR id = %s",
+                f"UPDATE projects SET {', '.join(updates)} WHERE project_id = %s",
                 values
             )
             db.commit()
@@ -420,7 +438,11 @@ class ProjectManager:
             db.close()
 
     def update_checklist(self, project_id, phase_index, item_index, complete=True):
-        """Mark checklist item as complete."""
+        """
+        Mark checklist item as complete.
+        FIXED March 05, 2026: Removed OR id = %s and str(project_id) from
+        parameter list — same root cause as get_project() fix above.
+        """
         project = self.get_project(project_id)
         if not project or 'checklist' not in project:
             return False
@@ -429,10 +451,9 @@ class ProjectManager:
 
         db = self._get_db()
         try:
-            # FIXED: was 'id::text = %s' — id is TEXT type, ::text cast is invalid
             db.execute(
-                'UPDATE projects SET checklist_data = %s, updated_at = CURRENT_TIMESTAMP WHERE project_id = %s OR id = %s',
-                (json.dumps(project['checklist']), project_id, str(project_id))
+                'UPDATE projects SET checklist_data = %s, updated_at = CURRENT_TIMESTAMP WHERE project_id = %s',
+                (json.dumps(project['checklist']), project_id)
             )
             db.commit()
             return True
