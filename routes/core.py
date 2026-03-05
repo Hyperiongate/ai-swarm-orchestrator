@@ -4,6 +4,11 @@ Created: January 21, 2026
 Last Updated: March 04, 2026 - REALDICTCURSOR + BOOLEAN FIX
 
 CHANGELOG:
+- March 04, 2026: PROJECT ID INTEGER CAST FIX
+  * Fixed OR id = %s queries that passed TEXT project_id to INTEGER column
+  * Now only compares id when input is numeric (isdigit())
+  * Fixes: "invalid input syntax for type integer" on project context lookup
+
 - March 04, 2026: REALDICTCURSOR FIX
   * psycopg2 RealDictCursor returns dict-only rows (no integer indexing)
   * All fetchone()[0] in get_stats() replaced with named aliases:
@@ -383,9 +388,17 @@ def get_project_context_legacy(project_id):
     try:
         db = get_db()
         try:
-            project = db.execute('''
-                SELECT * FROM projects WHERE project_id = %s OR id = %s
-            ''', (project_id, project_id)).fetchone()
+            # Look up by project_id (text). Only try numeric id if input is a number.
+            if project_id.isdigit():
+                project = db.execute(
+                    'SELECT * FROM projects WHERE project_id = %s OR id = %s',
+                    (project_id, int(project_id))
+                ).fetchone()
+            else:
+                project = db.execute(
+                    'SELECT * FROM projects WHERE project_id = %s',
+                    (project_id,)
+                ).fetchone()
         finally:
             db.close()
 
@@ -414,9 +427,17 @@ def get_project(project_id):
     try:
         db = get_db()
         try:
-            project = db.execute('''
-                SELECT * FROM projects WHERE project_id = %s OR id = %s
-            ''', (project_id, project_id)).fetchone()
+            # Look up by project_id (text). Only try numeric id if input is a number.
+            if project_id.isdigit():
+                project = db.execute(
+                    'SELECT * FROM projects WHERE project_id = %s OR id = %s',
+                    (project_id, int(project_id))
+                ).fetchone()
+            else:
+                project = db.execute(
+                    'SELECT * FROM projects WHERE project_id = %s',
+                    (project_id,)
+                ).fetchone()
         finally:
             db.close()
 
@@ -465,10 +486,17 @@ def update_project(project_id):
         if updates:
             db = get_db()
             try:
-                db.execute(f'''
-                    UPDATE projects SET {', '.join(updates)}
-                    WHERE project_id = %s OR id = %s
-                ''', values + [project_id, project_id])
+                # Only compare id when input is numeric to avoid INTEGER cast error
+                if project_id.isdigit():
+                    db.execute(f'''
+                        UPDATE projects SET {', '.join(updates)}
+                        WHERE project_id = %s OR id = %s
+                    ''', values + [project_id, int(project_id)])
+                else:
+                    db.execute(f'''
+                        UPDATE projects SET {', '.join(updates)}
+                        WHERE project_id = %s
+                    ''', values + [project_id])
                 db.commit()
             finally:
                 db.close()
