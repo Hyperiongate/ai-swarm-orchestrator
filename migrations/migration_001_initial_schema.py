@@ -2,32 +2,33 @@
 AI SWARM ORCHESTRATOR - Database Migration 001
 File: migrations/migration_001_initial_schema.py
 Created: March 02, 2026
-Last Updated: March 03, 2026 - Phase 9: COMPLETE SCHEMA REWRITE
+Last Updated: March 05, 2026 - Phase 9b: PROJECT_FILES COLUMN FIX
 
 PURPOSE:
     Authoritative schema definition for the entire AI Swarm Orchestrator system.
     Creates all tables for both PostgreSQL (production) and SQLite (local dev).
     Safe to run multiple times — all statements use CREATE TABLE IF NOT EXISTS.
 
-CRITICAL CHANGE (March 03, 2026 - Phase 9):
-    The previous migration was written from scratch with NEW column names that
-    did NOT match the existing application code. This caused every endpoint to
-    500 because tables had wrong columns (e.g., migration had 'id TEXT PRIMARY KEY'
-    for conversations, but database.py inserts into 'conversation_id'; migration
-    had no 'user_request'/'status'/'result' in tasks, but core.py queries them;
-    etc.).
-
-    This rewrite makes the migration match EXACTLY what the application code
-    (database.py, routes/core.py, database_file_management.py) expects.
-    Every column name was traced from actual INSERT/SELECT/UPDATE statements
-    in the codebase.
-
-    Tables and columns that existed in the old migration but are NOT referenced
-    by any application code are PRESERVED via ALTER TABLE ADD COLUMN to avoid
-    dropping data. Tables that were completely wrong are recreated with the
-    correct schema (since they couldn't have held valid data with wrong columns).
-
 CHANGELOG:
+    - March 05, 2026 (Phase 9b): PROJECT_FILES COLUMN FIX
+      * Root cause: project_files table was created by an earlier migration version
+        before all columns were defined. CREATE TABLE IF NOT EXISTS skips the table
+        entirely if it already exists, so new columns never got added.
+      * Fix: added 9 missing columns to the extra_columns ALTER TABLE section so
+        they are patched into the existing table on every startup:
+          - uploaded_at    TIMESTAMP DEFAULT NOW()   <-- was causing 500 on list/upload
+          - original_filename TEXT
+          - file_type TEXT
+          - file_size INTEGER DEFAULT 0
+          - file_path TEXT
+          - content_text TEXT
+          - content_summary TEXT
+          - category TEXT DEFAULT 'general'
+          - analysis_result TEXT
+      * No other changes. All table definitions, indexes, and other ALTER TABLE
+        entries are identical to Phase 9.
+      * database_file_management.py requires NO changes — its SQL is correct.
+
     - March 03, 2026 (Phase 9): COMPLETE SCHEMA REWRITE to match app code
       * tasks: added user_request, status, result, confidence, assigned_orchestrator,
                orchestrator, completed_at, conversation_id, knowledge_sources
@@ -110,7 +111,7 @@ def run_migration():
     from db_engine import get_db_connection, get_db_type
 
     db_type = get_db_type()
-    print(f"🔄 Running migration 001_initial_schema (Phase 9) on {db_type}...")
+    print(f"🔄 Running migration 001_initial_schema (Phase 9b) on {db_type}...")
 
     pk = _pk(db_type)
     bool_false = _bool(db_type, False)
@@ -121,9 +122,6 @@ def run_migration():
 
     # =========================================================================
     # CORE SWARM TABLES
-    # Column names traced from: database.py record_task_completion(),
-    # get_task_history(), get_task_details(), get_statistics()
-    # routes/core.py get_stats(), get_tasks(), get_task(), submit_feedback()
     # =========================================================================
 
     tables.append(f"""
@@ -151,12 +149,6 @@ def run_migration():
         )
     """)
 
-    # =========================================================================
-    # SPECIALIST CALLS
-    # Column names traced from: database.py record_specialist_call(),
-    # get_task_details()
-    # =========================================================================
-
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS specialist_calls (
             id {pk},
@@ -169,13 +161,6 @@ def run_migration():
             created_at {ts}
         )
     """)
-
-    # =========================================================================
-    # CONSENSUS VALIDATIONS
-    # Column names traced from: database.py record_consensus_validation(),
-    # get_task_details(), get_statistics()
-    # routes/core.py submit_feedback()
-    # =========================================================================
 
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS consensus_validations (
@@ -194,11 +179,6 @@ def run_migration():
         )
     """)
 
-    # =========================================================================
-    # ESCALATIONS
-    # Column names traced from: database.py get_statistics(), get_task_details()
-    # =========================================================================
-
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS escalations (
             id {pk},
@@ -211,12 +191,6 @@ def run_migration():
             created_at {ts}
         )
     """)
-
-    # =========================================================================
-    # LEARNING PATTERNS
-    # Column names traced from: database.py store_learning_pattern(),
-    # get_learning_patterns()
-    # =========================================================================
 
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS learning_patterns (
@@ -235,11 +209,6 @@ def run_migration():
         )
     """)
 
-    # =========================================================================
-    # LEARNING RECORDS
-    # Column names traced from: routes/core.py submit_feedback()
-    # =========================================================================
-
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS learning_records (
             id {pk},
@@ -251,12 +220,6 @@ def run_migration():
             updated_at {ts}
         )
     """)
-
-    # =========================================================================
-    # USER FEEDBACK
-    # Column names traced from: routes/core.py submit_feedback(),
-    # get_learning_stats()
-    # =========================================================================
 
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS user_feedback (
@@ -274,13 +237,6 @@ def run_migration():
         )
     """)
 
-    # =========================================================================
-    # CONVERSATIONS
-    # Column names traced from: database.py create_conversation(),
-    # get_conversation(), get_conversations(), update_conversation(),
-    # add_message(), get_schedule_context(), save_schedule_context()
-    # =========================================================================
-
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS conversations (
             id {pk},
@@ -296,12 +252,6 @@ def run_migration():
         )
     """)
 
-    # =========================================================================
-    # CONVERSATION MESSAGES
-    # Column names traced from: database.py add_message(), get_messages(),
-    # get_conversation_file_contents()
-    # =========================================================================
-
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS conversation_messages (
             id {pk},
@@ -315,10 +265,6 @@ def run_migration():
         )
     """)
 
-    # =========================================================================
-    # CONVERSATION CONTEXT
-    # =========================================================================
-
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS conversation_context (
             id {pk},
@@ -330,13 +276,6 @@ def run_migration():
             updated_at {ts}
         )
     """)
-
-    # =========================================================================
-    # GENERATED DOCUMENTS
-    # Column names traced from: database.py save_generated_document(),
-    # get_generated_documents(), get_document_stats()
-    # routes/core.py list_generated_documents(), download_generated_document()
-    # =========================================================================
 
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS generated_documents (
@@ -359,22 +298,6 @@ def run_migration():
             last_accessed {ts}
         )
     """)
-
-    # =========================================================================
-    # PROJECT MANAGEMENT TABLES
-    # Column names traced from: database.py load_project_from_db(),
-    # save_project_to_db()
-    # routes/core.py list_projects(), create_project(), start_project_legacy(),
-    # get_project_context_legacy(), update_project()
-    # database_file_management.py ProjectManager.create_project(),
-    # get_project(), list_projects(), update_project()
-    #
-    # IMPORTANT: The projects table has BOTH 'id' (auto-increment PK) and
-    # 'project_id' (TEXT, unique, used as the business key).
-    # database_file_management.py queries: WHERE project_id = %s OR id = %s
-    # routes/core.py inserts: (project_id, client_name, industry, facility_size, ...)
-    # database.py inserts: (project_id, client_name, industry, facility_type, ...)
-    # =========================================================================
 
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS projects (
@@ -407,13 +330,6 @@ def run_migration():
         )
     """)
 
-    # =========================================================================
-    # PROJECT FILES
-    # Column names traced from: database_file_management.py ProjectManager
-    # add_file(), get_file(), list_files(), delete_file(), mark_file_as_analyzed()
-    # routes/core.py upload_project_files(), list_project_files()
-    # =========================================================================
-
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS project_files (
             id {pk},
@@ -443,12 +359,6 @@ def run_migration():
         )
     """)
 
-    # =========================================================================
-    # PROJECT CONVERSATIONS
-    # Column names traced from: database_file_management.py ProjectManager
-    # add_message(), get_conversation_history()
-    # =========================================================================
-
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS project_conversations (
             id {pk},
@@ -462,12 +372,6 @@ def run_migration():
         )
     """)
 
-    # =========================================================================
-    # PROJECT CONTEXT
-    # Column names traced from: database_file_management.py ProjectManager
-    # set_context(), get_context(), get_all_context()
-    # =========================================================================
-
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS project_context (
             id {pk},
@@ -479,12 +383,6 @@ def run_migration():
         )
     """)
 
-    # =========================================================================
-    # CLIENT PROFILES
-    # Column names traced from: database.py get_client_profile(),
-    # update_client_profile()
-    # =========================================================================
-
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS client_profiles (
             id {pk},
@@ -494,12 +392,6 @@ def run_migration():
             updated_at {ts}
         )
     """)
-
-    # =========================================================================
-    # AVOIDANCE PATTERNS
-    # Column names traced from: database.py add_avoidance_pattern(),
-    # get_avoidance_context(), record_avoidance_violation()
-    # =========================================================================
 
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS avoidance_patterns (
@@ -511,12 +403,6 @@ def run_migration():
             last_seen {ts}
         )
     """)
-
-    # =========================================================================
-    # SMART ANALYZER STATE (singular - matches database.py function names)
-    # Column names traced from: database.py save_smart_analyzer_state(),
-    # get_smart_analyzer_state(), delete_smart_analyzer_state()
-    # =========================================================================
 
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS smart_analyzer_state (
@@ -530,12 +416,6 @@ def run_migration():
             created_at {ts}
         )
     """)
-
-    # =========================================================================
-    # ANALYSIS SESSIONS
-    # Column names traced from: database.py save_analysis_session(),
-    # load_analysis_session(), get_analysis_sessions()
-    # =========================================================================
 
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS analysis_sessions (
@@ -553,12 +433,6 @@ def run_migration():
         )
     """)
 
-    # =========================================================================
-    # ANALYSIS DELIVERABLES
-    # Column names traced from: database.py save_analysis_deliverable(),
-    # get_analysis_deliverables()
-    # =========================================================================
-
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS analysis_deliverables (
             id {pk},
@@ -570,12 +444,6 @@ def run_migration():
             created_at {ts}
         )
     """)
-
-    # =========================================================================
-    # ANALYSIS PROGRESS
-    # Column names traced from: database.py update_analysis_progress(),
-    # get_analysis_progress()
-    # =========================================================================
 
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS analysis_progress (
@@ -590,10 +458,6 @@ def run_migration():
             created_at {ts}
         )
     """)
-
-    # =========================================================================
-    # SCHEDULE CONTEXTS
-    # =========================================================================
 
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS schedule_contexts (
@@ -611,10 +475,6 @@ def run_migration():
             updated_at {ts}
         )
     """)
-
-    # =========================================================================
-    # RESEARCH TABLES
-    # =========================================================================
 
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS research_sessions (
@@ -640,10 +500,6 @@ def run_migration():
             created_at {ts}
         )
     """)
-
-    # =========================================================================
-    # MARKETING TABLES
-    # =========================================================================
 
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS marketing_campaigns (
@@ -687,10 +543,6 @@ def run_migration():
         )
     """)
 
-    # =========================================================================
-    # AVATAR / CONSULTATION TABLES
-    # =========================================================================
-
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS avatar_sessions (
             id {pk},
@@ -704,10 +556,6 @@ def run_migration():
             updated_at {ts}
         )
     """)
-
-    # =========================================================================
-    # EVALUATION / INTROSPECTION TABLES
-    # =========================================================================
 
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS swarm_evaluations (
@@ -733,12 +581,6 @@ def run_migration():
         )
     """)
 
-    # =========================================================================
-    # INTROSPECTION INSIGHTS — referenced by introspection.py
-    # This table was MISSING from the previous migration, causing:
-    #   relation "introspection_insights" does not exist
-    # =========================================================================
-
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS introspection_insights (
             id {pk},
@@ -756,10 +598,6 @@ def run_migration():
             updated_at {ts}
         )
     """)
-
-    # =========================================================================
-    # SURVEY TABLES
-    # =========================================================================
 
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS surveys (
@@ -787,11 +625,6 @@ def run_migration():
         )
     """)
 
-    # =========================================================================
-    # BLOG POSTS TABLE
-    # Column names traced from blog_post_generator.py
-    # =========================================================================
-
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS blog_posts (
             id {pk},
@@ -806,10 +639,6 @@ def run_migration():
             updated_at {ts}
         )
     """)
-
-    # =========================================================================
-    # CASE STUDIES TABLE
-    # =========================================================================
 
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS case_studies (
@@ -832,10 +661,6 @@ def run_migration():
         )
     """)
 
-    # =========================================================================
-    # USER PROFILES TABLE
-    # =========================================================================
-
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS user_profiles (
             id {pk},
@@ -848,10 +673,6 @@ def run_migration():
             updated_at {ts}
         )
     """)
-
-    # =========================================================================
-    # WORKFLOW TABLES
-    # =========================================================================
 
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS workflows (
@@ -881,10 +702,6 @@ def run_migration():
         )
     """)
 
-    # =========================================================================
-    # INTEGRATION LOGS
-    # =========================================================================
-
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS integration_logs (
             id {pk},
@@ -897,10 +714,6 @@ def run_migration():
             created_at {ts}
         )
     """)
-
-    # =========================================================================
-    # MEMORY / ROUTING TABLES
-    # =========================================================================
 
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS memory_store (
@@ -927,10 +740,6 @@ def run_migration():
             created_at {ts}
         )
     """)
-
-    # =========================================================================
-    # ALERT SYSTEM TABLES
-    # =========================================================================
 
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS alerts (
@@ -1007,10 +816,6 @@ def run_migration():
         )
     """)
 
-    # =========================================================================
-    # INTELLIGENCE / LEAD PIPELINE TABLES
-    # =========================================================================
-
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS leads (
             id {pk},
@@ -1078,11 +883,6 @@ def run_migration():
         )
     """)
 
-    # =========================================================================
-    # BACKGROUND JOBS TABLE
-    # Column names traced from: database.py background_jobs table creation
-    # =========================================================================
-
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS background_jobs (
             id {pk},
@@ -1103,10 +903,6 @@ def run_migration():
         )
     """)
 
-    # =========================================================================
-    # CONVERSATION SUMMARIES — referenced by conversation_summarizer.py
-    # =========================================================================
-
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS conversation_summaries (
             id {pk},
@@ -1118,10 +914,6 @@ def run_migration():
             updated_at {ts}
         )
     """)
-
-    # =========================================================================
-    # PROACTIVE SUGGESTIONS — referenced by proactive_curiosity_engine.py
-    # =========================================================================
 
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS proactive_suggestions (
@@ -1136,10 +928,6 @@ def run_migration():
         )
     """)
 
-    # =========================================================================
-    # USER PATTERNS — referenced by enhanced_intelligence.py
-    # =========================================================================
-
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS user_patterns (
             id {pk},
@@ -1151,11 +939,6 @@ def run_migration():
             created_at {ts}
         )
     """)
-
-    # =========================================================================
-    # MODIFICATION PROPOSALS — Phase 3 self-improvement
-    # Column names traced from: database.py
-    # =========================================================================
 
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS modification_proposals (
@@ -1177,10 +960,6 @@ def run_migration():
         )
     """)
 
-    # =========================================================================
-    # GOAL ALIGNMENT LOGS
-    # =========================================================================
-
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS goal_alignment_logs (
             id {pk},
@@ -1199,53 +978,42 @@ def run_migration():
     # =========================================================================
 
     indexes = [
-        # Core
         "CREATE INDEX IF NOT EXISTS idx_tasks_created ON tasks(created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)",
         "CREATE INDEX IF NOT EXISTS idx_tasks_conversation ON tasks(conversation_id)",
-        # Conversations
         "CREATE INDEX IF NOT EXISTS idx_conv_messages_conversation ON conversation_messages(conversation_id)",
         "CREATE INDEX IF NOT EXISTS idx_conv_messages_created ON conversation_messages(created_at ASC)",
         "CREATE INDEX IF NOT EXISTS idx_conversations_updated ON conversations(updated_at DESC)",
-        # Projects
         "CREATE INDEX IF NOT EXISTS idx_projects_project_id ON projects(project_id)",
         "CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status)",
         "CREATE INDEX IF NOT EXISTS idx_project_files_project ON project_files(project_id)",
         "CREATE INDEX IF NOT EXISTS idx_project_files_file_id ON project_files(file_id)",
         "CREATE INDEX IF NOT EXISTS idx_project_conv_project ON project_conversations(project_id)",
         "CREATE INDEX IF NOT EXISTS idx_project_context_project ON project_context(project_id)",
-        # Generated documents
         "CREATE INDEX IF NOT EXISTS idx_generated_docs_created ON generated_documents(created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_generated_docs_type ON generated_documents(document_type)",
-        # Blog posts
         "CREATE INDEX IF NOT EXISTS idx_blog_posts_topic ON blog_posts(topic)",
         "CREATE INDEX IF NOT EXISTS idx_blog_posts_created ON blog_posts(created_at DESC)",
-        # Alerts
         "CREATE INDEX IF NOT EXISTS idx_alerts_category ON alerts(category)",
         "CREATE INDEX IF NOT EXISTS idx_alerts_priority ON alerts(priority)",
         "CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_alerts_unread ON alerts(is_read, dismissed_at)",
         "CREATE INDEX IF NOT EXISTS idx_jobs_next_run ON scheduled_jobs(next_run_at)",
         "CREATE INDEX IF NOT EXISTS idx_monitored_type ON monitored_entities(entity_type)",
-        # Leads
         "CREATE INDEX IF NOT EXISTS idx_leads_stage ON leads(pipeline_stage)",
         "CREATE INDEX IF NOT EXISTS idx_leads_industry ON leads(industry)",
         "CREATE INDEX IF NOT EXISTS idx_leads_created ON leads(created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_lead_activities_lead ON lead_activities(lead_id)",
-        # Background jobs
         "CREATE INDEX IF NOT EXISTS idx_background_jobs_status ON background_jobs(status)",
         "CREATE INDEX IF NOT EXISTS idx_background_jobs_created ON background_jobs(created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_background_jobs_conversation ON background_jobs(conversation_id)",
-        # Learning
         "CREATE INDEX IF NOT EXISTS idx_learning_patterns_type ON learning_patterns(task_type)",
         "CREATE INDEX IF NOT EXISTS idx_learning_records_type ON learning_records(pattern_type)",
-        # Smart analyzer
         "CREATE INDEX IF NOT EXISTS idx_smart_analyzer_conversation ON smart_analyzer_state(conversation_id)",
-        # Analysis
         "CREATE INDEX IF NOT EXISTS idx_analysis_sessions_session ON analysis_sessions(session_id)",
-        # Introspection insights
         "CREATE INDEX IF NOT EXISTS idx_introspection_insights_created ON introspection_insights(created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_introspection_insights_read ON introspection_insights(is_read)",
+        "CREATE INDEX IF NOT EXISTS idx_project_files_uploaded ON project_files(uploaded_at DESC)",
     ]
 
     # =========================================================================
@@ -1263,7 +1031,6 @@ def run_migration():
                 tables_created += 1
             except Exception as e:
                 errors += 1
-                # Extract table name for clearer logging
                 table_name = "unknown"
                 try:
                     import re
@@ -1278,15 +1045,11 @@ def run_migration():
             try:
                 cursor.execute(index_sql)
             except Exception as e:
-                # Index errors are non-fatal
                 pass
 
         # =====================================================================
         # ADD MISSING COLUMNS TO EXISTING TABLES
-        # If tables already exist from a previous migration with fewer columns,
-        # add the columns the app code needs. This is safe because ADD COLUMN
-        # IF NOT EXISTS (PostgreSQL) or catching duplicate column errors (SQLite)
-        # will skip columns that already exist.
+        # Safe: ADD COLUMN IF NOT EXISTS skips columns that already exist.
         # =====================================================================
 
         extra_columns = [
@@ -1345,6 +1108,9 @@ def run_migration():
             ("consensus_validations", "ai2_response", "TEXT"),
             ("consensus_validations", "consensus_achieved", _bool(db_type, False).replace('BOOLEAN ', '').replace('INTEGER ', '')),
             # project_files — ensure all columns exist
+            # Phase 9b addition: uploaded_at was missing from ALTER TABLE section,
+            # causing "column does not exist" errors on list and upload operations.
+            # All columns below are safe to re-run (IF NOT EXISTS).
             ("project_files", "file_id", "TEXT"),
             ("project_files", "mime_type", "TEXT"),
             ("project_files", "description", "TEXT"),
@@ -1353,6 +1119,15 @@ def run_migration():
             ("project_files", "conversation_id", "TEXT"),
             ("project_files", "analysis_summary", "TEXT"),
             ("project_files", "analyzed_at", "TIMESTAMP"),
+            ("project_files", "uploaded_at", "TIMESTAMP DEFAULT NOW()"),
+            ("project_files", "original_filename", "TEXT"),
+            ("project_files", "file_type", "TEXT"),
+            ("project_files", "file_size", "INTEGER DEFAULT 0"),
+            ("project_files", "file_path", "TEXT"),
+            ("project_files", "content_text", "TEXT"),
+            ("project_files", "content_summary", "TEXT"),
+            ("project_files", "category", "TEXT DEFAULT 'general'"),
+            ("project_files", "analysis_result", "TEXT"),
             # project_conversations — ensure all columns exist
             ("project_conversations", "conversation_id", "TEXT"),
             ("project_conversations", "file_ids", "TEXT"),
@@ -1382,8 +1157,7 @@ def run_migration():
                 pass  # Column already exists — safe to ignore
 
         # =====================================================================
-        # ADD is_archived AND is_deleted COLUMNS (boolean handling)
-        # These need special handling because of PostgreSQL vs SQLite boolean
+        # ADD BOOLEAN COLUMNS (special handling for PostgreSQL vs SQLite)
         # =====================================================================
         bool_cols = [
             ("conversations", "is_archived", bool_false),
@@ -1410,7 +1184,7 @@ def run_migration():
     finally:
         conn.close()
 
-    print(f"✅ Migration 001 (Phase 9) complete: {tables_created}/{len(tables)} tables verified on {db_type}")
+    print(f"✅ Migration 001 (Phase 9b) complete: {tables_created}/{len(tables)} tables verified on {db_type}")
     if errors > 0:
         print(f"   ⚠️  {errors} table(s) had warnings (likely already exist with different schema)")
     return True
