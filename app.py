@@ -898,6 +898,26 @@ except Exception as e:
     print(f"Blog Post Generator registration failed: {e}")
 
 try:
+    from routes.memory import memory_bp
+    app.register_blueprint(memory_bp)
+    print("Phase 2A Memory System API registered")
+except ImportError as e:
+    print(f"Memory System routes not found: {e}")
+except Exception as e:
+    print(f"Memory System registration failed: {e}")
+```
+
+Then scroll to the top of the file and add one line to the changelog. Find:
+```
+- March 05, 2026: Phase 1 Log Cleanup (Opus direction pre-Phase 2)
+```
+
+And change it to:
+```
+- March 05, 2026: Phase 2A - Added memory blueprint registration
+- March 05, 2026: Phase 1 Log Cleanup (Opus direction pre-Phase 2)
+
+try:
     from routes.background_jobs import background_jobs_bp
     app.register_blueprint(background_jobs_bp)
     print("Background File Processor API registered")
