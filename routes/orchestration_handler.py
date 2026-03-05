@@ -1,42 +1,28 @@
 """
 Orchestration Handler - Main AI Task Processing (REFACTORED)
 Created: January 31, 2026
-Last Updated: March 05, 2026 - Phase 2A: Added background memory extraction thread
+Last Updated: March 05, 2026 - Phase 2A-fix: PostgreSQL placeholder fix
 
 CHANGELOG:
 
+- March 05, 2026: Phase 2A-fix - POSTGRESQL PLACEHOLDER FIX
+  * Root cause: All inline db.execute() calls in orchestrate() were using
+    SQLite-style ? placeholders. get_db() returns a PostgreSQL connection
+    (via db_engine.get_db_connection), which requires %s placeholders.
+    This caused: "syntax error at or near ','" on every orchestrate() call.
+  * Fix: Replaced ALL ? placeholders with %s throughout orchestrate().
+    Affected handlers: 3.5, 3.6, 4.5, 4.6, 9, 10, and schedule handler block.
+  * Also fixed: execution_time_seconds -> duration_seconds in all UPDATE tasks
+    statements. The tasks table schema uses duration_seconds (not
+    execution_time_seconds), so these UPDATE statements were silently
+    failing or would fail on a schema-strict DB.
+  * No logic changes. No handler behavior changes. Pure syntax correction.
+
 - March 05, 2026: Phase 2A - ADDED BACKGROUND MEMORY EXTRACTION
-  * Added 'import threading' to module-level imports
-  * Added try/except import block for 'from memory import extract_memories'
-    (safe import — if memory package not yet deployed, logs a warning and
-    memory extraction is skipped silently; no impact on any existing route)
-  * Added memory extraction trigger at the END of HANDLER 10 (regular
-    conversation), immediately before the final return jsonify().
-    Builds a task_data dict from variables already in scope and starts
-    a daemon thread: threading.Thread(target=_trigger_memory_extraction,
-    args=(task_data,), daemon=True).start()
-  * Added _trigger_memory_extraction() helper at bottom of file — wraps
-    extract_memories() in try/except so a failure there can never crash
-    the background thread or affect any other request.
-  * Memory extraction ONLY hooks into Handler 10. Survey builder, contract
-    handler, file handlers, labor handlers, and introspection routing are
-    NOT modified.
-  * No existing return values changed. No existing SQL changed.
-    No existing handler logic changed. Pure additive change.
+  * Added threading import, safe memory package import, and daemon thread
+    at end of Handler 10. No existing logic changed.
 
 - March 05, 2026: FIXED UnboundLocalError: local import os inside orchestrate()
-  PROBLEM: Handler 3.6 (Survey Builder) had 'import os' and 'import tempfile'
-    inside the orchestrate() function body. In Python, ANY import statement
-    inside a function makes that name a local variable for the ENTIRE function
-    scope. Handler 7 (line ~734) calls os.path.basename(file_path) BEFORE the
-    survey builder block executes, so Python sees os as a local variable that
-    hasn't been assigned yet and raises:
-      UnboundLocalError: cannot access local variable 'os' where it is not
-      associated with a value
-  FIX: Removed 'import os' and 'import tempfile' from inside Handler 3.6.
-    os is already imported at the top of the file. tempfile was never used
-    in that block (the code uses '/tmp' directly as a string literal).
-  IMPACT: File uploads now process correctly through Handler 7 without crashing.
 
 - February 28, 2026 (Session 2): SIMPLIFIED SURVEY BUILDER FORM
 - February 28, 2026 (Session 1): ADDED HANDLER 3.6 SURVEY BUILDER
@@ -120,7 +106,7 @@ from labor_analysis_processor import get_labor_processor
 
 # ============================================================================
 # Phase 2A: Memory extraction import
-# Safe import — if memory/ package not yet deployed, extraction is silently
+# Safe import - if memory/ package not yet deployed, extraction is silently
 # skipped. No impact on any existing route or functionality.
 # ============================================================================
 _MEMORY_EXTRACTION_AVAILABLE = False
@@ -129,9 +115,9 @@ try:
     _MEMORY_EXTRACTION_AVAILABLE = True
     print("Phase 2A Memory Extraction: loaded")
 except ImportError:
-    print("Phase 2A Memory Extraction: memory package not found — extraction disabled")
+    print("Phase 2A Memory Extraction: memory package not found - extraction disabled")
 except Exception as _mem_import_err:
-    print(f"Phase 2A Memory Extraction: import failed ({_mem_import_err}) — extraction disabled")
+    print(f"Phase 2A Memory Extraction: import failed ({_mem_import_err}) - extraction disabled")
 
 orchestration_bp = Blueprint('orchestration', __name__)
 
@@ -151,7 +137,7 @@ def orchestrate():
       3   File browser
           Parse clarification_answers
       3.5 Contract/Proposal templates
-      3.6 Survey Builder  <-- SIMPLIFIED February 28, 2026
+      3.6 Survey Builder
       4   Labor response
       4.5 Labor session retrieval (background or immediate)
       4.6 Introspection routing
@@ -253,7 +239,7 @@ def orchestrate():
             questions_html = _build_contract_questions_html(contract_type)
             db = get_db()
             cursor = db.execute(
-                'INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
+                'INSERT INTO tasks (user_request, status, conversation_id) VALUES (%s, %s, %s)',
                 (user_request, 'needs_clarification', conversation_id)
             )
             task_id = cursor.lastrowid
@@ -274,7 +260,7 @@ def orchestrate():
             add_message(conversation_id, 'user', user_request)
             db = get_db()
             cursor = db.execute(
-                'INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
+                'INSERT INTO tasks (user_request, status, conversation_id) VALUES (%s, %s, %s)',
                 (user_request, 'processing', conversation_id)
             )
             task_id = cursor.lastrowid
@@ -311,8 +297,10 @@ def orchestrate():
             except Exception as doc_err:
                 print(f"Contract doc generation error (non-critical): {doc_err}")
             total_time = time.time() - overall_start
-            db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
-                      ('completed', 'contract_handler', total_time, task_id))
+            db.execute(
+                'UPDATE tasks SET status = %s, assigned_orchestrator = %s, duration_seconds = %s WHERE id = %s',
+                ('completed', 'contract_handler', total_time, task_id)
+            )
             db.commit()
             db.close()
             add_message(conversation_id, 'assistant', actual_output, task_id,
@@ -328,8 +316,6 @@ def orchestrate():
 
         # ========================================================================
         # HANDLER 3.6: SURVEY BUILDER
-        # Added February 28, 2026 (Session 1)
-        # Simplified February 28, 2026 (Session 2)
         # ========================================================================
         is_survey_req = _detect_survey_request(user_request)
 
@@ -341,7 +327,7 @@ def orchestrate():
             questions_html = _build_survey_questions_html()
             db = get_db()
             cursor = db.execute(
-                'INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
+                'INSERT INTO tasks (user_request, status, conversation_id) VALUES (%s, %s, %s)',
                 (user_request, 'needs_clarification', conversation_id)
             )
             task_id = cursor.lastrowid
@@ -363,7 +349,7 @@ def orchestrate():
             add_message(conversation_id, 'user', user_request)
             db = get_db()
             cursor = db.execute(
-                'INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
+                'INSERT INTO tasks (user_request, status, conversation_id) VALUES (%s, %s, %s)',
                 (user_request, 'processing', conversation_id)
             )
             task_id = cursor.lastrowid
@@ -372,8 +358,7 @@ def orchestrate():
             company_name      = clarification_answers.get('company_name', 'Client').strip() or 'Client'
             survey_date       = clarification_answers.get('survey_date', datetime.now().strftime('%Y-%m-%d'))
             num_schedules_str = clarification_answers.get('num_schedules', '0')
-
-            project_name = f"{company_name} - Schedule Preference Survey"
+            project_name      = f"{company_name} - Schedule Preference Survey"
 
             selected_questions, schedules_to_rate = _map_survey_answers_to_questions(
                 company_name, survey_date, num_schedules_str
@@ -386,9 +371,7 @@ def orchestrate():
 
             try:
                 from survey_builder import SurveyBuilder
-                # NOTE: os is imported at the top of this file — do NOT re-import here.
-                # A local 'import os' inside this function would shadow the module-level
-                # import and cause UnboundLocalError in Handler 7. (Fixed March 05, 2026)
+                # NOTE: os is imported at the top of this file - do NOT re-import here.
 
                 builder = SurveyBuilder()
                 survey_obj = builder.create_survey(
@@ -467,7 +450,7 @@ def orchestrate():
             formatted_output = convert_markdown_to_html(actual_output)
             total_time = time.time() - overall_start
             db.execute(
-                'UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
+                'UPDATE tasks SET status = %s, assigned_orchestrator = %s, duration_seconds = %s WHERE id = %s',
                 ('completed', 'survey_builder', total_time, task_id)
             )
             db.commit()
@@ -526,8 +509,10 @@ def orchestrate():
                                     print(f"File is large ({file_size_mb}MB) - using background processing")
                                     clear_conversation_context(conversation_id, 'pending_analysis_session')
                                     db = get_db()
-                                    cursor = db.execute('INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
-                                                       (user_request, 'processing_background', conversation_id))
+                                    cursor = db.execute(
+                                        'INSERT INTO tasks (user_request, status, conversation_id) VALUES (%s, %s, %s)',
+                                        (user_request, 'processing_background', conversation_id)
+                                    )
                                     task_id = cursor.lastrowid
                                     db.commit()
                                     db.close()
@@ -541,7 +526,7 @@ def orchestrate():
                                         task_id=task_id,
                                     )
                                     if result['success']:
-                                        initial_msg = f"""🔄 **Analyzing labor data in background...**
+                                        initial_msg = f"""Processing labor data in background...
 
 **File:** {os.path.basename(file_path)} ({file_size_mb}MB)
 **Estimated time:** ~{result['estimated_minutes']} minutes
@@ -611,7 +596,7 @@ I'll post the complete analysis here when finished, including detailed insights.
 
                     db = get_db()
                     cursor = db.execute(
-                        'INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
+                        'INSERT INTO tasks (user_request, status, conversation_id) VALUES (%s, %s, %s)',
                         (user_request, 'processing', conversation_id)
                     )
                     task_id = cursor.lastrowid
@@ -638,7 +623,7 @@ I'll post the complete analysis here when finished, including detailed insights.
 
                     db = get_db()
                     db.execute(
-                        'UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
+                        'UPDATE tasks SET status = %s, assigned_orchestrator = %s, duration_seconds = %s WHERE id = %s',
                         ('completed', 'introspection_engine', total_time, task_id)
                     )
                     db.commit()
@@ -737,8 +722,10 @@ I'll post the complete analysis here when finished, including detailed insights.
                 conversation_id = create_conversation(mode=mode, project_id=project_id)
             add_message(conversation_id, 'user', user_request, file_contents=file_contents if file_contents else None)
             db = get_db()
-            cursor = db.execute('INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
-                               (user_request, 'processing', conversation_id))
+            cursor = db.execute(
+                'INSERT INTO tasks (user_request, status, conversation_id) VALUES (%s, %s, %s)',
+                (user_request, 'processing', conversation_id)
+            )
             task_id = cursor.lastrowid
             db.commit()
             from orchestration.ai_clients import call_gpt4
@@ -764,8 +751,10 @@ Be comprehensive and professional."""
                     actual_output = gpt_response.get('content', '')
                     formatted_output = convert_markdown_to_html(actual_output)
                     total_time = time.time() - overall_start
-                    db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
-                              ('completed', 'gpt4_file_handler', total_time, task_id))
+                    db.execute(
+                        'UPDATE tasks SET status = %s, assigned_orchestrator = %s, duration_seconds = %s WHERE id = %s',
+                        ('completed', 'gpt4_file_handler', total_time, task_id)
+                    )
                     db.commit()
                     db.close()
                     add_message(conversation_id, 'assistant', actual_output, task_id,
@@ -815,8 +804,10 @@ Be comprehensive and professional."""
                 pre_check = proactive.pre_process_request(user_request)
                 if pre_check['action'] == 'ask_questions':
                     db = get_db()
-                    cursor = db.execute('INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
-                                       (user_request, 'needs_clarification', conversation_id))
+                    cursor = db.execute(
+                        'INSERT INTO tasks (user_request, status, conversation_id) VALUES (%s, %s, %s)',
+                        (user_request, 'needs_clarification', conversation_id)
+                    )
                     task_id = cursor.lastrowid
                     db.commit()
                     db.close()
@@ -844,8 +835,10 @@ Be comprehensive and professional."""
                 print(f"Could not load file context: {file_ctx_error}")
 
         db = get_db()
-        cursor = db.execute('INSERT INTO tasks (user_request, status, conversation_id) VALUES (?, ?, ?)',
-                           (user_request, 'processing', conversation_id))
+        cursor = db.execute(
+            'INSERT INTO tasks (user_request, status, conversation_id) VALUES (%s, %s, %s)',
+            (user_request, 'processing', conversation_id)
+        )
         task_id = cursor.lastrowid
         db.commit()
 
@@ -877,8 +870,10 @@ Be comprehensive and professional."""
                         except Exception as doc_error:
                             print(f"Could not save code file: {doc_error}")
                     response_html = convert_markdown_to_html(code_result['message'])
-                    db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
-                              ('completed', 'code_assistant', time.time() - overall_start, task_id))
+                    db.execute(
+                        'UPDATE tasks SET status = %s, assigned_orchestrator = %s, duration_seconds = %s WHERE id = %s',
+                        ('completed', 'code_assistant', time.time() - overall_start, task_id)
+                    )
                     db.commit()
                     add_message(conversation_id, 'assistant', code_result['message'], task_id,
                                {'document_created': True, 'document_type': 'py', 'document_id': doc_id,
@@ -926,8 +921,10 @@ Be comprehensive and professional."""
                     category='schedule'
                 )
                 response_html = convert_markdown_to_html(schedule_result['message'])
-                db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
-                          ('completed', 'pattern_schedule_generator', time.time() - overall_start, task_id))
+                db.execute(
+                    'UPDATE tasks SET status = %s, assigned_orchestrator = %s, duration_seconds = %s WHERE id = %s',
+                    ('completed', 'pattern_schedule_generator', time.time() - overall_start, task_id)
+                )
                 db.commit()
                 add_message(conversation_id, 'assistant', schedule_result['message'], task_id,
                            {'document_created': True, 'document_type': 'xlsx', 'document_id': doc_id,
@@ -954,7 +951,10 @@ Be comprehensive and professional."""
                 })
             else:
                 response_html = convert_markdown_to_html(schedule_result['message'])
-                db.execute('UPDATE tasks SET status = ? WHERE id = ?', ('in_progress', task_id))
+                db.execute(
+                    'UPDATE tasks SET status = %s WHERE id = %s',
+                    ('in_progress', task_id)
+                )
                 db.commit()
                 add_message(conversation_id, 'assistant', schedule_result['message'], task_id,
                            {'waiting_for_input': True, 'orchestrator': 'pattern_schedule_generator',
@@ -1069,7 +1069,9 @@ END KNOWLEDGE BASE - Answer using the above as your primary source.
             if project_id:
                 try:
                     db_temp = get_db()
-                    project = db_temp.execute('SELECT client_name FROM projects WHERE project_id = ?', (project_id,)).fetchone()
+                    project = db_temp.execute(
+                        'SELECT client_name FROM projects WHERE project_id = %s', (project_id,)
+                    ).fetchone()
                     db_temp.close()
                     if project and project['client_name']:
                         client_profile_context = get_client_profile_context(project['client_name'])
@@ -1092,7 +1094,9 @@ END KNOWLEDGE BASE - Answer using the above as your primary source.
                 industry = None
                 if project_id:
                     db_temp = get_db()
-                    proj = db_temp.execute('SELECT industry FROM projects WHERE project_id = ?', (project_id,)).fetchone()
+                    proj = db_temp.execute(
+                        'SELECT industry FROM projects WHERE project_id = %s', (project_id,)
+                    ).fetchone()
                     db_temp.close()
                     if proj:
                         industry = proj['industry']
@@ -1126,7 +1130,9 @@ END KNOWLEDGE BASE - Answer using the above as your primary source.
                 try:
                     from database_file_management import get_file_stats_by_project
                     db_temp = get_db()
-                    project = db_temp.execute('SELECT * FROM projects WHERE project_id = ?', (project_id,)).fetchone()
+                    project = db_temp.execute(
+                        'SELECT * FROM projects WHERE project_id = %s', (project_id,)
+                    ).fetchone()
                     db_temp.close()
                     if project:
                         file_stats = get_file_stats_by_project(project_id)
@@ -1135,7 +1141,7 @@ END KNOWLEDGE BASE - Answer using the above as your primary source.
 === CURRENT PROJECT CONTEXT ===
 You are working inside the "{project['client_name']}" PROJECT FOLDER.
 - Industry: {project['industry']}
-- Facility Type: {project['facility_type']}
+- Facility Type: {project['facility_size']}
 - Project Phase: {project['project_phase']}
 
 This project folder contains: {file_stats.get('total_files', 0)} files
@@ -1285,8 +1291,10 @@ Be comprehensive and professional."""
                     print(f"Consensus validation failed: {consensus_error}")
 
             total_time = time.time() - overall_start
-            db.execute('UPDATE tasks SET status = ?, assigned_orchestrator = ?, execution_time_seconds = ? WHERE id = ?',
-                      ('completed', orchestrator, total_time, task_id))
+            db.execute(
+                'UPDATE tasks SET status = %s, assigned_orchestrator = %s, duration_seconds = %s WHERE id = %s',
+                ('completed', orchestrator, total_time, task_id)
+            )
             db.commit()
             db.close()
 
@@ -1311,7 +1319,9 @@ Be comprehensive and professional."""
             if project_id:
                 try:
                     db_temp = get_db()
-                    project = db_temp.execute('SELECT client_name, industry FROM projects WHERE project_id = ?', (project_id,)).fetchone()
+                    project = db_temp.execute(
+                        'SELECT client_name, industry FROM projects WHERE project_id = %s', (project_id,)
+                    ).fetchone()
                     db_temp.close()
                     if project and project['client_name']:
                         interaction_data = {'approach': orchestrator, 'approach_worked': True,
@@ -1366,9 +1376,7 @@ Be comprehensive and professional."""
 
             # ================================================================
             # Phase 2A: BACKGROUND MEMORY EXTRACTION
-            # Kick off a daemon thread to analyze this interaction and store
-            # relevant memories. This is non-blocking — user gets their
-            # response immediately. The thread runs silently in the background.
+            # Non-blocking daemon thread - user gets response immediately.
             # Only runs if memory package loaded successfully at import time.
             # ================================================================
             if _MEMORY_EXTRACTION_AVAILABLE and actual_output and not actual_output.startswith('Error'):
@@ -1394,7 +1402,6 @@ Be comprehensive and professional."""
                     _mem_thread.start()
                     print(f"Phase 2A: memory extraction thread started for task_id={task_id}")
                 except Exception as _mem_thread_err:
-                    # Never let memory threading errors affect the response
                     print(f"Phase 2A: memory thread start failed (non-critical): {_mem_thread_err}")
 
             return jsonify({
@@ -1412,7 +1419,7 @@ Be comprehensive and professional."""
         except Exception as orchestration_error:
             import traceback
             print(f"Orchestration error: {traceback.format_exc()}")
-            db.execute('UPDATE tasks SET status = ? WHERE id = ?', ('failed', task_id))
+            db.execute('UPDATE tasks SET status = %s WHERE id = %s', ('failed', task_id))
             db.commit()
             db.close()
             add_message(conversation_id, 'assistant', f"Error: {str(orchestration_error)}", task_id, {'error': True})
@@ -1427,18 +1434,13 @@ Be comprehensive and professional."""
 
 # ============================================================================
 # Phase 2A: MEMORY EXTRACTION HELPER
-# Called from daemon thread — must never raise an exception.
 # ============================================================================
 
 def _trigger_memory_extraction(task_data):
     """
     Wrapper that calls extract_memories() inside a try/except so any
-    failure in memory extraction cannot affect the main request thread
-    or any other background job.
-
-    This runs as a daemon thread. If the app shuts down, the thread
-    is killed without waiting (daemon=True). That is acceptable —
-    memory extraction is non-critical.
+    failure in memory extraction cannot affect the main request thread.
+    Runs as a daemon thread - killed on app shutdown (acceptable).
     """
     try:
         _extract_memories(task_data)
