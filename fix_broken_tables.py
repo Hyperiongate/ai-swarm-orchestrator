@@ -1,8 +1,8 @@
 """
-AI SWARM ORCHESTRATOR - Fix Broken Tables (Phase 9b + 9c)
+AI SWARM ORCHESTRATOR - Fix Broken Tables (Phase 9b + 9c + 9d)
 File: fix_broken_tables.py
 Created: March 03, 2026
-Last Updated: March 04, 2026 - Phase 9c: SERIAL sequence fix
+Last Updated: March 05, 2026 - Phase 9d: Added missing project_files columns
 
 PURPOSE:
     One-time cleanup to DROP and RECREATE tables that were created by the
@@ -12,52 +12,18 @@ PURPOSE:
     Phase 9c: Fixes missing SERIAL sequences on id columns for tables
               that were created by legacy code before migration_001 ran.
               This fixes: "null value in column id violates not-null constraint"
-
-    The old migration created tables with wrong column names. The Phase 9
-    migration used CREATE TABLE IF NOT EXISTS which SKIPPED these tables
-    (since they already existed), and ALTER TABLE ADD COLUMN which added
-    missing columns but CANNOT fix wrong column types or missing boolean
-    columns that fail due to type conflicts.
-
-    This script drops the broken tables and lets them be recreated correctly
-    by the Phase 9 migration on next startup.
-
-TABLES FIXED:
-    1. generated_documents — missing is_deleted column (old migration created
-       it without this column, ALTER TABLE ADD COLUMN failed)
-    2. user_feedback — never created by old migration at all
-    3. introspection_insights — never created by old migration (it created
-       introspection_reports instead)
-    4. conversations — old migration created with id TEXT PRIMARY KEY instead
-       of id SERIAL PRIMARY KEY + conversation_id TEXT UNIQUE
-    5. conversation_messages — old migration created as 'messages' with wrong
-       column names
-    6. tasks — verify columns exist (old migration may have wrong structure)
-    7. specialist_calls — old migration created as 'specialists' with wrong
-       column names
-    8. escalations — may not have been created correctly
-    9. learning_patterns — column name mismatches
-    10. learning_records — may not have been created
-    11. avoidance_patterns — column name mismatches
-    12. smart_analyzer_state — old migration used plural name
-    13. analysis_sessions — column mismatches
-    14. background_jobs — may not have been created
-    15. proactive_suggestions — may not have been created
-    16. conversation_summaries — may not have been created
-    17. user_patterns — may not have been created
-
-SAFETY:
-    - Only runs if the broken state is detected (checks for missing columns)
-    - Logs every action taken
-    - Safe to run multiple times (idempotent after first run)
-    - No data loss risk — confirmed total_projects: 0 and app was down
-
-USAGE:
-    Called automatically by app.py at startup (STEP 3.5).
-    Can also be triggered via: /api/admin/fix-broken-tables
+    Phase 9d: Adds missing columns to project_files that were not included
+              in the original bool_columns_needed list. This fixes:
+              "column uploaded_at does not exist" on list/upload operations.
 
 CHANGELOG:
-    - March 03, 2026: Created for Phase 9b cleanup
+    - March 05, 2026: Phase 9d — Added missing project_files columns
+      * uploaded_at, original_filename, file_type, file_size, file_path,
+        content_text, content_summary, file_id, mime_type were missing
+        from the bool_columns_needed list causing persistent 500 errors
+        on GET /projects/<id>/files and POST /projects/<id>/files
+    - March 04, 2026: Phase 9c — SERIAL sequence fix
+    - March 03, 2026: Phase 9b — Created for broken table schema cleanup
 
 AUTHOR: Jim @ Shiftwork Solutions LLC (managed by Claude)
 """
@@ -82,19 +48,10 @@ def fix_broken_tables():
         'success': True
     }
 
-    # Tables to drop and recreate. The Phase 9 migration will recreate them
-    # correctly on the next call to run_migration() (which happens in STEP 1
-    # of app.py, BEFORE this script runs — so we need to recreate them here).
-    #
-    # Strategy: For each table, check if it has the WRONG structure.
-    # If yes, drop it and recreate with correct structure.
-    # If it already has correct structure, skip it.
-
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
 
-        # Helper: get columns for a table
         def get_columns(table_name):
             try:
                 cursor.execute("""
@@ -106,7 +63,6 @@ def fix_broken_tables():
             except Exception:
                 return []
 
-        # Helper: check if table exists
         def table_exists(table_name):
             try:
                 cursor.execute("""
@@ -117,7 +73,6 @@ def fix_broken_tables():
             except Exception:
                 return False
 
-        # Helper: drop and recreate a table
         def drop_and_recreate(table_name, create_sql, reason):
             try:
                 print(f"  🔄 Dropping {table_name} ({reason})")
@@ -134,7 +89,7 @@ def fix_broken_tables():
         print("=" * 60)
 
         # ====================================================================
-        # 1. generated_documents — missing is_deleted
+        # 1. generated_documents
         # ====================================================================
         if table_exists('generated_documents'):
             cols = get_columns('generated_documents')
@@ -165,7 +120,7 @@ def fix_broken_tables():
                 print(f"  ✓ generated_documents OK")
 
         # ====================================================================
-        # 2. user_feedback — may not exist at all
+        # 2. user_feedback
         # ====================================================================
         if not table_exists('user_feedback'):
             drop_and_recreate('user_feedback', """
@@ -188,7 +143,7 @@ def fix_broken_tables():
             print(f"  ✓ user_feedback OK")
 
         # ====================================================================
-        # 3. introspection_insights — may not exist at all
+        # 3. introspection_insights
         # ====================================================================
         if not table_exists('introspection_insights'):
             drop_and_recreate('introspection_insights', """
@@ -213,7 +168,7 @@ def fix_broken_tables():
             print(f"  ✓ introspection_insights OK")
 
         # ====================================================================
-        # 4. conversations — check for conversation_id column
+        # 4. conversations
         # ====================================================================
         if table_exists('conversations'):
             cols = get_columns('conversations')
@@ -237,7 +192,7 @@ def fix_broken_tables():
                 print(f"  ✓ conversations OK")
 
         # ====================================================================
-        # 5. conversation_messages — check it exists and has correct columns
+        # 5. conversation_messages
         # ====================================================================
         if not table_exists('conversation_messages'):
             drop_and_recreate('conversation_messages', """
@@ -272,7 +227,7 @@ def fix_broken_tables():
                 print(f"  ✓ conversation_messages OK")
 
         # ====================================================================
-        # 6. tasks — check for user_request column
+        # 6. tasks
         # ====================================================================
         if table_exists('tasks'):
             cols = get_columns('tasks')
@@ -306,7 +261,7 @@ def fix_broken_tables():
                 print(f"  ✓ tasks OK")
 
         # ====================================================================
-        # 7. specialist_calls — may have been created as 'specialists'
+        # 7. specialist_calls
         # ====================================================================
         if not table_exists('specialist_calls'):
             drop_and_recreate('specialist_calls', """
@@ -326,7 +281,7 @@ def fix_broken_tables():
             print(f"  ✓ specialist_calls OK")
 
         # ====================================================================
-        # 8. escalations — check it exists with correct columns
+        # 8. escalations
         # ====================================================================
         if not table_exists('escalations'):
             drop_and_recreate('escalations', """
@@ -361,7 +316,7 @@ def fix_broken_tables():
                 print(f"  ✓ escalations OK")
 
         # ====================================================================
-        # 9. learning_patterns — check for task_type column
+        # 9. learning_patterns
         # ====================================================================
         if table_exists('learning_patterns'):
             cols = get_columns('learning_patterns')
@@ -387,7 +342,7 @@ def fix_broken_tables():
                 print(f"  ✓ learning_patterns OK")
 
         # ====================================================================
-        # 10. learning_records — may not exist
+        # 10. learning_records
         # ====================================================================
         if not table_exists('learning_records'):
             drop_and_recreate('learning_records', """
@@ -406,7 +361,7 @@ def fix_broken_tables():
             print(f"  ✓ learning_records OK")
 
         # ====================================================================
-        # 11. avoidance_patterns — check for pattern_data column
+        # 11. avoidance_patterns
         # ====================================================================
         if table_exists('avoidance_patterns'):
             cols = get_columns('avoidance_patterns')
@@ -426,7 +381,7 @@ def fix_broken_tables():
                 print(f"  ✓ avoidance_patterns OK")
 
         # ====================================================================
-        # 12. smart_analyzer_state — old migration used plural name
+        # 12. smart_analyzer_state
         # ====================================================================
         if not table_exists('smart_analyzer_state'):
             drop_and_recreate('smart_analyzer_state', """
@@ -446,7 +401,7 @@ def fix_broken_tables():
             print(f"  ✓ smart_analyzer_state OK")
 
         # ====================================================================
-        # 13. analysis_sessions — check for session_id and state columns
+        # 13. analysis_sessions
         # ====================================================================
         if table_exists('analysis_sessions'):
             cols = get_columns('analysis_sessions')
@@ -471,7 +426,7 @@ def fix_broken_tables():
                 print(f"  ✓ analysis_sessions OK")
 
         # ====================================================================
-        # 14. background_jobs — may not exist
+        # 14. background_jobs
         # ====================================================================
         if not table_exists('background_jobs'):
             drop_and_recreate('background_jobs', """
@@ -498,7 +453,7 @@ def fix_broken_tables():
             print(f"  ✓ background_jobs OK")
 
         # ====================================================================
-        # 15. proactive_suggestions — may not exist
+        # 15. proactive_suggestions
         # ====================================================================
         if not table_exists('proactive_suggestions'):
             drop_and_recreate('proactive_suggestions', """
@@ -518,7 +473,7 @@ def fix_broken_tables():
             print(f"  ✓ proactive_suggestions OK")
 
         # ====================================================================
-        # 16. conversation_summaries — may not exist
+        # 16. conversation_summaries
         # ====================================================================
         if not table_exists('conversation_summaries'):
             drop_and_recreate('conversation_summaries', """
@@ -537,7 +492,7 @@ def fix_broken_tables():
             print(f"  ✓ conversation_summaries OK")
 
         # ====================================================================
-        # 17. user_patterns — may not exist
+        # 17. user_patterns
         # ====================================================================
         if not table_exists('user_patterns'):
             drop_and_recreate('user_patterns', """
@@ -556,7 +511,7 @@ def fix_broken_tables():
             print(f"  ✓ user_patterns OK")
 
         # ====================================================================
-        # 18. consensus_validations — check structure
+        # 18. consensus_validations
         # ====================================================================
         if table_exists('consensus_validations'):
             cols = get_columns('consensus_validations')
@@ -607,11 +562,10 @@ def fix_broken_tables():
             try:
                 cursor.execute(idx_sql)
             except Exception:
-                pass  # Index already exists or table doesn't exist yet
+                pass
 
         conn.commit()
 
-        # Summary
         print("=" * 60)
         print(f"✅ Phase 9b complete:")
         print(f"   Tables fixed: {len(results['tables_dropped'])}")
@@ -623,23 +577,9 @@ def fix_broken_tables():
             results['success'] = False
         print("=" * 60)
 
-        # =================================================================
+        # ====================================================================
         # PHASE 9c: Fix missing SERIAL sequences on id columns
-        # March 04, 2026
-        #
-        # Problem: Tables created by legacy code (ProjectManager, etc.)
-        # have id without a SERIAL sequence. CREATE TABLE IF NOT EXISTS
-        # in migration_001 skipped them because they exist.
-        # INSERT without specifying id fails with:
-        #   "null value in column id violates not-null constraint"
-        #
-        # Fix: For each table, check if the id column has a default.
-        # If not, create a sequence and attach it.
-        # Uses SAVEPOINTs so one table's error doesn't abort all others.
-        #
-        # March 04, 2026 v2: Fixed TEXT→INTEGER type mismatch.
-        # Some legacy tables have id as TEXT. Must ALTER to INTEGER first.
-        # =================================================================
+        # ====================================================================
 
         if db_type == 'postgresql':
             print()
@@ -647,7 +587,6 @@ def fix_broken_tables():
             print("🔧 Phase 9c: Fixing missing SERIAL sequences...")
             print("=" * 60)
 
-            # All tables that use id SERIAL PRIMARY KEY in the migration
             serial_tables = [
                 'tasks', 'specialist_calls', 'consensus_validations',
                 'escalations', 'learning_patterns', 'learning_records',
@@ -676,10 +615,8 @@ def fix_broken_tables():
 
             for table_name in serial_tables:
                 try:
-                    # Use SAVEPOINT so errors don't abort the whole transaction
                     cursor.execute(f"SAVEPOINT sp_{table_name}")
 
-                    # Check if the table exists and has an id column
                     cursor.execute("""
                         SELECT column_default, data_type
                         FROM information_schema.columns
@@ -690,7 +627,6 @@ def fix_broken_tables():
                     row = cursor.fetchone()
 
                     if row is None:
-                        # Table doesn't exist or has no id column — skip
                         cursor.execute(f"RELEASE SAVEPOINT sp_{table_name}")
                         continue
 
@@ -698,26 +634,21 @@ def fix_broken_tables():
                     data_type = row['data_type'] if row else None
 
                     if col_default and 'nextval' in str(col_default):
-                        # Already has a sequence — OK
                         sequences_ok += 1
                         cursor.execute(f"RELEASE SAVEPOINT sp_{table_name}")
                         continue
 
-                    # If id is TEXT type, convert to INTEGER first
                     if data_type and data_type.lower() in ('text', 'character varying'):
-                        # Check if table has any rows with non-numeric ids
                         cursor.execute(f"SELECT COUNT(*) as cnt FROM {table_name}")
                         row_count = cursor.fetchone()['cnt']
 
                         if row_count == 0:
-                            # Empty table — safe to change type
                             cursor.execute(
                                 f"ALTER TABLE {table_name} "
                                 f"ALTER COLUMN id TYPE INTEGER USING 0"
                             )
                             print(f"  🔄 {table_name}.id: converted TEXT → INTEGER (empty table)")
                         else:
-                            # Table has data — try casting
                             try:
                                 cursor.execute(
                                     f"ALTER TABLE {table_name} "
@@ -730,15 +661,12 @@ def fix_broken_tables():
                                 sequences_errors += 1
                                 continue
 
-                    # Now create and attach the sequence
                     seq_name = f"{table_name}_id_seq"
-
                     cursor.execute(f"CREATE SEQUENCE IF NOT EXISTS {seq_name}")
                     cursor.execute(
                         f"ALTER TABLE {table_name} "
                         f"ALTER COLUMN id SET DEFAULT nextval('{seq_name}')"
                     )
-                    # Set sequence to start after max existing id
                     cursor.execute(
                         f"SELECT setval('{seq_name}', "
                         f"COALESCE((SELECT MAX(id) FROM {table_name}), 0) + 1, false)"
@@ -746,7 +674,6 @@ def fix_broken_tables():
                     cursor.execute(
                         f"ALTER TABLE {table_name} ALTER COLUMN id SET NOT NULL"
                     )
-                    # Link sequence ownership to the column
                     cursor.execute(
                         f"ALTER SEQUENCE {seq_name} OWNED BY {table_name}.id"
                     )
@@ -756,7 +683,6 @@ def fix_broken_tables():
                     print(f"  🔧 {table_name}.id: attached sequence {seq_name}")
 
                 except Exception as seq_err:
-                    # Rollback just this table's changes
                     try:
                         cursor.execute(f"ROLLBACK TO SAVEPOINT sp_{table_name}")
                     except Exception:
@@ -772,34 +698,43 @@ def fix_broken_tables():
                 print(f"  Errors:          {sequences_errors}")
             print("=" * 60)
 
-        # =================================================================
-        # PHASE 9d: Add missing boolean columns to project_files
-        # March 05, 2026
-        #
-        # Problem: project_files table was created by legacy code without
-        # boolean columns (is_deleted, is_generated, is_analyzed).
-        # migration_001's ALTER TABLE ADD COLUMN may have failed silently.
-        # database_file_management.py queries these columns.
-        # =================================================================
+        # ====================================================================
+        # PHASE 9d: Add missing columns to project_files
+        # March 05, 2026 — expanded to include ALL columns referenced by
+        # database_file_management.py that were missing from the original list.
+        # This fixes "column uploaded_at does not exist" and related errors.
+        # ====================================================================
 
         if db_type == 'postgresql':
             print()
             print("=" * 60)
-            print("🔧 Phase 9d: Adding missing boolean columns...")
+            print("🔧 Phase 9d: Adding missing project_files columns...")
             print("=" * 60)
 
             bool_columns_needed = [
-                ('project_files', 'is_deleted', 'BOOLEAN DEFAULT FALSE'),
-                ('project_files', 'is_generated', 'BOOLEAN DEFAULT FALSE'),
-                ('project_files', 'is_analyzed', 'BOOLEAN DEFAULT FALSE'),
-                ('project_files', 'analysis_summary', 'TEXT'),
-                ('project_files', 'analysis_result', 'TEXT'),
-                ('project_files', 'analyzed_at', 'TIMESTAMP'),
-                ('project_files', 'uploaded_by', "TEXT DEFAULT 'user'"),
-                ('project_files', 'task_id', 'INTEGER'),
-                ('project_files', 'conversation_id', 'TEXT'),
-                ('project_files', 'description', 'TEXT'),
-                ('project_files', 'category', "TEXT DEFAULT 'general'"),
+                # Boolean columns
+                ('project_files', 'is_deleted',        'BOOLEAN DEFAULT FALSE'),
+                ('project_files', 'is_generated',      'BOOLEAN DEFAULT FALSE'),
+                ('project_files', 'is_analyzed',       'BOOLEAN DEFAULT FALSE'),
+                # Timestamp columns — uploaded_at is the critical one that was missing
+                ('project_files', 'uploaded_at',       'TIMESTAMP DEFAULT NOW()'),
+                ('project_files', 'analyzed_at',       'TIMESTAMP'),
+                # Text columns used in queries and SELECT *
+                ('project_files', 'analysis_summary',  'TEXT'),
+                ('project_files', 'analysis_result',   'TEXT'),
+                ('project_files', 'uploaded_by',       "TEXT DEFAULT 'user'"),
+                ('project_files', 'task_id',            'INTEGER'),
+                ('project_files', 'conversation_id',   'TEXT'),
+                ('project_files', 'description',       'TEXT'),
+                ('project_files', 'category',          "TEXT DEFAULT 'general'"),
+                ('project_files', 'file_id',           'TEXT'),
+                ('project_files', 'mime_type',         'TEXT'),
+                ('project_files', 'original_filename', 'TEXT'),
+                ('project_files', 'file_type',         'TEXT'),
+                ('project_files', 'file_size',         'INTEGER DEFAULT 0'),
+                ('project_files', 'file_path',         'TEXT'),
+                ('project_files', 'content_text',      'TEXT'),
+                ('project_files', 'content_summary',   'TEXT'),
             ]
 
             cols_added = 0
@@ -809,7 +744,6 @@ def fix_broken_tables():
                 try:
                     cursor.execute(f"SAVEPOINT sp_col_{col_name}")
 
-                    # Check if column exists
                     cursor.execute("""
                         SELECT 1 FROM information_schema.columns
                         WHERE table_schema = 'public'
@@ -822,7 +756,6 @@ def fix_broken_tables():
                         cursor.execute(f"RELEASE SAVEPOINT sp_col_{col_name}")
                         continue
 
-                    # Column doesn't exist — add it
                     cursor.execute(
                         f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}"
                     )
@@ -844,7 +777,7 @@ def fix_broken_tables():
 
     except Exception as e:
         import traceback
-        print(f"❌ Phase 9b failed: {e}")
+        print(f"❌ fix_broken_tables failed: {e}")
         traceback.print_exc()
         results['success'] = False
         results['errors'].append(str(e))
