@@ -1,11 +1,30 @@
 """
 Orchestration Handler - Main AI Task Processing (REFACTORED)
 Created: January 31, 2026
-Last Updated: March 05, 2026 - FIXED UnboundLocalError: local import os inside orchestrate()
+Last Updated: March 05, 2026 - Phase 2A: Added background memory extraction thread
 
 CHANGELOG:
 
-- March 05, 2026: FIXED UnboundLocalError on os.path.basename()
+- March 05, 2026: Phase 2A - ADDED BACKGROUND MEMORY EXTRACTION
+  * Added 'import threading' to module-level imports
+  * Added try/except import block for 'from memory import extract_memories'
+    (safe import — if memory package not yet deployed, logs a warning and
+    memory extraction is skipped silently; no impact on any existing route)
+  * Added memory extraction trigger at the END of HANDLER 10 (regular
+    conversation), immediately before the final return jsonify().
+    Builds a task_data dict from variables already in scope and starts
+    a daemon thread: threading.Thread(target=_trigger_memory_extraction,
+    args=(task_data,), daemon=True).start()
+  * Added _trigger_memory_extraction() helper at bottom of file — wraps
+    extract_memories() in try/except so a failure there can never crash
+    the background thread or affect any other request.
+  * Memory extraction ONLY hooks into Handler 10. Survey builder, contract
+    handler, file handlers, labor handlers, and introspection routing are
+    NOT modified.
+  * No existing return values changed. No existing SQL changed.
+    No existing handler logic changed. Pure additive change.
+
+- March 05, 2026: FIXED UnboundLocalError: local import os inside orchestrate()
   PROBLEM: Handler 3.6 (Survey Builder) had 'import os' and 'import tempfile'
     inside the orchestrate() function body. In Python, ANY import statement
     inside a function makes that name a local variable for the ENTIRE function
@@ -20,42 +39,8 @@ CHANGELOG:
   IMPACT: File uploads now process correctly through Handler 7 without crashing.
 
 - February 28, 2026 (Session 2): SIMPLIFIED SURVEY BUILDER FORM
-  PROBLEM: Handler 3.6 Pass 1 form asked 5 questions including survey type,
-    shift length, and distribution method — forcing category selection that
-    Jim should not have to make. Pass 2 then routed questions by survey type,
-    producing partial question sets instead of comprehensive surveys.
-  FIX: Simplified the clarification form to 3 fields only:
-    - Company Name (required)
-    - Survey Date (optional, defaults to today)
-    - Number of Schedules to Include 0–8 (optional, defaults to 0)
-    Removed: survey_type dropdown, shift_length dropdown,
-             distribution_method dropdown, employee_count dropdown.
-  NEW BEHAVIOR: _map_survey_answers_to_questions() now ignores survey type
-    entirely and always returns ALL 64 standard questions from the bank.
-    Schedules are selected by count from the library in order of most common
-    usage. _build_survey_questions_html() renders the simplified 3-field form.
-    _detect_survey_request() unchanged.
-  IMPACT: Every survey request now produces a comprehensive, all-inclusive
-    Word document with no category filtering and no user decisions about
-    which questions to include.
-
 - February 28, 2026 (Session 1): ADDED HANDLER 3.6 SURVEY BUILDER
-  PROBLEM: Typing "provide me with a survey" in Quick Tasks produced either
-    no output (clarification questions with no follow-through) or unformatted
-    plain text from Sonnet with no download link. The dedicated SurveyBuilder
-    with its 97-question bank and Word export was never called from the
-    orchestration flow.
-  FIX: Added Handler 3.6 between Handler 3.5 (Contract) and Handler 4 (Labor).
-    Uses the same two-pass pattern as Handler 3.5.
-  IMPACT: "provide me with a survey" (and similar) now produces a downloadable
-    Word document using the proper question bank.
-
 - February 28, 2026: FIXED UnboundLocalError on labor_response
-  PROBLEM: When conversation_id is None, Handler 4 (if conversation_id:) is skipped
-    entirely so labor_response is never assigned. Handler 4.5 then references
-    "if not labor_response" causing UnboundLocalError on every new conversation.
-  FIX: Initialize labor_response = None before the if conversation_id: block.
-
 - February 27, 2026: ADDED HANDLER 4.6 INTROSPECTION ROUTING
 - February 27, 2026: ADDED INGESTED KNOWLEDGE BASE BRIDGE
 - February 21, 2026: RESEARCH AGENT SYNTHESIS
@@ -75,6 +60,7 @@ Author: Jim @ Shiftwork Solutions LLC
 """
 
 from flask import Blueprint, request, jsonify, session
+import threading
 import time
 import os
 import json
@@ -132,6 +118,21 @@ from conversation_summarizer import get_conversation_summarizer
 from proactive_curiosity_engine import get_curiosity_engine
 from labor_analysis_processor import get_labor_processor
 
+# ============================================================================
+# Phase 2A: Memory extraction import
+# Safe import — if memory/ package not yet deployed, extraction is silently
+# skipped. No impact on any existing route or functionality.
+# ============================================================================
+_MEMORY_EXTRACTION_AVAILABLE = False
+try:
+    from memory import extract_memories as _extract_memories
+    _MEMORY_EXTRACTION_AVAILABLE = True
+    print("Phase 2A Memory Extraction: loaded")
+except ImportError:
+    print("Phase 2A Memory Extraction: memory package not found — extraction disabled")
+except Exception as _mem_import_err:
+    print(f"Phase 2A Memory Extraction: import failed ({_mem_import_err}) — extraction disabled")
+
 orchestration_bp = Blueprint('orchestration', __name__)
 
 
@@ -160,6 +161,7 @@ def orchestrate():
       8   Standard file handling
       9   GPT-4 file analysis
       10  Regular conversation (Sonnet PATH 3)
+          + Phase 2A: background memory extraction thread
     """
     try:
         overall_start = time.time()
@@ -1362,6 +1364,39 @@ Be comprehensive and professional."""
             except Exception as doc_gen_error:
                 print(f"Document generation error (non-critical): {doc_gen_error}")
 
+            # ================================================================
+            # Phase 2A: BACKGROUND MEMORY EXTRACTION
+            # Kick off a daemon thread to analyze this interaction and store
+            # relevant memories. This is non-blocking — user gets their
+            # response immediately. The thread runs silently in the background.
+            # Only runs if memory package loaded successfully at import time.
+            # ================================================================
+            if _MEMORY_EXTRACTION_AVAILABLE and actual_output and not actual_output.startswith('Error'):
+                try:
+                    _task_data = {
+                        'user_request': user_request,
+                        'ai_response': actual_output,
+                        'model_used': orchestrator,
+                        'task_type': task_type,
+                        'execution_time': total_time,
+                        'task_id': task_id,
+                        'project_id': project_id,
+                        'consensus_score': (
+                            consensus_result.get('agreement_score')
+                            if isinstance(consensus_result, dict) else None
+                        )
+                    }
+                    _mem_thread = threading.Thread(
+                        target=_trigger_memory_extraction,
+                        args=(_task_data,),
+                        daemon=True
+                    )
+                    _mem_thread.start()
+                    print(f"Phase 2A: memory extraction thread started for task_id={task_id}")
+                except Exception as _mem_thread_err:
+                    # Never let memory threading errors affect the response
+                    print(f"Phase 2A: memory thread start failed (non-critical): {_mem_thread_err}")
+
             return jsonify({
                 'success': True, 'task_id': task_id, 'conversation_id': conversation_id,
                 'result': formatted_output, 'orchestrator': orchestrator,
@@ -1388,6 +1423,28 @@ Be comprehensive and professional."""
         import traceback
         print(f"CRITICAL ERROR: {traceback.format_exc()}")
         return jsonify({'success': False, 'error': f'Server error: {str(e)}'}), 500
+
+
+# ============================================================================
+# Phase 2A: MEMORY EXTRACTION HELPER
+# Called from daemon thread — must never raise an exception.
+# ============================================================================
+
+def _trigger_memory_extraction(task_data):
+    """
+    Wrapper that calls extract_memories() inside a try/except so any
+    failure in memory extraction cannot affect the main request thread
+    or any other background job.
+
+    This runs as a daemon thread. If the app shuts down, the thread
+    is killed without waiting (daemon=True). That is acceptable —
+    memory extraction is non-critical.
+    """
+    try:
+        _extract_memories(task_data)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"_trigger_memory_extraction failed: {e}")
 
 
 # ============================================================================
