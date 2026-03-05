@@ -1,28 +1,27 @@
 """
 Database File Management - UNIFIED PRODUCTION VERSION
 Created: January 28, 2026
-Last Updated: March 03, 2026 - SCHEMA FIX Phase 8
+Last Updated: March 04, 2026 - POSTGRESQL BOOLEAN + ID CAST FIX
 
 CHANGELOG:
+- March 04, 2026: POSTGRESQL BOOLEAN + ID CAST FIX
+  * Fixed is_deleted = 0 → is_deleted = FALSE (3 locations: get_file, list_files)
+  * Fixed is_deleted = 1 → is_deleted = TRUE (1 location: delete_file)
+  * Fixed is_analyzed = 1 → is_analyzed = TRUE (1 location: mark_file_as_analyzed)
+  * Fixed OR id = %s with str(project_id) → isdigit() guard in:
+      get_project(), update_project(), update_checklist()
+    Now only compares INTEGER id column when input is numeric.
+  * These fixes resolve:
+      - "column is_deleted does not exist" on project file listing
+      - "invalid input syntax for type integer" on project lookups
+
 - March 03, 2026: SCHEMA FIX Phase 8
-  * Fixed facility_type -> facility_size in create_project() INSERT column name
-  * Fixed facility_type -> facility_size in create_project() return dict key
-  * Fixed facility_type -> facility_size in get_project() response dict key
-  * Fixed facility_type -> facility_size in update_project() allowed_fields list
-  * Fixed id::text = %s -> id = %s in get_project(), update_project(),
-    update_checklist() — id column is TEXT type, the ::text cast is invalid
-    against a TEXT primary key in PostgreSQL and caused query failures.
-  * All missing columns (project_phase, storage_path, checklist_data,
-    milestone_data, folder_data, metadata, project_id) are added to the
-    projects table by add_missing_columns.py at startup.
-  * No functional changes — all methods behave identically after fix.
+  * Fixed facility_type -> facility_size in create/get/update project
+  * Fixed id::text = %s -> id = %s (id column is TEXT)
 
 - March 02, 2026: POSTGRESQL MIGRATION (Phase 1)
-  * Replaced all sqlite3.connect(DATABASE) calls with get_db_connection()
-  * All SQL parameters changed from ? to %s (PostgreSQL style)
-  * STORAGE_PATH now imported from config.py
-  * ON CONFLICT syntax for PostgreSQL upserts
-  * All existing functionality preserved
+  * Replaced all sqlite3.connect with get_db_connection()
+  * All SQL parameters changed from ? to %s
 
 - February 5, 2026: FIXED FILE SELECTION EXCEL EXTRACTION
 - February 1, 2026: CRITICAL FIX - add_file() handles Flask FileStorage objects
@@ -300,11 +299,17 @@ class ProjectManager:
         """Retrieve project from database."""
         db = self._get_db()
         try:
-            # FIXED: was 'id::text = %s' — id is TEXT type, ::text cast is invalid
-            project = db.execute(
-                'SELECT * FROM projects WHERE project_id = %s OR id = %s',
-                (project_id, str(project_id))
-            ).fetchone()
+            # Only compare INTEGER id when input is numeric
+            if str(project_id).isdigit():
+                project = db.execute(
+                    'SELECT * FROM projects WHERE project_id = %s OR id = %s',
+                    (project_id, int(project_id))
+                ).fetchone()
+            else:
+                project = db.execute(
+                    'SELECT * FROM projects WHERE project_id = %s',
+                    (project_id,)
+                ).fetchone()
 
             if not project:
                 return None
@@ -314,7 +319,7 @@ class ProjectManager:
                 'project_id': project['project_id'] or str(project['id']),
                 'client_name': project['client_name'],
                 'industry': project['industry'],
-                'facility_size': project['facility_size'],  # FIXED: was facility_type
+                'facility_size': project['facility_size'],
                 'status': project['status'],
                 'project_phase': project['project_phase'],
                 'storage_path': project['storage_path'],
@@ -373,7 +378,6 @@ class ProjectManager:
 
     def update_project(self, project_id, **kwargs):
         """Update project fields."""
-        # FIXED: was 'facility_type' in allowed_fields — DB column is facility_size
         allowed_fields = ['client_name', 'industry', 'facility_size', 'project_phase', 'status']
         updates = []
         values = []
@@ -392,18 +396,20 @@ class ProjectManager:
             updates.append('metadata = %s')
             values.append(json.dumps(kwargs['metadata']))
 
-        if not updates:
-            updates.append('updated_at = CURRENT_TIMESTAMP')
-            values.extend([project_id, str(project_id)])
+        updates.append('updated_at = CURRENT_TIMESTAMP')
+
+        # Only compare INTEGER id when input is numeric
+        if str(project_id).isdigit():
+            values.extend([project_id, int(project_id)])
+            where_clause = 'WHERE project_id = %s OR id = %s'
         else:
-            updates.append('updated_at = CURRENT_TIMESTAMP')
-            values.extend([project_id, str(project_id)])
+            values.append(project_id)
+            where_clause = 'WHERE project_id = %s'
 
         db = self._get_db()
         try:
-            # FIXED: was 'id::text = %s' — id is TEXT type, ::text cast is invalid
             db.execute(
-                f"UPDATE projects SET {', '.join(updates)} WHERE project_id = %s OR id = %s",
+                f"UPDATE projects SET {', '.join(updates)} {where_clause}",
                 values
             )
             db.commit()
@@ -421,11 +427,17 @@ class ProjectManager:
 
         db = self._get_db()
         try:
-            # FIXED: was 'id::text = %s' — id is TEXT type, ::text cast is invalid
-            db.execute(
-                'UPDATE projects SET checklist_data = %s, updated_at = CURRENT_TIMESTAMP WHERE project_id = %s OR id = %s',
-                (json.dumps(project['checklist']), project_id, str(project_id))
-            )
+            # Only compare INTEGER id when input is numeric
+            if str(project_id).isdigit():
+                db.execute(
+                    'UPDATE projects SET checklist_data = %s, updated_at = CURRENT_TIMESTAMP WHERE project_id = %s OR id = %s',
+                    (json.dumps(project['checklist']), project_id, int(project_id))
+                )
+            else:
+                db.execute(
+                    'UPDATE projects SET checklist_data = %s, updated_at = CURRENT_TIMESTAMP WHERE project_id = %s',
+                    (json.dumps(project['checklist']), project_id)
+                )
             db.commit()
             return True
         finally:
@@ -531,7 +543,7 @@ class ProjectManager:
             row = db.execute('''
                 SELECT * FROM project_files
                 WHERE (file_id = %s OR filename = %s)
-                AND is_deleted = 0
+                AND is_deleted = FALSE
             ''', (file_id, file_id)).fetchone()
 
             if not row:
@@ -558,7 +570,7 @@ class ProjectManager:
                 ).fetchall()
             else:
                 rows = db.execute(
-                    'SELECT * FROM project_files WHERE project_id = %s AND is_deleted = 0 ORDER BY uploaded_at DESC',
+                    'SELECT * FROM project_files WHERE project_id = %s AND is_deleted = FALSE ORDER BY uploaded_at DESC',
                     (project_id,)
                 ).fetchall()
 
@@ -602,7 +614,7 @@ class ProjectManager:
                 db.execute('DELETE FROM project_files WHERE file_id = %s', (file_id,))
             else:
                 db.execute(
-                    'UPDATE project_files SET is_deleted = 1 WHERE file_id = %s',
+                    'UPDATE project_files SET is_deleted = TRUE WHERE file_id = %s',
                     (file_id,)
                 )
             db.commit()
@@ -911,23 +923,23 @@ def get_files_for_ai_context(project_id, max_files=5, max_chars_per_file=50000, 
                         try:
                             import pandas as pd
                             df = pd.read_excel(file_path)
-                            content = f"Excel file with {len(df)} rows and {len(df.columns)} columns\n"
-                            content += f"Columns: {', '.join([str(col) for col in df.columns.tolist()])}\n\n"
-                            content += "Sample data (first 50 rows):\n"
-                            content += df.head(50).to_string()
-                            extraction_result = {'success': True, 'text': content, 'data': None}
+                            content_text = f"Excel file with {len(df)} rows and {len(df.columns)} columns\n"
+                            content_text += f"Columns: {', '.join([str(col) for col in df.columns.tolist()])}\n\n"
+                            content_text += "Sample data (first 50 rows):\n"
+                            content_text += df.head(50).to_string()
+                            extraction_result = {'success': True, 'text': content_text, 'data': None}
                         except Exception as e:
                             extraction_result = {'success': False, 'error': str(e)}
                     else:
                         try:
                             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                                content = f.read(max_chars_per_file)
-                            extraction_result = {'success': True, 'text': content, 'data': None}
+                                content_text = f.read(max_chars_per_file)
+                            extraction_result = {'success': True, 'text': content_text, 'data': None}
                         except Exception as e:
                             extraction_result = {'success': False, 'error': str(e)}
 
                 if extraction_result.get('success'):
-                    content = extraction_result['text']
+                    file_content = extraction_result['text']
 
                     if extraction_result.get('data'):
                         data = extraction_result['data']
@@ -938,14 +950,14 @@ def get_files_for_ai_context(project_id, max_files=5, max_chars_per_file=50000, 
                         elif 'num_paragraphs' in data:
                             context += f"   📝 Word document with {data['num_paragraphs']} paragraph(s)\n"
 
-                    print(f"   ✅ Extracted {len(content)} chars")
+                    print(f"   ✅ Extracted {len(file_content)} chars")
 
-                    if len(content) > max_chars_per_file:
-                        original_len = len(content)
-                        content = content[:max_chars_per_file] + f"\n\n... (truncated {original_len - max_chars_per_file} chars)\n"
+                    if len(file_content) > max_chars_per_file:
+                        original_len = len(file_content)
+                        file_content = file_content[:max_chars_per_file] + f"\n\n... (truncated {original_len - max_chars_per_file} chars)\n"
                         print(f"   ✂️ Truncated to {max_chars_per_file} chars")
 
-                    context += f"   Content:\n{content}\n"
+                    context += f"   Content:\n{file_content}\n"
                 else:
                     print(f"   ❌ Extraction failed: {extraction_result.get('error')}")
                     context += f"   (Could not extract content: {extraction_result.get('error')})\n"
@@ -986,7 +998,7 @@ def mark_file_as_analyzed(file_id, analysis_summary=None):
     try:
         db.execute('''
             UPDATE project_files
-            SET is_analyzed = 1,
+            SET is_analyzed = TRUE,
                 analysis_summary = %s,
                 analyzed_at = CURRENT_TIMESTAMP,
                 metadata = %s
