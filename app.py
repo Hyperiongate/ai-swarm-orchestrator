@@ -965,6 +965,35 @@ try:
 except ImportError:
     print("Integration Hub not found")
 
+@app.route('/api/admin/fix-memory-store', methods=['GET'])
+def fix_memory_store():
+    """One-time fix: add Phase 2A columns to memory_store table."""
+    try:
+        from db_engine import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        results = []
+        columns = [
+            ("category",       "TEXT DEFAULT 'general'"),
+            ("content",        "TEXT DEFAULT ''"),
+            ("source_task_id", "INTEGER"),
+            ("updated_at",     "TIMESTAMP DEFAULT NOW()"),
+        ]
+        for col_name, col_def in columns:
+            try:
+                cursor.execute(
+                    f"ALTER TABLE memory_store ADD COLUMN IF NOT EXISTS {col_name} {col_def}"
+                )
+                results.append(f"OK: {col_name}")
+            except Exception as e:
+                results.append(f"SKIP: {col_name} — {e}")
+        conn.commit()
+        conn.close()
+        return jsonify({'success': True, 'results': results})
+    except Exception as e:
+        import traceback
+        return jsonify({'success': False, 'error': str(e), 'traceback': traceback.format_exc()}), 500
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
