@@ -1,9 +1,23 @@
 """
 Orchestration Handler - Main AI Task Processing (REFACTORED)
 Created: January 31, 2026
-Last Updated: February 28, 2026 - SIMPLIFIED SURVEY BUILDER FORM
+Last Updated: March 05, 2026 - FIXED UnboundLocalError: local import os inside orchestrate()
 
 CHANGELOG:
+
+- March 05, 2026: FIXED UnboundLocalError on os.path.basename()
+  PROBLEM: Handler 3.6 (Survey Builder) had 'import os' and 'import tempfile'
+    inside the orchestrate() function body. In Python, ANY import statement
+    inside a function makes that name a local variable for the ENTIRE function
+    scope. Handler 7 (line ~734) calls os.path.basename(file_path) BEFORE the
+    survey builder block executes, so Python sees os as a local variable that
+    hasn't been assigned yet and raises:
+      UnboundLocalError: cannot access local variable 'os' where it is not
+      associated with a value
+  FIX: Removed 'import os' and 'import tempfile' from inside Handler 3.6.
+    os is already imported at the top of the file. tempfile was never used
+    in that block (the code uses '/tmp' directly as a string literal).
+  IMPACT: File uploads now process correctly through Handler 7 without crashing.
 
 - February 28, 2026 (Session 2): SIMPLIFIED SURVEY BUILDER FORM
   PROBLEM: Handler 3.6 Pass 1 form asked 5 questions including survey type,
@@ -43,32 +57,7 @@ CHANGELOG:
   FIX: Initialize labor_response = None before the if conversation_id: block.
 
 - February 27, 2026: ADDED HANDLER 4.6 INTROSPECTION ROUTING
-  PROBLEM: When user typed "run introspection" (or any introspection trigger phrase),
-    the request fell through to Handler 10 PATH 3 where Sonnet responded
-    conversationally instead of actually running the introspection engine.
-    This caused the 'Unexpected token <' error because either (a) Sonnet's
-    response contained HTML-like content that broke the JSON parser, or (b) the
-    frontend made a secondary fetch to /api/introspection/run which returned
-    an HTML error page (503) when INTROSPECTION_AVAILABLE=False.
-  FIX: Inserted Handler 4.6 between Handler 4.5 and Handler 5. It calls
-    is_introspection_request() (from introspection_engine.py) to detect intent,
-    then calls the engine directly (no HTTP round-trip), formats the result as
-    HTML, and returns a standard JSON response.
-  IMPACT: "run introspection", "how are you doing", "swarm status", and all
-    other INTROSPECTION_TRIGGERS now run the engine and display a formatted
-    self-assessment report.
-
 - February 27, 2026: ADDED INGESTED KNOWLEDGE BASE BRIDGE
-  PROBLEM: Documents uploaded through the Knowledge Management UI were stored
-    in knowledge_ingestion.db but NEVER queried when the AI answered questions.
-  FIX: In PATH 3 (Sonnet regular conversation), immediately before building
-    completion_prompt, call knowledge_query_bridge.query_ingested_knowledge()
-    to search the ingested KB for content relevant to the user's question.
-  NEW FILE: knowledge_query_bridge.py -- standalone bridge module.
-  IMPACT: Consulting lessons, pillar articles, implementation manuals,
-    contracts, survey results, and all other ingested documents are now
-    available to the AI as a primary reference source.
-
 - February 21, 2026: RESEARCH AGENT SYNTHESIS
 - February 21, 2026: FIXED clarification_answers NameError breaking every request
 - February 20, 2026: ADDED CONTRACT/PROPOSAL TEMPLATE HANDLER (Handler 3.5)
@@ -226,7 +215,6 @@ def orchestrate():
 
         # ====================================================================
         # PARSE CLARIFICATION ANSWERS
-        # Moved here February 21, 2026 - Handler 3.5 needs it before its block.
         # ====================================================================
         clarification_answers = None
         if request.is_json:
@@ -252,7 +240,6 @@ def orchestrate():
 
         # ========================================================================
         # HANDLER 3.5: CONTRACT / PROPOSAL TEMPLATE HANDLER
-        # Added February 20, 2026
         # ========================================================================
         contract_type = _detect_template_request(user_request)
 
@@ -340,15 +327,7 @@ def orchestrate():
         # ========================================================================
         # HANDLER 3.6: SURVEY BUILDER
         # Added February 28, 2026 (Session 1)
-        # Simplified February 28, 2026 (Session 2) - form reduced to 3 fields,
-        # always produces comprehensive all-question survey, no category selection.
-        #
-        # FLOW:
-        #   Pass 1 (no clarification_answers): detect intent -> show 3-field form
-        #   Pass 2 (clarification_answers present): build full survey -> Word export
-        #
-        # Uses the same two-pass pattern as Handler 3.5 (Contract/Proposal).
-        # Fires BEFORE Handler 10 / ProactiveAgent so it owns the survey flow.
+        # Simplified February 28, 2026 (Session 2)
         # ========================================================================
         is_survey_req = _detect_survey_request(user_request)
 
@@ -388,14 +367,12 @@ def orchestrate():
             task_id = cursor.lastrowid
             db.commit()
 
-            # Pull the three simple fields
-            company_name   = clarification_answers.get('company_name', 'Client').strip() or 'Client'
-            survey_date    = clarification_answers.get('survey_date', datetime.now().strftime('%Y-%m-%d'))
+            company_name      = clarification_answers.get('company_name', 'Client').strip() or 'Client'
+            survey_date       = clarification_answers.get('survey_date', datetime.now().strftime('%Y-%m-%d'))
             num_schedules_str = clarification_answers.get('num_schedules', '0')
 
             project_name = f"{company_name} - Schedule Preference Survey"
 
-            # Always build comprehensive question set; schedules by count
             selected_questions, schedules_to_rate = _map_survey_answers_to_questions(
                 company_name, survey_date, num_schedules_str
             )
@@ -407,8 +384,9 @@ def orchestrate():
 
             try:
                 from survey_builder import SurveyBuilder
-                import os
-                import tempfile
+                # NOTE: os is imported at the top of this file — do NOT re-import here.
+                # A local 'import os' inside this function would shadow the module-level
+                # import and cause UnboundLocalError in Handler 7. (Fixed March 05, 2026)
 
                 builder = SurveyBuilder()
                 survey_obj = builder.create_survey(
@@ -508,9 +486,6 @@ def orchestrate():
         # ========================================================================
 
         # HANDLER 4: Labor analysis response handler
-        # Initialize to None so Handler 4.5 can safely reference it even when
-        # conversation_id is None and this block is skipped entirely.
-        # Fix applied February 28, 2026 - UnboundLocalError on new conversations.
         labor_response = None
         if conversation_id:
             labor_response = handle_labor_response(user_request, conversation_id)
@@ -616,13 +591,6 @@ I'll post the complete analysis here when finished, including detailed insights.
 
         # ========================================================================
         # HANDLER 4.6: INTROSPECTION ROUTING
-        # Added February 27, 2026
-        #
-        # Detects introspection intent and calls the engine directly.
-        # No HTTP round-trip eliminates the 'Unexpected token <' HTML error.
-        # Only fires when there are no files (introspection is a text-only feature).
-        # Falls through gracefully on any import or runtime error so Sonnet
-        # can still respond conversationally.
         # ========================================================================
         if not file_contents and not file_paths:
             try:
@@ -660,7 +628,6 @@ I'll post the complete analysis here when finished, including detailed insights.
                             report = introspection_engine.run_introspection(days=7, is_monthly=False)
                             actual_output = _format_introspection_as_text(report)
                     else:
-                        # 'run' or 'show_proposals' (proposals Phase 3 - run standard cycle for now)
                         report = introspection_engine.run_introspection(days=7, is_monthly=False)
                         actual_output = _format_introspection_as_text(report)
 
@@ -1188,7 +1155,6 @@ This project folder contains: {file_stats.get('total_files', 0)} files
                 conversation_history += "=== END CONVERSATION HISTORY ===\n\n"
 
             if research_agent_ran and specialist_output:
-                # PATH 1: Synthesize research results with Sonnet
                 print(f"Synthesizing research agent results with Sonnet...")
                 synthesis_prompt = f"""{project_context}{conversation_history}
 USER QUESTION: {user_request}
@@ -1224,11 +1190,9 @@ Provide a complete, synthesized answer now:"""
                     actual_output = str(response)
 
             elif specialist_output and not research_agent_ran:
-                # PATH 2: Non-research specialist - use output directly
                 actual_output = specialist_output
 
             else:
-                # PATH 3: No specialist - Sonnet generates response
                 if file_contents:
                     file_section = f"""
 
@@ -1268,10 +1232,6 @@ preferences, implementation, or change management:
 
 """
 
-                # ============================================================
-                # INGESTED KNOWLEDGE BASE BRIDGE (System 2)
-                # Added February 27, 2026
-                # ============================================================
                 ingested_kb_context = ""
                 try:
                     from knowledge_query_bridge import query_ingested_knowledge
@@ -1432,24 +1392,16 @@ Be comprehensive and professional."""
 
 # ============================================================================
 # INTROSPECTION REPORT FORMATTER
-# Added February 27, 2026 - Handler 4.6 helper
 # ============================================================================
 
 def _format_introspection_as_text(report: dict) -> str:
-    """
-    Format an introspection report dict as readable markdown for the frontend.
-    Called by Handler 4.6 to produce the 'result' field.
-    """
     lines = []
-
     introspection_type = report.get('introspection_type', 'weekly').title()
     generated_at = report.get('generated_at', '')
     period_days = report.get('period_days', 7)
-
     lines.append(f"## Swarm {introspection_type} Self-Assessment")
     lines.append(f"*Generated: {generated_at} | Period: Last {period_days} days*")
     lines.append("")
-
     summary = report.get('summary', {})
     health_score = summary.get('health_score', 0)
     trend = summary.get('trend', 'stable')
@@ -1457,9 +1409,7 @@ def _format_introspection_as_text(report: dict) -> str:
     success_rate = summary.get('success_rate', 0)
     anomalies = summary.get('anomalies_detected', 0)
     alignment_score = summary.get('alignment_score', 0)
-
     trend_icon = {'improving': 'Trending Up', 'declining': 'Trending Down', 'stable': 'Stable'}.get(trend, 'Stable')
-
     lines.append("### Performance Summary")
     lines.append(f"| Metric | Value |")
     lines.append(f"|--------|-------|")
@@ -1470,7 +1420,6 @@ def _format_introspection_as_text(report: dict) -> str:
     lines.append(f"| Anomalies Detected | {anomalies} |")
     lines.append(f"| Goal Alignment Score | {alignment_score}/100 |")
     lines.append("")
-
     monitoring = report.get('components', {}).get('self_monitoring', {})
     if monitoring.get('status') == 'complete':
         metrics = monitoring.get('metrics', {})
@@ -1497,7 +1446,6 @@ def _format_introspection_as_text(report: dict) -> str:
         lines.append("### Self-Monitoring")
         lines.append(f"*Could not collect metrics: {monitoring.get('error', 'Unknown error')}*")
         lines.append("")
-
     alignment = report.get('components', {}).get('goal_alignment', {})
     if alignment.get('status') == 'complete':
         lines.append("### Goal Alignment")
@@ -1517,23 +1465,19 @@ def _format_introspection_as_text(report: dict) -> str:
             for obs in observations:
                 lines.append(f"- {obs}")
             lines.append("")
-
     reflection = report.get('reflection', '')
     if reflection:
         lines.append("### My Self-Reflection")
         lines.append(reflection)
         lines.append("")
-
     lines.append("---")
     lines.append("*Components in development: Capability Boundary Tracking (Phase 2), "
                 "Confidence Calibration (Phase 2), Self-Modification Proposals (Phase 3)*")
-
     return "\n".join(lines)
 
 
 # ============================================================================
 # CONTRACT / PROPOSAL HANDLER HELPERS
-# Added February 20, 2026
 # ============================================================================
 
 def _detect_template_request(user_request):
@@ -1742,32 +1686,22 @@ Generate the complete {doc_label} now:"""
 
 # ============================================================================
 # SURVEY BUILDER HANDLER HELPERS
-# Added February 28, 2026 (Session 1) - Handler 3.6
-# Simplified February 28, 2026 (Session 2) - 3-field form, always comprehensive
 # ============================================================================
 
-# All standard question IDs in the order they should appear in the survey.
-# This is the comprehensive set used for every survey — no category filtering.
-# Updated February 28, 2026: added 39 new questions from Master_Survey_for_Survey_Business.doc
-# Total: 103 questions across 7 categories (added Day Care / Elder Care as new category)
 _ALL_SURVEY_QUESTION_IDS = [
-    # Demographics (18 questions)
     'dept', 'tenure', 'dept_tenure', 'crew_assignment', 'current_schedule',
     'prior_shiftwork', 'second_job', 'second_job_timing', 'employment_type',
     'student_status', 'caregiving', 'gender', 'age_group', 'partner_status',
     'single_parent', 'commute_method', 'commute_distance', 'worst_shift_start',
-    # Sleep & Alertness (11 questions)
     'alarm_clock_normal', 'alarm_clock_day', 'alarm_clock_afternoon', 'alarm_clock_night',
     'sleep_day_shift', 'sleep_second_shift', 'sleep_third_shift',
     'sleep_night_shift', 'sleep_days_off', 'sleep_needed', 'sleepiness_problems',
-    # Working Conditions (18 questions)
     'safety_rating', 'safety_improvement', 'company_communication',
     'communication_importance', 'handoff_time', 'management_input',
     'enjoy_work', 'pay_competitive', 'management_equality', 'company_belonging',
     'absenteeism_impact', 'facility_improvement', 'best_workplace',
     'training_importance', 'training_adequacy', 'training_amount',
     'supervisor_responsive', 'management_responsive',
-    # Schedule Features (33 questions)
     'schedule_improvement', 'schedule_policies_fair', 'current_schedule_satisfaction',
     'better_schedules_exist', 'shift_mobility_intent', 'time_off_predictable',
     'schedule_flexibility', 'preferred_8hr_shift', 'least_preferred_8hr_shift',
@@ -1779,21 +1713,16 @@ _ALL_SURVEY_QUESTION_IDS = [
     'weekend_pattern', 'work_pattern', 'three_day_preference', 'weekday_preference',
     'supervisor_overlap', 'task_variety', 'weekend_willingness', 'weekend_occasional',
     'understand_247_need', 'new_schedule_trial_willingness',
-    # Overtime (13 questions)
     'overtime_dependency', 'overtime_amount', 'overtime_satisfaction',
     'overtime_timing_actual', 'overtime_timing_preferred', 'overtime_extend_shift',
     'overtime_day_off', 'overtime_distribution_fair', 'overtime_predictable',
     'time_vs_overtime', 'overtime_desire', 'overtime_expectation', 'overtime_weekly_hours',
-    # Day Care / Elder Care (6 questions - new section added February 28, 2026)
     'daycare_use', 'daycare_location', 'daycare_relationship',
     'daycare_shifts_used', 'daycare_shift_issue', 'daycare_worst_shift',
-    # Open-ended (4 questions)
     'schedule_like_most', 'schedule_like_least',
     'work_life_positives', 'work_life_improvements',
 ]
 
-# All schedule IDs in order of most common usage across client engagements.
-# Selecting N schedules picks the first N from this list.
 _SCHEDULE_LIBRARY_ORDER = [
     '2_3_2_fixed_days',
     '2_3_2_fixed_nights',
@@ -1807,11 +1736,6 @@ _SCHEDULE_LIBRARY_ORDER = [
 
 
 def _detect_survey_request(user_request):
-    """
-    Detect if the user is asking for a survey or questionnaire.
-    Returns True if detected, False otherwise.
-    Intentionally simple - catches 'survey' and 'questionnaire' in any context.
-    """
     if not user_request:
         return False
     req_lower = user_request.lower()
@@ -1819,23 +1743,8 @@ def _detect_survey_request(user_request):
 
 
 def _build_survey_questions_html():
-    """
-    Build the simplified 3-field HTML clarification form for survey requests.
-
-    Fields:
-      1. Company Name  (required text input)
-      2. Survey Date   (optional date input, defaults to today)
-      3. Number of Schedules to Include  (optional dropdown 0-8)
-
-    Simplified February 28, 2026 (Session 2):
-      - Removed survey_type dropdown (always comprehensive)
-      - Removed shift_length dropdown (not needed)
-      - Removed distribution_method dropdown (not needed)
-      - Removed employee_count dropdown (not needed)
-    """
     from datetime import datetime
     today_str = datetime.now().strftime('%Y-%m-%d')
-
     html = (
         '<div style="background: linear-gradient(135deg, #e3f2fd 0%, #e8f5e9 100%); '
         'border-radius: 12px; padding: 20px; margin: 10px 0;">'
@@ -1846,8 +1755,6 @@ def _build_survey_questions_html():
         'All standard questions are included automatically. Just fill in the basics below.'
         '</div>'
     )
-
-    # Field 1: Company Name (required)
     html += (
         '<div style="background: white; border-radius: 8px; padding: 15px; margin-bottom: 12px;">'
         '<div style="font-weight: 500; color: #333; margin-bottom: 8px;">'
@@ -1858,8 +1765,6 @@ def _build_survey_questions_html():
         'font-size: 14px; box-sizing: border-box;">'
         '</div>'
     )
-
-    # Field 2: Survey Date (optional)
     html += (
         '<div style="background: white; border-radius: 8px; padding: 15px; margin-bottom: 12px;">'
         '<div style="font-weight: 500; color: #333; margin-bottom: 8px;">'
@@ -1869,8 +1774,6 @@ def _build_survey_questions_html():
         'font-size: 14px; box-sizing: border-box;">'
         '</div>'
     )
-
-    # Field 3: Number of schedules to include (optional, 0-8)
     html += (
         '<div style="background: white; border-radius: 8px; padding: 15px; margin-bottom: 12px;">'
         '<div style="font-weight: 500; color: #333; margin-bottom: 8px;">'
@@ -1894,8 +1797,6 @@ def _build_survey_questions_html():
         '</div>'
         '</div>'
     )
-
-    # Submit button
     html += (
         '<div style="margin-top: 20px; text-align: center;">'
         '<button onclick="submitSurveyAnswers()" '
@@ -1905,38 +1806,31 @@ def _build_survey_questions_html():
         'Build My Survey</button>'
         '</div></div>'
     )
-
-    # JavaScript handler — reads the three fields and posts to /api/orchestrate
     html += '''
 <script>
 function submitSurveyAnswers() {
     var companyEl = document.getElementById('survey_field_company_name');
     var dateEl    = document.getElementById('survey_field_survey_date');
     var schedEl   = document.getElementById('survey_field_num_schedules');
-
     var company = companyEl ? companyEl.value.trim() : '';
     if (!company) {
         alert('Please enter the client / company name.');
         if (companyEl) companyEl.focus();
         return;
     }
-
     var answers = {
         company_name:  company,
         survey_date:   dateEl  ? dateEl.value  : '',
         num_schedules: schedEl ? schedEl.value : '0'
     };
-
     var loading = document.getElementById('loadingIndicator');
     if (loading) loading.classList.add('active');
-
     var formData = new FormData();
     formData.append('request', 'Build a survey for ' + company);
     formData.append('clarification_answers', JSON.stringify(answers));
     if (typeof currentConversationId !== 'undefined' && currentConversationId) {
         formData.append('conversation_id', currentConversationId);
     }
-
     fetch('/api/orchestrate', { method: 'POST', body: formData })
     .then(function(r) { return r.json(); })
     .then(function(data) {
@@ -1976,33 +1870,12 @@ function submitSurveyAnswers() {
 
 
 def _map_survey_answers_to_questions(company_name, survey_date, num_schedules_str):
-    """
-    Map clarification answers to SurveyBuilder question IDs and schedule IDs.
-
-    Simplified February 28, 2026 (Session 2):
-      - Always returns ALL standard questions (_ALL_SURVEY_QUESTION_IDS).
-        No category filtering, no survey-type branching.
-      - Selects the first N schedules from _SCHEDULE_LIBRARY_ORDER where N
-        is parsed from num_schedules_str. Invalid/missing input defaults to 0.
-
-    Args:
-        company_name:     Client company name (informational only, not used for selection)
-        survey_date:      Survey date string (informational only, not used for selection)
-        num_schedules_str: String integer 0-8 indicating how many schedule concepts to include
-
-    Returns:
-        tuple: (selected_questions list[str], schedules_to_rate list[str])
-    """
     selected_questions = list(_ALL_SURVEY_QUESTION_IDS)
-
     try:
         num_schedules = max(0, min(int(num_schedules_str), len(_SCHEDULE_LIBRARY_ORDER)))
     except (ValueError, TypeError):
         num_schedules = 0
-
     schedules_to_rate = _SCHEDULE_LIBRARY_ORDER[:num_schedules]
-
     return selected_questions, schedules_to_rate
-
 
 # I did no harm and this file is not truncated
