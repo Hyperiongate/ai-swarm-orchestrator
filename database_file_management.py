@@ -1,1062 +1,488 @@
-"""
-Database File Management - UNIFIED PRODUCTION VERSION
-Created: January 28, 2026
-Last Updated: March 04, 2026 - POSTGRESQL BOOLEAN + ID CAST FIX
-
-CHANGELOG:
-- March 04, 2026: POSTGRESQL BOOLEAN + ID CAST FIX
-  * Fixed is_deleted = 0 → is_deleted = FALSE (3 locations: get_file, list_files)
-  * Fixed is_deleted = 1 → is_deleted = TRUE (1 location: delete_file)
-  * Fixed is_analyzed = 1 → is_analyzed = TRUE (1 location: mark_file_as_analyzed)
-  * Fixed OR id = %s with str(project_id) → isdigit() guard in:
-      get_project(), update_project(), update_checklist()
-    Now only compares INTEGER id column when input is numeric.
-  * These fixes resolve:
-      - "column is_deleted does not exist" on project file listing
-      - "invalid input syntax for type integer" on project lookups
-
-- March 03, 2026: SCHEMA FIX Phase 8
-  * Fixed facility_type -> facility_size in create/get/update project
-  * Fixed id::text = %s -> id = %s (id column is TEXT)
-
-- March 02, 2026: POSTGRESQL MIGRATION (Phase 1)
-  * Replaced all sqlite3.connect with get_db_connection()
-  * All SQL parameters changed from ? to %s
-
-- February 5, 2026: FIXED FILE SELECTION EXCEL EXTRACTION
-- February 1, 2026: CRITICAL FIX - add_file() handles Flask FileStorage objects
-- February 1, 2026: CRITICAL FIX - Proper persistent storage instead of /tmp
-- January 31, 2026: Added file_ids parameter to get_files_for_ai_context()
-- January 30, 2026: COMPLETE REBUILD - Merged Sprint 2 features + bulletproof persistence
-
-AUTHOR: Jim @ Shiftwork Solutions LLC (managed by Claude)
-"""
-
-import json
-import re
-import os
-import shutil
-import hashlib
-from datetime import datetime, timedelta
-from config import STORAGE_PATH
-from db_engine import get_db_connection
-
-
-class ProjectManager:
-    PROJECT_KEYWORDS = [
-        'new client', 'new facility', 'new customer', 'new project',
-        'kick off', 'kickoff', 'starting work with', 'beginning work',
-        'new engagement', 'new implementation', 'project start'
-    ]
-
-    def __init__(self, storage_root=None):
-        print("=" * 80)
-        print("🔧 INITIALIZING PROJECT MANAGER - STORAGE DIAGNOSTICS")
-        print("=" * 80)
-
-        if storage_root is None:
-            env_storage = os.environ.get('STORAGE_ROOT')
-            if env_storage:
-                storage_root = env_storage
-                print(f"   ✅ Using STORAGE_ROOT from environment: {storage_root}")
-            else:
-                storage_root = STORAGE_PATH
-                print(f"   ✅ Using STORAGE_PATH from config: {storage_root}")
-        else:
-            print(f"   ✅ Using provided storage_root: {storage_root}")
-
-        self.storage_root = storage_root
-        print(f"\n✅ FINAL STORAGE LOCATION: {storage_root}")
-        print("=" * 80)
-
-        try:
-            os.makedirs(storage_root, exist_ok=True)
-            test_file = os.path.join(storage_root, '.write_test')
-            with open(test_file, 'w') as f:
-                f.write('test')
-            os.remove(test_file)
-            print(f"✅ Storage directory exists and is writable: {storage_root}")
-        except PermissionError as e:
-            print(f"❌ ERROR: Cannot write to storage directory: {storage_root}")
-            print(f"   Permission denied: {e}")
-            raise
-        except Exception as e:
-            print(f"❌ ERROR: Failed to initialize storage: {e}")
-            raise
-
-        print("=" * 80)
-
-    def _get_db(self):
-        return get_db_connection()
-
-    def _generate_id(self, prefix=''):
-        timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-        random_hash = hashlib.md5(os.urandom(16)).hexdigest()[:8]
-        return f"{prefix}{timestamp}_{random_hash}"
-
-    # ========================================================================
-    # PROJECT DETECTION
-    # ========================================================================
-
-    def detect_new_project(self, user_request):
-        request_lower = user_request.lower()
-        detected = any(keyword in request_lower for keyword in self.PROJECT_KEYWORDS)
-        if not detected:
-            return {'detected': False}
-        client_name = self._extract_client_name(user_request)
-        industry = self._extract_industry(user_request)
-        return {
-            'detected': True,
-            'client_name': client_name,
-            'industry': industry,
-            'confidence': 0.9 if client_name else 0.7
-        }
-
-    def _extract_client_name(self, text):
-        patterns = [
-            r'(?:new client|new facility|new customer|kickoff)\s+(?:for\s+)?([A-Z][A-Za-z\s&]+?)(?:\s+in|\s+at|\s+facility|$|\.)',
-            r'(?:starting work with|beginning work|engagement with)\s+([A-Z][A-Za-z\s&]+?)(?:\s+in|\s+at|$|\.)',
-            r'([A-Z][A-Za-z\s&]{2,})\s+(?:project|facility|plant|site)'
-        ]
-        for pattern in patterns:
-            match = re.search(pattern, text)
-            if match:
-                name = match.group(1).strip()
-                name = re.sub(r'\s+(is|has|will|wants|needs)$', '', name)
-                if len(name) > 2:
-                    return name
-        return None
-
-    def _extract_industry(self, text):
-        industries = {
-            'manufacturing': ['manufacturing', 'factory', 'plant', 'production'],
-            'pharmaceutical': ['pharmaceutical', 'pharma', 'drug', 'biotech'],
-            'food processing': ['food', 'processing', 'beverage', 'bottling'],
-            'distribution': ['distribution', 'warehouse', 'logistics', 'fulfillment'],
-            'mining': ['mining', 'quarry', 'extraction'],
-            'chemical': ['chemical', 'refinery', 'petrochemical'],
-            'automotive': ['automotive', 'auto', 'assembly']
-        }
-        text_lower = text.lower()
-        for industry, keywords in industries.items():
-            if any(keyword in text_lower for keyword in keywords):
-                return industry.title()
-        return None
-
-    # ========================================================================
-    # PROJECT CREATION
-    # ========================================================================
-
-    def create_project(self, client_name, industry=None, facility_type=None,
-                       additional_context=None, metadata=None):
-        """
-        Create complete project structure.
-        Parameter facility_type kept for API backward compatibility with callers.
-        Stored in facility_size column (authoritative schema Mar 2026).
-        """
-        project_id = self._generate_id('PRJ_')
-        storage_path = os.path.join(self.storage_root, project_id)
-        os.makedirs(storage_path, exist_ok=True)
-
-        checklist = self._generate_checklist()
-        milestones = self._generate_milestones()
-        folders = self._generate_folder_structure(client_name)
-
-        if metadata is None:
-            metadata = {}
-        metadata['templates'] = self._list_available_templates()
-        metadata['next_steps'] = self._suggest_next_steps()
-
-        db = self._get_db()
-        try:
-            db.execute('''
-                INSERT INTO projects (
-                    project_id, client_name, industry, facility_size,
-                    status, project_phase, storage_path,
-                    checklist_data, milestone_data, folder_data, metadata
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ''', (
-                project_id, client_name, industry, facility_type,
-                'active', 'discovery', storage_path,
-                json.dumps(checklist), json.dumps(milestones),
-                json.dumps(folders), json.dumps(metadata)
-            ))
-            db.commit()
-        finally:
-            db.close()
-
-        print(f"✅ Created project {project_id} for {client_name}")
-
-        return {
-            'project_id': project_id,
-            'id': project_id,
-            'client_name': client_name,
-            'industry': industry,
-            'facility_size': facility_type,
-            'storage_path': storage_path,
-            'status': 'active',
-            'project_phase': 'discovery',
-            'checklist': checklist,
-            'milestones': milestones,
-            'folders': folders,
-            'templates': metadata['templates'],
-            'next_steps': metadata['next_steps']
-        }
-
-    def _generate_checklist(self):
-        return [
-            {
-                'phase': 'Discovery',
-                'status': 'not_started',
-                'items': [
-                    {'task': 'Schedule kickoff meeting', 'complete': False},
-                    {'task': 'Collect organizational charts', 'complete': False},
-                    {'task': 'Gather payroll data', 'complete': False},
-                    {'task': 'Analyze current schedules', 'complete': False},
-                    {'task': 'Conduct stakeholder interviews', 'complete': False}
-                ]
-            },
-            {
-                'phase': 'Assessment',
-                'status': 'not_started',
-                'items': [
-                    {'task': 'Deploy employee survey', 'complete': False},
-                    {'task': 'Calculate labor costs', 'complete': False},
-                    {'task': 'Analyze overtime patterns', 'complete': False},
-                    {'task': 'Identify regulatory constraints', 'complete': False},
-                    {'task': 'Document current pain points', 'complete': False}
-                ]
-            },
-            {
-                'phase': 'Design',
-                'status': 'not_started',
-                'items': [
-                    {'task': 'Create schedule options', 'complete': False},
-                    {'task': 'Model cost comparisons', 'complete': False},
-                    {'task': 'Develop implementation plan', 'complete': False},
-                    {'task': 'Prepare employee communications', 'complete': False},
-                    {'task': 'Create training materials', 'complete': False}
-                ]
-            },
-            {
-                'phase': 'Implementation',
-                'status': 'not_started',
-                'items': [
-                    {'task': 'Present to leadership', 'complete': False},
-                    {'task': 'Conduct employee info sessions', 'complete': False},
-                    {'task': 'Execute rollout plan', 'complete': False},
-                    {'task': 'Monitor first 30 days', 'complete': False},
-                    {'task': 'Collect feedback and adjust', 'complete': False}
-                ]
-            }
-        ]
-
-    def _generate_milestones(self):
-        today = datetime.now()
-        return [
-            {'name': 'Kickoff Meeting', 'target_date': (today + timedelta(days=3)).isoformat(), 'status': 'pending'},
-            {'name': 'Data Collection Complete', 'target_date': (today + timedelta(days=14)).isoformat(), 'status': 'pending'},
-            {'name': 'Survey Deployment', 'target_date': (today + timedelta(days=21)).isoformat(), 'status': 'pending'},
-            {'name': 'Schedule Design Complete', 'target_date': (today + timedelta(days=35)).isoformat(), 'status': 'pending'},
-            {'name': 'Leadership Presentation', 'target_date': (today + timedelta(days=42)).isoformat(), 'status': 'pending'},
-            {'name': 'Go-Live', 'target_date': (today + timedelta(days=56)).isoformat(), 'status': 'pending'}
-        ]
-
-    def _generate_folder_structure(self, client_name):
-        safe_name = re.sub(r'[^a-zA-Z0-9\s]', '', client_name).replace(' ', '_')
-        return {
-            'root': f'/projects/{safe_name}',
-            'folders': [
-                'Data_Collection', 'Survey_Results', 'Schedule_Designs',
-                'Cost_Analysis', 'Communications', 'Presentations',
-                'Contracts', 'Implementation_Materials'
-            ]
-        }
-
-    def _list_available_templates(self):
-        return [
-            {'name': 'Implementation Manual', 'file': 'Implementation_Manual.docx'},
-            {'name': 'Employee Survey', 'file': 'Schedule_Survey.docx'},
-            {'name': 'Executive Summary', 'file': 'Example_Client_facing_executive_summary.docx'},
-            {'name': 'Contract Template', 'file': 'Contract_without_name.docx'},
-            {'name': 'Project Kickoff Bulletin', 'file': 'Project_kickoff_bulletin.docx'}
-        ]
-
-    def _suggest_next_steps(self):
-        return [
-            'Schedule kickoff meeting with client stakeholders',
-            'Request organizational charts and payroll data',
-            'Prepare data collection checklist',
-            'Draft project scope document',
-            'Set up project tracking dashboard'
-        ]
-
-    # ========================================================================
-    # PROJECT RETRIEVAL & MANAGEMENT
-    # ========================================================================
-
-    def get_project(self, project_id):
-        """Retrieve project from database."""
-        db = self._get_db()
-        try:
-            # Only compare INTEGER id when input is numeric
-            if str(project_id).isdigit():
-                project = db.execute(
-                    'SELECT * FROM projects WHERE project_id = %s OR id = %s',
-                    (project_id, int(project_id))
-                ).fetchone()
-            else:
-                project = db.execute(
-                    'SELECT * FROM projects WHERE project_id = %s',
-                    (project_id,)
-                ).fetchone()
-
-            if not project:
-                return None
-
-            project_data = {
-                'id': project['id'],
-                'project_id': project['project_id'] or str(project['id']),
-                'client_name': project['client_name'],
-                'industry': project['industry'],
-                'facility_size': project['facility_size'],
-                'status': project['status'],
-                'project_phase': project['project_phase'],
-                'storage_path': project['storage_path'],
-                'created_at': project['created_at'],
-                'updated_at': project['updated_at']
-            }
-
-            for field, key in [('checklist_data', 'checklist'), ('milestone_data', 'milestones'), ('folder_data', 'folders')]:
-                if project[field]:
-                    try:
-                        project_data[key] = json.loads(project[field])
-                    except Exception:
-                        project_data[key] = [] if key != 'folders' else {}
-
-            if project['metadata']:
-                try:
-                    meta = json.loads(project['metadata'])
-                    project_data.update(meta)
-                except Exception:
-                    pass
-
-            return project_data
-        finally:
-            db.close()
-
-    def list_projects(self, status='active', limit=50):
-        """List all projects."""
-        db = self._get_db()
-        try:
-            if status == 'all':
-                rows = db.execute(
-                    'SELECT * FROM projects ORDER BY updated_at DESC LIMIT %s',
-                    (limit,)
-                ).fetchall()
-            else:
-                rows = db.execute(
-                    'SELECT * FROM projects WHERE status = %s ORDER BY updated_at DESC LIMIT %s',
-                    (status, limit)
-                ).fetchall()
-            return [self._row_to_project(row) for row in rows]
-        finally:
-            db.close()
-
-    def _row_to_project(self, row):
-        """Convert database row to project dict."""
-        return {
-            'id': row['id'],
-            'project_id': row['project_id'] or str(row['id']),
-            'client_name': row['client_name'],
-            'industry': row['industry'],
-            'status': row['status'],
-            'project_phase': row['project_phase'],
-            'created_at': row['created_at'],
-            'updated_at': row['updated_at']
-        }
-
-    def update_project(self, project_id, **kwargs):
-        """Update project fields."""
-        allowed_fields = ['client_name', 'industry', 'facility_size', 'project_phase', 'status']
-        updates = []
-        values = []
-
-        for field in allowed_fields:
-            if field in kwargs:
-                updates.append(f'{field} = %s')
-                values.append(kwargs[field])
-
-        # Accept legacy facility_type key from callers
-        if 'facility_type' in kwargs and 'facility_size' not in kwargs:
-            updates.append('facility_size = %s')
-            values.append(kwargs['facility_type'])
-
-        if 'metadata' in kwargs:
-            updates.append('metadata = %s')
-            values.append(json.dumps(kwargs['metadata']))
-
-        updates.append('updated_at = CURRENT_TIMESTAMP')
-
-        # Only compare INTEGER id when input is numeric
-        if str(project_id).isdigit():
-            values.extend([project_id, int(project_id)])
-            where_clause = 'WHERE project_id = %s OR id = %s'
-        else:
-            values.append(project_id)
-            where_clause = 'WHERE project_id = %s'
-
-        db = self._get_db()
-        try:
-            db.execute(
-                f"UPDATE projects SET {', '.join(updates)} {where_clause}",
-                values
-            )
-            db.commit()
-            return True
-        finally:
-            db.close()
-
-    def update_checklist(self, project_id, phase_index, item_index, complete=True):
-        """Mark checklist item as complete."""
-        project = self.get_project(project_id)
-        if not project or 'checklist' not in project:
-            return False
-
-        project['checklist'][phase_index]['items'][item_index]['complete'] = complete
-
-        db = self._get_db()
-        try:
-            # Only compare INTEGER id when input is numeric
-            if str(project_id).isdigit():
-                db.execute(
-                    'UPDATE projects SET checklist_data = %s, updated_at = CURRENT_TIMESTAMP WHERE project_id = %s OR id = %s',
-                    (json.dumps(project['checklist']), project_id, int(project_id))
-                )
-            else:
-                db.execute(
-                    'UPDATE projects SET checklist_data = %s, updated_at = CURRENT_TIMESTAMP WHERE project_id = %s',
-                    (json.dumps(project['checklist']), project_id)
-                )
-            db.commit()
-            return True
-        finally:
-            db.close()
-
-    def search_projects(self, search_term, search_in='client_name'):
-        """Search for projects."""
-        db = self._get_db()
-        try:
-            rows = db.execute(
-                f"SELECT * FROM projects WHERE {search_in} ILIKE %s AND status = 'active' ORDER BY updated_at DESC",
-                (f'%{search_term}%',)
-            ).fetchall()
-            return [self._row_to_project(row) for row in rows]
-        finally:
-            db.close()
-
-    # ========================================================================
-    # FILE MANAGEMENT
-    # ========================================================================
-
-    def add_file(self, project_id, file_path, original_filename=None,
-                 file_type=None, metadata=None):
-        """
-        Add a file to a project.
-        Accepts both file path strings and Flask FileStorage objects.
-        Files stored at STORAGE_PATH on persistent disk.
-        """
-        project = self.get_project(project_id)
-        if not project:
-            raise ValueError(f"Project {project_id} not found")
-
-        if not project.get('storage_path'):
-            storage_path = os.path.join(self.storage_root, project_id)
-            os.makedirs(storage_path, exist_ok=True)
-            self.update_project(project_id, metadata={'storage_path': storage_path})
-            project['storage_path'] = storage_path
-
-        is_file_storage = hasattr(file_path, 'save') and hasattr(file_path, 'filename')
-        print(f"📥 add_file called: is_file_storage={is_file_storage}")
-
-        file_id = self._generate_id('FILE_')
-
-        if is_file_storage:
-            if not original_filename:
-                original_filename = file_path.filename
-            file_ext = os.path.splitext(original_filename)[1]
-            stored_filename = f"{file_id}{file_ext}"
-            storage_path = os.path.join(project['storage_path'], stored_filename)
-            print(f"📁 Saving FileStorage to: {storage_path}")
-            file_path.save(storage_path)
-            file_size = os.path.getsize(storage_path)
-            print(f"✅ FileStorage saved: {file_size} bytes")
-        else:
-            if not os.path.exists(file_path):
-                raise FileNotFoundError(f"File not found: {file_path}")
-            if not original_filename:
-                original_filename = os.path.basename(file_path)
-            file_ext = os.path.splitext(original_filename)[1]
-            stored_filename = f"{file_id}{file_ext}"
-            storage_path = os.path.join(project['storage_path'], stored_filename)
-            print(f"📁 Copying file to: {storage_path}")
-            shutil.copy2(file_path, storage_path)
-            file_size = os.path.getsize(storage_path)
-            print(f"✅ File copied: {file_size} bytes")
-
-        import mimetypes
-        mime_type, _ = mimetypes.guess_type(original_filename)
-
-        actual_project_id = project['project_id']
-
-        db = self._get_db()
-        try:
-            db.execute('''
-                INSERT INTO project_files
-                (project_id, file_id, filename, original_filename, file_path, file_size,
-                 file_type, mime_type, metadata)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ''', (actual_project_id, file_id, stored_filename, original_filename,
-                  storage_path, file_size, file_type, mime_type,
-                  json.dumps(metadata) if metadata else None))
-            db.commit()
-        finally:
-            db.close()
-
-        self.update_project(project_id)
-        print(f"✅ Added file {original_filename} to project {project_id}")
-
-        return {
-            'file_id': file_id,
-            'filename': stored_filename,
-            'original_filename': original_filename,
-            'file_path': storage_path,
-            'file_size': file_size,
-            'file_type': file_type,
-            'mime_type': mime_type
-        }
-
-    def get_file(self, file_id):
-        """Get file information by file_id OR filename."""
-        db = self._get_db()
-        try:
-            row = db.execute('''
-                SELECT * FROM project_files
-                WHERE (file_id = %s OR filename = %s)
-                AND is_deleted = FALSE
-            ''', (file_id, file_id)).fetchone()
-
-            if not row:
-                return None
-
-            file_info = dict(row)
-            if file_info.get('metadata'):
-                try:
-                    file_info['metadata'] = json.loads(file_info['metadata'])
-                except Exception:
-                    pass
-            return file_info
-        finally:
-            db.close()
-
-    def list_files(self, project_id, include_deleted=False):
-        """List all files in a project."""
-        db = self._get_db()
-        try:
-            if include_deleted:
-                rows = db.execute(
-                    'SELECT * FROM project_files WHERE project_id = %s ORDER BY uploaded_at DESC',
-                    (project_id,)
-                ).fetchall()
-            else:
-                rows = db.execute(
-                    'SELECT * FROM project_files WHERE project_id = %s AND is_deleted = FALSE ORDER BY uploaded_at DESC',
-                    (project_id,)
-                ).fetchall()
-
-            files = []
-            for row in rows:
-                file_info = dict(row)
-                if file_info.get('metadata'):
-                    try:
-                        file_info['metadata'] = json.loads(file_info['metadata'])
-                    except Exception:
-                        pass
-                files.append(file_info)
-            return files
-        finally:
-            db.close()
-
-    def get_file_content(self, file_id):
-        """Get actual file content."""
-        file_info = self.get_file(file_id)
-        if not file_info:
-            raise FileNotFoundError(f"File {file_id} not found")
-        if not os.path.exists(file_info['file_path']):
-            raise FileNotFoundError(f"File storage missing: {file_info['file_path']}")
-        with open(file_info['file_path'], 'rb') as f:
-            return f.read()
-
-    def delete_file(self, file_id, hard_delete=False):
-        """Delete a file."""
-        file_info = self.get_file(file_id)
-        if not file_info:
-            return False
-
-        db = self._get_db()
-        try:
-            if hard_delete:
-                try:
-                    if os.path.exists(file_info['file_path']):
-                        os.remove(file_info['file_path'])
-                except Exception as e:
-                    print(f"⚠️ Could not delete physical file: {e}")
-                db.execute('DELETE FROM project_files WHERE file_id = %s', (file_id,))
-            else:
-                db.execute(
-                    'UPDATE project_files SET is_deleted = TRUE WHERE file_id = %s',
-                    (file_id,)
-                )
-            db.commit()
-        finally:
-            db.close()
-
-        self.update_project(file_info['project_id'])
-        return True
-
-    # ========================================================================
-    # CONVERSATION MANAGEMENT
-    # ========================================================================
-
-    def add_message(self, project_id, conversation_id, role, content,
-                    file_ids=None, metadata=None):
-        """Add a message to project conversation."""
-        db = self._get_db()
-        try:
-            db.execute('''
-                INSERT INTO project_conversations
-                (project_id, conversation_id, role, content, file_ids, metadata)
-                VALUES (%s, %s, %s, %s, %s, %s)
-            ''', (project_id, conversation_id, role, content,
-                  json.dumps(file_ids) if file_ids else None,
-                  json.dumps(metadata) if metadata else None))
-            db.commit()
-        finally:
-            db.close()
-        self.update_project(project_id)
-
-    def get_conversation_history(self, project_id, conversation_id=None, limit=100):
-        """Get conversation history."""
-        db = self._get_db()
-        try:
-            if conversation_id:
-                rows = db.execute('''
-                    SELECT * FROM project_conversations
-                    WHERE project_id = %s AND conversation_id = %s
-                    ORDER BY created_at ASC LIMIT %s
-                ''', (project_id, conversation_id, limit)).fetchall()
-            else:
-                rows = db.execute('''
-                    SELECT * FROM project_conversations
-                    WHERE project_id = %s
-                    ORDER BY created_at DESC LIMIT %s
-                ''', (project_id, limit)).fetchall()
-
-            messages = []
-            for row in rows:
-                message = dict(row)
-                for field in ['file_ids', 'metadata']:
-                    if message.get(field):
-                        try:
-                            message[field] = json.loads(message[field])
-                        except Exception:
-                            pass
-                messages.append(message)
-            return messages
-        finally:
-            db.close()
-
-    # ========================================================================
-    # CONTEXT MANAGEMENT
-    # ========================================================================
-
-    def set_context(self, project_id, key, value):
-        """Set context value."""
-        db = self._get_db()
-        value_json = json.dumps(value) if not isinstance(value, str) else value
-        try:
-            from db_engine import get_db_type
-            if get_db_type() == 'postgresql':
-                db.execute('''
-                    INSERT INTO project_context (project_id, context_key, context_value, updated_at)
-                    VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
-                    ON CONFLICT (project_id, context_key) DO UPDATE
-                    SET context_value = EXCLUDED.context_value,
-                        updated_at = CURRENT_TIMESTAMP
-                ''', (project_id, key, value_json))
-            else:
-                db.execute('''
-                    INSERT OR REPLACE INTO project_context
-                    (project_id, context_key, context_value, updated_at)
-                    VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
-                ''', (project_id, key, value_json))
-            db.commit()
-        finally:
-            db.close()
-
-    def get_context(self, project_id, key):
-        """Get context value."""
-        db = self._get_db()
-        try:
-            row = db.execute('''
-                SELECT context_value FROM project_context
-                WHERE project_id = %s AND context_key = %s
-            ''', (project_id, key)).fetchone()
-
-            if not row:
-                return None
-            try:
-                return json.loads(row['context_value'])
-            except Exception:
-                return row['context_value']
-        finally:
-            db.close()
-
-    def get_all_context(self, project_id):
-        """Get all context."""
-        db = self._get_db()
-        try:
-            rows = db.execute(
-                'SELECT context_key, context_value FROM project_context WHERE project_id = %s',
-                (project_id,)
-            ).fetchall()
-
-            context = {}
-            for row in rows:
-                try:
-                    context[row['context_key']] = json.loads(row['context_value'])
-                except Exception:
-                    context[row['context_key']] = row['context_value']
-            return context
-        finally:
-            db.close()
-
-    # ========================================================================
-    # SUMMARY & UTILITIES
-    # ========================================================================
-
-    def get_project_summary(self, project_id):
-        """Get complete project summary."""
-        project = self.get_project(project_id)
-        if not project:
-            return None
-
-        files = self.list_files(project_id)
-        messages = self.get_conversation_history(project_id, limit=1000)
-        context = self.get_all_context(project_id)
-
-        return {
-            'project': project,
-            'file_count': len(files),
-            'files': files,
-            'message_count': len(messages),
-            'latest_messages': messages[-10:] if messages else [],
-            'context': context
-        }
-
-
-# ============================================================================
-# SINGLETON & BACKWARD COMPATIBLE FUNCTIONS
-# ============================================================================
-
-_project_manager = None
-
-
-def get_project_manager(storage_root=None, force_reload=False):
-    global _project_manager
-
-    if force_reload:
-        print("🔄 Force reloading ProjectManager singleton...")
-        _project_manager = None
-
-    if _project_manager is None:
-        _project_manager = ProjectManager(storage_root)
-
-    return _project_manager
-
-
-def add_project_files_table():
-    print("✅ Tables managed via migrations/001_initial_schema.py")
-
-
-def save_project_file(project_id, filename, original_filename, file_type, file_path, **kwargs):
-    pm = get_project_manager()
-    return pm.add_file(project_id, file_path, original_filename, file_type)
-
-
-def get_project_files(project_id, include_deleted=False, file_type=None):
-    pm = get_project_manager()
-    return pm.list_files(project_id, include_deleted)
-
-
-def get_project_file_by_id(file_id):
-    pm = get_project_manager()
-    return pm.get_file(file_id)
-
-
-def delete_project_file(file_id, hard_delete=False):
-    pm = get_project_manager()
-    return pm.delete_file(file_id, hard_delete)
-
-
-def get_all_projects_with_files():
-    pm = get_project_manager()
-    projects = pm.list_projects(status='active', limit=1000)
-
-    result = []
-    for proj in projects:
-        files = pm.list_files(proj['project_id'])
-        result.append({
-            'project_id': proj['project_id'],
-            'client_name': proj['client_name'],
-            'industry': proj.get('industry'),
-            'project_phase': proj.get('project_phase'),
-            'file_count': len(files)
-        })
-    return result
-
-
-def get_project_file_by_name(project_id, filename):
-    pm = get_project_manager()
-    files = pm.list_files(project_id)
-
-    for file in files:
-        if file['filename'] == filename or file['original_filename'] == filename:
-            return file
-    for file in files:
-        if filename in file['filename'] or filename in file['original_filename']:
-            return file
-    return None
-
-
-def get_file_stats_by_project(project_id):
-    pm = get_project_manager()
-    files = pm.list_files(project_id)
-
-    stats = {
-        'total_files': len(files),
-        'by_type': {},
-        'total_size_bytes': 0,
-        'uploaded_files': 0,
-        'generated_files': 0
-    }
-
-    for file in files:
-        file_type = file.get('file_type', 'unknown')
-        stats['by_type'][file_type] = stats['by_type'].get(file_type, 0) + 1
-        stats['total_size_bytes'] += file.get('file_size', 0)
-        if file.get('is_generated'):
-            stats['generated_files'] += 1
-        else:
-            stats['uploaded_files'] += 1
-
-    return stats
-
-
-def get_files_for_ai_context(project_id, max_files=5, max_chars_per_file=50000, file_ids=None):
-    """
-    Extract file content for AI context.
-    Uses file_content_reader for consistent extraction quality.
-    Files retrieved from STORAGE_PATH on persistent disk.
-    """
-    try:
-        from file_content_reader import extract_file_content
-        HAS_FILE_READER = True
-    except ImportError:
-        print("⚠️  file_content_reader not available - using pandas fallback")
-        HAS_FILE_READER = False
-        extract_file_content = None
-
-    pm = get_project_manager()
-
-    if file_ids:
-        files = []
-        for file_id in file_ids:
-            print(f"🔍 Looking for file_id: {file_id}")
-            file_info = pm.get_file(file_id)
-            if file_info:
-                files.append(file_info)
-                print(f"✅ Found file: {file_info.get('original_filename')} at {file_info.get('file_path')}")
-            else:
-                print(f"❌ File not found for file_id: {file_id}")
-        print(f"✅ Retrieved {len(files)} specific file(s) by ID")
-    else:
-        files = pm.list_files(project_id)[:max_files]
-
-    if not files:
-        print(f"⚠️ No file context retrieved for file_ids: {file_ids}")
-        return ""
-
-    context = "\n\n=== PROJECT FILES CONTEXT ===\n"
-    context += f"This project has {len(files)} file(s) available:\n\n"
-
-    for file in files:
-        print(f"\n📁 Processing file: {file['original_filename']}")
-        context += f"📄 {file['original_filename']} ({file.get('file_type', 'unknown')})\n"
-
-        if file.get('description'):
-            context += f"   Description: {file['description']}\n"
-        if file.get('analysis_summary'):
-            context += f"   Summary: {file['analysis_summary']}\n"
-
-        try:
-            file_path = file['file_path']
-            print(f"   📍 File path: {file_path}")
-            print(f"   📏 File exists: {os.path.exists(file_path)}")
-
-            if os.path.exists(file_path):
-                if HAS_FILE_READER and extract_file_content:
-                    extraction_result = extract_file_content(file_path)
-                else:
-                    file_ext = os.path.splitext(file_path)[1].lower()
-                    if file_ext in ['.xlsx', '.xls']:
-                        try:
-                            import pandas as pd
-                            df = pd.read_excel(file_path)
-                            content_text = f"Excel file with {len(df)} rows and {len(df.columns)} columns\n"
-                            content_text += f"Columns: {', '.join([str(col) for col in df.columns.tolist()])}\n\n"
-                            content_text += "Sample data (first 50 rows):\n"
-                            content_text += df.head(50).to_string()
-                            extraction_result = {'success': True, 'text': content_text, 'data': None}
-                        except Exception as e:
-                            extraction_result = {'success': False, 'error': str(e)}
-                    else:
-                        try:
-                            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                                content_text = f.read(max_chars_per_file)
-                            extraction_result = {'success': True, 'text': content_text, 'data': None}
-                        except Exception as e:
-                            extraction_result = {'success': False, 'error': str(e)}
-
-                if extraction_result.get('success'):
-                    file_content = extraction_result['text']
-
-                    if extraction_result.get('data'):
-                        data = extraction_result['data']
-                        if 'sheets' in data:
-                            context += f"   📊 Excel file with {data['num_sheets']} worksheet(s): {', '.join(data['sheet_names'])}\n"
-                        elif 'num_pages' in data:
-                            context += f"   📄 PDF with {data['num_pages']} page(s)\n"
-                        elif 'num_paragraphs' in data:
-                            context += f"   📝 Word document with {data['num_paragraphs']} paragraph(s)\n"
-
-                    print(f"   ✅ Extracted {len(file_content)} chars")
-
-                    if len(file_content) > max_chars_per_file:
-                        original_len = len(file_content)
-                        file_content = file_content[:max_chars_per_file] + f"\n\n... (truncated {original_len - max_chars_per_file} chars)\n"
-                        print(f"   ✂️ Truncated to {max_chars_per_file} chars")
-
-                    context += f"   Content:\n{file_content}\n"
-                else:
-                    print(f"   ❌ Extraction failed: {extraction_result.get('error')}")
-                    context += f"   (Could not extract content: {extraction_result.get('error')})\n"
-            else:
-                print(f"   ❌ File does not exist at path: {file_path}")
-                context += f"   (File not found at expected location)\n"
-
-        except Exception as e:
-            print(f"   ❌ ERROR reading file {file['original_filename']}: {e}")
-            import traceback
-            traceback.print_exc()
-            context += f"   (File content could not be extracted: {str(e)})\n"
-
-        context += "\n"
-
-    print(f"✅ Generated context with {len(context)} total characters")
-    return context
-
-
-def mark_file_as_analyzed(file_id, analysis_summary=None):
-    pm = get_project_manager()
-    file_info = pm.get_file(file_id)
-    if not file_info:
-        return False
-
-    metadata = file_info.get('metadata', {})
-    if isinstance(metadata, str):
-        try:
-            metadata = json.loads(metadata)
-        except Exception:
-            metadata = {}
-
-    metadata['is_analyzed'] = True
-    metadata['analysis_summary'] = analysis_summary
-    metadata['analyzed_at'] = datetime.now().isoformat()
-
-    db = get_db_connection()
-    try:
-        db.execute('''
-            UPDATE project_files
-            SET is_analyzed = TRUE,
-                analysis_summary = %s,
-                analyzed_at = CURRENT_TIMESTAMP,
-                metadata = %s
-            WHERE file_id = %s
-        ''', (analysis_summary, json.dumps(metadata), file_id))
-        db.commit()
-        return True
-    finally:
-        db.close()
-
-
-def search_project_files(project_id, search_term):
-    pm = get_project_manager()
-    all_files = pm.list_files(project_id)
-    search_lower = search_term.lower()
-
-    return [
-        file for file in all_files
-        if (search_lower in file['filename'].lower() or
-            search_lower in file['original_filename'].lower() or
-            (file.get('description') and search_lower in file['description'].lower()) or
-            (file.get('analysis_summary') and search_lower in file['analysis_summary'].lower()))
-    ]
-
-
-def update_file_metadata(file_id, **kwargs):
-    allowed_fields = ['description', 'category']
-    updates = []
-    values = []
-
-    for field, value in kwargs.items():
-        if field in allowed_fields:
-            updates.append(f"{field} = %s")
-            values.append(value)
-        elif field == 'metadata':
-            updates.append("metadata = %s")
-            values.append(json.dumps(value) if isinstance(value, dict) else value)
-
-    if not updates:
-        return False
-
-    values.append(file_id)
-
-    db = get_db_connection()
-    try:
-        db.execute(
-            f"UPDATE project_files SET {', '.join(updates)} WHERE file_id = %s",
-            values
-        )
-        db.commit()
-        return True
-    finally:
-        db.close()
-
-
-if __name__ == '__main__':
-    print("🔧 Initializing project management system...")
-    pm = get_project_manager()
-    print("✅ System ready!")
-
-# I did no harm and this file is not truncated
+✅ Research Agent initialized with Tavily API
+✅ Research Agent routes loaded
+[2026-03-05 00:41:45 +0000] [59] [INFO] Starting gunicorn 25.1.0
+[2026-03-05 00:41:45 +0000] [59] [INFO] Listening at: http://0.0.0.0:10000 (59)
+[2026-03-05 00:41:45 +0000] [59] [INFO] Using worker: sync
+[2026-03-05 00:41:45 +0000] [59] [INFO] Control socket listening at /opt/render/project/src/gunicorn.ctl
+==> Your service is live 🎉
+==> 
+==> ///////////////////////////////////////////////////////////
+[GET]
+ai-swarm-orchestrator.onrender.com/ clientIP="35.197.118.178" requestID="32c7760a-6e6e-4328" responseTimeMS=17 responseBytes=223158 userAgent="Go-http-client/2.0"
+==> 
+==> Available at your primary URL https://ai-swarm-orchestrator.onrender.com
+==> 
+==> ///////////////////////////////////////////////////////////
+==> No open HTTP ports detected on 0.0.0.0, continuing to scan...
+==> No open HTTP ports detected on 0.0.0.0, continuing to scan...
+==> No open HTTP ports detected on 0.0.0.0, continuing to scan...
+[GET]
+ai-swarm-orchestrator.onrender.com/api/stats clientIP="216.131.83.55" requestID="dd4c2034-d6bc-4398" responseTimeMS=126825 responseBytes=29 userAgent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+[GET]
+ai-swarm-orchestrator.onrender.com/api/documents clientIP="216.131.83.55" requestID="06760fa3-e3c7-4c11" responseTimeMS=46744 responseBytes=29 userAgent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+[GET]
+ai-swarm-orchestrator.onrender.com/api/learning/stats clientIP="216.131.83.55" requestID="c5217dbf-a8fc-464b" responseTimeMS=126688 responseBytes=29 userAgent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+[GET]
+ai-swarm-orchestrator.onrender.com/api/learning/stats clientIP="216.131.83.55" requestID="7a2da895-db2d-4054" responseTimeMS=46918 responseBytes=29 userAgent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+[GET]
+ai-swarm-orchestrator.onrender.com/api/documents clientIP="216.131.83.55" requestID="f6df0fb9-3452-49c0" responseTimeMS=126705 responseBytes=29 userAgent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+[GET]
+ai-swarm-orchestrator.onrender.com/api/stats clientIP="216.131.83.55" requestID="ca96c84f-1f97-47ed" responseTimeMS=46751 responseBytes=29 userAgent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+[GET]
+ai-swarm-orchestrator.onrender.com/ clientIP="216.131.83.55" requestID="c6a19b3d-ff54-4686" responseTimeMS=6719 responseBytes=29 userAgent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+==> No open HTTP ports detected on 0.0.0.0, continuing to scan...
+==> No open HTTP ports detected on 0.0.0.0, continuing to scan...
+==> Deploying...
+[2026-03-05 00:46:19 +0000] [59] [INFO] Handling signal: term
+Research Agent API registered
+[GET]
+ai-swarm-orchestrator.onrender.com/ clientIP="35.197.117.9" requestID="309aad5c-4075-4fe1" responseTimeMS=20 responseBytes=223158 userAgent="Go-http-client/2.0"
+==> Your service is live 🎉
+==> 
+==> ///////////////////////////////////////////////////////////
+==> 
+==> Available at your primary URL https://ai-swarm-orchestrator.onrender.com
+==> 
+==> ///////////////////////////////////////////////////////////
+==> Running 'gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 180'
+File Upload Limit: 100MB (allows large project files)
+============================================================
+🔄 STEP 1: Running database migration...
+🗄️  DB Engine: PostgreSQL (production)
+🔄 Running migration 001_initial_schema (Phase 9) on postgresql...
+✅ PostgreSQL connection pool created (min=2, max=40)
+✅ Migration 001 (Phase 9) complete: 56/56 tables verified on postgresql
+✅ Database migration complete
+============================================================
+✅ Database tables already initialized by migration (STEP 1 in app.py)
+✅ Survey tables verified/initialized
+Survey tables initialized
+Running legacy database migrations...
+🔄 Migrating projects table...
+   ℹ️  Projects table doesn't exist - will be created by ProjectManager
+DEBUG: About to attempt blog_posts migration import...
+DEBUG: Import successful, calling function...
+📊 Blog Posts Migration: Checking /mnt/project/swarm_intelligence.db...
+ℹ️  blog_posts table exists - checking for SEO columns...
+   Current columns: id, topic, topic_display, title, url_slug, meta_description, content, angle, created_at, updated_at
+   ✓ url_slug exists
+   ✓ meta_description exists
+✅ blog_posts table already has all SEO columns
+✅ Blog Posts table migration complete!
+Blog Posts table migration complete!
+Error upgrading database: syntax error at or near "PRAGMA"
+LINE 1: PRAGMA table_info(projects)
+        ^
+Error creating table: syntax error at or near "AUTOINCREMENT"
+LINE 3:                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                               ^
+Improvement reports migration: No module named 'add_improvement_reports_table'
+✅ conversation_context table created
+Conversation context table added!
+✅ user_profiles table created!
+Error creating tables: syntax error at or near "AUTOINCREMENT"
+LINE 3:                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                               ^
+Error creating table: syntax error at or near "AUTOINCREMENT"
+LINE 3:                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                               ^
+  ✅ add_missing_columns: Added 16 columns: case_studies.problem_summary, case_studies.solution_summary, blog_posts.topic_display, blog_posts.url_slug, blog_posts.meta_description, blog_posts.word_count, blog_posts.seo_title, blog_posts.author_name, blog_posts.tags, projects.project_id, projects.project_phase, projects.storage_path, projects.checklist_data, projects.milestone_data, projects.folder_data, projects.metadata
+============================================================
+🔧 Phase 9b: Fixing broken table schemas...
+============================================================
+  ✓ generated_documents OK
+  ✓ user_feedback OK
+  ✓ introspection_insights OK
+  ✓ conversations OK
+  ✓ conversation_messages OK
+  ✓ tasks OK
+  ✓ specialist_calls OK
+  ✓ escalations OK
+  ✓ learning_patterns OK
+  ✓ learning_records OK
+  ✓ avoidance_patterns OK
+  ✓ smart_analyzer_state OK
+  ✓ analysis_sessions OK
+  ✓ background_jobs OK
+  ✓ proactive_suggestions OK
+  ✓ conversation_summaries OK
+  ✓ user_patterns OK
+  ✓ consensus_validations OK
+============================================================
+✅ Phase 9b complete:
+   Tables fixed: 0
+   Tables OK:    18
+============================================================
+============================================================
+🔧 Phase 9c: Fixing missing SERIAL sequences...
+============================================================
+  Sequences fixed: 0
+  Sequences OK:    52
+============================================================
+============================================================
+🔧 Phase 9d: Adding missing boolean columns...
+============================================================
+  Columns added: 0
+  Columns OK:    11
+============================================================
+Database migrations complete!
+Initializing Bulletproof Project Management...
+================================================================================
+🔧 INITIALIZING PROJECT MANAGER - STORAGE DIAGNOSTICS
+================================================================================
+   ✅ Using STORAGE_ROOT from environment: /mnt/project/swarm_projects
+✅ FINAL STORAGE LOCATION: /mnt/project/swarm_projects
+================================================================================
+✅ Storage directory exists and is writable: /mnt/project/swarm_projects
+================================================================================
+Bulletproof Project Manager initialized
+Initializing Project Knowledge Base...
+Found directory: project_files (40 files)
+Starting knowledge base initialization in background thread...
+   Gunicorn will accept connections immediately.
+   Knowledge search will be available in ~30 seconds.
+Initializing ENHANCED Project Knowledge Base...
+Knowledge Base initializing in background (~30 seconds)...
+App is ready to serve requests immediately.
+Pattern-Based Schedule Generator loaded
+Output Formatter loaded
+  Found 40 files at project_files — proceeding with indexing.
+  Indexed: Implementation Manual Sample.docx (4354 words)
+  Indexed: Definitive Schedules.xlsx (7687 words)
+  Indexed: conients.docx (15 words)
+  Indexed: Data Collection.docx (142 words)
+  Indexed: Implementation_Manual_Sample_2.docx (3965 words)
+  Indexed: Data_Collection.docx (186 words)
+  Indexed: Cost of time .xlsx (942 words)
+  Indexed: Scope_of_work_by_AI.docx (586 words)
+  Indexed: The_Code (4349 words)
+  Indexed: Knowledge_base_from_pages (4650 words)
+  Indexed: Jims_bio.docx (228 words)
+  Indexed: Shiftwork_Solutions_Lessons_Learned.md (18027 words)
+  Indexed: Shiftwork Work-Life Balance Survey.docx (2081 words)
+  Indexed: Overall_summary (4068 words)
+  Indexed: Copy of Kelloggs Math.xlsx (1126 words)
+  Indexed: executive summary_SKECHERS_2025.docx (482 words)
+  Indexed: Implementation_Manual_Sample.docx (4402 words)
+  Indexed: Shiftwork_Solutions_LLC_Company_Profile_-_All_Industry__002_.docx (721 words)
+  Indexed: Shiftwork_Solutions_LLC_-_Contract.docx (1727 words)
+  Indexed: Definitive_Schedules_v2.xlsx (10832 words)
+  Indexed: Project_kickoff_bulletin.docx (309 words)
+  Indexed: Implementation Manual.docx (4354 words)
+  Indexed: Schedule_Survey_.docx (2386 words)
+  Indexed: Implementation_Manual.docx (4402 words)
+  Indexed: README.md (4 words)
+  Indexed: ACME_Implementation_Manual (1).docx (3427 words)
+📚 [task_analysis] Knowledge Management DB path: /mnt/project/knowledge_ingestion.db
+Survey Builder not available
+Marketing Hub loaded for API endpoints
+Opportunity Finder loaded for API endpoints
+Project Manager loaded for API endpoints
+    Error extracting THE_ESSENTIAL_GUIDE_TO_SHIFTWORK_OPERATIONS_EXCELLENCE.pdf: EOF marker not found
+  Indexed: Session_Handoff_SwingShift.docx (1763 words)
+  Indexed: Survey_evaluation (5246 words)
+  Indexed: About Shiftwork Solutions.docx (1148 words)
+  Indexed: Contract_without_name_Corp_A_2025.docx (1699 words)
+  Indexed: Definitive Schedules v2.xlsx (9296 words)
+  Indexed: Implementation Manual Sample 2.docx (3921 words)
+  Indexed: Cost of time Best.xlsx (4103 words)
+  Indexed: Example_Client_facing_executive_summary_Andersen_2025.docx (500 words)
+  Indexing complete: 34 indexed, 0 errors
+  Building semantic search index...
+  Semantic index built: 5351 terms
+============================================================
+KNOWLEDGE BASE INITIALIZATION COMPLETE
+  Source path  : project_files
+  Files found  : 40
+  Docs indexed : 34
+  Unique terms : 5351
+============================================================
+Orchestration Handler API registered
+DEBUG: About to import bulletproof project routes...
+🔄 Force reloading ProjectManager singleton...
+================================================================================
+🔧 INITIALIZING PROJECT MANAGER - STORAGE DIAGNOSTICS
+================================================================================
+   ✅ Using STORAGE_ROOT from environment: /mnt/project/swarm_projects
+✅ FINAL STORAGE LOCATION: /mnt/project/swarm_projects
+[2026-03-05 00:47:23 +0000] [59] [INFO] Starting gunicorn 25.1.0
+[2026-03-05 00:47:23 +0000] [59] [INFO] Listening at: http://0.0.0.0:10000 (59)
+[2026-03-05 00:47:23 +0000] [59] [INFO] Using worker: sync
+[2026-03-05 00:47:23 +0000] [59] [INFO] Control socket listening at /opt/render/project/src/gunicorn.ctl
+[2026-03-05 00:47:23 +0000] [79] [INFO] Booting worker with pid: 79
+================================================================================
+✅ Storage directory exists and is writable: /mnt/project/swarm_projects
+================================================================================
+🔄 ProjectManager loaded with storage: /mnt/project/swarm_projects
+Bulletproof Project Management API registered
+Voice Control WebSocket registered
+✅ Research Agent initialized with Tavily API
+✅ Research Agent routes loaded
+Research Agent API registered
+ℹ️  Alert email delivery disabled (configure SMTP settings to enable)
+ℹ️  Alert email delivery disabled (configure SMTP settings to enable)
+✅ Job Scheduler: Research Agent connected
+✅ Alert System routes loaded
+Alert System API registered
+✅ Intelligence tables initialized
+✅ Intelligence routes loaded
+Intelligence Dashboard API registered
+Content Marketing Engine API registered
+Avatar Consultation System API registered
+✅ Swarm Self-Evaluation Engine loaded
+Swarm Self-Evaluation API registered
+✅ Introspection Layer loaded
+Introspection Layer API registered
+✅ Implementation manual generator tables initialized
+Implementation Manual Generator API registered
+Adaptive Learning Engine API registered
+Predictive Intelligence API registered
+Self-Optimization Engine routes not found: No module named 'self_optimization_engine'
+✅ Knowledge Ingestion: Direct import succeeded
+Knowledge Ingestion API registered
+Unified Conversation Learning API registered
+Pattern Recognition API registered
+Phase 1 Intelligence API registered
+  [CaseStudy] case_studies table ready
+[CaseStudies] Case Study Generator loaded successfully
+Case Study Generator API registered
+[BlogPosts] Blog Post Generator loaded successfully with SEO enhancement
+Blog Post Generator API registered
+Background File Processor API registered
+Knowledge Backup routes not found: No module named 'knowledge_backup_routes'
+Project Dashboard API registered
+Analytics API registered
+Workflow Engine API registered
+Integration Hub API registered
+============================================================
+AI Swarm Orchestrator Starting
+Workers: 2
+Timeout: 180 seconds
+Graceful Timeout: 200 seconds
+============================================================
+AI Swarm Orchestrator ready - accepting connections
+Timeout configured: 180s
+[KeepAlive] Keep-alive thread started in worker 79
+127.0.0.1 - - [05/Mar/2026:00:47:24 +0000] "HEAD / HTTP/1.1" 200 0 "-" "Go-http-client/1.1" 23856
+==> New primary port detected: 10000. Restarting deploy to update network configuration...
+==> Docs on specifying a port: https://render.com/docs/web-services#port-binding
+[2026-03-05 00:48:03 +0000] [59] [INFO] Handling signal: term
+[2026-03-05 00:48:03 +0000] [79] [INFO] Worker exiting (pid: 79)
+[2026-03-05 00:48:03 +0000] [59] [INFO] Shutting down: Master
+✅ Storage directory exists and is writable: /mnt/project/swarm_projects
+================================================================================
+🔄 ProjectManager loaded with storage: /mnt/project/swarm_projects
+Bulletproof Project Management API registered
+Voice Control WebSocket registered
+✅ Research Agent initialized with Tavily API
+✅ Research Agent routes loaded
+Research Agent API registered
+ℹ️  Alert email delivery disabled (configure SMTP settings to enable)
+ℹ️  Alert email delivery disabled (configure SMTP settings to enable)
+✅ Job Scheduler: Research Agent connected
+✅ Alert System routes loaded
+Alert System API registered
+✅ Intelligence tables initialized
+✅ Intelligence routes loaded
+Intelligence Dashboard API registered
+Content Marketing Engine API registered
+Avatar Consultation System API registered
+✅ Swarm Self-Evaluation Engine loaded
+Swarm Self-Evaluation API registered
+✅ Introspection Layer loaded
+Introspection Layer API registered
+✅ Implementation manual generator tables initialized
+Implementation Manual Generator API registered
+Adaptive Learning Engine API registered
+Predictive Intelligence API registered
+Self-Optimization Engine routes not found: No module named 'self_optimization_engine'
+✅ Knowledge Ingestion: Direct import succeeded
+Knowledge Ingestion API registered
+Unified Conversation Learning API registered
+Pattern Recognition API registered
+Phase 1 Intelligence API registered
+  [CaseStudy] case_studies table ready
+[CaseStudies] Case Study Generator loaded successfully
+Case Study Generator API registered
+[BlogPosts] Blog Post Generator loaded successfully with SEO enhancement
+Blog Post Generator API registered
+Background File Processor API registered
+Knowledge Backup routes not found: No module named 'knowledge_backup_routes'
+Project Dashboard API registered
+Analytics API registered
+Workflow Engine API registered
+Integration Hub API registered
+============================================================
+AI Swarm Orchestrator Starting
+Workers: 2
+Timeout: 180 seconds
+Graceful Timeout: 200 seconds
+============================================================
+AI Swarm Orchestrator ready - accepting connections
+Timeout configured: 180s
+==> Running 'gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 180'
+File Upload Limit: 100MB (allows large project files)
+============================================================
+🔄 STEP 1: Running database migration...
+🗄️  DB Engine: PostgreSQL (production)
+🔄 Running migration 001_initial_schema (Phase 9) on postgresql...
+✅ PostgreSQL connection pool created (min=2, max=40)
+✅ Migration 001 (Phase 9) complete: 56/56 tables verified on postgresql
+✅ Database migration complete
+============================================================
+✅ Database tables already initialized by migration (STEP 1 in app.py)
+✅ Survey tables verified/initialized
+Survey tables initialized
+Running legacy database migrations...
+🔄 Migrating projects table...
+   ℹ️  Projects table doesn't exist - will be created by ProjectManager
+DEBUG: About to attempt blog_posts migration import...
+DEBUG: Import successful, calling function...
+📊 Blog Posts Migration: Checking /mnt/project/swarm_intelligence.db...
+ℹ️  blog_posts table exists - checking for SEO columns...
+   Current columns: id, topic, topic_display, title, url_slug, meta_description, content, angle, created_at, updated_at
+   ✓ url_slug exists
+   ✓ meta_description exists
+✅ blog_posts table already has all SEO columns
+✅ Blog Posts table migration complete!
+Blog Posts table migration complete!
+Error upgrading database: syntax error at or near "PRAGMA"
+LINE 1: PRAGMA table_info(projects)
+        ^
+Error creating table: syntax error at or near "AUTOINCREMENT"
+LINE 3:                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                               ^
+Improvement reports migration: No module named 'add_improvement_reports_table'
+✅ conversation_context table created
+Conversation context table added!
+✅ user_profiles table created!
+Error creating tables: syntax error at or near "AUTOINCREMENT"
+LINE 3:                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                               ^
+Error creating table: syntax error at or near "AUTOINCREMENT"
+LINE 3:                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                               ^
+  ✅ add_missing_columns: Added 16 columns: case_studies.problem_summary, case_studies.solution_summary, blog_posts.topic_display, blog_posts.url_slug, blog_posts.meta_description, blog_posts.word_count, blog_posts.seo_title, blog_posts.author_name, blog_posts.tags, projects.project_id, projects.project_phase, projects.storage_path, projects.checklist_data, projects.milestone_data, projects.folder_data, projects.metadata
+============================================================
+🔧 Phase 9b: Fixing broken table schemas...
+============================================================
+  ✓ generated_documents OK
+  ✓ user_feedback OK
+  ✓ introspection_insights OK
+  ✓ conversations OK
+  ✓ conversation_messages OK
+  ✓ tasks OK
+  ✓ specialist_calls OK
+  ✓ escalations OK
+  ✓ learning_patterns OK
+  ✓ learning_records OK
+  ✓ avoidance_patterns OK
+  ✓ smart_analyzer_state OK
+  ✓ analysis_sessions OK
+  ✓ background_jobs OK
+  ✓ proactive_suggestions OK
+  ✓ conversation_summaries OK
+  ✓ user_patterns OK
+  ✓ consensus_validations OK
+============================================================
+✅ Phase 9b complete:
+   Tables fixed: 0
+   Tables OK:    18
+============================================================
+============================================================
+🔧 Phase 9c: Fixing missing SERIAL sequences...
+============================================================
+  Sequences fixed: 0
+  Sequences OK:    52
+============================================================
+============================================================
+🔧 Phase 9d: Adding missing boolean columns...
+============================================================
+  Columns added: 0
+  Columns OK:    11
+============================================================
+Database migrations complete!
+Initializing Bulletproof Project Management...
+================================================================================
+🔧 INITIALIZING PROJECT MANAGER - STORAGE DIAGNOSTICS
+================================================================================
+   ✅ Using STORAGE_ROOT from environment: /mnt/project/swarm_projects
+✅ FINAL STORAGE LOCATION: /mnt/project/swarm_projects
+================================================================================
+✅ Storage directory exists and is writable: /mnt/project/swarm_projects
+================================================================================
+Bulletproof Project Manager initialized
+Initializing Project Knowledge Base...
+Found directory: project_files (40 files)
+Starting knowledge base initialization in background thread...
+   Gunicorn will accept connections immediately.
+   Knowledge search will be available in ~30 seconds.
+Initializing ENHANCED Project Knowledge Base...
+Knowledge Base initializing in background (~30 seconds)...
+App is ready to serve requests immediately.
+Pattern-Based Schedule Generator loaded
+Output Formatter loaded
+  Found 40 files at project_files — proceeding with indexing.
+  Indexed: Implementation Manual Sample.docx (4354 words)
+  Indexed: Definitive Schedules.xlsx (7687 words)
+  Indexed: conients.docx (15 words)
+  Indexed: Data Collection.docx (142 words)
+  Indexed: Implementation_Manual_Sample_2.docx (3965 words)
+  Indexed: Data_Collection.docx (186 words)
+  Indexed: Cost of time .xlsx (942 words)
+  Indexed: Scope_of_work_by_AI.docx (586 words)
+  Indexed: The_Code (4349 words)
+  Indexed: Knowledge_base_from_pages (4650 words)
+  Indexed: Jims_bio.docx (228 words)
+  Indexed: Shiftwork_Solutions_Lessons_Learned.md (18027 words)
+  Indexed: Shiftwork Work-Life Balance Survey.docx (2081 words)
+  Indexed: Overall_summary (4068 words)
+  Indexed: Copy of Kelloggs Math.xlsx (1126 words)
+  Indexed: executive summary_SKECHERS_2025.docx (482 words)
+  Indexed: Implementation_Manual_Sample.docx (4402 words)
+  Indexed: Shiftwork_Solutions_LLC_Company_Profile_-_All_Industry__002_.docx (721 words)
+  Indexed: Shiftwork_Solutions_LLC_-_Contract.docx (1727 words)
+  Indexed: Definitive_Schedules_v2.xlsx (10832 words)
+  Indexed: Project_kickoff_bulletin.docx (309 words)
+  Indexed: Implementation Manual.docx (4354 words)
+  Indexed: Schedule_Survey_.docx (2386 words)
+  Indexed: Implementation_Manual.docx (4402 words)
+  Indexed: README.md (4 words)
+  Indexed: ACME_Implementation_Manual (1).docx (3427 words)
+📚 [task_analysis] Knowledge Management DB path: /mnt/project/knowledge_ingestion.db
+Survey Builder not available
+Marketing Hub loaded for API endpoints
+Opportunity Finder loaded for API endpoints
+Project Manager loaded for API endpoints
+    Error extracting THE_ESSENTIAL_GUIDE_TO_SHIFTWORK_OPERATIONS_EXCELLENCE.pdf: EOF marker not found
+  Indexed: Session_Handoff_SwingShift.docx (1763 words)
+  Indexed: Survey_evaluation (5246 words)
+  Indexed: About Shiftwork Solutions.docx (1148 words)
+  Indexed: Contract_without_name_Corp_A_2025.docx (1699 words)
+  Indexed: Definitive Schedules v2.xlsx (9296 words)
+  Indexed: Implementation Manual Sample 2.docx (3921 words)
+  Indexed: Cost of time Best.xlsx (4103 words)
+  Indexed: Example_Client_facing_executive_summary_Andersen_2025.docx (500 words)
+  Indexing complete: 34 indexed, 0 errors
+  Building semantic search index...
+  Semantic index built: 5351 terms
+============================================================
+KNOWLEDGE BASE INITIALIZATION COMPLETE
+  Source path  : project_files
+  Files found  : 40
+  Docs indexed : 34
+  Unique terms : 5351
+============================================================
+Orchestration Handler API registered
+DEBUG: About to import bulletproof project routes...
+🔄 Force reloading ProjectManager singleton...
+================================================================================
+🔧 INITIALIZING PROJECT MANAGER - STORAGE DIAGNOSTICS
+================================================================================
+   ✅ Using STORAGE_ROOT from environment: /mnt/project/swarm_projects
+✅ FINAL STORAGE LOCATION: /mnt/project/swarm_projects
+[2026-03-05 00:48:27 +0000] [38] [INFO] Starting gunicorn 25.1.0
+[2026-03-05 00:48:27 +0000] [38] [INFO] Listening at: http://0.0.0.0:10000 (38)
+[2026-03-05 00:48:27 +0000] [38] [INFO] Using worker: sync
+[2026-03-05 00:48:27 +0000] [38] [INFO] Control socket listening at /opt/render/project/src/gunicorn.ctl
+==> No open HTTP ports detected on 0.0.0.0, continuing to scan...
