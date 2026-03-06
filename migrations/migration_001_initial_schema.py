@@ -2,7 +2,7 @@
 AI SWARM ORCHESTRATOR - Database Migration 001
 File: migrations/migration_001_initial_schema.py
 Created: March 02, 2026
-Last Updated: March 06, 2026 - COLUMN PATCHES: conversation_summaries + user_profiles
+Last Updated: March 06, 2026 - SAVEPOINT FIX: ALTER TABLE transaction isolation
 
 PURPOSE:
     Authoritative schema definition for the entire AI Swarm Orchestrator system.
@@ -10,6 +10,21 @@ PURPOSE:
     Safe to run multiple times — all statements use CREATE TABLE IF NOT EXISTS.
 
 CHANGELOG:
+    - March 06, 2026: SAVEPOINT FIX - ALTER TABLE transaction isolation
+      * Root cause: The extra_columns and bool_cols ALTER TABLE loops ran in a
+        single shared PostgreSQL transaction. When any statement raised an error
+        (even a benign "column already exists"), PostgreSQL aborted the ENTIRE
+        transaction. All subsequent ALTER TABLE statements were silently ignored
+        (InFailedSqlTransaction). The except:pass swallowed the error but did NOT
+        issue ROLLBACK, so the transaction stayed in aborted state.
+        This is why 'reasoning', 'profile_data', 'message_range' columns were
+        never added to the live database despite being in the migration.
+      * Fix: Each ALTER TABLE is now wrapped in its own SAVEPOINT via the
+        _safe_alter() helper. On failure, only that one statement is rolled back;
+        the rest of the transaction continues. Unexpected errors are logged.
+      * Added _safe_alter() helper function with SAVEPOINT logic for PostgreSQL
+        and plain try/except fallback for SQLite.
+
     - March 06, 2026: COLUMN PATCHES - conversation_summaries + user_profiles
       * conversation_summaries: Added message_range, summary_text,
         mentioned_entities, key_decisions to extra_columns ALTER TABLE section.
@@ -1128,19 +1143,45 @@ def run_migration():
             ("user_profiles", "profile_data", "TEXT"),
         ]
 
+        # =====================================================================
+        # SAVEPOINT-PROTECTED ALTER TABLE HELPER
+        #
+        # PostgreSQL aborts the ENTIRE transaction if any statement raises an
+        # error, even when caught with except:pass. Every subsequent statement
+        # in that transaction is silently ignored (InFailedSqlTransaction).
+        #
+        # Fix: wrap each ALTER TABLE in its own SAVEPOINT. On failure, roll
+        # back only that savepoint, leaving the rest of the transaction intact.
+        # SQLite does not support SAVEPOINT in this context so we fall back to
+        # the plain try/except pattern.
+        # =====================================================================
+
+        def _safe_alter(cursor, db_type, sql):
+            """Execute one ALTER TABLE protected by a SAVEPOINT (PostgreSQL)."""
+            if db_type == 'postgresql':
+                try:
+                    cursor.execute("SAVEPOINT alter_col")
+                    cursor.execute(sql)
+                    cursor.execute("RELEASE SAVEPOINT alter_col")
+                except Exception as e:
+                    cursor.execute("ROLLBACK TO SAVEPOINT alter_col")
+                    # Only log unexpected errors; skip duplicate-column silently
+                    msg = str(e).lower()
+                    if 'already exists' not in msg and 'duplicate' not in msg:
+                        print(f"  ALTER TABLE note: {e}")
+            else:
+                try:
+                    cursor.execute(sql)
+                except Exception:
+                    pass  # SQLite: column already exists → ignore
+
         for table_name, col_name, col_type in extra_columns:
-            try:
-                if db_type == 'postgresql':
-                    cursor.execute(
-                        f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS "
-                        f"{col_name} {col_type}"
-                    )
-                else:
-                    cursor.execute(
-                        f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}"
-                    )
-            except Exception:
-                pass
+            if db_type == 'postgresql':
+                sql = (f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS "
+                       f"{col_name} {col_type}")
+            else:
+                sql = f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}"
+            _safe_alter(cursor, db_type, sql)
 
         # =====================================================================
         # ADD BOOLEAN COLUMNS
@@ -1153,18 +1194,12 @@ def run_migration():
             ("project_files", "is_analyzed", bool_false),
         ]
         for table_name, col_name, col_default in bool_cols:
-            try:
-                if db_type == 'postgresql':
-                    cursor.execute(
-                        f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS "
-                        f"{col_name} {col_default}"
-                    )
-                else:
-                    cursor.execute(
-                        f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_default}"
-                    )
-            except Exception:
-                pass
+            if db_type == 'postgresql':
+                sql = (f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS "
+                       f"{col_name} {col_default}")
+            else:
+                sql = f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_default}"
+            _safe_alter(cursor, db_type, sql)
 
         conn.commit()
     finally:
