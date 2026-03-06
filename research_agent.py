@@ -1,22 +1,21 @@
 """
 Research Agent - Proactive Web Research for AI Swarm
 Created: January 23, 2026
-Last Updated: January 23, 2026
+Last Updated: March 06, 2026 - PostgreSQL placeholder fix
 
-PURPOSE:
-This module adds real-time web research capabilities to the AI Swarm.
-It can proactively search for:
-- Industry news and trends
-- Competitor activity
-- New regulations and compliance updates
-- Case studies and research papers
-- Potential leads discussing shift problems
+CHANGELOG:
 
-USES TAVILY API:
-- Purpose-built for AI agents
-- Returns clean, structured results
-- Includes AI-generated summaries
-- $0.01/search or free tier (1000/month)
+- March 06, 2026: POSTGRESQL PLACEHOLDER FIX
+  PROBLEM: _log_search() and _store_briefing() used SQLite-style '?'
+    placeholders in their INSERT statements. PostgreSQL requires '%s'.
+    Error in logs: "Failed to log search: syntax error at or near ','
+    LINE 3:                 VALUES (?, ?, ?)"
+  FIX: Changed all '?' placeholders to '%s' in both functions.
+    Also added try/finally with db.close() to prevent connection leaks
+    (consistent with Phase 2B leak-fix pattern applied to other files).
+    db = None before try block, finally: if db: db.close()
+  NO OTHER CHANGES: All search methods, API calls, research domains,
+    get_daily_briefing, research_topic, get_status unchanged.
 
 Author: Jim @ Shiftwork Solutions LLC (managed by Claude)
 """
@@ -37,15 +36,15 @@ class ResearchAgent:
     Proactive research agent that searches the web for relevant information.
     Integrates with the AI Swarm to provide current, real-time data.
     """
-    
+
     def __init__(self):
         self.api_key = TAVILY_API_KEY
         self.is_available = bool(self.api_key)
-        
+
         # Define research domains relevant to shiftwork consulting
         self.research_domains = {
             'industry_news': {
-                'keywords': ['shift work', '24/7 operations', 'manufacturing schedules', 
+                'keywords': ['shift work', '24/7 operations', 'manufacturing schedules',
                             'rotating shifts', 'workforce scheduling'],
                 'description': 'Latest news about shift work and scheduling'
             },
@@ -70,17 +69,17 @@ class ResearchAgent:
                 'description': 'Potential clients discussing scheduling challenges'
             }
         }
-        
+
         if self.is_available:
             print("✅ Research Agent initialized with Tavily API")
         else:
             print("⚠️ Research Agent: TAVILY_API_KEY not configured")
-    
-    def search(self, query, search_depth="basic", max_results=5, include_domains=None, 
+
+    def search(self, query, search_depth="basic", max_results=5, include_domains=None,
                exclude_domains=None, days_back=None):
         """
         Perform a web search using Tavily API.
-        
+
         Args:
             query: Search query string
             search_depth: "basic" (faster) or "advanced" (more thorough)
@@ -88,7 +87,7 @@ class ResearchAgent:
             include_domains: List of domains to search within
             exclude_domains: List of domains to exclude
             days_back: Only return results from last N days
-            
+
         Returns:
             dict with 'success', 'results', 'summary', 'query'
         """
@@ -98,7 +97,7 @@ class ResearchAgent:
                 'error': 'Tavily API key not configured',
                 'results': []
             }
-        
+
         try:
             payload = {
                 "api_key": self.api_key,
@@ -108,18 +107,18 @@ class ResearchAgent:
                 "include_answer": True,  # Get AI-generated summary
                 "include_raw_content": False
             }
-            
+
             if include_domains:
                 payload["include_domains"] = include_domains
-            
+
             if exclude_domains:
                 payload["exclude_domains"] = exclude_domains
-            
+
             response = requests.post(TAVILY_SEARCH_URL, json=payload, timeout=30)
             response.raise_for_status()
-            
+
             data = response.json()
-            
+
             # Process results
             results = []
             for result in data.get('results', []):
@@ -130,10 +129,10 @@ class ResearchAgent:
                     'score': result.get('score', 0),
                     'published_date': result.get('published_date')
                 })
-            
+
             # Log the search
             self._log_search(query, len(results))
-            
+
             return {
                 'success': True,
                 'query': query,
@@ -141,7 +140,7 @@ class ResearchAgent:
                 'results': results,
                 'result_count': len(results)
             }
-            
+
         except requests.exceptions.RequestException as e:
             print(f"Research Agent search error: {e}")
             return {
@@ -156,7 +155,7 @@ class ResearchAgent:
                 'error': str(e),
                 'results': []
             }
-    
+
     def search_industry_news(self, specific_topic=None, days_back=7):
         """
         Search for recent industry news about shift work and scheduling.
@@ -164,14 +163,14 @@ class ResearchAgent:
         base_query = "shift work scheduling manufacturing news"
         if specific_topic:
             base_query = f"{specific_topic} shift work news"
-        
+
         return self.search(
             query=base_query,
             search_depth="advanced",
             max_results=5,
             exclude_domains=["pinterest.com", "facebook.com", "twitter.com"]
         )
-    
+
     def search_regulations(self, topic=None):
         """
         Search for regulatory updates affecting shift operations.
@@ -179,14 +178,14 @@ class ResearchAgent:
         base_query = "OSHA labor regulations shift work overtime 2024 2025"
         if topic:
             base_query = f"{topic} regulations compliance"
-        
+
         return self.search(
             query=base_query,
             search_depth="advanced",
             max_results=5,
             include_domains=["osha.gov", "dol.gov", "shrm.org", "law.cornell.edu"]
         )
-    
+
     def search_research_studies(self, topic=None):
         """
         Search for academic and industry research on shift work.
@@ -194,15 +193,15 @@ class ResearchAgent:
         base_query = "shift work health fatigue research study"
         if topic:
             base_query = f"{topic} research study"
-        
+
         return self.search(
             query=base_query,
             search_depth="advanced",
             max_results=5,
-            include_domains=["pubmed.gov", "nih.gov", "sciencedirect.com", 
+            include_domains=["pubmed.gov", "nih.gov", "sciencedirect.com",
                            "journals.sagepub.com", "nature.com"]
         )
-    
+
     def search_competitors(self):
         """
         Search for competitor activity and products.
@@ -213,7 +212,7 @@ class ResearchAgent:
             max_results=10,
             exclude_domains=["shiftworksolutions.com"]  # Exclude ourselves
         )
-    
+
     def search_potential_leads(self, industry=None):
         """
         Search for potential clients discussing scheduling challenges.
@@ -221,58 +220,58 @@ class ResearchAgent:
         base_query = "struggling with shift schedules overtime problems manufacturing"
         if industry:
             base_query = f"{industry} shift scheduling problems challenges"
-        
+
         return self.search(
             query=base_query,
             search_depth="advanced",
             max_results=10,
-            include_domains=["linkedin.com", "reddit.com", "quora.com", 
+            include_domains=["linkedin.com", "reddit.com", "quora.com",
                            "manufacturingnet.com", "industryweek.com"]
         )
-    
+
     def research_topic(self, topic, context=None):
         """
         General-purpose research on any topic related to shift work.
         Used by the AI Swarm when it needs current information.
-        
+
         Args:
             topic: The topic to research
             context: Additional context about why we need this info
-            
+
         Returns:
             Structured research results
         """
         # Enhance query with shiftwork context if relevant
-        shiftwork_keywords = ['schedule', 'shift', 'crew', 'rotation', 'overtime', 
+        shiftwork_keywords = ['schedule', 'shift', 'crew', 'rotation', 'overtime',
                              'fatigue', '12-hour', '24/7', 'manufacturing']
-        
+
         is_shiftwork_related = any(kw in topic.lower() for kw in shiftwork_keywords)
-        
+
         if is_shiftwork_related:
             enhanced_query = f"{topic} workforce operations"
         else:
             enhanced_query = topic
-        
+
         result = self.search(
             query=enhanced_query,
             search_depth="advanced",
             max_results=7
         )
-        
+
         if result['success']:
             # Add metadata
             result['topic'] = topic
             result['context'] = context
             result['is_shiftwork_related'] = is_shiftwork_related
             result['researched_at'] = datetime.now().isoformat()
-        
+
         return result
-    
+
     def get_daily_briefing(self):
         """
         Generate a daily briefing of relevant industry updates.
         Called proactively to keep Jim informed.
-        
+
         Returns:
             Structured briefing with categorized findings
         """
@@ -280,7 +279,7 @@ class ResearchAgent:
             'generated_at': datetime.now().isoformat(),
             'sections': []
         }
-        
+
         # Industry News
         news = self.search_industry_news()
         if news['success'] and news['results']:
@@ -289,7 +288,7 @@ class ResearchAgent:
                 'summary': news.get('summary', ''),
                 'items': news['results'][:3]
             })
-        
+
         # Regulatory Updates
         regs = self.search_regulations()
         if regs['success'] and regs['results']:
@@ -298,7 +297,7 @@ class ResearchAgent:
                 'summary': regs.get('summary', ''),
                 'items': regs['results'][:2]
             })
-        
+
         # Research & Studies
         research = self.search_research_studies()
         if research['success'] and research['results']:
@@ -307,38 +306,60 @@ class ResearchAgent:
                 'summary': research.get('summary', ''),
                 'items': research['results'][:2]
             })
-        
+
         # Store briefing in database
         self._store_briefing(briefing)
-        
+
         return briefing
-    
+
     def _log_search(self, query, result_count):
-        """Log search to database for analytics"""
+        """
+        Log search to database for analytics.
+
+        FIXED March 06, 2026: Changed SQLite '?' placeholders to
+        PostgreSQL '%s'. Added try/finally for connection safety.
+        """
+        db = None
         try:
             db = get_db()
-            db.execute('''
+            db.execute(
+                '''
                 INSERT INTO research_logs (query, result_count, searched_at)
-                VALUES (?, ?, ?)
-            ''', (query, result_count, datetime.now()))
+                VALUES (%s, %s, %s)
+                ''',
+                (query, result_count, datetime.now())
+            )
             db.commit()
-            db.close()
         except Exception as e:
             print(f"Failed to log search: {e}")
-    
+        finally:
+            if db:
+                db.close()
+
     def _store_briefing(self, briefing):
-        """Store daily briefing in database"""
+        """
+        Store daily briefing in database.
+
+        FIXED March 06, 2026: Changed SQLite '?' placeholders to
+        PostgreSQL '%s'. Added try/finally for connection safety.
+        """
+        db = None
         try:
             db = get_db()
-            db.execute('''
+            db.execute(
+                '''
                 INSERT INTO research_briefings (briefing_data, created_at)
-                VALUES (?, ?)
-            ''', (json.dumps(briefing), datetime.now()))
+                VALUES (%s, %s)
+                ''',
+                (json.dumps(briefing), datetime.now())
+            )
             db.commit()
-            db.close()
         except Exception as e:
             print(f"Failed to store briefing: {e}")
-    
+        finally:
+            if db:
+                db.close()
+
     def get_status(self):
         """Get research agent status"""
         return {
