@@ -1,48 +1,41 @@
 """
 AI Clients Module
 Created: January 21, 2026
-Last Updated: February 28, 2026 - FIXED IDENTITY IN GPT-4/DEEPSEEK/GEMINI CALLS
+Last Updated: March 06, 2026 - ADDED call_claude_sonnet_raw() FOR MEMORY EXTRACTION
 
 CHANGELOG:
+- March 06, 2026: ADDED call_claude_sonnet_raw()
+  * Root cause: Memory extraction thread was silently dying after "🧠 Memory
+    extraction starting..." because call_claude_sonnet() injects thousands of
+    tokens of system capabilities + FORMATTING_REQUIREMENTS into every call.
+    For memory extraction (which only needs a lean JSON response), this bloated
+    the input beyond what the daemon thread could reliably handle within the
+    30-second timeout window.
+  * Fix: Added call_claude_sonnet_raw(prompt, system_prompt, max_tokens) that
+    calls the Anthropic API directly with ONLY the provided system_prompt and
+    prompt — no capabilities injection, no formatting requirements, no
+    conversation history overhead.
+  * Used exclusively by memory/memory_extractor.py. All other callers continue
+    to use call_claude_sonnet() unchanged.
+  * No changes to any existing functions. Fully backward compatible.
 
 - February 28, 2026: FIXED IDENTITY IN GPT-4, DEEPSEEK, AND GEMINI CALLS
-  PROBLEM: GPT-4 (and DeepSeek/Gemini) responded "As an AI developed by OpenAI..."
-    because those calls only had identity in the USER message turn. GPT-4's own
-    system-level training overrides user-turn identity claims and defaults to
-    identifying as an OpenAI product. The capabilities block was injected as
-    part of enhanced_prompt (user role), which GPT-4 ignores for identity purposes.
-  FIX: Added IDENTITY_SYSTEM_MESSAGE as the first message with role='system'
-    in call_gpt4(), call_deepseek(), and call_gemini() API calls.
-    The identity message comes from system_capabilities.get_identity_system_message().
-    The OpenAI-compatible API (used by GPT-4 and DeepSeek) treats role='system'
-    as highest priority, same as Anthropic's system= parameter.
-    For Gemini, the identity is prepended to the prompt since Gemini's API
-    does not support a system role in the same way.
-  IMPACT: All AI models in the swarm now consistently identify as the
-    Shiftwork Solutions AI Swarm regardless of which underlying model handles
-    the request.
+  * Added IDENTITY_SYSTEM_MESSAGE as role='system' in call_gpt4(), call_deepseek(),
+    and call_gemini() so all models identify as Shiftwork Solutions AI Swarm.
 
 - February 19, 2026: ADDED SYSTEM PROMPT PARAMETER FOR KNOWLEDGE BASE INJECTION
-  * PROBLEM: Knowledge base content and identity instructions were being injected
-    into the user message turn, where they competed with capabilities and formatting
-    blocks and were treated as optional context by the AI.
-  * FIX: Added optional system_prompt parameter to call_claude_sonnet() and
+  * Added optional system_prompt parameter to call_claude_sonnet() and
     call_claude_opus(). When provided, passed as Anthropic API system= parameter.
-  * Backward compatible - system_prompt defaults to None.
 
 - January 30, 2026: CRITICAL FILE ATTACHMENT FIX
   * Added files_attached parameter to call_claude_sonnet() and call_claude_opus()
-  * When files are attached, AI receives EXPLICIT WARNING it cannot ignore
 
 - January 29, 2026: ROBUST CAPABILITY INJECTION
   * ALL AI calls now inject system capabilities
-  * call_claude_sonnet() now ALWAYS knows what it can do
-  * call_claude_opus() now ALWAYS knows what it can do
-  * call_gpt4(), call_deepseek(), call_gemini() all get capabilities
 
 - January 25, 2026: FIXED CONVERSATION MEMORY NOT BEING USED
-  * Modified call_claude_sonnet() to accept optional conversation_history parameter
-  * Modified call_claude_opus() to accept optional conversation_history parameter
+  * Modified call_claude_sonnet() and call_claude_opus() to accept
+    optional conversation_history parameter
 
 Author: Jim @ Shiftwork Solutions LLC
 """
@@ -189,6 +182,68 @@ DO NOT say "I don't see any files" - the files ARE present and you MUST read the
         print(f"Claude Sonnet API error: {str(e)}")
         return {
             'content': f"ERROR: Claude Sonnet call failed: {str(e)}",
+            'usage': {'input_tokens': 0, 'output_tokens': 0},
+            'error': True
+        }
+
+
+def call_claude_sonnet_raw(prompt, system_prompt, max_tokens=1000):
+    """
+    Call Claude Sonnet with NO capabilities injection, NO formatting requirements.
+
+    This is a lean internal function designed exclusively for background tasks
+    like memory extraction that need a clean JSON response from Claude without
+    the overhead of the full capabilities and formatting blocks injected by
+    call_claude_sonnet().
+
+    call_claude_sonnet() adds thousands of tokens of capabilities + formatting
+    to every call. For a background daemon thread calling Claude just to extract
+    a small JSON array of memories, that overhead can cause timeouts or silent
+    failures. This function bypasses all that.
+
+    Args:
+        prompt (str):        The full user prompt to send
+        system_prompt (str): System-level instructions (required — no default)
+        max_tokens (int):    Maximum response tokens (default 1000)
+
+    Returns:
+        dict with keys:
+            'content' (str):  The model's text response, or error message
+            'usage'   (dict): {'input_tokens': int, 'output_tokens': int}
+            'error'   (bool): True if the call failed (key absent on success)
+
+    Added: March 06, 2026
+    Used by: memory/memory_extractor.py
+    """
+    if not anthropic_client:
+        return {
+            'content': "ERROR: Anthropic API key not configured",
+            'usage': {'input_tokens': 0, 'output_tokens': 0},
+            'error': True
+        }
+
+    try:
+        response = anthropic_client.messages.create(
+            model=config.CLAUDE_SONNET_MODEL,
+            max_tokens=max_tokens,
+            system=system_prompt,
+            messages=[
+                {'role': 'user', 'content': prompt}
+            ],
+            timeout=config.ANTHROPIC_TIMEOUT
+        )
+
+        return {
+            'content': response.content[0].text,
+            'usage': {
+                'input_tokens': response.usage.input_tokens,
+                'output_tokens': response.usage.output_tokens
+            }
+        }
+    except Exception as e:
+        print(f"call_claude_sonnet_raw error: {str(e)}")
+        return {
+            'content': f"ERROR: call_claude_sonnet_raw failed: {str(e)}",
             'usage': {'input_tokens': 0, 'output_tokens': 0},
             'error': True
         }
