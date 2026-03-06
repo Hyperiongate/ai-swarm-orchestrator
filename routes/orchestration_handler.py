@@ -1,9 +1,25 @@
 """
 Orchestration Handler - Main AI Task Processing (REFACTORED)
 Created: January 31, 2026
-Last Updated: March 05, 2026 - Phase 2A-fix: PostgreSQL placeholder fix
+Last Updated: March 06, 2026 - CONNECTION LEAK FIX: db_temp try/finally
 
 CHANGELOG:
+
+- March 06, 2026: CONNECTION LEAK FIX - db_temp try/finally
+  * Root cause: 4 db_temp blocks in Handler 10 called db_temp.close()
+    without try/finally. If any db_temp.execute() raised an exception
+    (e.g. under pool pressure), db_temp.close() was never called, leaking
+    a connection slot back to the pool. These at-risk leaks combined with
+    the guaranteed leaks in enhanced_intelligence.py to produce exactly
+    4 leaked connections per /api/orchestrate request.
+  * Fix: Wrapped all 4 db_temp blocks in try/finally so db_temp.close()
+    always fires regardless of whether the query succeeds or fails.
+    Affected blocks:
+      1. client_profile_context lookup (SELECT client_name FROM projects)
+      2. specialized_context industry lookup (SELECT industry FROM projects)
+      3. project_context full project lookup (SELECT * FROM projects)
+      4. client profile update lookup (SELECT client_name, industry FROM projects)
+  * No logic changes. No handler behavior changes. Pure leak prevention.
 
 - March 05, 2026: Phase 2A-fix - POSTGRESQL PLACEHOLDER FIX
   * Root cause: All inline db.execute() calls in orchestrate() were using
@@ -1065,14 +1081,20 @@ END KNOWLEDGE BASE - Answer using the above as your primary source.
             except Exception as learn_ctx_error:
                 print(f"Could not get learning context (non-critical): {learn_ctx_error}")
 
+            # ----------------------------------------------------------------
+            # CLIENT PROFILE CONTEXT — try/finally ensures db_temp is closed
+            # even if the query fails (March 06, 2026 leak fix)
+            # ----------------------------------------------------------------
             client_profile_context = ""
             if project_id:
                 try:
                     db_temp = get_db()
-                    project = db_temp.execute(
-                        'SELECT client_name FROM projects WHERE project_id = %s', (project_id,)
-                    ).fetchone()
-                    db_temp.close()
+                    try:
+                        project = db_temp.execute(
+                            'SELECT client_name FROM projects WHERE project_id = %s', (project_id,)
+                        ).fetchone()
+                    finally:
+                        db_temp.close()
                     if project and project['client_name']:
                         client_profile_context = get_client_profile_context(project['client_name'])
                         if client_profile_context:
@@ -1088,16 +1110,22 @@ END KNOWLEDGE BASE - Answer using the above as your primary source.
             except Exception as avoid_error:
                 print(f"Could not get avoidance context (non-critical): {avoid_error}")
 
+            # ----------------------------------------------------------------
+            # SPECIALIZED CONTEXT — try/finally ensures db_temp is closed
+            # even if the query fails (March 06, 2026 leak fix)
+            # ----------------------------------------------------------------
             specialized_context = ""
             try:
                 specialist_kb = get_specialized_knowledge()
                 industry = None
                 if project_id:
                     db_temp = get_db()
-                    proj = db_temp.execute(
-                        'SELECT industry FROM projects WHERE project_id = %s', (project_id,)
-                    ).fetchone()
-                    db_temp.close()
+                    try:
+                        proj = db_temp.execute(
+                            'SELECT industry FROM projects WHERE project_id = %s', (project_id,)
+                        ).fetchone()
+                    finally:
+                        db_temp.close()
                     if proj:
                         industry = proj['industry']
                 specialized_context = specialist_kb.build_expertise_context(user_request, industry)
@@ -1125,15 +1153,21 @@ END KNOWLEDGE BASE - Answer using the above as your primary source.
             except Exception as intel_error:
                 print(f"EnhancedIntelligence init failed (non-critical): {intel_error}")
 
+            # ----------------------------------------------------------------
+            # PROJECT CONTEXT — try/finally ensures db_temp is closed
+            # even if the query fails (March 06, 2026 leak fix)
+            # ----------------------------------------------------------------
             project_context = ""
             if project_id:
                 try:
                     from database_file_management import get_file_stats_by_project
                     db_temp = get_db()
-                    project = db_temp.execute(
-                        'SELECT * FROM projects WHERE project_id = %s', (project_id,)
-                    ).fetchone()
-                    db_temp.close()
+                    try:
+                        project = db_temp.execute(
+                            'SELECT * FROM projects WHERE project_id = %s', (project_id,)
+                        ).fetchone()
+                    finally:
+                        db_temp.close()
                     if project:
                         file_stats = get_file_stats_by_project(project_id)
                         project_context = f"""
@@ -1316,13 +1350,19 @@ Be comprehensive and professional."""
                 except Exception as learn_error:
                     print(f"EnhancedIntelligence learning failed (non-critical): {learn_error}")
 
+            # ----------------------------------------------------------------
+            # CLIENT PROFILE UPDATE — try/finally ensures db_temp is closed
+            # even if the query fails (March 06, 2026 leak fix)
+            # ----------------------------------------------------------------
             if project_id:
                 try:
                     db_temp = get_db()
-                    project = db_temp.execute(
-                        'SELECT client_name, industry FROM projects WHERE project_id = %s', (project_id,)
-                    ).fetchone()
-                    db_temp.close()
+                    try:
+                        project = db_temp.execute(
+                            'SELECT client_name, industry FROM projects WHERE project_id = %s', (project_id,)
+                        ).fetchone()
+                    finally:
+                        db_temp.close()
                     if project and project['client_name']:
                         interaction_data = {'approach': orchestrator, 'approach_worked': True,
                                            'industry': project['industry'], 'preferences': {}}
