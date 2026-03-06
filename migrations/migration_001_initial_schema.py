@@ -2,7 +2,7 @@
 AI SWARM ORCHESTRATOR - Database Migration 001
 File: migrations/migration_001_initial_schema.py
 Created: March 02, 2026
-Last Updated: March 05, 2026 - Phase 2A: MEMORY_STORE SCHEMA FIX
+Last Updated: March 06, 2026 - CONVERSATION_CONTEXT UNIQUE CONSTRAINT FIX
 
 PURPOSE:
     Authoritative schema definition for the entire AI Swarm Orchestrator system.
@@ -10,73 +10,29 @@ PURPOSE:
     Safe to run multiple times — all statements use CREATE TABLE IF NOT EXISTS.
 
 CHANGELOG:
+    - March 06, 2026: CONVERSATION_CONTEXT UNIQUE CONSTRAINT FIX
+      * Root cause: conversation_context table was missing UNIQUE(conversation_id,
+        context_key) constraint. The ON CONFLICT upsert in conversation_utils.py
+        requires this constraint to function. Without it PostgreSQL raises:
+          "there is no unique or exclusion constraint matching the ON CONFLICT
+           specification"
+      * Fix 1: Added UNIQUE(conversation_id, context_key) to CREATE TABLE
+        definition for new installs.
+      * Fix 2: Added CREATE UNIQUE INDEX IF NOT EXISTS to the post-migration
+        index section to patch the existing production table.
+      * Also confirmed: column names are context_key and context_value (not
+        key and value). conversation_utils.py updated to match.
+
     - March 05, 2026 (Phase 2A): MEMORY_STORE SCHEMA FIX
-      * Root cause: memory_store table was created with wrong columns
-        (memory_key, memory_value, access_count, last_accessed, expires_at)
-        from the original Phase 1 migration. Phase 2A code expects:
-        category, content, source_task_id, updated_at.
-      * Fix 1: Updated CREATE TABLE IF NOT EXISTS memory_store definition
-        to the correct Phase 2A schema. New installs get the right table.
-      * Fix 2: Added 4 missing columns to extra_columns ALTER TABLE section
-        so the existing production table gets patched on next startup:
-          - category        TEXT
-          - content         TEXT
-          - source_task_id  INTEGER
-          - updated_at      TIMESTAMP
-      * No other changes. All other table definitions, indexes, and ALTER
-        TABLE entries are identical to Phase 9b.
+      * Root cause: memory_store table was created with wrong columns.
+      * Fix: Updated CREATE TABLE and added ALTER TABLE patches.
 
     - March 05, 2026 (Phase 9b): PROJECT_FILES COLUMN FIX
-      * Root cause: project_files table was created by an earlier migration version
-        before all columns were defined. CREATE TABLE IF NOT EXISTS skips the table
-        entirely if it already exists, so new columns never got added.
-      * Fix: added 9 missing columns to the extra_columns ALTER TABLE section so
-        they are patched into the existing table on every startup:
-          - uploaded_at    TIMESTAMP DEFAULT NOW()   <-- was causing 500 on list/upload
-          - original_filename TEXT
-          - file_type TEXT
-          - file_size INTEGER DEFAULT 0
-          - file_path TEXT
-          - content_text TEXT
-          - content_summary TEXT
-          - category TEXT DEFAULT 'general'
-          - analysis_result TEXT
-      * No other changes. All table definitions, indexes, and other ALTER TABLE
-        entries are identical to Phase 9.
-      * database_file_management.py requires NO changes — its SQL is correct.
+      * Added 9 missing columns to project_files via ALTER TABLE.
 
-    - March 03, 2026 (Phase 9): COMPLETE SCHEMA REWRITE to match app code
-      * tasks: added user_request, status, result, confidence, assigned_orchestrator,
-               orchestrator, completed_at, conversation_id, knowledge_sources
-      * conversations: changed to conversation_id TEXT PK, added mode, project_id,
-                       is_archived, schedule_context, updated_at
-      * conversation_messages: NEW table (was 'messages' with wrong columns)
-      * projects: changed to id SERIAL PK + project_id TEXT, added all Sprint 2
-                  columns (context_data, uploaded_files, etc.) and bulletproof
-                  columns (storage_path, checklist_data, etc.)
-      * generated_documents: added original_name, is_deleted, category, description,
-                             task_id, project_id
-      * learning_patterns: fixed to match app code columns
-      * learning_records: NEW table (was missing entirely)
-      * escalations: NEW table (was missing entirely)
-      * user_feedback: NEW table (was missing entirely)
-      * specialist_calls: NEW table (was 'specialists' with wrong schema)
-      * avoidance_patterns: fixed column names to match database.py
-      * smart_analyzer_state: singular name, correct columns
-      * analysis_sessions: correct columns matching database.py
-      * analysis_deliverables: correct columns
-      * analysis_progress: NEW table (was missing)
-      * project_files: added all columns used by database_file_management.py
-      * project_conversations: added conversation_id, file_ids, metadata columns
-      * introspection_insights: NEW table (was missing, referenced by introspection.py)
-      * background_jobs: NEW table (was missing)
-      * conversation_summaries: NEW table (was missing)
-      * proactive_suggestions: NEW table (was missing)
-      * user_patterns: NEW table (was missing)
-      * client_profiles: fixed to use client_name as unique key
-      * Preserved all tables from old migration that are still valid
+    - March 03, 2026 (Phase 9): COMPLETE SCHEMA REWRITE to match app code.
 
-    - March 02, 2026: Initial creation for PostgreSQL migration (Phase 1)
+    - March 02, 2026: Initial creation for PostgreSQL migration (Phase 1).
 
 USAGE:
     Called automatically by app.py STEP 1 on every startup.
@@ -281,6 +237,12 @@ def run_migration():
         )
     """)
 
+    # -------------------------------------------------------------------------
+    # CONVERSATION_CONTEXT
+    # March 06, 2026: Added UNIQUE(conversation_id, context_key) constraint.
+    # This is required by the ON CONFLICT upsert in conversation_utils.py.
+    # Column names are context_key and context_value (not key/value).
+    # -------------------------------------------------------------------------
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS conversation_context (
             id {pk},
@@ -289,7 +251,8 @@ def run_migration():
             context_key TEXT NOT NULL,
             context_value TEXT,
             created_at {ts},
-            updated_at {ts}
+            updated_at {ts},
+            UNIQUE(conversation_id, context_key)
         )
     """)
 
@@ -1039,6 +1002,10 @@ def run_migration():
         "CREATE INDEX IF NOT EXISTS idx_memory_store_type ON memory_store(memory_type)",
         "CREATE INDEX IF NOT EXISTS idx_memory_store_category ON memory_store(category)",
         "CREATE INDEX IF NOT EXISTS idx_memory_store_created ON memory_store(created_at DESC)",
+        # March 06, 2026: UNIQUE index for conversation_context ON CONFLICT upsert.
+        # This patches existing production tables that were created without the
+        # UNIQUE(conversation_id, context_key) constraint.
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_context_unique ON conversation_context(conversation_id, context_key)",
     ]
 
     # =========================================================================
@@ -1133,9 +1100,6 @@ def run_migration():
             ("consensus_validations", "ai2_response", "TEXT"),
             ("consensus_validations", "consensus_achieved", _bool(db_type, False).replace('BOOLEAN ', '').replace('INTEGER ', '')),
             # project_files — ensure all columns exist
-            # Phase 9b addition: uploaded_at was missing from ALTER TABLE section,
-            # causing "column does not exist" errors on list and upload operations.
-            # All columns below are safe to re-run (IF NOT EXISTS).
             ("project_files", "file_id", "TEXT"),
             ("project_files", "mime_type", "TEXT"),
             ("project_files", "description", "TEXT"),
