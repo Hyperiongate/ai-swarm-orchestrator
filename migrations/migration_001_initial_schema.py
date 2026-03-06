@@ -1097,7 +1097,7 @@ def run_migration():
             ("consensus_validations", "ai1_response", "TEXT"),
             ("consensus_validations", "ai2_name", "TEXT"),
             ("consensus_validations", "ai2_response", "TEXT"),
-            ("consensus_validations", "consensus_achieved", _bool(db_type, False).replace('BOOLEAN ', '').replace('INTEGER ', '')),
+            ("consensus_validations", "consensus_achieved", "BOOLEAN DEFAULT FALSE"),
             # project_files
             ("project_files", "file_id", "TEXT"),
             ("project_files", "mime_type", "TEXT"),
