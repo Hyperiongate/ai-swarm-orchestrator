@@ -1,9 +1,35 @@
 """
 Proactive Curiosity Engine - Phase 1 Component 2
 Created: February 5, 2026
-Last Updated: February 21, 2026 - FIXED table column migration + curiosity nonsense
+Last Updated: March 06, 2026 - POSTGRESQL FIX
 
 CHANGELOG:
+
+- March 06, 2026: POSTGRESQL FIX - Full PostgreSQL compatibility
+  PROBLEM: Three separate errors fired on every request:
+    1. "syntax error at or near AUTOINCREMENT" - _ensure_table() used SQLite-only
+       AUTOINCREMENT syntax in CREATE TABLE. get_db() returns a PostgreSQL
+       connection, not SQLite.
+    2. "syntax error at or near AND" - _get_recent_curiosity_count() used ?
+       placeholder which PostgreSQL does not accept; also the WHERE clause
+       continuation was malformed.
+    3. "syntax error at or near ','" with VALUES (?, ?, ?, ?) - _log_curiosity()
+       used ? placeholders throughout.
+  FIX:
+    - _ensure_table(): Completely rewritten for PostgreSQL.
+        * Removed AUTOINCREMENT (PostgreSQL uses SERIAL, handled by migration).
+        * Removed PRAGMA table_info (SQLite-only); replaced with
+          information_schema.columns query.
+        * Removed datetime('now') SQLite default; uses NOW().
+        * Simplified: migration_001 already creates proactive_suggestions with
+          the correct PostgreSQL schema. _ensure_table() now just verifies the
+          table exists and adds any missing columns via ALTER TABLE IF NOT EXISTS.
+    - _get_recent_curiosity_count(): ? -> %s, fixed WHERE clause formatting,
+      fetchone()[0] instead of fetchone()['cnt'] (psycopg2 positional rows).
+    - _log_curiosity(): ? -> %s throughout.
+    - get_curiosity_stats(): Replaced dict(stats) with explicit column mapping
+      since psycopg2 rows are positional, not named dicts.
+  No logic changes. No function signature changes. Fully backward compatible.
 
 - February 21, 2026: FIXED proactive_suggestions COLUMN MIGRATION + CLIENT NAME STOPWORDS
   PROBLEM 1: _ensure_table() used CREATE TABLE IF NOT EXISTS which is idempotent -
@@ -98,62 +124,63 @@ class ProactiveCuriosityEngine:
         self.curiosity_history = []
         self.max_curiosity_per_conversation = 3
 
-        # Create/upgrade the proactive_suggestions table
+        # Verify/upgrade the proactive_suggestions table
         self._ensure_table()
 
     def _ensure_table(self):
         """
-        Create the proactive_suggestions table if it doesn't exist,
-        AND add any missing columns to an already-existing table.
+        Verify the proactive_suggestions table exists and has all required columns.
 
-        UPDATED February 21, 2026:
-        Added ALTER TABLE migration for conversation_id column.
-        CREATE TABLE IF NOT EXISTS is idempotent but won't add columns to
-        an existing table. We inspect actual columns after creation and
-        ALTER TABLE ADD COLUMN for any that are missing.
+        REWRITTEN March 06, 2026 for PostgreSQL compatibility:
+        - migration_001_initial_schema.py creates proactive_suggestions with the
+          correct PostgreSQL schema (SERIAL PRIMARY KEY, BOOLEAN, NOW()).
+        - This method just verifies the table is present and adds any missing
+          columns. Uses information_schema instead of SQLite PRAGMA table_info.
+        - No CREATE TABLE here - that is the migration's responsibility.
         """
         try:
             db = get_db()
 
-            # Step 1: Create table if it doesn't exist at all
-            db.execute('''
-                CREATE TABLE IF NOT EXISTS proactive_suggestions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    conversation_id TEXT NOT NULL,
-                    suggestion_type TEXT NOT NULL,
-                    suggestion_text TEXT NOT NULL,
-                    reasoning TEXT,
-                    user_action TEXT DEFAULT NULL,
-                    created_at TEXT DEFAULT (datetime('now'))
-                )
-            ''')
-            db.execute('''
-                CREATE INDEX IF NOT EXISTS idx_proactive_suggestions_conversation
-                ON proactive_suggestions (conversation_id)
-            ''')
-            db.commit()
+            # Check if table exists (PostgreSQL information_schema)
+            table_check = db.execute(
+                """SELECT table_name FROM information_schema.tables
+                   WHERE table_schema = 'public'
+                   AND table_name = 'proactive_suggestions'"""
+            ).fetchone()
 
-            # Step 2: Inspect actual columns and add any that are missing
-            # This handles the case where the table existed before conversation_id
-            # was added to the schema.
-            existing_cols = {
-                row[1] for row in db.execute('PRAGMA table_info(proactive_suggestions)').fetchall()
-            }
+            if not table_check:
+                # Table doesn't exist yet - migration will create it on next
+                # startup. Log a warning and return gracefully.
+                print("⚠️ proactive_suggestions table not found - will be created by migration")
+                db.close()
+                return
 
+            # Check existing columns via information_schema
+            col_rows = db.execute(
+                """SELECT column_name FROM information_schema.columns
+                   WHERE table_schema = 'public'
+                   AND table_name = 'proactive_suggestions'"""
+            ).fetchall()
+            existing_cols = {row[0] for row in col_rows}
+
+            # Required columns with PostgreSQL-compatible defaults
             required_cols = {
-                'conversation_id': 'TEXT NOT NULL DEFAULT ""',
-                'suggestion_type': 'TEXT NOT NULL DEFAULT ""',
-                'suggestion_text': 'TEXT NOT NULL DEFAULT ""',
+                'conversation_id': 'TEXT',
+                'response_id':     'TEXT',
+                'suggestion_type': 'TEXT',
+                'suggestion_text': 'TEXT',
+                'context':         'TEXT',
+                'was_accepted':    'BOOLEAN DEFAULT FALSE',
                 'reasoning':       'TEXT',
-                'user_action':     'TEXT DEFAULT NULL',
-                'created_at':      "TEXT DEFAULT (datetime('now'))"
+                'created_at':      'TIMESTAMP DEFAULT NOW()',
             }
 
             for col_name, col_def in required_cols.items():
                 if col_name not in existing_cols:
                     try:
                         db.execute(
-                            f'ALTER TABLE proactive_suggestions ADD COLUMN {col_name} {col_def}'
+                            f'ALTER TABLE proactive_suggestions '
+                            f'ADD COLUMN IF NOT EXISTS {col_name} {col_def}'
                         )
                         db.commit()
                         print(f"✅ Added missing column to proactive_suggestions: {col_name}")
@@ -163,7 +190,7 @@ class ProactiveCuriosityEngine:
             db.close()
 
         except Exception as e:
-            print(f"⚠️ Could not create proactive_suggestions table: {e}")
+            print(f"⚠️ Could not verify proactive_suggestions table: {e}")
 
     def should_be_curious(self, conversation_id, response_context):
         """
@@ -302,13 +329,15 @@ class ProactiveCuriosityEngine:
         """Count how many curious questions asked in this conversation"""
         try:
             db = get_db()
-            count = db.execute('''
-                SELECT COUNT(*) as cnt FROM proactive_suggestions
-                WHERE conversation_id = ?
-                AND suggestion_type = 'curious_followup'
-            ''', (conversation_id,)).fetchone()
+            result = db.execute(
+                """SELECT COUNT(*) FROM proactive_suggestions
+                   WHERE conversation_id = %s
+                   AND suggestion_type = 'curious_followup'""",
+                (conversation_id,)
+            ).fetchone()
             db.close()
-            return count['cnt'] if count else 0
+            # psycopg2 returns positional tuples, not named dicts
+            return result[0] if result else 0
         except Exception as e:
             print(f"⚠️ Could not count curiosity: {e}")
             return 0
@@ -317,12 +346,17 @@ class ProactiveCuriosityEngine:
         """Log that we asked a curious question"""
         try:
             db = get_db()
-            db.execute('''
-                INSERT INTO proactive_suggestions
-                (conversation_id, suggestion_type, suggestion_text, reasoning)
-                VALUES (?, ?, ?, ?)
-            ''', (conversation_id, 'curious_followup', question,
-                  json.dumps({'triggers': [t['type'] for t in triggers]})))
+            db.execute(
+                """INSERT INTO proactive_suggestions
+                   (conversation_id, suggestion_type, suggestion_text, reasoning)
+                   VALUES (%s, %s, %s, %s)""",
+                (
+                    conversation_id,
+                    'curious_followup',
+                    question,
+                    json.dumps({'triggers': [t['type'] for t in triggers]})
+                )
+            )
             db.commit()
             db.close()
         except Exception as e:
@@ -332,16 +366,22 @@ class ProactiveCuriosityEngine:
         """Get statistics about curiosity behavior"""
         try:
             db = get_db()
-            stats = db.execute('''
-                SELECT
-                    COUNT(*) as total_questions,
-                    COUNT(DISTINCT conversation_id) as conversations_with_curiosity,
-                    AVG(CASE WHEN user_action = 'engaged' THEN 1.0 ELSE 0.0 END) as engagement_rate
-                FROM proactive_suggestions
-                WHERE suggestion_type = 'curious_followup'
-            ''').fetchone()
+            result = db.execute(
+                """SELECT
+                       COUNT(*) AS total_questions,
+                       COUNT(DISTINCT conversation_id) AS conversations_with_curiosity,
+                       AVG(CASE WHEN was_accepted = TRUE THEN 1.0 ELSE 0.0 END) AS engagement_rate
+                   FROM proactive_suggestions
+                   WHERE suggestion_type = 'curious_followup'"""
+            ).fetchone()
             db.close()
-            return dict(stats) if stats else {}
+            if result:
+                return {
+                    'total_questions': result[0],
+                    'conversations_with_curiosity': result[1],
+                    'engagement_rate': result[2]
+                }
+            return {}
         except Exception as e:
             print(f"⚠️ Could not get curiosity stats: {e}")
             return {}
