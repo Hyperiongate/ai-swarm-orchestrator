@@ -3,9 +3,15 @@ AI SWARM ORCHESTRATOR - Memory Extractor
 Phase 2A: Memory System — Extraction Layer
 
 Created: March 05, 2026
-Last Updated: March 05, 2026 - Phase 2A initial build
+Last Updated: March 06, 2026 - Added print logging for extraction visibility
 
 CHANGELOG:
+- March 06, 2026: ADDED PRINT LOGGING
+  * Added print("🧠 Memory extraction starting...") at start of _run_extraction()
+  * Added print("🧠 Memory extraction complete - stored X memories") at end
+  * These appear in Render logs so we can confirm extraction is running
+  * No logic changes whatsoever.
+
 - March 05, 2026: Phase 2A initial build
   * New file — part of Phase 2A memory system
   * After each orchestration completes, analyzes the interaction with Claude Sonnet
@@ -120,6 +126,8 @@ def _run_extraction(task_data):
     """
     Internal implementation — called by extract_memories() inside a try/except.
     """
+    print("🧠 Memory extraction starting...")
+
     # ----------------------------------------------------------------
     # 1. Validate and unpack inputs
     # ----------------------------------------------------------------
@@ -138,10 +146,12 @@ def _run_extraction(task_data):
     # Skip extraction for empty or error responses
     if not user_request:
         logger.debug("extract_memories: skipping — no user_request")
+        print("🧠 Memory extraction skipped — no user_request")
         return []
 
     if not ai_response or ai_response.startswith('Error:'):
         logger.debug("extract_memories: skipping — no ai_response or response was an error")
+        print("🧠 Memory extraction skipped — no ai_response or error response")
         return []
 
     # ----------------------------------------------------------------
@@ -174,15 +184,18 @@ def _run_extraction(task_data):
         )
     except Exception as api_err:
         logger.error(f"extract_memories: Sonnet call failed: {api_err}")
+        print(f"🧠 Memory extraction failed — Sonnet API error: {api_err}")
         return []
 
     if not response or response.get('error'):
         logger.error(f"extract_memories: Sonnet returned error: {response.get('content', 'unknown')}")
+        print(f"🧠 Memory extraction failed — Sonnet response error")
         return []
 
     raw_text = (response.get('content') or '').strip()
     if not raw_text:
         logger.warning("extract_memories: Sonnet returned empty response")
+        print("🧠 Memory extraction failed — empty Sonnet response")
         return []
 
     # ----------------------------------------------------------------
@@ -191,6 +204,7 @@ def _run_extraction(task_data):
     memories_data = _parse_memories_json(raw_text)
     if memories_data is None:
         logger.warning(f"extract_memories: could not parse Sonnet response as JSON. Raw: {raw_text[:300]}")
+        print(f"🧠 Memory extraction — JSON parse failed, using fallback episodic record")
         # Fall back to storing a minimal episodic record so something is captured
         memories_data = [
             {
@@ -237,6 +251,7 @@ def _run_extraction(task_data):
             })
             logger.debug(f"extract_memories: stored {memory_type}/{category} id={memory_id}")
 
+    print(f"🧠 Memory extraction complete - stored {len(stored)} memories")
     logger.info(
         f"extract_memories: stored {len(stored)} memories for task_id={source_task_id} "
         f"(model={model_used}, time={execution_time}s)"
