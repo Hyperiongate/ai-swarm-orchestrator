@@ -1,11 +1,26 @@
 """
 Proactive Curiosity Engine - Phase 1 Component 2
 Created: February 5, 2026
-Last Updated: March 06, 2026 - POSTGRESQL FIX
+Last Updated: March 06, 2026 - CONNECTION LEAK FIX
 
 CHANGELOG:
 
-- March 06, 2026: POSTGRESQL FIX - Full PostgreSQL compatibility
+- March 06, 2026 (v2): CONNECTION LEAK FIX
+  PROBLEM: _ensure_table(), _get_recent_curiosity_count(), and _log_curiosity()
+    all opened db = get_db() inside a try: block but had NO finally: db.close().
+    If ANY exception was raised (e.g., column missing, table in bad state,
+    pool exhausted), the except branch ran WITHOUT closing the connection.
+    This leaked 1 PostgreSQL connection per orchestrate call, causing the
+    connection pool (max=40) to exhaust over time and producing 15-second
+    timeout spikes on /api/stats, /api/documents, and /api/learning/stats.
+  FIX:
+    - All three database functions refactored to declare db = None before try:
+    - Added finally: if db: db.close() to every function
+    - This guarantees db.close() fires on ALL code paths: success, exception,
+      and early return.
+    - No logic changes. No behavior changes. Purely structural safety fix.
+
+- March 06, 2026 (v1): POSTGRESQL FIX - Full PostgreSQL compatibility
   PROBLEM: Three separate errors fired on every request:
     1. "syntax error at or near AUTOINCREMENT" - _ensure_table() used SQLite-only
        AUTOINCREMENT syntax in CREATE TABLE. get_db() returns a PostgreSQL
@@ -137,7 +152,11 @@ class ProactiveCuriosityEngine:
         - This method just verifies the table is present and adds any missing
           columns. Uses information_schema instead of SQLite PRAGMA table_info.
         - No CREATE TABLE here - that is the migration's responsibility.
+
+        UPDATED March 06, 2026 (v2): Added try/finally to guarantee db.close()
+        fires on ALL code paths including exceptions and early returns.
         """
+        db = None
         try:
             db = get_db()
 
@@ -152,7 +171,6 @@ class ProactiveCuriosityEngine:
                 # Table doesn't exist yet - migration will create it on next
                 # startup. Log a warning and return gracefully.
                 print("⚠️ proactive_suggestions table not found - will be created by migration")
-                db.close()
                 return
 
             # Check existing columns via information_schema
@@ -187,10 +205,11 @@ class ProactiveCuriosityEngine:
                     except Exception as alter_err:
                         print(f"⚠️ Could not add column {col_name}: {alter_err}")
 
-            db.close()
-
         except Exception as e:
             print(f"⚠️ Could not verify proactive_suggestions table: {e}")
+        finally:
+            if db:
+                db.close()
 
     def should_be_curious(self, conversation_id, response_context):
         """
@@ -327,6 +346,7 @@ class ProactiveCuriosityEngine:
 
     def _get_recent_curiosity_count(self, conversation_id):
         """Count how many curious questions asked in this conversation"""
+        db = None
         try:
             db = get_db()
             result = db.execute(
@@ -335,15 +355,18 @@ class ProactiveCuriosityEngine:
                    AND suggestion_type = 'curious_followup'""",
                 (conversation_id,)
             ).fetchone()
-            db.close()
             # psycopg2 returns positional tuples, not named dicts
             return result[0] if result else 0
         except Exception as e:
             print(f"⚠️ Could not count curiosity: {e}")
             return 0
+        finally:
+            if db:
+                db.close()
 
     def _log_curiosity(self, conversation_id, question, triggers):
         """Log that we asked a curious question"""
+        db = None
         try:
             db = get_db()
             db.execute(
@@ -358,12 +381,15 @@ class ProactiveCuriosityEngine:
                 )
             )
             db.commit()
-            db.close()
         except Exception as e:
             print(f"⚠️ Could not log curiosity: {e}")
+        finally:
+            if db:
+                db.close()
 
     def get_curiosity_stats(self):
         """Get statistics about curiosity behavior"""
+        db = None
         try:
             db = get_db()
             result = db.execute(
@@ -374,7 +400,6 @@ class ProactiveCuriosityEngine:
                    FROM proactive_suggestions
                    WHERE suggestion_type = 'curious_followup'"""
             ).fetchone()
-            db.close()
             if result:
                 return {
                     'total_questions': result[0],
@@ -385,6 +410,9 @@ class ProactiveCuriosityEngine:
         except Exception as e:
             print(f"⚠️ Could not get curiosity stats: {e}")
             return {}
+        finally:
+            if db:
+                db.close()
 
 
 def get_curiosity_engine():
