@@ -1,9 +1,24 @@
 """
 Task Analysis Module - WITH UNIFIED KNOWLEDGE BASE (Project Files + Knowledge Management)
 Created: January 21, 2026
-Last Updated: February 28, 2026 - GAP 3 FIX: RELEVANCE-RANKED KNOWLEDGE SEARCH
+Last Updated: March 06, 2026 - POSTGRESQL FIX: get_learning_context()
 
 CHANGELOG:
+
+- March 06, 2026: POSTGRESQL FIX in get_learning_context()
+  PROBLEM: get_learning_context() used get_db() (PostgreSQL connection) but queried
+    sqlite_master to check for the learning_records table. sqlite_master is a
+    SQLite-only system catalog; it does not exist in PostgreSQL.
+    Error: relation "sqlite_master" does not exist
+    This fired on EVERY request, logging a warning on every call.
+  FIX: Replaced sqlite_master check with PostgreSQL information_schema query:
+    OLD: db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='learning_records'")
+    NEW: db.execute(\"\"\"SELECT table_name FROM information_schema.tables
+                        WHERE table_schema = 'public' AND table_name = 'learning_records'\"\"\")
+  NO other logic changed. No function signatures changed. Fully backward compatible.
+  NOTE: search_knowledge_management_db() and _get_template_from_kb() (in
+    orchestration_handler.py) intentionally use sqlite3.connect() to access
+    the local knowledge base SQLite file — those are CORRECT and NOT changed.
 
 - February 28, 2026 (Gap 3): RELEVANCE-RANKED KNOWLEDGE SEARCH
   PROBLEM: search_knowledge_management_db() used LIKE %term% queries with no
@@ -191,9 +206,9 @@ def call_research_agent(prompt, max_tokens=4000):
 # ============================================================================
 
 SPECIALIST_ROUTING_RULES = """
-\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SPECIALIST ROUTING RULES - READ CAREFULLY
-\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 You have access to these specialist AIs. Use them when the task genuinely
 benefits from their capability. Do NOT default to an empty list.
@@ -239,7 +254,7 @@ ESCALATE TO OPUS (escalate_to_opus: true) WHEN:
 FOR MOST STANDARD QUESTIONS: specialists_needed = [] and escalate_to_opus = false
   Only assign specialists when they add genuine value.
 
-\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
 
 
@@ -248,21 +263,24 @@ def get_learning_context():
     try:
         db = get_db()
 
+        # PostgreSQL: use information_schema instead of sqlite_master
+        # sqlite_master is SQLite-only; it does not exist in PostgreSQL.
         table_check = db.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='learning_records'"
+            """SELECT table_name FROM information_schema.tables
+               WHERE table_schema = 'public' AND table_name = 'learning_records'"""
         ).fetchone()
 
         if not table_check:
             db.close()
             return ""
 
-        patterns = db.execute('''
+        patterns = db.execute("""
             SELECT pattern_type, success_rate, times_applied, pattern_data
             FROM learning_records
             WHERE times_applied >= 2
             ORDER BY success_rate DESC
             LIMIT 10
-        ''').fetchall()
+        """).fetchall()
 
         db.close()
 
