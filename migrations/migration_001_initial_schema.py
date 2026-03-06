@@ -2,7 +2,7 @@
 AI SWARM ORCHESTRATOR - Database Migration 001
 File: migrations/migration_001_initial_schema.py
 Created: March 02, 2026
-Last Updated: March 06, 2026 - CONVERSATION_CONTEXT UNIQUE CONSTRAINT FIX
+Last Updated: March 06, 2026 - COLUMN PATCHES: conversation_summaries + user_profiles
 
 PURPOSE:
     Authoritative schema definition for the entire AI Swarm Orchestrator system.
@@ -10,25 +10,25 @@ PURPOSE:
     Safe to run multiple times — all statements use CREATE TABLE IF NOT EXISTS.
 
 CHANGELOG:
+    - March 06, 2026: COLUMN PATCHES - conversation_summaries + user_profiles
+      * conversation_summaries: Added message_range, summary_text,
+        mentioned_entities, key_decisions to extra_columns ALTER TABLE section.
+        Root cause: conversation_summarizer.py was rebuilt to use these column
+        names but the original migration only had summary, key_topics, action_items.
+        The CREATE TABLE now includes all columns; ALTER TABLE patches the live DB.
+      * user_profiles: Added profile_data column to CREATE TABLE and extra_columns.
+        Root cause: EnhancedIntelligence queries profile_data but migration
+        only defined preferences column. Both now present for compatibility.
+      * proactive_suggestions: Added reasoning column to CREATE TABLE and
+        extra_columns (proactive_curiosity_engine.py inserts this field).
+
     - March 06, 2026: CONVERSATION_CONTEXT UNIQUE CONSTRAINT FIX
-      * Root cause: conversation_context table was missing UNIQUE(conversation_id,
-        context_key) constraint. The ON CONFLICT upsert in conversation_utils.py
-        requires this constraint to function. Without it PostgreSQL raises:
-          "there is no unique or exclusion constraint matching the ON CONFLICT
-           specification"
-      * Fix 1: Added UNIQUE(conversation_id, context_key) to CREATE TABLE
-        definition for new installs.
-      * Fix 2: Added CREATE UNIQUE INDEX IF NOT EXISTS to the post-migration
-        index section to patch the existing production table.
-      * Also confirmed: column names are context_key and context_value (not
-        key and value). conversation_utils.py updated to match.
+      * Added UNIQUE(conversation_id, context_key) constraint.
+      * Added CREATE UNIQUE INDEX IF NOT EXISTS to patch existing production table.
 
     - March 05, 2026 (Phase 2A): MEMORY_STORE SCHEMA FIX
-      * Root cause: memory_store table was created with wrong columns.
-      * Fix: Updated CREATE TABLE and added ALTER TABLE patches.
 
     - March 05, 2026 (Phase 9b): PROJECT_FILES COLUMN FIX
-      * Added 9 missing columns to project_files via ALTER TABLE.
 
     - March 03, 2026 (Phase 9): COMPLETE SCHEMA REWRITE to match app code.
 
@@ -42,19 +42,16 @@ USAGE:
 import os
 import sys
 
-# Add parent directory to path so we can import db_engine
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def _pk(db_type):
-    """Return correct auto-increment primary key syntax."""
     if db_type == 'postgresql':
         return 'SERIAL PRIMARY KEY'
     return 'INTEGER PRIMARY KEY AUTOINCREMENT'
 
 
 def _bool(db_type, default=False):
-    """Return correct boolean type with default."""
     val = 'FALSE' if default is False else 'TRUE'
     if db_type == 'postgresql':
         return f'BOOLEAN DEFAULT {val}'
@@ -62,24 +59,12 @@ def _bool(db_type, default=False):
 
 
 def _ts(db_type):
-    """Return correct timestamp default."""
     if db_type == 'postgresql':
         return 'TIMESTAMP DEFAULT NOW()'
     return 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP'
 
 
-def _text_or_varchar(db_type, size=None):
-    """TEXT works for both PostgreSQL and SQLite."""
-    return 'TEXT'
-
-
 def run_migration():
-    """
-    Run the initial schema migration.
-    Creates all tables if they do not exist.
-    Safe to call on every application startup.
-    Returns True on success, raises on failure.
-    """
     from db_engine import get_db_connection, get_db_type
 
     db_type = get_db_type()
@@ -91,10 +76,6 @@ def run_migration():
     ts = _ts(db_type)
 
     tables = []
-
-    # =========================================================================
-    # CORE SWARM TABLES
-    # =========================================================================
 
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS tasks (
@@ -237,12 +218,6 @@ def run_migration():
         )
     """)
 
-    # -------------------------------------------------------------------------
-    # CONVERSATION_CONTEXT
-    # March 06, 2026: Added UNIQUE(conversation_id, context_key) constraint.
-    # This is required by the ON CONFLICT upsert in conversation_utils.py.
-    # Column names are context_key and context_value (not key/value).
-    # -------------------------------------------------------------------------
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS conversation_context (
             id {pk},
@@ -640,6 +615,9 @@ def run_migration():
         )
     """)
 
+    # -------------------------------------------------------------------------
+    # USER_PROFILES — March 06, 2026: added profile_data column
+    # -------------------------------------------------------------------------
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS user_profiles (
             id {pk},
@@ -648,6 +626,7 @@ def run_migration():
             email TEXT,
             role TEXT DEFAULT 'user',
             preferences TEXT,
+            profile_data TEXT,
             created_at {ts},
             updated_at {ts}
         )
@@ -696,10 +675,6 @@ def run_migration():
 
     # -------------------------------------------------------------------------
     # MEMORY STORE - Phase 2A schema
-    # NOTE: The original Phase 1 schema had wrong columns (memory_key,
-    # memory_value, access_count, last_accessed, expires_at). Phase 2A
-    # corrects this. The extra_columns section below patches any existing
-    # production table that was created with the old schema.
     # -------------------------------------------------------------------------
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS memory_store (
@@ -888,18 +863,29 @@ def run_migration():
         )
     """)
 
+    # -------------------------------------------------------------------------
+    # CONVERSATION_SUMMARIES — March 06, 2026: added message_range,
+    # summary_text, mentioned_entities, key_decisions columns.
+    # -------------------------------------------------------------------------
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS conversation_summaries (
             id {pk},
             conversation_id TEXT NOT NULL,
             summary TEXT,
+            summary_text TEXT,
             key_topics TEXT,
+            key_decisions TEXT,
             action_items TEXT,
+            mentioned_entities TEXT,
+            message_range TEXT,
             created_at {ts},
             updated_at {ts}
         )
     """)
 
+    # -------------------------------------------------------------------------
+    # PROACTIVE_SUGGESTIONS — March 06, 2026: added reasoning column.
+    # -------------------------------------------------------------------------
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS proactive_suggestions (
             id {pk},
@@ -908,6 +894,7 @@ def run_migration():
             suggestion_type TEXT,
             suggestion_text TEXT,
             context TEXT,
+            reasoning TEXT,
             was_accepted {bool_false},
             created_at {ts}
         )
@@ -1002,9 +989,6 @@ def run_migration():
         "CREATE INDEX IF NOT EXISTS idx_memory_store_type ON memory_store(memory_type)",
         "CREATE INDEX IF NOT EXISTS idx_memory_store_category ON memory_store(category)",
         "CREATE INDEX IF NOT EXISTS idx_memory_store_created ON memory_store(created_at DESC)",
-        # March 06, 2026: UNIQUE index for conversation_context ON CONFLICT upsert.
-        # This patches existing production tables that were created without the
-        # UNIQUE(conversation_id, context_key) constraint.
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_context_unique ON conversation_context(conversation_id, context_key)",
     ]
 
@@ -1045,7 +1029,7 @@ def run_migration():
         # =====================================================================
 
         extra_columns = [
-            # projects table — ensure all columns exist
+            # projects table
             ("projects", "project_id", "TEXT"),
             ("projects", "facility_size", "TEXT"),
             ("projects", "project_phase", "TEXT DEFAULT 'discovery'"),
@@ -1064,7 +1048,7 @@ def run_migration():
             ("projects", "pain_points", "TEXT"),
             ("projects", "goals", "TEXT"),
             ("projects", "notes", "TEXT"),
-            # tasks table — ensure all columns exist
+            # tasks table
             ("tasks", "user_request", "TEXT"),
             ("tasks", "status", "TEXT DEFAULT 'pending'"),
             ("tasks", "assigned_orchestrator", "TEXT"),
@@ -1074,32 +1058,32 @@ def run_migration():
             ("tasks", "conversation_id", "TEXT"),
             ("tasks", "knowledge_sources", "TEXT"),
             ("tasks", "completed_at", "TIMESTAMP"),
-            # conversations table — ensure all columns exist
+            # conversations table
             ("conversations", "conversation_id", "TEXT"),
             ("conversations", "mode", "TEXT DEFAULT 'quick'"),
             ("conversations", "project_id", "TEXT"),
             ("conversations", "schedule_context", "TEXT"),
-            # generated_documents table — ensure all columns exist
+            # generated_documents table
             ("generated_documents", "original_name", "TEXT"),
             ("generated_documents", "category", "TEXT DEFAULT 'general'"),
             ("generated_documents", "description", "TEXT"),
             ("generated_documents", "task_id", "INTEGER"),
             ("generated_documents", "project_id", "TEXT"),
-            # case_studies table — ensure all columns exist
+            # case_studies table
             ("case_studies", "problem_summary", "TEXT"),
             ("case_studies", "solution_summary", "TEXT"),
-            # blog_posts table — ensure all columns exist
+            # blog_posts table
             ("blog_posts", "topic_display", "TEXT"),
             ("blog_posts", "url_slug", "TEXT"),
             ("blog_posts", "meta_description", "TEXT"),
             ("blog_posts", "angle", "TEXT"),
-            # consensus_validations — ensure all columns exist
+            # consensus_validations
             ("consensus_validations", "ai1_name", "TEXT"),
             ("consensus_validations", "ai1_response", "TEXT"),
             ("consensus_validations", "ai2_name", "TEXT"),
             ("consensus_validations", "ai2_response", "TEXT"),
             ("consensus_validations", "consensus_achieved", _bool(db_type, False).replace('BOOLEAN ', '').replace('INTEGER ', '')),
-            # project_files — ensure all columns exist
+            # project_files
             ("project_files", "file_id", "TEXT"),
             ("project_files", "mime_type", "TEXT"),
             ("project_files", "description", "TEXT"),
@@ -1117,28 +1101,31 @@ def run_migration():
             ("project_files", "content_summary", "TEXT"),
             ("project_files", "category", "TEXT DEFAULT 'general'"),
             ("project_files", "analysis_result", "TEXT"),
-            # project_conversations — ensure all columns exist
+            # project_conversations
             ("project_conversations", "conversation_id", "TEXT"),
             ("project_conversations", "file_ids", "TEXT"),
             ("project_conversations", "metadata", "TEXT"),
-            # proactive_suggestions — ensure all columns exist
+            # proactive_suggestions
             ("proactive_suggestions", "conversation_id", "TEXT"),
             ("proactive_suggestions", "response_id", "TEXT"),
-            # introspection_insights — ensure all columns exist
+            ("proactive_suggestions", "reasoning", "TEXT"),
+            # introspection_insights
             ("introspection_insights", "insight_type", "TEXT"),
             ("introspection_insights", "category", "TEXT"),
             ("introspection_insights", "title", "TEXT"),
             ("introspection_insights", "description", "TEXT"),
-            # -----------------------------------------------------------------
             # memory_store — Phase 2A column patch
-            # The original Phase 1 table had memory_key/memory_value/etc.
-            # These ALTER TABLE statements add the Phase 2A columns to any
-            # existing production table. Safe to re-run (IF NOT EXISTS).
-            # -----------------------------------------------------------------
             ("memory_store", "category", "TEXT DEFAULT 'general'"),
             ("memory_store", "content", "TEXT DEFAULT ''"),
             ("memory_store", "source_task_id", "INTEGER"),
             ("memory_store", "updated_at", "TIMESTAMP DEFAULT NOW()"),
+            # conversation_summaries — March 06, 2026 column patch
+            ("conversation_summaries", "message_range", "TEXT"),
+            ("conversation_summaries", "summary_text", "TEXT"),
+            ("conversation_summaries", "mentioned_entities", "TEXT"),
+            ("conversation_summaries", "key_decisions", "TEXT"),
+            # user_profiles — March 06, 2026 column patch
+            ("user_profiles", "profile_data", "TEXT"),
         ]
 
         for table_name, col_name, col_type in extra_columns:
@@ -1153,10 +1140,10 @@ def run_migration():
                         f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}"
                     )
             except Exception:
-                pass  # Column already exists — safe to ignore
+                pass
 
         # =====================================================================
-        # ADD BOOLEAN COLUMNS (special handling for PostgreSQL vs SQLite)
+        # ADD BOOLEAN COLUMNS
         # =====================================================================
         bool_cols = [
             ("conversations", "is_archived", bool_false),
@@ -1190,7 +1177,6 @@ def run_migration():
 
 
 if __name__ == '__main__':
-    """Allow running directly for testing: python migrations/migration_001_initial_schema.py"""
     result = run_migration()
     print(f"Migration result: {result}")
 
