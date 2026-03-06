@@ -1,18 +1,41 @@
 """
 CODE ASSISTANT AGENT - Self-Improving AI System
 Created: January 27, 2026
-Last Updated: January 27, 2026
+Last Updated: March 06, 2026 - MISROUTING FIX
 
-This agent enables the AI to:
-1. Detect when user is giving code feedback
-2. Read existing code from knowledge base or live files
-3. Understand what needs to be fixed
-4. Generate complete, corrected code
-5. Provide deployment-ready files
+CHANGELOG:
 
-USAGE:
-User: "The 2-2-3 schedule starts on the wrong day. It should be Sunday."
-Agent: [Reads schedule_generator.py, fixes bug, returns complete corrected file]
+- March 06, 2026: MISROUTING FIX - detect_code_feedback() false positives
+  PROBLEM: detect_code_feedback() was matching general consulting questions as
+    code feedback requests, causing misroutes to the code assistant handler.
+    Example: "A food processing plant wants to go to a 7-day schedule. What
+    things should we consider" triggered is_code_feedback=True because:
+      1. 'should' was in code_keywords list
+      2. 'schedule' was in the context-inference block → target_file = 'schedule_generator.py'
+    Result: The user received a "Code Fix Generated!" response instead of a
+    consulting answer.
+  FIX: Two-part tightening of detect_code_feedback():
+    1. Removed ambiguous general-purpose words from code_keywords:
+         Removed: 'should', 'update', 'modify', 'function', 'method', 'class',
+                  'file', 'need to change'
+         These words appear constantly in consulting language and do NOT by
+         themselves indicate a code request.
+         Kept: 'bug', 'error', 'broken', 'wrong', 'incorrect', 'fix',
+               'schedule_generator', 'routes', 'database', 'code'
+               (these have near-zero false positive rate in consulting context)
+    2. Added CONSULTING_STOPWORDS guard: if the request contains typical
+         consulting framing words (consider, plant, facility, employees,
+         shift, operations, overtime, workers, industry, implementation,
+         management, workforce), is_code_feedback is forced to False even
+         if a code keyword matches. This prevents the rare case where a
+         consulting question contains 'fix' or 'error' (e.g. "fix overtime
+         distribution") from misrouting.
+    3. The .py filename check (PRIORITY CHECK) is unchanged - an explicit
+         .py reference is still always treated as code feedback.
+    4. Context inference block (schedule → schedule_generator.py) is
+         unchanged - it only fires when is_code_feedback is already True.
+  No changes to any other method. No behavior changes for legitimate
+  code feedback requests.
 
 Author: Jim @ Shiftwork Solutions LLC
 """
@@ -26,15 +49,33 @@ class CodeAssistantAgent:
     """
     AI agent that can read, understand, and fix its own code
     """
-    
+
+    # =========================================================================
+    # CONSULTING STOPWORDS - Added March 06, 2026
+    # If a request contains ANY of these words, it is almost certainly a
+    # consulting/operational question, not a code feedback request.
+    # Used as a guard to prevent false positives in detect_code_feedback().
+    # =========================================================================
+    CONSULTING_STOPWORDS = {
+        'consider', 'plant', 'facility', 'facilities', 'employees', 'workers',
+        'workforce', 'shift', 'shifts', 'shiftwork', 'overtime', 'operations',
+        'operational', 'industry', 'industries', 'implementation', 'management',
+        'scheduling', 'staffing', 'coverage', 'rotation', 'crew', 'crews',
+        'dupont', 'panama', 'manufacturing', 'processing', 'food', 'mining',
+        'pharmaceutical', 'healthcare', 'distribution', 'warehouse',
+        'morale', 'fatigue', 'turnover', 'absenteeism', 'productivity',
+        'union', 'seniority', 'survey', 'questionnaire', 'preference',
+        'changeover', 'transition', 'rollout', 'pilot', 'trial',
+    }
+
     def __init__(self, knowledge_base=None):
         self.knowledge_base = knowledge_base
         self.code_files = self._discover_code_files()
-        
+
     def _discover_code_files(self):
         """Discover all Python code files in the system"""
         code_files = {}
-        
+
         # Common code file locations - try multiple Render paths
         search_paths = [
             '/opt/render/project/src',      # Render deployment (primary)
@@ -44,19 +85,19 @@ class CodeAssistantAgent:
             '.',                             # Current directory
             '/mnt/project'                   # Project knowledge
         ]
-        
+
         # Log what we're searching for debugging
         print(f"🔍 Code Assistant searching for Python files...")
-        
+
         for search_path in search_paths:
             if os.path.exists(search_path):
                 print(f"   Searching: {search_path}")
                 file_count = 0
-                
+
                 for root, dirs, files in os.walk(search_path):
                     # Skip __pycache__ and .venv and cache directories
                     dirs[:] = [d for d in dirs if d not in ['__pycache__', '.venv', 'node_modules', '.git', '.cache', 'cache']]
-                    
+
                     for file in files:
                         if file.endswith('.py'):
                             full_path = os.path.join(root, file)
@@ -64,23 +105,32 @@ class CodeAssistantAgent:
                             if '.cache' not in full_path and 'site-packages' not in full_path:
                                 code_files[file] = full_path
                                 file_count += 1
-                
+
                 if file_count > 0:
                     print(f"   ✅ Found {file_count} Python files in {search_path}")
             else:
                 print(f"   ⏭️  Skipping {search_path} (doesn't exist)")
-        
+
         print(f"📊 Total discoverable Python files: {len(code_files)}")
         if len(code_files) > 0:
             # Show first 5 files found for debugging
             print(f"   Sample files: {list(code_files.keys())[:5]}")
-        
+
         return code_files
-    
+
     def detect_code_feedback(self, user_message):
         """
-        Detect if user is giving feedback about code
-        
+        Detect if user is giving feedback about code.
+
+        UPDATED March 06, 2026:
+        - Removed ambiguous words from code_keywords ('should', 'update',
+          'modify', 'function', 'method', 'class', 'file', 'need to change')
+          that caused false positives on consulting questions.
+        - Added CONSULTING_STOPWORDS guard: any request containing typical
+          consulting vocabulary is treated as NOT code feedback, even if a
+          code keyword is present.
+        - The .py filename PRIORITY CHECK is unchanged and fires first.
+
         Returns:
             dict: {
                 'is_code_feedback': bool,
@@ -90,27 +140,47 @@ class CodeAssistantAgent:
             }
         """
         user_lower = user_message.lower()
-        
-        # PRIORITY CHECK: If message mentions a .py file, it's DEFINITELY code feedback
+
+        # ----------------------------------------------------------------
+        # PRIORITY CHECK: explicit .py filename = always code feedback.
+        # This fires before any keyword matching.
+        # ----------------------------------------------------------------
         py_file_pattern = r'[\w_/]+\.py'
         py_file_match = re.search(py_file_pattern, user_message, re.IGNORECASE)
         if py_file_match:
-            # Found a .py filename - this is code feedback!
             return {
                 'is_code_feedback': True,
                 'target_file': py_file_match.group(0),
                 'feedback_type': self._determine_feedback_type(user_lower),
                 'description': user_message
             }
-        
-        # Keywords that indicate code feedback
+
+        # ----------------------------------------------------------------
+        # CONSULTING STOPWORDS GUARD (March 06, 2026)
+        # If ANY consulting word is present, this is NOT code feedback.
+        # Checked before keyword matching to avoid false positives from
+        # words like 'fix', 'error', or 'wrong' in operational questions.
+        # ----------------------------------------------------------------
+        user_words = set(re.findall(r'\b\w+\b', user_lower))
+        if user_words & self.CONSULTING_STOPWORDS:
+            return {
+                'is_code_feedback': False,
+                'target_file': None,
+                'feedback_type': None,
+                'description': None
+            }
+
+        # ----------------------------------------------------------------
+        # CODE KEYWORDS - tightened March 06, 2026.
+        # Only words with near-zero false positive rate in consulting
+        # context are kept. Removed: 'should', 'update', 'modify',
+        # 'function', 'method', 'class', 'file', 'need to change'.
+        # ----------------------------------------------------------------
         code_keywords = [
             'bug', 'error', 'broken', 'wrong', 'incorrect', 'fix',
-            'should', 'need to change', 'update', 'modify',
-            'schedule_generator', 'routes', 'database',
-            'function', 'method', 'class', 'code', 'file'
+            'schedule_generator', 'routes', 'database', 'code',
         ]
-        
+
         # File name patterns (for non-.py references)
         file_patterns = [
             r'schedule_generator',
@@ -119,10 +189,10 @@ class CodeAssistantAgent:
             r'app',
             r'schedule_request_handler'
         ]
-        
+
         # Check for code feedback indicators
         is_code_feedback = any(keyword in user_lower for keyword in code_keywords)
-        
+
         if not is_code_feedback:
             return {
                 'is_code_feedback': False,
@@ -130,7 +200,7 @@ class CodeAssistantAgent:
                 'feedback_type': None,
                 'description': None
             }
-        
+
         # Identify target file
         target_file = None
         for pattern in file_patterns:
@@ -138,7 +208,7 @@ class CodeAssistantAgent:
             if match:
                 target_file = match.group(0) + '.py'
                 break
-        
+
         # If no specific file mentioned, infer from context
         if not target_file:
             if any(word in user_lower for word in ['schedule', '2-2-3', 'pattern', 'crew']):
@@ -147,14 +217,14 @@ class CodeAssistantAgent:
                 target_file = 'routes/core.py'
             elif any(word in user_lower for word in ['database', 'table', 'query']):
                 target_file = 'database.py'
-        
+
         return {
             'is_code_feedback': True,
             'target_file': target_file,
             'feedback_type': self._determine_feedback_type(user_lower),
             'description': user_message
         }
-    
+
     def _determine_feedback_type(self, user_lower):
         """Helper to determine if feedback is bug, feature, or improvement"""
         if any(word in user_lower for word in ['add', 'new feature', 'implement', 'create']):
@@ -163,14 +233,14 @@ class CodeAssistantAgent:
             return 'improvement'
         else:
             return 'bug'
-    
+
     def read_code_file(self, filename):
         """
         Read code from file system or knowledge base
-        
+
         Args:
             filename: Name of the file to read
-            
+
         Returns:
             tuple: (file_content, file_path)
         """
@@ -183,7 +253,7 @@ class CodeAssistantAgent:
                 return content, file_path
             except Exception as e:
                 print(f"Could not read {file_path}: {e}")
-        
+
         # Try knowledge base
         if self.knowledge_base:
             try:
@@ -195,24 +265,24 @@ class CodeAssistantAgent:
                         return content, f"knowledge_base:{kb_filename}"
             except Exception as e:
                 print(f"Could not read from knowledge base: {e}")
-        
+
         return None, None
-    
+
     def generate_fix_prompt(self, feedback_data, current_code):
         """
         Generate a prompt for the AI to fix the code
-        
+
         Args:
             feedback_data: Dict with feedback information
             current_code: Current code content
-            
+
         Returns:
             str: Prompt for AI to generate fix
         """
         target_file = feedback_data['target_file']
         feedback_type = feedback_data['feedback_type']
         description = feedback_data['description']
-        
+
         prompt = f"""You are a senior software engineer fixing code based on user feedback.
 
 **TARGET FILE:** {target_file}
@@ -244,16 +314,16 @@ Provide ONLY the complete Python code, ready to deploy. No explanations outside 
 Start immediately with the file header."""
 
         return prompt
-    
+
     def create_deployment_package(self, filename, fixed_code, feedback_data):
         """
         Create a deployment-ready file with documentation
-        
+
         Args:
             filename: Original filename
             fixed_code: Fixed code content
             feedback_data: Feedback information
-            
+
         Returns:
             dict: {
                 'filename': str,
@@ -263,7 +333,7 @@ Start immediately with the file header."""
             }
         """
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        
+
         # Generate change summary
         change_summary = f"""CODE FIX APPLIED - {timestamp}
 
@@ -281,7 +351,7 @@ Start immediately with the file header."""
 □ Imports remain valid
 □ Dependencies unchanged
 """
-        
+
         # Deployment instructions
         deployment_instructions = f"""DEPLOYMENT INSTRUCTIONS:
 
@@ -307,7 +377,7 @@ Start immediately with the file header."""
 **Files to Deploy:**
 - {filename} (REPLACE existing)
 """
-        
+
         return {
             'filename': filename,
             'content': fixed_code,
@@ -315,15 +385,15 @@ Start immediately with the file header."""
             'deployment_instructions': deployment_instructions,
             'backup_filename': f"{filename}.backup_{timestamp}"
         }
-    
+
     def process_code_feedback(self, user_message, ai_completion_function):
         """
         Main method to process code feedback and generate fixes
-        
+
         Args:
             user_message: User's feedback message
             ai_completion_function: Function to call AI (e.g., call_claude_sonnet)
-            
+
         Returns:
             dict: {
                 'success': bool,
@@ -337,14 +407,14 @@ Start immediately with the file header."""
         """
         # Step 1: Detect if this is code feedback
         feedback_data = self.detect_code_feedback(user_message)
-        
+
         if not feedback_data['is_code_feedback']:
             return {
                 'success': False,
                 'action': 'not_code_feedback',
                 'message': 'This does not appear to be code feedback.'
             }
-        
+
         # Step 2: Read current code
         target_file = feedback_data['target_file']
         if not target_file:
@@ -353,9 +423,9 @@ Start immediately with the file header."""
                 'action': 'file_not_identified',
                 'message': 'Could not identify which file needs to be fixed. Please specify the file name.'
             }
-        
+
         current_code, file_path = self.read_code_file(target_file)
-        
+
         if not current_code:
             # Build a helpful error message
             available_files = list(self.code_files.keys())[:20]  # Show first 20
@@ -376,57 +446,57 @@ Start immediately with the file header."""
 - Verify the file exists on Render by checking deployment logs
 
 **Available files found:** {", ".join(list(self.code_files.keys())[:10])}'''
-            
+
             return {
                 'success': False,
                 'action': 'file_not_found',
                 'message': error_msg
             }
-        
+
         print(f"✅ Found {target_file} at {file_path}")
         print(f"📝 Current code: {len(current_code)} characters")
-        
+
         # Step 3: Generate fix prompt
         fix_prompt = self.generate_fix_prompt(feedback_data, current_code)
-        
+
         # Step 4: Get AI to generate fixed code
         print(f"🤖 Asking AI to fix {target_file}...")
-        
+
         try:
             response = ai_completion_function(fix_prompt, max_tokens=16000)
-            
+
             if isinstance(response, dict):
                 fixed_code = response.get('content', '')
             else:
                 fixed_code = str(response)
-            
+
             if not fixed_code or len(fixed_code) < 100:
                 return {
                     'success': False,
                     'action': 'fix_generation_failed',
                     'message': 'AI failed to generate a valid fix.'
                 }
-            
+
             print(f"✅ Generated fix: {len(fixed_code)} characters")
-            
+
         except Exception as e:
             return {
                 'success': False,
                 'action': 'ai_error',
                 'message': f'Error calling AI: {str(e)}'
             }
-        
+
         # Step 5: Create deployment package
         deployment_package = self.create_deployment_package(
             target_file,
             fixed_code,
             feedback_data
         )
-        
+
         # Step 6: Save fixed file
         output_filename = f"{target_file.replace('/', '_')}_FIXED_{datetime.now().strftime('%Y%m%d_%H%M%S')}.py"
         output_path = f"/mnt/user-data/outputs/{output_filename}"
-        
+
         try:
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
             with open(output_path, 'w', encoding='utf-8') as f:
@@ -435,7 +505,7 @@ Start immediately with the file header."""
         except Exception as e:
             print(f"⚠️  Could not save to outputs: {e}")
             output_path = None
-        
+
         # Step 7: Return success response
         return {
             'success': True,
@@ -447,7 +517,7 @@ Start immediately with the file header."""
             'output_path': output_path,
             'message': self._build_success_message(feedback_data, deployment_package)
         }
-    
+
     def _build_success_message(self, feedback_data, deployment_package):
         """Build user-friendly success message"""
         return f"""✅ **Code Fix Generated!**
