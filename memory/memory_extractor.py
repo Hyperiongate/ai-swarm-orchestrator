@@ -3,22 +3,35 @@ AI SWARM ORCHESTRATOR - Memory Extractor
 Phase 2A: Memory System — Extraction Layer
 
 Created: March 05, 2026
-Last Updated: March 06, 2026 - Added print logging for extraction visibility
+Last Updated: March 06, 2026 - SWITCHED TO call_claude_sonnet_raw()
 
 CHANGELOG:
+- March 06, 2026: SWITCHED TO call_claude_sonnet_raw()
+  * Root cause: call_claude_sonnet() injects thousands of tokens of system
+    capabilities + FORMATTING_REQUIREMENTS into every call. Running inside a
+    background daemon thread with max_tokens=800, the oversized input was
+    causing silent failures — the thread would start ("🧠 Memory extraction
+    starting...") but never reach the "complete" log line.
+  * Fix: Switched from call_claude_sonnet() to the new call_claude_sonnet_raw()
+    function in orchestration/ai_clients.py. This calls Claude directly with
+    only the extraction system prompt and extraction user prompt — no
+    capabilities injection, no formatting requirements, no conversation history.
+  * Also increased max_tokens from 800 to 1000 to give Claude a little more
+    room for the JSON array response.
+  * No logic changes. All extraction prompts, memory types, categories, and
+    storage calls unchanged.
+
 - March 06, 2026: ADDED PRINT LOGGING
   * Added print("🧠 Memory extraction starting...") at start of _run_extraction()
   * Added print("🧠 Memory extraction complete - stored X memories") at end
-  * These appear in Render logs so we can confirm extraction is running
-  * No logic changes whatsoever.
+  * Added failure/skip prints at all early-exit paths
 
 - March 05, 2026: Phase 2A initial build
   * New file — part of Phase 2A memory system
   * After each orchestration completes, analyzes the interaction with Claude Sonnet
     and extracts structured memories (episodic, semantic, procedural)
   * Called from a background daemon thread in routes/orchestration_handler.py
-    so memory extraction is non-blocking to the user
-  * Uses call_claude_sonnet() from orchestration.ai_clients
+  * Uses call_claude_sonnet_raw() from orchestration.ai_clients (updated Mar 06)
   * Uses store_memory() from memory.memory_store
   * Handles all failures gracefully — never crashes the main request
 
@@ -119,6 +132,7 @@ def extract_memories(task_data):
         return _run_extraction(task_data)
     except Exception as e:
         logger.error(f"extract_memories: unexpected top-level failure: {e}")
+        print(f"🧠 Memory extraction failed — unexpected error: {e}")
         return []
 
 
@@ -171,16 +185,19 @@ def _run_extraction(task_data):
     )
 
     # ----------------------------------------------------------------
-    # 3. Call Claude Sonnet for extraction
+    # 3. Call Claude Sonnet (RAW — no capabilities/formatting overhead)
+    #    Using call_claude_sonnet_raw() so the daemon thread is not
+    #    burdened with thousands of tokens of capabilities injection.
     # ----------------------------------------------------------------
-    logger.info(f"extract_memories: calling Sonnet for task_id={source_task_id}")
+    logger.info(f"extract_memories: calling Sonnet (raw) for task_id={source_task_id}")
+    print(f"🧠 Calling Sonnet for memory extraction (task_id={source_task_id})...")
 
     try:
-        from orchestration.ai_clients import call_claude_sonnet
-        response = call_claude_sonnet(
-            prompt,
-            max_tokens=800,
-            system_prompt=_EXTRACTION_SYSTEM_PROMPT
+        from orchestration.ai_clients import call_claude_sonnet_raw
+        response = call_claude_sonnet_raw(
+            prompt=prompt,
+            system_prompt=_EXTRACTION_SYSTEM_PROMPT,
+            max_tokens=1000
         )
     except Exception as api_err:
         logger.error(f"extract_memories: Sonnet call failed: {api_err}")
@@ -189,7 +206,7 @@ def _run_extraction(task_data):
 
     if not response or response.get('error'):
         logger.error(f"extract_memories: Sonnet returned error: {response.get('content', 'unknown')}")
-        print(f"🧠 Memory extraction failed — Sonnet response error")
+        print(f"🧠 Memory extraction failed — Sonnet response error: {response.get('content', 'unknown')[:100]}")
         return []
 
     raw_text = (response.get('content') or '').strip()
@@ -297,7 +314,6 @@ def _parse_memories_json(raw_text):
         pass
 
     # Try to extract a JSON array from within the text (handles preamble/postamble)
-    # Find the first [ and last ]
     start = text.find('[')
     end = text.rfind(']')
     if start != -1 and end != -1 and end > start:
