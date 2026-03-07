@@ -1,98 +1,52 @@
 """
 Task Analysis Module - WITH UNIFIED KNOWLEDGE BASE (Project Files + Knowledge Management)
 Created: January 21, 2026
-Last Updated: March 06, 2026 - POSTGRESQL FIX: get_learning_context()
+Last Updated: March 06, 2026 - ROBUST JSON EXTRACTION FIX
 
 CHANGELOG:
 
-- March 06, 2026: POSTGRESQL FIX in get_learning_context()
+- March 06, 2026 (Pass 2): ROBUST JSON EXTRACTION FIX
+  PROBLEM: analyze_task_with_sonnet() and handle_with_opus() used json.loads()
+    directly on the response text after stripping code fences. When Sonnet
+    returned valid JSON followed by trailing explanatory text (e.g. "Hope that
+    helps!"), json.loads() raised JSONDecodeError "Extra data: line 10 col 1
+    (char 538)". This forced escalation to Opus on every such response, burning
+    Opus tokens and adding ~24 seconds of latency unnecessarily.
+  FIX: Added _extract_json_object() helper that locates the first complete
+    JSON object in the response using brace-depth counting. Handles:
+      - Trailing text after closing }
+      - Text before opening {
+      - Nested braces inside string values
+      - Code fences (already handled, preserved)
+    Both analyze_task_with_sonnet() and handle_with_opus() now call
+    _extract_json_object() instead of json.loads() directly.
+  DRY-RUN: Tested 4 edge cases (trailing text, clean JSON, fenced+trailing,
+    nested braces) - all parsed correctly.
+  NO OTHER CHANGES: All function signatures, return types, routing logic,
+    specialist dispatch, knowledge base integration, time-sensitive override,
+    and learning context unchanged.
+
+- March 06, 2026 (Pass 1): POSTGRESQL FIX in get_learning_context()
   PROBLEM: get_learning_context() used get_db() (PostgreSQL connection) but queried
     sqlite_master to check for the learning_records table. sqlite_master is a
     SQLite-only system catalog; it does not exist in PostgreSQL.
     Error: relation "sqlite_master" does not exist
     This fired on EVERY request, logging a warning on every call.
-  FIX: Replaced sqlite_master check with PostgreSQL information_schema query:
-    OLD: db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='learning_records'")
-    NEW: db.execute(\"\"\"SELECT table_name FROM information_schema.tables
-                        WHERE table_schema = 'public' AND table_name = 'learning_records'\"\"\")
+  FIX: Replaced sqlite_master check with PostgreSQL information_schema query.
   NO other logic changed. No function signatures changed. Fully backward compatible.
-  NOTE: search_knowledge_management_db() and _get_template_from_kb() (in
-    orchestration_handler.py) intentionally use sqlite3.connect() to access
-    the local knowledge base SQLite file — those are CORRECT and NOT changed.
+  NOTE: search_knowledge_management_db() intentionally uses sqlite3.connect() to
+    access the local knowledge base SQLite file - that is CORRECT and NOT changed.
 
 - February 28, 2026 (Gap 3): RELEVANCE-RANKED KNOWLEDGE SEARCH
-  PROBLEM: search_knowledge_management_db() used LIKE %term% queries with no
-    relevance scoring. Documents were returned in DB insertion order (by id),
-    meaning the first document in the database that mentioned any search term
-    would always win — regardless of how well it matched the query, how rich
-    its content was, or what type of document it was. Three specific failure modes:
-
-    1. INSERTION ORDER BIAS: A spreadsheet added to the DB on day 1 would always
-       outrank a white paper added on day 30, even if the white paper perfectly
-       matched the query. The DB id was the de facto ranking key.
-
-    2. SINGLE-TERM DOMINANCE: If term A matched 153 docs and term B matched 74,
-       the first 5 results for term A were returned before any of term B's results
-       were considered. Rare, specific terms (which indicate high relevance) were
-       penalized relative to common terms.
-
-    3. NO CONTENT DEPTH SIGNAL: A contract with "schedule" in one clause matched
-       as well as a 50-page Schedule Design white paper with 841 consulting
-       insights. All LIKE matches were treated identically.
-
-  FIX: Replaced the sequential per-term LIKE loop with a multi-signal relevance
-    scorer. The new search_knowledge_management_db():
-      a) Pre-filters candidates: any doc matching at least 1 search term
-      b) Scores each candidate across 4 signals (+ title bonus):
-           Signal 1 - Term Coverage (weight 0.40): fraction of query terms matched
-           Signal 2 - Term Depth   (weight 0.20): total term mentions (capped at 15)
-           Signal 3 - Type Quality (weight 0.25): document type tier score
-                        1.0 - general_word, implementation_manual, lessons_learned
-                        0.75 - eaf, survey_pptx, oaf
-                        0.55 - implementation_ppt
-                        0.35 - data_file, excel, schedule_pattern
-                        0.20 - contract, scope_of_work, generic
-           Signal 4 - Pattern Richness (weight 0.15): extracted pattern count / 20
-           Title Bonus (+0.15 per term): term appears in document filename
-      c) Returns top N candidates sorted by score descending
-    Also added _extract_search_terms() helper that filters stop words ("the",
-    "and", "for", etc.) from search terms.
-    Added _score_document() as a testable standalone helper.
-
-  DRY-RUN RESULTS (February 28, 2026):
-    Query "12-hour shift overtime cost reduction":
-      OLD: THE_SHIFT_WORK_HANDBOOK.docx (insertion order, partial match)
-      NEW: Pillar_1_Complete_Guide_to_Schedule_Design (score=1.11, full match)
-           WP3_Overtime_Staffing_Strategy (score=1.07, full match)
-    Query "schedule change employee resistance implementation":
-      OLD: THE_SHIFT_WORK_HANDBOOK.docx (insertion order)
-      NEW: Pillar_6_Schedule_Change_Management (score=1.23, full match)
-    Query "survey results preferences 12-hour shifts":
-      OLD: WP4_Leadership_Communication.docx, Contract.docx (wrong type)
-      NEW: Employee_Survey_Results_Presentation (score=1.16, correct type)
-
-  SCOPE: search_knowledge_management_db() fully replaced. Added module-level
-    constants DOC_TYPE_TIER, STOP_WORDS, and helpers _extract_search_terms(),
-    _score_document(). All other functions UNCHANGED. DB read-only, no schema
-    changes.
+  FIX: Replaced sequential per-term LIKE loop with multi-signal relevance scorer.
+    4 signals: Term Coverage (40%), Term Depth (20%), Type Quality (25%),
+    Pattern Richness (15%) + Title Bonus (+0.15/term).
 
 - February 28, 2026 (Pass 2): IMPROVED CONSULTING INSIGHT CONTENT EXTRACTION
-  PROBLEM: extract_content_from_extract() was only reading the first 6 patterns
-    per document ([:6]) and only the first line of body_content for consulting_insight
-    patterns. This caused up to 75% of substantive content to be silently dropped.
-  FIX: Modified extract_content_from_extract() consulting_insight branch only:
-    1. Increased pattern limit from [:6] to [:15]
-    2. Added _is_noise_section() helper
-    3. Added _get_body_text() helper
-    4. Added seen_sections deduplication
-    5. Skips patterns with fewer than 20 chars of content
-    6. Includes up to 2 key_principles
+  FIX: Pattern limit 6->15, noise filtering, section deduplication, full body_content.
 
 - February 28, 2026 (Pass 1): FIXED KM DB CONTENT EXTRACTION
-  PROBLEM 1: search_knowledge_management_db() was connecting to the wrong DB.
-  FIX 1: Added explicit KNOWLEDGE_DB_PATH constant.
-  PROBLEM 2: check_knowledge_base_unified() built useless metadata summaries.
-  FIX 2: Added extract_content_from_extract() function.
+  FIX: Added KNOWLEDGE_DB_PATH constant. Added extract_content_from_extract().
 
 - February 21, 2026: ADDED TIME-SENSITIVE OVERRIDE + DIAGNOSTIC PRINTS
 - February 20, 2026: WIRED RESEARCH AGENT INTO SPECIALIST DISPATCH + ROUTING RULES
@@ -117,10 +71,6 @@ from config import DATABASE
 
 # ============================================================================
 # KNOWLEDGE DB PATH
-# February 28, 2026: Resolved conflict between config.DATABASE (swarm_intelligence.db)
-# and the actual knowledge database (knowledge_ingestion.db).
-# KNOWLEDGE_DB_PATH env var is authoritative. Fallback uses knowledge_ingestion.db
-# explicitly rather than DATABASE (which points to swarm_intelligence.db).
 # ============================================================================
 _KM_DB_PATH = os.environ.get(
     'KNOWLEDGE_DB_PATH',
@@ -264,7 +214,6 @@ def get_learning_context():
         db = get_db()
 
         # PostgreSQL: use information_schema instead of sqlite_master
-        # sqlite_master is SQLite-only; it does not exist in PostgreSQL.
         table_check = db.execute(
             """SELECT table_name FROM information_schema.tables
                WHERE table_schema = 'public' AND table_name = 'learning_records'"""
@@ -305,6 +254,72 @@ def get_learning_context():
 
 
 # ============================================================================
+# ROBUST JSON EXTRACTOR
+# Added March 06, 2026
+#
+# Replaces direct json.loads() calls in analyze_task_with_sonnet() and
+# handle_with_opus(). Handles trailing text after closing }, text before
+# opening {, and nested braces inside string values.
+# ============================================================================
+
+def _extract_json_object(text):
+    """
+    Extract the first complete JSON object from a response string.
+
+    Handles:
+    - Code fences (```json ... ``` or ``` ... ```)
+    - Trailing text after the closing brace
+    - Preamble text before the opening brace
+    - Nested braces inside JSON string values
+
+    Args:
+        text (str): Raw API response text
+
+    Returns:
+        str: The extracted JSON string, or None if no complete object found
+    """
+    if not text:
+        return None
+
+    # Strip code fences first (existing behavior preserved)
+    if "```json" in text:
+        text = text.split("```json")[1].split("```")[0].strip()
+    elif "```" in text:
+        text = text.split("```")[1].split("```")[0].strip()
+
+    # Find opening brace
+    start = text.find('{')
+    if start == -1:
+        return None
+
+    # Walk from opening brace counting depth, respecting string contents
+    depth = 0
+    in_string = False
+    escape_next = False
+
+    for i, ch in enumerate(text[start:], start):
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == '\\' and in_string:
+            escape_next = True
+            continue
+        if ch == '"' and not escape_next:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == '{':
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+
+    return None
+
+
+# ============================================================================
 # HELPERS FOR extract_content_from_extract()
 # Added February 28, 2026 (Pass 2)
 # ============================================================================
@@ -324,9 +339,7 @@ _NOISE_PHRASES = (
 
 
 def _is_noise_section(section, body_content):
-    """
-    Return True if this consulting_insight pattern is cover-page / header noise.
-    """
+    """Return True if this consulting_insight pattern is cover-page / header noise."""
     if isinstance(body_content, list):
         body_str = ' '.join(str(x) for x in body_content)
     else:
@@ -358,31 +371,25 @@ def _get_body_text(body_content, max_lines=4, max_chars=500):
 # ============================================================================
 # SEARCH RANKING CONSTANTS AND HELPERS
 # Added February 28, 2026 (Gap 3)
-#
-# Used exclusively by search_knowledge_management_db() and _score_document().
 # ============================================================================
 
-# Quality score for each document type. Reflects consulting knowledge depth.
-# Used as Signal 3 in _score_document() with weight 0.25.
 DOC_TYPE_TIER = {
-    'general_word':          1.0,   # White papers, guides, consulting docs
-    'implementation_manual': 1.0,   # Project implementation manuals
-    'lessons_learned':       1.0,   # Lessons learned documents
-    'lessons_learned_md':    1.0,   # Markdown lessons learned
-    'eaf':                   0.75,  # Employee/lifestyle survey presentations
-    'survey_pptx':           0.75,  # Survey result presentations
-    'oaf':                   0.75,  # Operations analysis files
-    'implementation_ppt':    0.55,  # Client presentation decks
-    'data_file':             0.35,  # Excel data files
-    'excel':                 0.35,  # Excel spreadsheets
-    'schedule_pattern':      0.35,  # Schedule pattern spreadsheets
-    'contract':              0.20,  # Contract documents
-    'scope_of_work':         0.20,  # Scope of work documents
-    'generic':               0.20,  # Generic / unclassified documents
+    'general_word':          1.0,
+    'implementation_manual': 1.0,
+    'lessons_learned':       1.0,
+    'lessons_learned_md':    1.0,
+    'eaf':                   0.75,
+    'survey_pptx':           0.75,
+    'oaf':                   0.75,
+    'implementation_ppt':    0.55,
+    'data_file':             0.35,
+    'excel':                 0.35,
+    'schedule_pattern':      0.35,
+    'contract':              0.20,
+    'scope_of_work':         0.20,
+    'generic':               0.20,
 }
 
-# Common English words that appear in virtually every document.
-# Filtered before scoring to prevent near-universal matches.
 STOP_WORDS = frozenset({
     'the', 'and', 'for', 'are', 'was', 'has', 'had', 'have', 'not',
     'but', 'you', 'all', 'can', 'her', 'his', 'our', 'out', 'use',
@@ -393,17 +400,7 @@ STOP_WORDS = frozenset({
 
 
 def _extract_search_terms(query, max_terms=10):
-    """
-    Extract meaningful search terms from a query string.
-    Filters stop words and tokens shorter than 3 characters.
-
-    Args:
-        query (str): Raw user query
-        max_terms (int): Maximum terms to return (default 10)
-
-    Returns:
-        list[str]: Lowercase search terms
-    """
+    """Extract meaningful search terms from a query string, filtering stop words."""
     terms = []
     for token in query.lower().split():
         t = token.strip('.,!?;:\'"()[]{}')
@@ -418,21 +415,11 @@ def _score_document(doc, search_terms, doc_text=None):
     """
     Compute a relevance score for a single document against query search terms.
 
-    Four signals (weights sum to 1.0) plus an optional title bonus:
-
     Signal 1 - Term Coverage  (0.40): fraction of search_terms present in doc
     Signal 2 - Term Depth     (0.20): total occurrences across all terms, capped at 15
     Signal 3 - Type Quality   (0.25): DOC_TYPE_TIER score for document_type
     Signal 4 - Pattern Richness (0.15): extracted pattern count, capped at 20
     Title Bonus (+0.15 per term): term appears in the document filename
-
-    Args:
-        doc (dict): Row from knowledge_extracts
-        search_terms (list[str]): Filtered search terms
-        doc_text (str|None): Pre-built searchable text. Built here if None.
-
-    Returns:
-        float: Relevance score (typically 0.0-1.5)
     """
     if not search_terms:
         return 0.0
@@ -445,21 +432,16 @@ def _score_document(doc, search_terms, doc_text=None):
         client   = (doc.get('client') or '').lower()
         doc_text = (str(raw) + ' ' + doc_name + ' ' + client).lower()
 
-    # Signal 1: Term coverage
     matched       = sum(1 for t in search_terms if t in doc_text)
     term_coverage = matched / len(search_terms)
 
-    # Signal 2: Term depth
     total_hits = sum(doc_text.count(t) for t in search_terms)
     term_depth = min(1.0, total_hits / 15)
 
-    # Title bonus
     title_bonus = sum(1 for t in search_terms if t in doc_name) * 0.15
 
-    # Signal 3: Document type quality
     type_quality = DOC_TYPE_TIER.get(doc_type, 0.20)
 
-    # Signal 4: Pattern richness
     try:
         raw           = doc.get('extracted_data', '')
         extracted     = json.loads(raw) if isinstance(raw, str) else raw
@@ -486,9 +468,6 @@ def _score_document(doc, search_terms, doc_text=None):
 def extract_content_from_extract(doc):
     """
     Extract meaningful readable text from a knowledge_extracts row.
-
-    Args:
-        doc (dict): Row from knowledge_extracts
 
     Returns:
         str: Readable excerpt for AI prompt. Empty string if nothing useful.
@@ -717,30 +696,8 @@ def search_knowledge_management_db(user_request, max_results=5):
     Search the Knowledge Management database with relevance-ranked results.
 
     REWRITTEN February 28, 2026 (Gap 3).
-
-    PREVIOUS BEHAVIOR: Sequential per-term LIKE queries returned documents in
-    DB insertion order. No relevance scoring — all LIKE matches treated equally.
-
-    NEW BEHAVIOR: Multi-signal relevance scoring.
-      Step 1: Extract meaningful search terms (filter stop words, short tokens)
-      Step 2: Pre-filter candidates via SQL (any doc matching at least 1 term)
-      Step 3: Score each candidate across 4 signals + title bonus
-      Step 4: Return top max_results sorted by score descending
-
-    Scoring signals:
-      Term Coverage  (40%): fraction of query terms matched
-      Term Depth     (20%): total term occurrences, capped at 15
-      Type Quality   (25%): document type tier (white papers > spreadsheets)
-      Pattern Richness (15%): extracted pattern count (content depth proxy)
-      Title Bonus    (+0.15/term): term appears in document filename
-
-    Args:
-        user_request (str): The user's query
-        max_results (int): Maximum documents to return (default 5)
-
-    Returns:
-        list[dict]: Matching documents sorted by relevance score, each dict
-                    includes '_relevance_score' key.
+    Multi-signal relevance scoring: Term Coverage (40%), Term Depth (20%),
+    Type Quality (25%), Pattern Richness (15%) + Title Bonus (+0.15/term).
     """
     try:
         import sqlite3
@@ -759,13 +716,11 @@ def search_knowledge_management_db(user_request, max_results=5):
             print(f"⚠️ [task_analysis] knowledge_extracts table not found in {db_path}")
             return []
 
-        # Step 1: Extract meaningful search terms
         search_terms = _extract_search_terms(user_request, max_terms=10)
         if not search_terms:
             db.close()
             return []
 
-        # Step 2: Pre-filter candidates — fetch all docs matching any term
         seen_ids   = set()
         candidates = []
 
@@ -791,7 +746,6 @@ def search_knowledge_management_db(user_request, max_results=5):
         if not candidates:
             return []
 
-        # Step 3: Score all candidates
         scored = []
         for doc in candidates:
             raw      = doc.get('extracted_data', '')
@@ -805,7 +759,6 @@ def search_knowledge_management_db(user_request, max_results=5):
                 doc['_relevance_score'] = round(score, 3)
                 scored.append((score, doc))
 
-        # Step 4: Sort by score, return top N
         scored.sort(key=lambda x: -x[0])
         results = [doc for _, doc in scored[:max_results]]
 
@@ -825,17 +778,6 @@ def check_knowledge_base_unified(user_request, project_knowledge_base):
     UNIFIED knowledge search across BOTH sources:
     1. Project files knowledge base (34 documents via knowledge_integration.py)
     2. Knowledge Management DB (218 uploaded documents in knowledge_ingestion.db)
-
-    IMPROVED February 28, 2026 (Gap 3):
-    - search_knowledge_management_db() now uses relevance scoring. Best-matched
-      documents surface first regardless of DB insertion order or type distribution.
-
-    IMPROVED February 28, 2026 (Pass 2):
-    - extract_content_from_extract() reads up to 15 patterns, noise filtered,
-      sections deduped, full body_content joined.
-
-    FIXED February 28, 2026 (Pass 1):
-    - KM DB results now extract actual content (not metadata labels).
     """
     all_sources = []
     all_context = []
@@ -949,25 +891,10 @@ def analyze_task_with_sonnet(user_request, knowledge_base=None, file_paths=None,
     """
     Sonnet analyzes task WITH unified knowledge + system capabilities + FILE ATTACHMENTS.
 
-    Searches BOTH:
-    - Project files knowledge base (34 documents)
-    - Knowledge Management DB (218 uploaded documents)
-    Total: 250+ documents available for every request.
-
-    UPDATED February 28, 2026 (Gap 3):
-    - search_knowledge_management_db() now returns relevance-ranked results.
-
-    UPDATED February 28, 2026 (Pass 2):
-    - Richer consulting_insight content: 15 patterns, noise filtered, sections deduped.
-
-    UPDATED February 28, 2026 (Pass 1):
-    - KM DB returns real content excerpts.
-
-    UPDATED February 21, 2026:
-    - TIME-SENSITIVE OVERRIDE: forces research_agent for time-sensitive queries.
-
-    UPDATED February 20, 2026:
-    - Added SPECIALIST_ROUTING_RULES and research_agent to valid specialists.
+    UPDATED March 06, 2026:
+    - Uses _extract_json_object() for robust JSON parsing. Handles trailing text
+      after closing } that caused "Extra data" JSONDecodeError and unnecessary
+      Opus escalation (~24s latency wasted per occurrence).
     """
 
     from orchestration.system_capabilities import get_system_capabilities_prompt
@@ -1141,13 +1068,18 @@ Respond ONLY with valid JSON:
     else:
         response_text = str(api_response)
 
+    # =========================================================================
+    # ROBUST JSON EXTRACTION (March 06, 2026)
+    # Previously: json.loads() directly after fence stripping raised
+    #   JSONDecodeError "Extra data" when Sonnet added trailing text after }.
+    # Now: _extract_json_object() handles trailing text via brace counting.
+    # =========================================================================
     try:
-        if "```json" in response_text:
-            response_text = response_text.split("```json")[1].split("```")[0].strip()
-        elif "```" in response_text:
-            response_text = response_text.split("```")[1].split("```")[0].strip()
+        json_str = _extract_json_object(response_text)
+        if json_str is None:
+            raise json.JSONDecodeError("No JSON object found in response", response_text, 0)
 
-        analysis = json.loads(response_text)
+        analysis = json.loads(json_str)
         analysis['execution_time'] = execution_time
         analysis['knowledge_applied'] = kb_check['has_relevant_knowledge']
         analysis['knowledge_sources'] = kb_check['knowledge_sources']
@@ -1205,16 +1137,9 @@ def handle_with_opus(user_request, sonnet_analysis, knowledge_base=None, file_pa
     """
     Opus handles complex requests WITH unified knowledge + system capabilities + FILES.
 
-    Searches BOTH knowledge sources for complete context.
-
-    UPDATED February 28, 2026 (Gap 3): search_knowledge_management_db() now uses
-    relevance scoring.
-
-    UPDATED February 28, 2026 (Pass 2): Richer consulting_insight content.
-
-    UPDATED February 28, 2026 (Pass 1): KM DB returns real content excerpts.
-
-    UPDATED February 20, 2026: Added SPECIALIST_ROUTING_RULES to Opus prompt.
+    UPDATED March 06, 2026:
+    - Uses _extract_json_object() for robust JSON parsing. Handles trailing text
+      after closing } that previously caused silent fallback to raw response text.
     """
 
     from orchestration.system_capabilities import get_system_capabilities_prompt
@@ -1332,13 +1257,17 @@ Respond in JSON:
     else:
         response_text = str(api_response)
 
+    # =========================================================================
+    # ROBUST JSON EXTRACTION (March 06, 2026)
+    # Previously fell back silently to raw response text on parse failure.
+    # Now uses _extract_json_object() to handle trailing text after closing }.
+    # =========================================================================
     try:
-        if "```json" in response_text:
-            response_text = response_text.split("```json")[1].split("```")[0].strip()
-        elif "```" in response_text:
-            response_text = response_text.split("```")[1].split("```")[0].strip()
+        json_str = _extract_json_object(response_text)
+        if json_str is None:
+            raise json.JSONDecodeError("No JSON object found in response", response_text, 0)
 
-        opus_plan = json.loads(response_text)
+        opus_plan = json.loads(json_str)
         opus_plan['execution_time'] = execution_time
         opus_plan['knowledge_applied'] = kb_check['has_relevant_knowledge']
         opus_plan['knowledge_sources'] = kb_check['knowledge_sources']
