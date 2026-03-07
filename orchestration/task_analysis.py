@@ -1137,6 +1137,13 @@ Respond ONLY with valid JSON:
         analysis['files_attached'] = len(file_paths) if file_paths else 0
 
         # TIME-SENSITIVE OVERRIDE (Added February 21, 2026)
+        # Updated March 07, 2026: Added CONVERSATION_HISTORY_PATTERNS exclusion.
+        # Phrases like "what did we discuss", "what did we talk about", "what have
+        # we covered" were matching 'what did' / 'what have' and incorrectly
+        # triggering a research_agent web search instead of using memory context.
+        # The exclusion list is checked BEFORE the time-sensitive keyword check —
+        # if the request is asking about conversation history, it is never
+        # treated as time-sensitive regardless of other keywords present.
         TIME_SENSITIVE_KEYWORDS = [
             'this week', 'this month', 'this year', 'today', 'yesterday',
             'latest', 'recent', 'just announced', 'just released', 'new rule',
@@ -1145,8 +1152,25 @@ Respond ONLY with valid JSON:
             'what did', 'what has', 'what have', 'did osha', 'did dol',
             'did congress', 'news on', 'update on', 'status of'
         ]
+        # Patterns that indicate the user is asking about prior conversation
+        # history or memory — these must NEVER trigger the research agent.
+        CONVERSATION_HISTORY_PATTERNS = [
+            'what did we discuss', 'what did we talk', 'what did we cover',
+            'what have we discussed', 'what have we talked', 'what have we covered',
+            'what did you say', 'what did you tell', 'what did you recommend',
+            'what did you suggest', 'what was discussed', 'what was said',
+            'our previous', 'our last', 'our earlier', 'our conversation',
+            'last time we', 'previously discussed', 'we talked about',
+            'we discussed', 'you mentioned', 'you said', 'you told me',
+            'you recommended', 'you suggested', 'remind me', 'do you remember',
+            'what do you know about', 'what have you learned about',
+        ]
         request_lower_ts = user_request.lower()
-        is_time_sensitive = any(kw in request_lower_ts for kw in TIME_SENSITIVE_KEYWORDS)
+        is_conversation_history = any(pat in request_lower_ts for pat in CONVERSATION_HISTORY_PATTERNS)
+        is_time_sensitive = (
+            not is_conversation_history and
+            any(kw in request_lower_ts for kw in TIME_SENSITIVE_KEYWORDS)
+        )
 
         print(f"DIAGNOSTIC: is_time_sensitive={is_time_sensitive} | request={user_request[:50]}")
         print(f"DIAGNOSTIC: specialists_needed={analysis.get('specialists_needed', [])}")
