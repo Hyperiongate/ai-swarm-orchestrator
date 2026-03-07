@@ -3,9 +3,31 @@ AI SWARM ORCHESTRATOR - Memory Extractor
 Phase 2A: Memory System — Extraction Layer
 
 Created: March 05, 2026
-Last Updated: March 06, 2026 - SWITCHED TO call_claude_sonnet_raw()
+Last Updated: March 07, 2026 - DENIAL DETECTION: prevent self-poisoning
 
 CHANGELOG:
+- March 07, 2026: DENIAL DETECTION — prevent memory self-poisoning
+  PROBLEM: When the AI incorrectly responded "TestCorp not in the knowledge
+    base," the extractor faithfully extracted that wrong behavior as a
+    PROCEDURAL memory: "When asked about client companies not in the knowledge
+    base, acknowledge the limitation." That procedural memory had score 0.7,
+    which outranked the correct TestCorp semantic facts at 0.6. The AI then
+    followed its own bad lesson on the next request, creating a poisoning loop.
+  FIX 1 — DENIAL DETECTION: Added _is_denial_response() which scans the AI
+    response for phrases like "not in the knowledge base", "no information about",
+    "I don't see any information", etc. If detected, the response is flagged
+    as a denial response.
+  FIX 2 — SUPPRESSED EXTRACTION: When denial is detected, the extraction
+    prompt explicitly instructs Sonnet NOT to create procedural or semantic
+    memories from this interaction. Only a low-score episodic record is
+    allowed. This prevents the wrong behavior from becoming a learned lesson.
+  FIX 3 — NEAR-DUPLICATE SUPPRESSION: Added _is_near_duplicate() which
+    checks if a candidate semantic memory's content is substantially similar
+    to an already-stored memory. Prevents the 4 near-identical TestCorp
+    memories that accumulated from repeated failed test queries.
+  NO OTHER CHANGES: API call, JSON parsing, store_memory() calls, thread
+    safety, and error handling all unchanged.
+
 - March 06, 2026: SWITCHED TO call_claude_sonnet_raw()
   * Root cause: call_claude_sonnet() injects thousands of tokens of system
     capabilities + FORMATTING_REQUIREMENTS into every call. Running inside a
@@ -46,6 +68,13 @@ PURPOSE:
     - PROCEDURAL memories when performance patterns are observed (which model
       works best for what, what approaches succeed or fail)
 
+    DENIAL RESPONSES: If the AI response contains denial language ("not in
+    the knowledge base", "no information about", etc.), extraction is
+    restricted to a single low-score episodic record. No procedural or
+    semantic memories are extracted from denial responses — this prevents
+    the wrong behavior from becoming a learned lesson that gets applied to
+    future requests.
+
     If Sonnet returns bad JSON or the API call fails, extraction is silently
     skipped. The user never sees memory extraction errors.
 
@@ -71,11 +100,37 @@ logger = logging.getLogger(__name__)
 # Keeps token cost low while giving Sonnet enough signal to extract memories.
 _RESPONSE_SUMMARY_LENGTH = 800
 
+# Phrases that indicate the AI gave a denial/ignorance response.
+# If ANY of these appear in the response, extraction is restricted to
+# a single low-score episodic record — no procedural or semantic memories.
+# This prevents bad "acknowledge the limitation" lessons from being learned.
+_DENIAL_PHRASES = [
+    "not in the knowledge base",
+    "no information about",
+    "doesn't appear in",
+    "not found in",
+    "i don't see any information",
+    "have no data",
+    "not available in",
+    "cannot find",
+    "no record of",
+    "wasn't discussed",
+    "wasn't mentioned",
+    "don't have information",
+    "no details about",
+    "isn't in our knowledge",
+    "is not in our knowledge",
+    "not included in the knowledge",
+    "not part of the knowledge",
+    "no specific information",
+    "doesn't contain information about",
+]
+
 # System prompt for the memory extraction call.
 # Kept short to minimize token usage — this runs after every interaction.
 _EXTRACTION_SYSTEM_PROMPT = """You are the memory system for the AI Swarm Orchestrator, a consulting tool for Shiftwork Solutions LLC. Your job is to analyze a completed interaction and extract structured memories worth keeping. Be selective — not every interaction needs a memory. Routine questions with routine answers only need a brief episodic record."""
 
-# Template for the extraction user prompt.
+# Template for the standard extraction user prompt.
 _EXTRACTION_PROMPT_TEMPLATE = """Here is a completed interaction from the AI Swarm:
 
 REQUEST: {user_request}
@@ -100,6 +155,34 @@ Guidelines:
 - Procedural memories get 0.6-0.9 based on how actionable the insight is
 - If nothing interesting happened beyond a routine answer, just return the single episodic record
 - Keep each content field to 1-3 sentences maximum
+
+Return ONLY a valid JSON array. No markdown fences, no explanation, no preamble. Just the JSON array starting with [ and ending with ]."""
+
+# Template for denial responses — restricts extraction to episodic only.
+# Used when the AI response contained denial/ignorance language, to prevent
+# extracting bad procedural lessons like "acknowledge the limitation."
+_DENIAL_EXTRACTION_PROMPT_TEMPLATE = """Here is a completed interaction from the AI Swarm:
+
+REQUEST: {user_request}
+RESPONSE SUMMARY: {response_summary}
+MODEL USED: {model_used}
+EXECUTION TIME: {execution_time}s
+TASK TYPE: {task_type}
+PROJECT ID: {project_id}
+
+IMPORTANT: The AI response above contained uncertainty or denial language (e.g., "not in
+the knowledge base", "no information about"). This means the AI may have given an
+incorrect or incomplete answer. DO NOT extract procedural lessons from denial responses —
+doing so would teach the system to repeat incorrect behavior.
+
+For this interaction, return ONLY a single episodic memory recording what was asked.
+Do NOT create semantic or procedural memories from this interaction.
+
+Return a JSON array containing exactly one memory object:
+- "memory_type": "episodic"
+- "category": "task_patterns"
+- "content": one sentence summarizing what the user asked (do not characterize the answer as correct)
+- "relevance_score": 0.2
 
 Return ONLY a valid JSON array. No markdown fences, no explanation, no preamble. Just the JSON array starting with [ and ending with ]."""
 
@@ -169,13 +252,27 @@ def _run_extraction(task_data):
         return []
 
     # ----------------------------------------------------------------
-    # 2. Build the extraction prompt
+    # 2. Detect denial responses
+    #    If the AI said "not in the knowledge base" or similar, restrict
+    #    extraction to a single low-score episodic record only.
+    #    This prevents bad procedural lessons from being learned.
+    # ----------------------------------------------------------------
+    is_denial = _is_denial_response(ai_response)
+    if is_denial:
+        print(f"🧠 Memory extraction: DENIAL RESPONSE detected — restricting to episodic only")
+        logger.info(f"extract_memories: denial response detected for task_id={source_task_id}, "
+                    f"suppressing procedural/semantic extraction")
+
+    # ----------------------------------------------------------------
+    # 3. Build the extraction prompt
     # ----------------------------------------------------------------
     response_summary = ai_response[:_RESPONSE_SUMMARY_LENGTH]
     if len(ai_response) > _RESPONSE_SUMMARY_LENGTH:
         response_summary += '...'
 
-    prompt = _EXTRACTION_PROMPT_TEMPLATE.format(
+    prompt_template = _DENIAL_EXTRACTION_PROMPT_TEMPLATE if is_denial else _EXTRACTION_PROMPT_TEMPLATE
+
+    prompt = prompt_template.format(
         user_request=user_request[:500],
         response_summary=response_summary,
         model_used=model_used,
@@ -185,12 +282,13 @@ def _run_extraction(task_data):
     )
 
     # ----------------------------------------------------------------
-    # 3. Call Claude Sonnet (RAW — no capabilities/formatting overhead)
+    # 4. Call Claude Sonnet (RAW — no capabilities/formatting overhead)
     #    Using call_claude_sonnet_raw() so the daemon thread is not
     #    burdened with thousands of tokens of capabilities injection.
     # ----------------------------------------------------------------
     logger.info(f"extract_memories: calling Sonnet (raw) for task_id={source_task_id}")
-    print(f"🧠 Calling Sonnet for memory extraction (task_id={source_task_id})...")
+    print(f"🧠 Calling Sonnet for memory extraction (task_id={source_task_id}, "
+          f"denial={is_denial})...")
 
     try:
         from orchestration.ai_clients import call_claude_sonnet_raw
@@ -206,7 +304,8 @@ def _run_extraction(task_data):
 
     if not response or response.get('error'):
         logger.error(f"extract_memories: Sonnet returned error: {response.get('content', 'unknown')}")
-        print(f"🧠 Memory extraction failed — Sonnet response error: {response.get('content', 'unknown')[:100]}")
+        print(f"🧠 Memory extraction failed — Sonnet response error: "
+              f"{response.get('content', 'unknown')[:100]}")
         return []
 
     raw_text = (response.get('content') or '').strip()
@@ -216,12 +315,13 @@ def _run_extraction(task_data):
         return []
 
     # ----------------------------------------------------------------
-    # 4. Parse the JSON response
+    # 5. Parse the JSON response
     # ----------------------------------------------------------------
     memories_data = _parse_memories_json(raw_text)
     if memories_data is None:
-        logger.warning(f"extract_memories: could not parse Sonnet response as JSON. Raw: {raw_text[:300]}")
-        print(f"🧠 Memory extraction — JSON parse failed, using fallback episodic record")
+        logger.warning(f"extract_memories: could not parse Sonnet response as JSON. "
+                       f"Raw: {raw_text[:300]}")
+        print("🧠 Memory extraction — JSON parse failed, using fallback episodic record")
         # Fall back to storing a minimal episodic record so something is captured
         memories_data = [
             {
@@ -233,9 +333,17 @@ def _run_extraction(task_data):
         ]
 
     # ----------------------------------------------------------------
-    # 5. Store each memory
+    # 6. Safety filter: if denial was detected, enforce episodic-only
+    #    even if Sonnet ignored the instruction in the prompt.
+    #    Also enforce: episodic score capped at 0.3 for denial responses.
     # ----------------------------------------------------------------
-    from memory.memory_store import store_memory
+    if is_denial:
+        memories_data = _enforce_episodic_only(memories_data)
+
+    # ----------------------------------------------------------------
+    # 7. Store each memory, with near-duplicate suppression for semantics
+    # ----------------------------------------------------------------
+    from memory.memory_store import store_memory, search_memories
 
     stored = []
     for mem in memories_data:
@@ -249,6 +357,15 @@ def _run_extraction(task_data):
 
         if not content:
             continue
+
+        # Near-duplicate suppression for semantic memories:
+        # Don't store a semantic memory if a very similar one already exists.
+        if memory_type == 'semantic':
+            if _is_near_duplicate(content, search_memories):
+                print(f"🧠 Memory extraction: skipping near-duplicate semantic memory: "
+                      f"{content[:80]}...")
+                logger.debug(f"extract_memories: near-duplicate suppressed: {content[:80]}")
+                continue
 
         memory_id = store_memory(
             memory_type=memory_type,
@@ -271,10 +388,166 @@ def _run_extraction(task_data):
     print(f"🧠 Memory extraction complete - stored {len(stored)} memories")
     logger.info(
         f"extract_memories: stored {len(stored)} memories for task_id={source_task_id} "
-        f"(model={model_used}, time={execution_time}s)"
+        f"(model={model_used}, time={execution_time}s, denial={is_denial})"
     )
     return stored
 
+
+# ============================================================================
+# DENIAL DETECTION
+# ============================================================================
+
+def _is_denial_response(ai_response):
+    """
+    Detect whether the AI response contains denial/ignorance language.
+
+    Returns True if the response contains any phrase from _DENIAL_PHRASES,
+    indicating the AI claimed it had no information about the topic.
+    These responses should not generate procedural or semantic memories,
+    as the AI may have been wrong and we don't want to codify wrong behavior.
+
+    Args:
+        ai_response (str): The full AI response text
+
+    Returns:
+        bool: True if denial language detected, False otherwise
+    """
+    if not ai_response:
+        return False
+    response_lower = ai_response.lower()
+    for phrase in _DENIAL_PHRASES:
+        if phrase in response_lower:
+            logger.debug(f"_is_denial_response: matched phrase '{phrase}'")
+            return True
+    return False
+
+
+def _enforce_episodic_only(memories_data):
+    """
+    Filter a list of memory dicts to keep only episodic memories,
+    and cap their relevance_score at 0.3.
+
+    Called when a denial response was detected, to ensure Sonnet's output
+    does not include procedural or semantic memories even if it ignored
+    the prompt instruction.
+
+    Args:
+        memories_data (list[dict]): Raw memory dicts from Sonnet
+
+    Returns:
+        list[dict]: Filtered list with only episodic memories, score capped at 0.3
+    """
+    filtered = []
+    for mem in memories_data:
+        if not isinstance(mem, dict):
+            continue
+        if mem.get('memory_type') == 'episodic':
+            # Cap relevance score
+            mem['relevance_score'] = min(float(mem.get('relevance_score') or 0.2), 0.3)
+            filtered.append(mem)
+
+    # If Sonnet returned nothing episodic, create a minimal fallback
+    if not filtered:
+        filtered = [
+            {
+                'memory_type': 'episodic',
+                'category': 'task_patterns',
+                'content': 'User asked a question; system response indicated uncertainty.',
+                'relevance_score': 0.2
+            }
+        ]
+
+    return filtered
+
+
+# ============================================================================
+# NEAR-DUPLICATE SUPPRESSION
+# ============================================================================
+
+def _is_near_duplicate(content, search_memories_fn, similarity_threshold=0.7):
+    """
+    Check whether a candidate semantic memory is substantially similar
+    to an already-stored memory.
+
+    Uses word overlap (Jaccard similarity) between the candidate content
+    and the top search result for the same content. If similarity exceeds
+    the threshold, the candidate is considered a near-duplicate.
+
+    This prevents accumulation of near-identical memories like:
+      "TestCorp is a bottling plant with 4 crews..."
+      "TestCorp operates a bottling plant with 4 crews..."
+      "TestCorp is a bottling plant operation with 4 crews..."
+
+    Args:
+        content (str): The candidate memory content
+        search_memories_fn (callable): search_memories() from memory_store
+        similarity_threshold (float): Jaccard similarity threshold (default 0.7)
+
+    Returns:
+        bool: True if a near-duplicate exists, False otherwise (store it)
+    """
+    if not content or not content.strip():
+        return False
+
+    try:
+        # Search for the most similar existing memories
+        results = search_memories_fn(content, limit=5)
+        if not results:
+            return False
+
+        candidate_words = set(_tokenize(content))
+        if not candidate_words:
+            return False
+
+        for existing in results:
+            existing_content = existing.get('content', '')
+            if not existing_content:
+                continue
+            existing_words = set(_tokenize(existing_content))
+            if not existing_words:
+                continue
+
+            # Jaccard similarity: |intersection| / |union|
+            intersection = candidate_words & existing_words
+            union = candidate_words | existing_words
+            similarity = len(intersection) / len(union) if union else 0.0
+
+            if similarity >= similarity_threshold:
+                logger.debug(
+                    f"_is_near_duplicate: similarity={similarity:.2f} "
+                    f"candidate='{content[:60]}' existing='{existing_content[:60]}'"
+                )
+                return True
+
+        return False
+
+    except Exception as e:
+        # On any error, allow the memory to be stored (fail open)
+        logger.debug(f"_is_near_duplicate: error during check (allowing store): {e}")
+        return False
+
+
+def _tokenize(text):
+    """
+    Tokenize text into lowercase words for Jaccard similarity comparison.
+    Strips punctuation and filters short/stop words.
+    """
+    _STOP = frozenset({
+        'a', 'an', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to',
+        'for', 'of', 'with', 'is', 'are', 'was', 'has', 'that', 'this',
+        'it', 'its', 'be', 'by', 'from', 'as', 'about',
+    })
+    tokens = []
+    for token in text.lower().split():
+        clean = token.strip('.,!?;:\'"()[]{}')
+        if len(clean) >= 3 and clean not in _STOP:
+            tokens.append(clean)
+    return tokens
+
+
+# ============================================================================
+# JSON PARSING
+# ============================================================================
 
 def _parse_memories_json(raw_text):
     """
