@@ -1,9 +1,32 @@
 """
 Proactive Curiosity Engine - Phase 1 Component 2
 Created: February 5, 2026
-Last Updated: March 06, 2026 - CONNECTION LEAK FIX
+Last Updated: March 07, 2026 - SINGLETON FIX: eliminate per-request _ensure_table() warnings
 
 CHANGELOG:
+
+- March 07, 2026 (v3): SINGLETON FIX
+  PROBLEM: get_curiosity_engine() created a NEW ProactiveCuriosityEngine() instance
+    on EVERY call (i.e., every /api/orchestrate request). Each new instance called
+    __init__() -> _ensure_table() -> get_db() + 2 information_schema queries.
+    When the connection was in a bad state mid-request (connection reused from
+    an earlier operation in the same request cycle), psycopg2 raised an exception
+    whose str() was literally "0" (InterfaceError with args=(0,)).
+    This produced the noisy warnings on every request:
+      ⚠️ Could not verify proactive_suggestions table: 0
+      ⚠️ Could not count curiosity: 0
+    SECOND PROBLEM: _get_recent_curiosity_count() was called with conversation_id=None
+    when orchestrate handler hadn't yet established a conversation. This caused
+    a silent SQL error (WHERE conversation_id = NULL is always false in SQL, but
+    the parameterized query with None still causes issues in some psycopg2 states).
+  FIX:
+    1. Added module-level _engine_instance = None singleton cache.
+       get_curiosity_engine() now checks the cache before creating a new instance.
+       _ensure_table() runs ONCE at startup (first call), never again per-request.
+    2. Added None guard in _get_recent_curiosity_count(): if conversation_id is
+       None, return 0 immediately without touching the database.
+    3. No logic changes. No behavior changes. All curiosity patterns, triggers,
+       stats, and logging functions are identical.
 
 - March 06, 2026 (v2): CONNECTION LEAK FIX
   PROBLEM: _ensure_table(), _get_recent_curiosity_count(), and _log_curiosity()
@@ -99,6 +122,13 @@ QUESTION_WORD_STOPWORDS = {
 }
 
 
+# =============================================================================
+# MODULE-LEVEL SINGLETON CACHE
+# Added March 07, 2026 - prevents _ensure_table() from firing on every request
+# =============================================================================
+_engine_instance = None
+
+
 class ProactiveCuriosityEngine:
     """Generates natural, contextual follow-up questions"""
 
@@ -139,12 +169,18 @@ class ProactiveCuriosityEngine:
         self.curiosity_history = []
         self.max_curiosity_per_conversation = 3
 
-        # Verify/upgrade the proactive_suggestions table
+        # Verify/upgrade the proactive_suggestions table.
+        # Runs ONCE per process lifetime due to singleton pattern in
+        # get_curiosity_engine(). Not called on every request.
         self._ensure_table()
 
     def _ensure_table(self):
         """
         Verify the proactive_suggestions table exists and has all required columns.
+
+        Called ONCE at startup via singleton pattern in get_curiosity_engine().
+        Not called on every request (that was the source of the per-request
+        ": 0" warnings fixed in March 07, 2026 v3).
 
         REWRITTEN March 06, 2026 for PostgreSQL compatibility:
         - migration_001_initial_schema.py creates proactive_suggestions with the
@@ -204,6 +240,8 @@ class ProactiveCuriosityEngine:
                         print(f"✅ Added missing column to proactive_suggestions: {col_name}")
                     except Exception as alter_err:
                         print(f"⚠️ Could not add column {col_name}: {alter_err}")
+
+            print("✅ proactive_suggestions table verified")
 
         except Exception as e:
             print(f"⚠️ Could not verify proactive_suggestions table: {e}")
@@ -345,7 +383,19 @@ class ProactiveCuriosityEngine:
         return question
 
     def _get_recent_curiosity_count(self, conversation_id):
-        """Count how many curious questions asked in this conversation"""
+        """
+        Count how many curious questions asked in this conversation.
+
+        UPDATED March 07, 2026: Guard against conversation_id=None.
+        When called before a conversation is fully established, conversation_id
+        may be None. A parameterized WHERE conversation_id = %s with None
+        can cause psycopg2 issues depending on connection state. Return 0
+        immediately to avoid any DB interaction.
+        """
+        # Guard: if no conversation yet, no curiosity has been asked
+        if conversation_id is None:
+            return 0
+
         db = None
         try:
             db = get_db()
@@ -416,8 +466,22 @@ class ProactiveCuriosityEngine:
 
 
 def get_curiosity_engine():
-    """Get singleton instance"""
-    return ProactiveCuriosityEngine()
+    """
+    Return the module-level singleton ProactiveCuriosityEngine instance.
+
+    UPDATED March 07, 2026: Changed from creating a new instance on every call
+    to a cached singleton. This ensures _ensure_table() runs only ONCE at
+    startup (when the first call is made), not on every /api/orchestrate request.
+
+    Before this fix: every orchestrate call created a new instance, called
+    _ensure_table(), opened a DB connection mid-request, and produced
+    '⚠️ Could not verify proactive_suggestions table: 0' warnings when the
+    connection was in a bad state from an earlier operation in the same cycle.
+    """
+    global _engine_instance
+    if _engine_instance is None:
+        _engine_instance = ProactiveCuriosityEngine()
+    return _engine_instance
 
 
 # I did no harm and this file is not truncated
