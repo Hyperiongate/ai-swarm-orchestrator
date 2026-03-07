@@ -1,9 +1,29 @@
 """
 Task Analysis Module - WITH UNIFIED KNOWLEDGE BASE (Project Files + Knowledge Management)
 Created: January 21, 2026
-Last Updated: March 06, 2026 - ROBUST JSON EXTRACTION FIX
+Last Updated: March 07, 2026 - PHASE 2B: MEMORY RETRIEVAL WIRED IN
 
 CHANGELOG:
+
+- March 07, 2026: PHASE 2B: MEMORY RETRIEVAL WIRED IN
+  WHAT CHANGED: Memory retrieval is now injected into every AI call.
+  - Added import: retrieve_relevant_memories, format_memories_for_prompt
+    from memory.memory_retriever
+  - In analyze_task_with_sonnet(): after kb_check and learning_context are
+    assembled, calls retrieve_relevant_memories(user_request) and
+    format_memories_for_prompt(). Appends formatted memory context to
+    analysis_prompt AFTER the knowledge base section, BEFORE the user
+    request line.
+  - In handle_with_opus(): same pattern applied.
+  - Both memory retrieval calls are wrapped in try/except. If memory
+    retrieval fails for any reason, orchestration continues normally
+    without memories — the error is logged but never surfaced to the user.
+  - Memory context is injected between the knowledge base section and the
+    USER REQUEST line so the AI treats it as background context, not
+    instructions.
+  NO OTHER CHANGES: All function signatures, routing logic, specialist
+    dispatch, time-sensitive override, knowledge base integration, JSON
+    extraction, and file handling are completely unchanged.
 
 - March 06, 2026 (Pass 2): ROBUST JSON EXTRACTION FIX
   PROBLEM: analyze_task_with_sonnet() and handle_with_opus() used json.loads()
@@ -889,7 +909,16 @@ def check_knowledge_base_unified(user_request, project_knowledge_base):
 
 def analyze_task_with_sonnet(user_request, knowledge_base=None, file_paths=None, file_contents=None):
     """
-    Sonnet analyzes task WITH unified knowledge + system capabilities + FILE ATTACHMENTS.
+    Sonnet analyzes task WITH unified knowledge + system capabilities + FILE ATTACHMENTS
+    + MEMORY CONTEXT (Phase 2B).
+
+    UPDATED March 07, 2026 (Phase 2B):
+    - Retrieves relevant memories from the memory store before building the prompt.
+    - Memory context is appended to the system prompt after the knowledge base
+      section and before the user request. The AI treats these as background
+      knowledge it already possesses.
+    - Memory retrieval is wrapped in try/except — any failure is logged and
+      silently skipped. Orchestration never fails because of the memory system.
 
     UPDATED March 06, 2026:
     - Uses _extract_json_object() for robust JSON parsing. Handles trailing text
@@ -902,6 +931,25 @@ def analyze_task_with_sonnet(user_request, knowledge_base=None, file_paths=None,
 
     kb_check = check_knowledge_base_unified(user_request, knowledge_base)
     learning_context = get_learning_context()
+
+    # =========================================================================
+    # PHASE 2B: MEMORY RETRIEVAL
+    # Retrieve relevant memories and format for prompt injection.
+    # Wrapped in try/except — memory failure must never break orchestration.
+    # =========================================================================
+    memory_context = ""
+    try:
+        from memory.memory_retriever import retrieve_relevant_memories, format_memories_for_prompt
+        memories = retrieve_relevant_memories(user_request, limit=10)
+        memory_context = format_memories_for_prompt(memories)
+        if memory_context:
+            print(f"🧠 [task_analysis] Memory context injected: {len(memories)} memories, "
+                  f"{len(memory_context)} chars")
+        else:
+            print("🧠 [task_analysis] No relevant memories found for this request")
+    except Exception as mem_err:
+        print(f"⚠️ [task_analysis] Memory retrieval failed (non-fatal): {mem_err}")
+        memory_context = ""
 
     analysis_prompt = f"""{capabilities}
 
@@ -958,6 +1006,8 @@ VIOLATION OF THESE RULES = LOSS OF CREDIBILITY
 {learning_context}
 
 {kb_check['knowledge_context']}
+
+{memory_context}
 
 """
 
@@ -1135,7 +1185,14 @@ Respond ONLY with valid JSON:
 
 def handle_with_opus(user_request, sonnet_analysis, knowledge_base=None, file_paths=None, file_contents=None):
     """
-    Opus handles complex requests WITH unified knowledge + system capabilities + FILES.
+    Opus handles complex requests WITH unified knowledge + system capabilities + FILES
+    + MEMORY CONTEXT (Phase 2B).
+
+    UPDATED March 07, 2026 (Phase 2B):
+    - Retrieves relevant memories from the memory store before building the prompt.
+    - Memory context is appended after the knowledge base section and before the
+      user request. The AI treats these as background knowledge.
+    - Memory retrieval is wrapped in try/except — any failure is silently skipped.
 
     UPDATED March 06, 2026:
     - Uses _extract_json_object() for robust JSON parsing. Handles trailing text
@@ -1147,6 +1204,25 @@ def handle_with_opus(user_request, sonnet_analysis, knowledge_base=None, file_pa
 
     kb_check = check_knowledge_base_unified(user_request, knowledge_base)
     learning_context = get_learning_context()
+
+    # =========================================================================
+    # PHASE 2B: MEMORY RETRIEVAL
+    # Retrieve relevant memories and format for prompt injection.
+    # Wrapped in try/except — memory failure must never break orchestration.
+    # =========================================================================
+    memory_context = ""
+    try:
+        from memory.memory_retriever import retrieve_relevant_memories, format_memories_for_prompt
+        memories = retrieve_relevant_memories(user_request, limit=10)
+        memory_context = format_memories_for_prompt(memories)
+        if memory_context:
+            print(f"🧠 [handle_with_opus] Memory context injected: {len(memories)} memories, "
+                  f"{len(memory_context)} chars")
+        else:
+            print("🧠 [handle_with_opus] No relevant memories found for this request")
+    except Exception as mem_err:
+        print(f"⚠️ [handle_with_opus] Memory retrieval failed (non-fatal): {mem_err}")
+        memory_context = ""
 
     opus_prompt = f"""{capabilities}
 
@@ -1178,6 +1254,8 @@ SPEAK LIKE AN EXPERIENCED PARTNER, NOT A SALES BROCHURE.
 {learning_context}
 
 {kb_check['knowledge_context']}
+
+{memory_context}
 
 """
 
