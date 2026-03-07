@@ -1,59 +1,76 @@
 """
-AI SWARM ORCHESTRATOR - Memory Package
-Phase 2A: Memory System
-Phase 2B: Memory Retrieval & Context Injection
+Orchestration Package
+Created: January 21, 2026
+Last Updated: January 29, 2026 - ADDED SYSTEM CAPABILITIES
 
-Created: March 05, 2026
-Last Updated: March 07, 2026 - Phase 2B: added retriever exports
+All AI orchestration logic lives here.
 
-CHANGELOG:
-- March 07, 2026: Phase 2B — added memory retriever exports
-  * Added retrieve_relevant_memories, format_memories_for_prompt
-    from memory.memory_retriever
-  * Both added to __all__
-  * No other changes — all Phase 2A exports preserved
+CRITICAL UPDATE (January 29, 2026):
+- Added system_capabilities module for AI self-awareness
+- AI now knows what it can do (file handling, folders, analysis)
+- Capability manifest injected into all AI calls
 
-- March 05, 2026: Phase 2A initial build
-  * New package — exports the public API for the memory system
-  * store_memory, search_memories, get_memory_stats from memory_store
-  * extract_memories from memory_extractor
-
-USAGE:
-    from memory import store_memory, search_memories, get_memory_stats, extract_memories
-    from memory import retrieve_relevant_memories, format_memories_for_prompt
-
-AUTHOR: Jim @ Shiftwork Solutions LLC (managed by Claude)
+Author: Jim @ Shiftwork Solutions LLC
 """
 
-from memory.memory_store import (
-    store_memory,
-    get_memories_by_type,
-    get_memories_by_category,
-    search_memories,
-    get_memory_stats,
-    update_relevance,
-    delete_old_memories
-)
-from memory.memory_extractor import extract_memories
-from memory.memory_retriever import (
-    retrieve_relevant_memories,
-    format_memories_for_prompt
+# Import existing AI clients
+from orchestration.ai_clients import (
+    call_claude_sonnet,
+    call_claude_opus,
+    call_gpt4,
+    call_deepseek,
+    call_gemini
 )
 
+# Import existing task analysis
+from orchestration.task_analysis import (
+    analyze_task_with_sonnet,
+    handle_with_opus,
+    execute_specialist_task,
+    get_learning_context
+)
+
+# Import existing consensus validation
+from orchestration.consensus import validate_with_consensus
+
+# Import NEW capability system (January 29, 2026)
+from orchestration.system_capabilities import (
+    get_system_capabilities_prompt,
+    inject_capabilities_into_prompt,
+    can_handle_files,
+    can_create_folders,
+    can_save_files,
+    can_access_files,
+    can_analyze_files,
+    get_supported_file_types,
+    get_capability_summary
+)
+
+# Export everything (existing + new)
 __all__ = [
-    # Phase 2A — store layer
-    'store_memory',
-    'get_memories_by_type',
-    'get_memories_by_category',
-    'search_memories',
-    'get_memory_stats',
-    'update_relevance',
-    'delete_old_memories',
-    # Phase 2A — extraction layer
-    'extract_memories',
-    # Phase 2B — retrieval layer
-    'retrieve_relevant_memories',
-    'format_memories_for_prompt',
+    # Existing AI clients
+    'call_claude_sonnet',
+    'call_claude_opus',
+    'call_gpt4',
+    'call_deepseek',
+    'call_gemini',
+    # Existing task analysis
+    'analyze_task_with_sonnet',
+    'handle_with_opus',
+    'execute_specialist_task',
+    'get_learning_context',
+    # Existing consensus
+    'validate_with_consensus',
+    # NEW capability system
+    'get_system_capabilities_prompt',
+    'inject_capabilities_into_prompt',
+    'can_handle_files',
+    'can_create_folders',
+    'can_save_files',
+    'can_access_files',
+    'can_analyze_files',
+    'get_supported_file_types',
+    'get_capability_summary'
 ]
 
 # I did no harm and this file is not truncated
