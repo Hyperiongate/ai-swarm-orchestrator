@@ -3,10 +3,30 @@ AI SWARM ORCHESTRATOR - Memory Retriever
 Phase 2B: Memory Retrieval & Context Injection
 
 Created: March 07, 2026
-Last Updated: March 07, 2026 - Phase 2B initial build
+Last Updated: March 07, 2026 - FRAMING FIX: memory presented as established facts
 
 CHANGELOG:
-- March 07, 2026: Phase 2B initial build
+- March 07, 2026 (Pass 2): FRAMING FIX
+  PROBLEM: AI was contradicting injected memory facts, saying "TestCorp was
+    never discussed" even though the memory block contained "TestCorp operates
+    a bottling plant with 4 crews." Root cause: the prompt framing said "You
+    have the following knowledge from previous interactions" which is weak — the
+    AI was weighting an empty in-session conversation_history more heavily than
+    the memory context, concluding the topic had not come up in THIS chat.
+  FIX: Replaced prompt framing in both _format() and _truncate_to_budget() with
+    explicit language:
+      - "facts come from your persistent memory system"
+      - "YOU ALREADY KNOW from prior sessions, completely independent of the
+         current conversation"
+      - "Do NOT say these topics were never discussed"
+      - "Do NOT say you have no memory of them"
+      - "Treat these as established facts you possess"
+  This framing makes clear that memory facts are authoritative, independent of
+  what appears in the visible conversation history, and must not be contradicted.
+  NO OTHER CHANGES: All retrieval logic, strategies, category detection,
+    keyword extraction, sorting, and character budget enforcement unchanged.
+
+- March 07, 2026 (Pass 1): Phase 2B initial build
   * New file — wires the memory store into the orchestration flow
   * retrieve_relevant_memories(): three-strategy search returning deduplicated,
     relevance-ranked memory list capped at `limit` entries
@@ -31,6 +51,7 @@ STRATEGIES:
 
 CALLED FROM:
     orchestration/task_analysis.py — analyze_task_with_sonnet() and handle_with_opus()
+    routes/orchestration_handler.py — Handler 10, directly into completion_prompt
     routes/memory.py               — GET /api/memory/preview?q= (debug endpoint)
 
 USAGE:
@@ -140,12 +161,15 @@ def format_memories_for_prompt(memories):
 
     The block is structured as:
         --- SWARM MEMORY CONTEXT ---
-        [RECENT KNOWLEDGE]          ← episodic + semantic memories
-        [HOW TO WORK EFFECTIVELY]   ← procedural memories
+        IMPORTANT: [authoritative framing — do not contradict these facts]
+        [RECENT KNOWLEDGE]          <- episodic + semantic memories
+        [HOW TO WORK EFFECTIVELY]   <- procedural memories
         --- END MEMORY CONTEXT ---
 
-    The AI is instructed to treat these as things it already knows, not
-    things it was just told. This avoids the AI saying "based on my memory..."
+    The framing explicitly tells the AI that these facts come from persistent
+    memory independent of the current conversation, and must NOT be contradicted
+    even if the in-session conversation history appears to show the topic was
+    never discussed.
 
     Total output is capped at _MAX_CONTEXT_CHARS characters. If truncation
     is needed, lower-relevance memories are dropped first (list is
@@ -266,11 +290,20 @@ def _format(memories):
         return ""
 
     # Build the block
+    # =========================================================================
+    # FRAMING (updated March 07, 2026 Pass 2):
+    # Explicit language telling the AI these facts are authoritative and
+    # independent of the current conversation history. Prevents the AI from
+    # saying "this was never discussed" when the in-session history is empty.
+    # =========================================================================
     parts = [
         "--- SWARM MEMORY CONTEXT ---",
-        "You have the following knowledge from previous interactions. "
-        "Use this context naturally — do not mention that you are reading "
-        "from memory unless directly asked.",
+        "IMPORTANT: The following facts come from your persistent memory system -- "
+        "they are things YOU ALREADY KNOW from prior sessions, completely independent "
+        "of the current conversation. Do NOT say these topics were never discussed. "
+        "Do NOT say you have no memory of them. Treat these as established facts "
+        "you possess. Use them naturally without mentioning the memory system "
+        "unless directly asked.",
         "",
     ]
 
@@ -308,9 +341,12 @@ def _truncate_to_budget(knowledge_lines, procedural_lines):
         trimmed_knowledge = knowledge_lines[:cutoff]
         parts = [
             "--- SWARM MEMORY CONTEXT ---",
-            "You have the following knowledge from previous interactions. "
-            "Use this context naturally — do not mention that you are reading "
-            "from memory unless directly asked.",
+            "IMPORTANT: The following facts come from your persistent memory system -- "
+            "they are things YOU ALREADY KNOW from prior sessions, completely independent "
+            "of the current conversation. Do NOT say these topics were never discussed. "
+            "Do NOT say you have no memory of them. Treat these as established facts "
+            "you possess. Use them naturally without mentioning the memory system "
+            "unless directly asked.",
             "",
         ]
         if trimmed_knowledge:
