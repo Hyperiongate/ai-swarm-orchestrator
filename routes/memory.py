@@ -1,11 +1,25 @@
 """
 AI SWARM ORCHESTRATOR - Memory API Routes
 Phase 2A: Memory System — API Layer
+Phase 2B: Memory Retrieval & Context Injection — preview endpoint added
 
 Created: March 05, 2026
-Last Updated: March 05, 2026 - Phase 2A initial build
+Last Updated: March 07, 2026 - Phase 2B: added /api/memory/preview endpoint
 
 CHANGELOG:
+- March 07, 2026: Phase 2B — added /api/memory/preview endpoint
+  * GET /api/memory/preview?q=your+search+text
+  * Calls retrieve_relevant_memories() and format_memories_for_prompt()
+  * Returns the exact memory context block that WOULD be injected into
+    the AI system prompt for the given query
+  * Includes timing information (retrieval_ms, format_ms, total_ms)
+  * Includes memory count and character count of formatted context
+  * Critical debugging tool: if the Swarm gives an unexpected answer,
+    hit this endpoint with the same text to see what memory context
+    the AI received
+  * Follows the same error handling pattern as all existing endpoints
+  * No changes to existing endpoints
+
 - March 05, 2026: Phase 2A initial build
   * New file — part of Phase 2A memory system
   * Provides read-only HTTP endpoints for inspecting the memory store
@@ -19,15 +33,17 @@ CHANGELOG:
   * No writes — memory store is written to by memory_extractor only
   * Handles ImportError gracefully if memory package not deployed
 
-ACCEPTANCE CRITERIA (from Phase 2A plan):
-  - /api/memory/health returns operational status
-  - After /api/orchestrate, /api/memory/recent shows new episodic memory
-  - /api/memory/stats shows counts by type/category
-  - /api/memory/search?q=term returns relevant memories
+ENDPOINTS (all read-only):
+  GET  /api/memory/health          — operational status check
+  GET  /api/memory/stats           — aggregate statistics
+  GET  /api/memory/recent          — most recent memories, ?limit=N&type=T&category=C
+  GET  /api/memory/search          — keyword search, ?q=term&limit=N
+  GET  /api/memory/preview         — debug: what memory context would AI receive? ?q=text
 
 AUTHOR: Jim @ Shiftwork Solutions LLC (managed by Claude)
 """
 
+import time as time_module
 from flask import Blueprint, request, jsonify
 
 memory_bp = Blueprint('memory', __name__, url_prefix='/api/memory')
@@ -52,7 +68,7 @@ def memory_health():
             "operational": true | false,
             "total_memories": int,
             "message": str,
-            "phase": "2A"
+            "phase": "2B"
         }
     """
     try:
@@ -64,7 +80,7 @@ def memory_health():
                 'operational': True,
                 'total_memories': stats.get('total_memories', 0),
                 'message': 'Memory system is operational',
-                'phase': '2A',
+                'phase': '2B',
                 'by_type': stats.get('by_type', {}),
                 'avg_relevance': stats.get('avg_relevance', 0.0)
             })
@@ -74,7 +90,7 @@ def memory_health():
                 'operational': False,
                 'total_memories': 0,
                 'message': f"Memory store unreachable: {stats.get('error', 'unknown error')}",
-                'phase': '2A'
+                'phase': '2B'
             }), 503
 
     except ImportError:
@@ -82,8 +98,8 @@ def memory_health():
             'status': 'unavailable',
             'operational': False,
             'total_memories': 0,
-            'message': 'Memory package not installed — Phase 2A not yet deployed',
-            'phase': '2A'
+            'message': 'Memory package not installed — Phase 2B not yet deployed',
+            'phase': '2B'
         }), 503
 
     except Exception as e:
@@ -92,7 +108,7 @@ def memory_health():
             'operational': False,
             'total_memories': 0,
             'message': f'Memory health check failed: {str(e)}',
-            'phase': '2A'
+            'phase': '2B'
         }), 503
 
 
@@ -290,6 +306,115 @@ def search_memories_endpoint():
             'query': query,
             'memories': [],
             'count': 0
+        }), 500
+
+
+# ============================================================================
+# PREVIEW — DEBUG ENDPOINT (Phase 2B)
+# ============================================================================
+
+@memory_bp.route('/preview', methods=['GET'])
+def memory_preview():
+    """
+    Show exactly what memory context would be injected into the AI prompt
+    for a given query. Critical debugging tool for Phase 2B.
+
+    If the Swarm gives an unexpected answer, hit this endpoint with the
+    same query text to see what memory context the AI received.
+
+    Query params:
+        q     (str, required): The query text to simulate (same as user request)
+        limit (int, optional): Max memories to retrieve. Default 10, max 20.
+
+    Returns JSON:
+        {
+            "success": true,
+            "query": "the search text",
+            "memory_count": int,
+            "context_chars": int,
+            "formatted_context": "the exact block that would be injected",
+            "memories": [ {id, memory_type, category, content, relevance_score,
+                           created_at}, ... ],
+            "timing": {
+                "retrieval_ms": float,
+                "format_ms": float,
+                "total_ms": float
+            }
+        }
+
+    If no memories match: formatted_context will be "" and memory_count will be 0.
+    This is normal on a fresh system before any /api/orchestrate calls have been made.
+    """
+    query = request.args.get('q', '').strip()
+    if not query:
+        return jsonify({
+            'success': False,
+            'error': 'Query parameter "q" is required. Example: /api/memory/preview?q=TestCorp+schedule',
+            'formatted_context': '',
+            'memory_count': 0,
+            'context_chars': 0
+        }), 400
+
+    limit = request.args.get('limit', 10, type=int)
+    limit = max(1, min(limit, 20))
+
+    try:
+        from memory.memory_retriever import retrieve_relevant_memories, format_memories_for_prompt
+
+        # Time the retrieval
+        t0 = time_module.time()
+        memories = retrieve_relevant_memories(query, limit=limit)
+        t1 = time_module.time()
+        retrieval_ms = round((t1 - t0) * 1000, 1)
+
+        # Time the formatting
+        formatted_context = format_memories_for_prompt(memories)
+        t2 = time_module.time()
+        format_ms = round((t2 - t1) * 1000, 1)
+        total_ms = round((t2 - t0) * 1000, 1)
+
+        # Serialize memories for the response (strip any internal fields)
+        serialized_memories = []
+        for mem in memories:
+            serialized_memories.append({
+                'id': mem.get('id'),
+                'memory_type': mem.get('memory_type'),
+                'category': mem.get('category'),
+                'content': mem.get('content'),
+                'relevance_score': mem.get('relevance_score'),
+                'created_at': mem.get('created_at'),
+            })
+
+        return jsonify({
+            'success': True,
+            'query': query,
+            'memory_count': len(memories),
+            'context_chars': len(formatted_context),
+            'formatted_context': formatted_context,
+            'memories': serialized_memories,
+            'timing': {
+                'retrieval_ms': retrieval_ms,
+                'format_ms': format_ms,
+                'total_ms': total_ms
+            }
+        })
+
+    except ImportError:
+        return jsonify({
+            'success': False,
+            'error': 'Memory retriever not installed — Phase 2B not yet deployed',
+            'formatted_context': '',
+            'memory_count': 0,
+            'context_chars': 0
+        }), 503
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Memory preview failed: {str(e)}',
+            'formatted_context': '',
+            'memory_count': 0,
+            'context_chars': 0
         }), 500
 
 
