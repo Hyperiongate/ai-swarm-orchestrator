@@ -4,9 +4,22 @@ Phase 2A: Memory System — API Layer
 Phase 2B: Memory Retrieval & Context Injection — preview endpoint added
 
 Created: March 05, 2026
-Last Updated: March 07, 2026 - Phase 2B: added /api/memory/preview endpoint
+Last Updated: March 07, 2026 - Added /api/memory/delete-ids admin endpoint
 
 CHANGELOG:
+- March 07, 2026: Added DELETE /api/memory/delete-ids endpoint
+  PROBLEM: Memory self-poisoning — AI denial responses ("not in the knowledge
+    base") were being extracted as high-score procedural memories (0.7) that
+    outranked correct semantic facts (0.6), causing the AI to repeatedly
+    follow its own wrong behavior. Specific bad memory IDs: 76, 77, 78.
+  FIX: New POST /api/memory/delete-ids endpoint accepts a JSON body with
+    an "ids" array and hard-deletes those specific memory rows from
+    memory_store. Returns a full report of deleted vs not-found IDs.
+  ALSO FIXED: memory_extractor.py now detects denial responses and suppresses
+    procedural/semantic extraction from them (see that file's changelog).
+  Usage: POST /api/memory/delete-ids  body: {"ids": [76, 77, 78]}
+  Auth note: Development-only endpoint — add auth before production use.
+
 - March 07, 2026: Phase 2B — added /api/memory/preview endpoint
   * GET /api/memory/preview?q=your+search+text
   * Calls retrieve_relevant_memories() and format_memories_for_prompt()
@@ -33,12 +46,13 @@ CHANGELOG:
   * No writes — memory store is written to by memory_extractor only
   * Handles ImportError gracefully if memory package not deployed
 
-ENDPOINTS (all read-only):
+ENDPOINTS:
   GET  /api/memory/health          — operational status check
   GET  /api/memory/stats           — aggregate statistics
   GET  /api/memory/recent          — most recent memories, ?limit=N&type=T&category=C
   GET  /api/memory/search          — keyword search, ?q=term&limit=N
   GET  /api/memory/preview         — debug: what memory context would AI receive? ?q=text
+  POST /api/memory/delete-ids      — admin: hard-delete specific memory IDs
 
 AUTHOR: Jim @ Shiftwork Solutions LLC (managed by Claude)
 """
@@ -415,6 +429,109 @@ def memory_preview():
             'formatted_context': '',
             'memory_count': 0,
             'context_chars': 0
+        }), 500
+
+
+# ============================================================================
+# DELETE BY IDs — ADMIN ENDPOINT (added March 07, 2026)
+# ============================================================================
+
+@memory_bp.route('/delete-ids', methods=['POST'])
+def delete_memory_ids():
+    """
+    Hard-delete specific memory records by ID.
+
+    Use this to purge bad memories that were created when the AI gave
+    incorrect denial responses and the extractor incorrectly learned
+    those denial behaviors as procedural lessons.
+
+    Request body (JSON):
+        {
+            "ids": [76, 77, 78]
+        }
+
+    Returns JSON:
+        {
+            "success": true,
+            "deleted": [76, 77],        <- IDs actually deleted
+            "not_found": [78],          <- IDs that did not exist
+            "deleted_count": 2,
+            "requested_count": 3
+        }
+
+    Errors:
+        400 — missing or invalid "ids" field
+        500 — database error
+    """
+    try:
+        body = request.get_json(silent=True) or {}
+        ids_raw = body.get('ids', [])
+
+        if not ids_raw:
+            return jsonify({
+                'success': False,
+                'error': 'Request body must include "ids" as a non-empty array of integers',
+                'example': '{"ids": [76, 77, 78]}'
+            }), 400
+
+        # Validate and convert all IDs to integers
+        try:
+            ids_to_delete = [int(i) for i in ids_raw]
+        except (TypeError, ValueError) as e:
+            return jsonify({
+                'success': False,
+                'error': f'All IDs must be integers: {e}'
+            }), 400
+
+        if len(ids_to_delete) > 100:
+            return jsonify({
+                'success': False,
+                'error': 'Maximum 100 IDs per request'
+            }), 400
+
+        from db_engine import get_db_connection
+
+        deleted = []
+        not_found = []
+
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            for memory_id in ids_to_delete:
+                # Check if it exists first
+                cursor.execute(
+                    'SELECT id FROM memory_store WHERE id = %s',
+                    (memory_id,)
+                )
+                row = cursor.fetchone()
+
+                if row:
+                    cursor.execute(
+                        'DELETE FROM memory_store WHERE id = %s',
+                        (memory_id,)
+                    )
+                    deleted.append(memory_id)
+                    print(f"🧠 Admin: deleted memory id={memory_id}")
+                else:
+                    not_found.append(memory_id)
+                    print(f"🧠 Admin: memory id={memory_id} not found (already deleted?)")
+
+            conn.commit()
+
+        return jsonify({
+            'success': True,
+            'deleted': deleted,
+            'not_found': not_found,
+            'deleted_count': len(deleted),
+            'requested_count': len(ids_to_delete)
+        })
+
+    except Exception as e:
+        import traceback
+        print(f"🧠 Admin delete-ids error: {traceback.format_exc()}")
+        return jsonify({
+            'success': False,
+            'error': f'Delete failed: {str(e)}'
         }), 500
 
 
