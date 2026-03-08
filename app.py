@@ -275,7 +275,13 @@ except Exception as e:
 print("Initializing capabilities manifest...")
 try:
     from intelligence.capabilities_manifest import generate_capabilities_manifest, get_manifest_summary
-    generate_capabilities_manifest()
+    _kb_stats = None
+    if knowledge_base is not None:
+        _kb_stats = {
+            'doc_count': len(getattr(knowledge_base, 'knowledge_index', {})),
+            'is_ready': getattr(knowledge_base, 'is_ready', False),
+        }
+    generate_capabilities_manifest(kb_stats=_kb_stats)
     _caps_summary = get_manifest_summary()
     print(f"Capabilities manifest ready: {_caps_summary}")
 except Exception as e:
