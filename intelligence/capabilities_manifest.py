@@ -2,10 +2,28 @@
 intelligence/capabilities_manifest.py
 AI Swarm Orchestrator — Dynamic Capabilities Manifest
 Created: March 08, 2026
-Last Updated: March 08, 2026 — Phase 3 Self-Awareness (initial build)
+Last Updated: March 08, 2026 — KB stats injection fix (Opus direction)
 
 CHANGELOG:
-- March 08, 2026: Phase 3 Self-Awareness
+- March 08, 2026 (Pass 2): KB STATS INJECTION FIX (Opus direction)
+  PROBLEM: _build_knowledge_base_section() used Flask current_app context
+    to find the KB object. At startup cache-warm time there is no active
+    request context, so current_app raised RuntimeError. The manifest
+    reported "Knowledge base status could not be determined (RuntimeError)"
+    even though the KB was fully initialized with 34 documents. This meant
+    the AI did not know it had a knowledge base — defeating Phase 3's purpose.
+  FIX: Added optional kb_stats parameter to both _build_knowledge_base_section()
+    and generate_capabilities_manifest(). When kb_stats is passed (a dict with
+    doc_count and is_ready), the section is built directly from those values
+    with no Flask context needed. When kb_stats is None (mid-request cache
+    refresh), the existing current_app / import app fallback path is used.
+    app.py startup warm call now passes kb_stats extracted from the live
+    knowledge_base object before calling generate_capabilities_manifest().
+  CHANGE SCOPE: Only _build_knowledge_base_section() and
+    generate_capabilities_manifest() are modified. No other functions,
+    logic, caching, or section builders are changed.
+
+- March 08, 2026 (Pass 1): Phase 3 Self-Awareness (initial build)
   * NEW FILE — dynamically generates a runtime capabilities manifest.
   * Queries live system state: API keys, loaded modules, memory count,
     knowledge base doc count, research agent availability, blueprint list.
@@ -134,17 +152,52 @@ def _build_schedule_section():
         return "Schedule generator is not available — schedule_generator module not loaded."
 
 
-def _build_knowledge_base_section():
+def _build_knowledge_base_section(kb_stats=None):
     """
     Section 3: Knowledge base status — document count and topics covered.
-    Reads from the app config where the KB object is stored after startup.
-    Falls back gracefully if not yet initialized.
+
+    Updated March 08, 2026 (Pass 2):
+    PATH 1 — kb_stats dict passed in (startup call, no Flask context needed):
+      Uses doc_count and is_ready directly. This is the correct path for the
+      startup cache-warm call in app.py where no request context exists.
+    PATH 2 — kb_stats is None (mid-request cache refresh):
+      Falls back to the original current_app / import app lookup. This path
+      works correctly inside a live Flask request context.
+
+    Args:
+        kb_stats (dict|None): Optional dict with keys:
+            'doc_count' (int)  — number of indexed documents
+            'is_ready'  (bool) — whether KB initialization is complete
     """
+    KB_TOPICS = (
+        "Topics covered: shift scheduling methodology, overtime management, "
+        "implementation planning, employee survey design, cost analysis, "
+        "contract templates, and lessons learned from hundreds of past projects. "
+        "IMPORTANT: When answering questions about shift work, scheduling, or "
+        "workforce management, ALWAYS check the knowledge base first. "
+        "It contains 35+ years of Shiftwork Solutions consulting expertise."
+    )
+
+    # PATH 1: stats injected directly — no Flask context required
+    if kb_stats is not None:
+        if kb_stats.get('is_ready') and kb_stats.get('doc_count', 0) > 0:
+            doc_count = kb_stats['doc_count']
+            return (
+                f"Knowledge base is active with {doc_count} indexed documents. "
+                + KB_TOPICS
+            )
+        else:
+            return (
+                "Knowledge base is initializing. Document count not yet available. "
+                "Topics: shift scheduling, overtime, implementation, surveys, cost analysis. "
+                "Check again in 30-60 seconds after startup."
+            )
+
+    # PATH 2: no stats passed — attempt Flask context lookup (mid-request refresh)
     try:
         from flask import current_app
         kb = current_app.config.get('knowledge_base') or current_app.config.get('KNOWLEDGE_BASE')
         if kb is None:
-            # Try the module-level reference set during app startup
             import app as _app_module
             kb = getattr(_app_module, 'knowledge_base', None)
 
@@ -152,12 +205,7 @@ def _build_knowledge_base_section():
             doc_count = len(getattr(kb, 'knowledge_index', {}))
             return (
                 f"Knowledge base is active with {doc_count} indexed documents. "
-                "Topics covered: shift scheduling methodology, overtime management, "
-                "implementation planning, employee survey design, cost analysis, "
-                "contract templates, and lessons learned from hundreds of past projects. "
-                "IMPORTANT: When answering questions about shift work, scheduling, or "
-                "workforce management, ALWAYS check the knowledge base first. "
-                "It contains 35+ years of Shiftwork Solutions consulting expertise."
+                + KB_TOPICS
             )
         elif kb is not None:
             return (
@@ -312,9 +360,11 @@ def _build_limitations_section():
 
 # =============================================================================
 # MAIN MANIFEST GENERATOR
+# Updated March 08, 2026 (Pass 2): accepts kb_stats parameter and passes it
+# to _build_knowledge_base_section() so startup calls work without Flask context.
 # =============================================================================
 
-def generate_capabilities_manifest(force_refresh=False):
+def generate_capabilities_manifest(force_refresh=False, kb_stats=None):
     """
     Generate (or return cached) the full dynamic capabilities manifest.
 
@@ -323,6 +373,13 @@ def generate_capabilities_manifest(force_refresh=False):
 
     Results are cached for CACHE_TTL seconds (5 minutes). Pass
     force_refresh=True to bypass the cache.
+
+    Args:
+        force_refresh (bool): If True, bypass the cache and regenerate.
+        kb_stats (dict|None): Optional knowledge base stats dict with keys
+            'doc_count' (int) and 'is_ready' (bool). Pass this at startup
+            where no Flask request context is available. When None, the KB
+            section falls back to Flask current_app context lookup.
 
     Returns:
         str: Plain-text capabilities manifest under 3000 characters.
@@ -333,13 +390,13 @@ def generate_capabilities_manifest(force_refresh=False):
 
     try:
         sections = {}
-        sections['ai_models']         = _build_ai_models_section()
-        sections['schedule']          = _build_schedule_section()
-        sections['knowledge_base']    = _build_knowledge_base_section()
-        sections['memory']            = _build_memory_section()
-        sections['research']          = _build_research_section()
-        sections['other']             = _build_other_capabilities_section()
-        sections['limitations']       = _build_limitations_section()
+        sections['ai_models']      = _build_ai_models_section()
+        sections['schedule']       = _build_schedule_section()
+        sections['knowledge_base'] = _build_knowledge_base_section(kb_stats=kb_stats)
+        sections['memory']         = _build_memory_section()
+        sections['research']       = _build_research_section()
+        sections['other']          = _build_other_capabilities_section()
+        sections['limitations']    = _build_limitations_section()
 
         manifest = (
             "IMPORTANT: The following is your complete capabilities list. "
