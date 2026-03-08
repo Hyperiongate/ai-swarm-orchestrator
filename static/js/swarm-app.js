@@ -389,7 +389,7 @@ function addMessageFromHistoryWithMetadata(role, content, timestamp, metadata) {
             
             if (meta.document_created && meta.document_id) {
                 var docUrl = meta.document_url || '/api/generated-documents/' + meta.document_id + '/download';
-                var docName = meta.document_name || 'Labor_Analysis_Report.xlsx';
+                var docName = meta.document_name || meta.document_filename || ('Generated_' + (meta.document_type || 'xlsx').toUpperCase() + '.' + (meta.document_type || 'xlsx'));
                 var docType = (meta.document_type || 'xlsx').toUpperCase();
                 
                 downloadSection = '<div style="margin-top: 20px; padding: 15px; background: linear-gradient(135deg, #e8f5e9 0%, #e3f2fd 100%); border-radius: 10px; border-left: 4px solid #4caf50;">';
@@ -1205,8 +1205,9 @@ function sendMessage() {
             
             if (data.document_url) {
                 var docType = (data.document_type || 'docx').toUpperCase();
+                var docFilename = data.document_filename || data.document_name || ('Generated_Schedule.' + (data.document_type || 'xlsx'));
                 downloadSection = '<div style="margin-top: 15px; padding: 12px; background: #e8f5e9; border-left: 4px solid #4caf50; border-radius: 4px;">' +
-                    '<a href="' + data.document_url + '" download style="padding: 8px 16px; background: #4caf50; color: white; text-decoration: none; border-radius: 6px;">⬇️ Download ' + docType + '</a></div>';
+                    '<a href="' + data.document_url + '" download="' + docFilename + '" style="padding: 8px 16px; background: #4caf50; color: white; text-decoration: none; border-radius: 6px;">⬇️ Download ' + docType + '</a></div>';
             }
             
             if (data.download_available && data.download_file) {
@@ -1218,7 +1219,8 @@ function sendMessage() {
                     '</div>';
             }
             
-            addMessage('assistant', data.result + '<div style="margin-top: 10px;">' + badges + '</div>' + downloadSection, data.task_id, currentMode, data);
+            var metadataForMsg = data.document_url ? null : data;
+            addMessage('assistant', data.result + '<div style="margin-top: 10px;">' + badges + '</div>' + downloadSection, data.task_id, currentMode, metadataForMsg);
             
             updateMemoryIndicator(true, 2);
             loadConversations();
