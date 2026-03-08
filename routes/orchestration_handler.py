@@ -1,9 +1,24 @@
 """
 Orchestration Handler - Main AI Task Processing (REFACTORED)
 Created: January 31, 2026
-Last Updated: March 07, 2026 - Phase 2B Memory Injection Fix
+Last Updated: March 08, 2026 - Phase 2B Memory System Prompt Fix
 
 CHANGELOG:
+
+- March 08, 2026: Phase 2B MEMORY SYSTEM PROMPT FIX
+  * ROOT CAUSE: handler10_memory_context was injected into completion_prompt
+    (the user message), but the AI was comparing it against the knowledge base
+    in api_system_prompt and dismissing memory facts as "not in the knowledge
+    base." The AI explicitly referenced "the Shiftwork Solutions knowledge base"
+    and found TestCorp absent from it, overriding the memory context.
+  * FIX: Added handler10_memory_context to api_system_prompt assembly so memory
+    context has equal authority to the knowledge base. Changed:
+      if knowledge_context or identity_block:
+          api_system_prompt = f"{knowledge_context}{identity_block}".strip()
+    To:
+      if knowledge_context or identity_block or handler10_memory_context:
+          api_system_prompt = f"{knowledge_context}{identity_block}{handler10_memory_context}".strip()
+  * No other logic changes. All handlers unchanged.
 
 - March 07, 2026: Phase 2B MEMORY INJECTION FIX
   * ROOT CAUSE: handler10_memory_context was never present in this file.
@@ -163,7 +178,7 @@ def orchestrate():
       9   GPT-4 file analysis
       10  Regular conversation (Sonnet PATH 3)
           + Phase 2A: background memory extraction thread
-          + Phase 2B: memory context injection into completion_prompt
+          + Phase 2B: memory context injection into api_system_prompt
     """
     try:
         overall_start = time.time()
@@ -1291,11 +1306,13 @@ preferences, implementation, or change management:
                         print(f"Ingested KB query failed (non-critical): {ikb_err}")
 
                     # ----------------------------------------------------------------
-                    # Phase 2B: MEMORY CONTEXT INJECTION
-                    # Retrieve persistent memories relevant to this request and inject
-                    # them into the completion prompt so the AI can use facts from
-                    # prior sessions. Non-critical — failure falls back to empty string.
-                    # Added: March 07, 2026
+                    # Phase 2B: MEMORY CONTEXT RETRIEVAL
+                    # Retrieve persistent memories relevant to this request.
+                    # Memory context is injected into api_system_prompt (not just
+                    # completion_prompt) so it has equal authority to the knowledge
+                    # base and is not overridden by the knowledge base identity block.
+                    # Non-critical — failure falls back to empty string.
+                    # Updated: March 08, 2026 (moved from completion_prompt to system prompt)
                     # ----------------------------------------------------------------
                     handler10_memory_context = ""
                     if _MEMORY_RETRIEVAL_AVAILABLE:
@@ -1303,15 +1320,15 @@ preferences, implementation, or change management:
                             h10_memories = retrieve_relevant_memories(user_request, limit=10)
                             if h10_memories:
                                 handler10_memory_context = format_memories_for_prompt(h10_memories)
-                                print(f"Phase 2B: injected {len(h10_memories)} memories "
-                                      f"({len(handler10_memory_context)} chars) into completion_prompt")
+                                print(f"Phase 2B: retrieved {len(h10_memories)} memories "
+                                      f"({len(handler10_memory_context)} chars) for system prompt")
                             else:
                                 print("Phase 2B: no relevant memories found for this request")
                         except Exception as h10_mem_err:
                             print(f"Phase 2B: memory retrieval failed (non-critical): {h10_mem_err}")
                             handler10_memory_context = ""
 
-                    completion_prompt = f"""{project_context}{file_context}{conversation_history}{learning_context}{client_profile_context}{avoidance_context}{specialized_context}{summary_context}{ingested_kb_context}{handler10_memory_context}{file_section}
+                    completion_prompt = f"""{project_context}{file_context}{conversation_history}{learning_context}{client_profile_context}{avoidance_context}{specialized_context}{summary_context}{ingested_kb_context}{file_section}
 USER REQUEST: {user_request}
 
 Please complete this request fully. Provide the actual deliverable.
@@ -1323,9 +1340,17 @@ Be comprehensive and professional."""
                     if file_contents:
                         print(f"Completion prompt contains {len(file_contents)} chars of file content")
 
+                    # ----------------------------------------------------------------
+                    # Phase 2B: MEMORY INJECTED INTO SYSTEM PROMPT
+                    # Memory context is appended to api_system_prompt so it has
+                    # equal authority to the knowledge base. Previously it was in
+                    # completion_prompt (user message) where the knowledge base
+                    # identity block overrode it.
+                    # Fixed: March 08, 2026
+                    # ----------------------------------------------------------------
                     api_system_prompt = None
-                    if knowledge_context or identity_block:
-                        api_system_prompt = f"{knowledge_context}{identity_block}".strip()
+                    if knowledge_context or identity_block or handler10_memory_context:
+                        api_system_prompt = f"{knowledge_context}{identity_block}{handler10_memory_context}".strip()
 
                     if orchestrator == 'opus':
                         response = call_claude_opus(completion_prompt, conversation_history=conversation_context,
