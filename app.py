@@ -1,9 +1,25 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: March 05, 2026 - Phase 2A Memory Schema Fix
+Last Updated: March 08, 2026 — Phase 3 Self-Awareness: capabilities manifest wired in
 
 CHANGELOG:
+- March 08, 2026: Phase 3 Self-Awareness — CAPABILITIES MANIFEST WIRED IN
+  THREE CHANGES ONLY — all other code is completely unchanged:
+  1. BLUEPRINT: Registered capabilities_bp from routes/capabilities.py.
+     Adds GET /api/capabilities, GET /api/capabilities/summary,
+     POST /api/capabilities/refresh endpoints.
+     Placed after the memory_bp registration block, before background_jobs_bp.
+  2. STARTUP: After knowledge base initialization, calls
+     generate_capabilities_manifest() once to warm the cache and logs
+     the summary to startup output so Jim can verify detection is working.
+     Wrapped in try/except — never blocks startup if it fails.
+  3. HEALTH CHECK: Added 'capabilities_manifest' section to the /health
+     response. Shows status, summary, manifest_length, cached flag,
+     and URLs for the full manifest and refresh endpoints.
+  NO OTHER CHANGES. All routes, blueprints, features, and startup sequence
+  are completely unchanged.
+
 - March 05, 2026: Phase 2A Memory Schema Fix
   * Added /api/admin/fix-memory-schema endpoint.
   * ROOT CAUSE: The memory_store table was created in Phase 1 with columns
@@ -247,6 +263,23 @@ except ImportError:
     print("Output Formatter module not found - formatting features disabled")
 except Exception as e:
     print(f"Output Formatter initialization failed: {e}")
+
+# ============================================================================
+# PHASE 3: WARM THE CAPABILITIES MANIFEST CACHE ON STARTUP
+# Generate the manifest once now so the first AI request gets a cached result
+# instead of paying the generation cost mid-request. The summary is logged
+# so Jim can confirm capability detection is working from deploy logs.
+# Wrapped in try/except — never blocks startup if it fails.
+# Added: March 08, 2026
+# ============================================================================
+print("Initializing capabilities manifest...")
+try:
+    from intelligence.capabilities_manifest import generate_capabilities_manifest, get_manifest_summary
+    generate_capabilities_manifest()
+    _caps_summary = get_manifest_summary()
+    print(f"Capabilities manifest ready: {_caps_summary}")
+except Exception as e:
+    print(f"Capabilities manifest generation failed (non-fatal): {e}")
 
 # Basic routes
 @app.route('/')
@@ -666,9 +699,32 @@ def health():
     except Exception:
         blog_posts_status = 'not_installed'
 
+    # =========================================================================
+    # PHASE 3: CAPABILITIES MANIFEST STATUS
+    # Added: March 08, 2026
+    # =========================================================================
+    capabilities_manifest_status = {}
+    try:
+        from intelligence.capabilities_manifest import get_manifest_summary, get_manifest_metadata
+        caps_summary = get_manifest_summary()
+        caps_meta    = get_manifest_metadata()
+        capabilities_manifest_status = {
+            'status':          'active',
+            'summary':         caps_summary,
+            'manifest_length': caps_meta.get('manifest_length', 0),
+            'cached':          caps_meta.get('cached', False),
+            'refresh_url':     '/api/capabilities/refresh',
+            'full_url':        '/api/capabilities',
+        }
+    except Exception as e:
+        capabilities_manifest_status = {
+            'status': 'error',
+            'error':  str(e),
+        }
+
     return jsonify({
         'status': 'healthy',
-        'version': 'Phase 2A Memory Schema Fix Mar05 + Phase 2A Memory Mar05 + Phase 1 Log Cleanup Mar05 + Phase 9b Schema Fix Mar03 + PostgreSQL Migration Mar02 + Sprint 3 + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator + LinkedIn Poster + Bulletproof Projects + 100MB Upload + Background KB',
+        'version': 'Phase 3 Capabilities Manifest Mar08 + Phase 2A Memory Schema Fix Mar05 + Phase 2A Memory Mar05 + Phase 1 Log Cleanup Mar05 + Phase 9b Schema Fix Mar03 + PostgreSQL Migration Mar02 + Sprint 3 + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator + LinkedIn Poster + Bulletproof Projects + 100MB Upload + Background KB',
         'database': {
             'type': get_db_type(),
             'backend': 'PostgreSQL (persistent)' if get_db_type() == 'postgresql' else 'SQLite (local dev)'
@@ -727,7 +783,8 @@ def health():
             'status': 'enabled',
             'endpoint': '/api/admin/restore-knowledge',
             'method': 'POST multipart/form-data, field: export_file'
-        }
+        },
+        'capabilities_manifest': capabilities_manifest_status,
     })
 
 # Register blueprints
@@ -930,6 +987,21 @@ except ImportError as e:
     print(f"Memory System routes not found: {e}")
 except Exception as e:
     print(f"Memory System registration failed: {e}")
+
+# ----------------------------------------------------------------------------
+# Phase 3: Capabilities Manifest API
+# Provides GET /api/capabilities, GET /api/capabilities/summary,
+# POST /api/capabilities/refresh endpoints.
+# Added: March 08, 2026
+# ----------------------------------------------------------------------------
+try:
+    from routes.capabilities import capabilities_bp
+    app.register_blueprint(capabilities_bp)
+    print("Phase 3 Capabilities Manifest API registered")
+except ImportError as e:
+    print(f"Capabilities Manifest routes not found: {e}")
+except Exception as e:
+    print(f"Capabilities Manifest registration failed: {e}")
 
 try:
     from routes.background_jobs import background_jobs_bp
