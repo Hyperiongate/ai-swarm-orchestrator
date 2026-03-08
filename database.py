@@ -1,32 +1,32 @@
 """
 Database Module
 Created: January 21, 2026
-Last Updated: March 04, 2026 - REALDICTCURSOR + BOOLEAN FIX
+Last Updated: March 08, 2026 - POSTGRESQL LASTROWID FIX
 
 CHANGELOG:
+- March 08, 2026: POSTGRESQL LASTROWID FIX
+  * cursor.lastrowid always returns 0 in PostgreSQL with psycopg2.
+  * Fixed 4 broken instances by replacing with INSERT...RETURNING id
+    and fetching result with fetchone()['id']:
+      1. save_generated_document()
+      2. add_avoidance_pattern()
+      3. save_analysis_deliverable()
+      4. update_analysis_progress() INSERT branch
+  * Root cause of download.json bug: document saved with ID=0,
+    GET /api/generated-documents/0/download returned 404 JSON,
+    browser downloaded that JSON and named it "download.json".
+  * No other changes — all functions and logic unchanged.
+
 - March 04, 2026: REALDICTCURSOR FIX
   * psycopg2 RealDictCursor returns RealDictRow (dict-only, no integer indexing)
-  * All fetchone()[0] calls replaced with named column aliases:
-      - SELECT COUNT(*) ... fetchone()[0]  →  SELECT COUNT(*) as cnt ... fetchone()['cnt']
-      - SELECT SUM(...) ... fetchone()[0]   →  SELECT COALESCE(SUM(...), 0) as total ... fetchone()['total']
-      - SELECT AVG(...) ... fetchone()[0]   →  SELECT AVG(...) as avg_conf ... fetchone()['avg_conf']
+  * All fetchone()[0] calls replaced with named column aliases
   * 15 instances fixed across get_document_stats() and get_statistics()
-  * This was causing KeyError(0) → {"error":"0"} on any endpoint using these functions
 
 - March 04, 2026: POSTGRESQL BOOLEAN FIX
   * PostgreSQL BOOLEAN columns cannot be compared with integers (0/1).
-  * Changed ALL boolean comparisons to use TRUE/FALSE instead of 1/0:
-      - is_deleted = 0 → is_deleted = FALSE  (7 locations)
-      - is_deleted = 1 → is_deleted = TRUE   (1 location)
-      - consensus_achieved = 1 → consensus_achieved = TRUE (1 location)
-      - is_archived = 0 → is_archived = FALSE (2 locations)
-  * Fixed facility_type → facility_size in load_project_from_db() and
-    save_project_to_db() to match authoritative schema (projects table
-    column is facility_size, not facility_type).
-  * These fixes resolve:
-      - /api/stats returning {"error":"0"}
-      - /api/documents returning "column is_deleted does not exist"
-      - /api/conversations returning 500
+  * Changed ALL boolean comparisons to use TRUE/FALSE instead of 1/0
+  * Fixed facility_type -> facility_size in load_project_from_db() and
+    save_project_to_db() to match authoritative schema.
 
 - March 02, 2026: CONNECTION POOL FIX
 - March 02, 2026: POSTGRESQL MIGRATION
@@ -64,15 +64,16 @@ def save_generated_document(filename, original_name, document_type, file_path, f
     if not title:
         title = original_name
     try:
-        cursor = db.execute('''
+        row = db.execute('''
             INSERT INTO generated_documents
             (filename, original_name, document_type, file_path, file_size,
              task_id, conversation_id, project_id, title, description, category, metadata)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
         ''', (filename, original_name, document_type, file_path, file_size,
               task_id, conversation_id, project_id, title, description, category,
-              json.dumps(metadata) if metadata else None))
-        document_id = cursor.lastrowid
+              json.dumps(metadata) if metadata else None)).fetchone()
+        document_id = row['id']
         db.commit()
         print(f"📄 Document saved to database: {filename} (ID: {document_id})")
         return document_id
@@ -722,11 +723,12 @@ def get_client_profile_context(client_name):
 def add_avoidance_pattern(pattern_data, severity='medium'):
     db = get_db()
     try:
-        cursor = db.execute('''
+        row = db.execute('''
             INSERT INTO avoidance_patterns (pattern_data, severity, times_violated, created_at, last_seen)
             VALUES (%s, %s, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        ''', (json.dumps(pattern_data), severity))
-        pattern_id = cursor.lastrowid
+            RETURNING id
+        ''', (json.dumps(pattern_data), severity)).fetchone()
+        pattern_id = row['id']
         db.commit()
         return pattern_id
     finally:
@@ -932,13 +934,14 @@ def load_analysis_session(session_id):
 def save_analysis_deliverable(session_id, deliverable_type, file_path, file_name, metadata=None):
     db = get_db()
     try:
-        cursor = db.execute('''
+        row = db.execute('''
             INSERT INTO analysis_deliverables
             (session_id, deliverable_type, file_path, file_name, metadata)
             VALUES (%s, %s, %s, %s, %s)
+            RETURNING id
         ''', (session_id, deliverable_type, file_path, file_name,
-              json.dumps(metadata) if metadata else None))
-        deliverable_id = cursor.lastrowid
+              json.dumps(metadata) if metadata else None)).fetchone()
+        deliverable_id = row['id']
         db.commit()
         return deliverable_id
     finally:
@@ -976,12 +979,13 @@ def update_analysis_progress(session_id, step_name, status, progress_pct=0, mess
             ''', (status, progress_pct, message, status, existing['id']))
             progress_id = existing['id']
         else:
-            cursor = db.execute('''
+            row = db.execute('''
                 INSERT INTO analysis_progress
                 (session_id, step_name, status, progress_pct, message, started_at)
                 VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
-            ''', (session_id, step_name, status, progress_pct, message))
-            progress_id = cursor.lastrowid
+                RETURNING id
+            ''', (session_id, step_name, status, progress_pct, message)).fetchone()
+            progress_id = row['id']
         db.commit()
         return progress_id
     finally:
