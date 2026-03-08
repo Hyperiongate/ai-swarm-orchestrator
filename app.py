@@ -293,6 +293,10 @@ def workflow():
     """Workflow interface"""
     return render_template('index_workflow.html')
 
+@app.route('/memory-admin')
+def memory_admin():
+    return render_template('memory_admin.html')
+
 @app.route('/api/admin/migrate-storage', methods=['GET', 'POST'])
 def migrate_storage():
     """One-time migration endpoint to move projects from /tmp to persistent storage."""
