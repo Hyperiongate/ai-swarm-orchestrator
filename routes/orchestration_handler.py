@@ -1,9 +1,28 @@
 """
 Orchestration Handler - Main AI Task Processing (REFACTORED)
 Created: January 31, 2026
-Last Updated: March 08, 2026 - Phase 2B Memory System Prompt Fix
+Last Updated: March 08, 2026 - Phase 4 Reasoning Loop Wiring
 
 CHANGELOG:
+
+- March 08, 2026: Phase 4 REASONING LOOP WIRING
+  * Added Phase 4 safe import block (after Phase 2B block):
+      _REASONING_ENGINE_AVAILABLE, reason_about_request, execute_tool,
+      get_manifest_summary. Same try/except/flag pattern as Phase 2A and 2B.
+  * Added reasoning engine block in PATH 3, immediately before the existing
+      analyze_task_with_sonnet() call. The reasoning engine fires first:
+      - RESPOND_DIRECTLY: response already in JSON, returns immediately (no
+        second AI call, same or better latency than current path)
+      - NEEDS_CLARIFICATION: returns specific questions to the user
+      - USE_TOOL: routes to tool_router.execute_tool() for schedule_generator,
+        research_agent, or manual_generator
+      - ESCALATE_TO_OPUS: sets escalate=True so existing Opus path runs
+      - FALLBACK (or any exception): falls through to original
+        analyze_task_with_sonnet() — system never breaks
+  * Added GET /api/reasoning/recent endpoint (last 10 reasoning decisions).
+  * No other changes. All handlers 1–9 and all existing PATH 3 logic
+    (Opus, specialists, research synthesis, document generation, memory
+    extraction, curiosity engine, etc.) are completely unchanged.
 
 - March 08, 2026: Phase 2B MEMORY SYSTEM PROMPT FIX
   * ROOT CAUSE: handler10_memory_context was injected into completion_prompt
@@ -149,12 +168,61 @@ except ImportError:
 except Exception as _mem_retr_err:
     print(f"Phase 2B Memory Retrieval: import failed ({_mem_retr_err}) - retrieval disabled")
 
+# ============================================================================
+# Phase 4: Reasoning Engine import
+# Safe import - if intelligence/ package not yet deployed, reasoning is
+# silently skipped and the original analyze_task_with_sonnet() path runs.
+# No impact on any existing route or functionality.
+# Added: March 08, 2026
+# ============================================================================
+_REASONING_ENGINE_AVAILABLE = False
+try:
+    from intelligence.reasoning_engine import reason_about_request
+    from intelligence.tool_router import execute_tool as _execute_tool
+    from intelligence.capabilities_manifest import get_manifest_summary
+    _REASONING_ENGINE_AVAILABLE = True
+    print("Phase 4 Reasoning Engine: loaded")
+except ImportError:
+    print("Phase 4 Reasoning Engine: intelligence package not found - falling back to analyze_task_with_sonnet")
+except Exception as _re_import_err:
+    print(f"Phase 4 Reasoning Engine: import failed ({_re_import_err}) - fallback active")
+
 orchestration_bp = Blueprint('orchestration', __name__)
 
 
 @orchestration_bp.route('/api/download/<path:filename>')
 def download_file_route(filename):
     return download_analysis_file(filename)
+
+
+@orchestration_bp.route('/api/reasoning/recent', methods=['GET'])
+def get_recent_reasoning():
+    """
+    Phase 4: Returns the last N reasoning decisions from reasoning_log.
+    Query param: limit (int, default 10, max 50)
+    Added: March 08, 2026
+    """
+    if not _REASONING_ENGINE_AVAILABLE:
+        return jsonify({
+            'success': False,
+            'error': 'Reasoning engine not loaded',
+            'reasoning_log': []
+        }), 503
+    try:
+        limit = int(request.args.get('limit', 10))
+        from intelligence.reasoning_engine import get_recent_reasoning_log
+        log = get_recent_reasoning_log(limit=limit)
+        return jsonify({
+            'success': True,
+            'count': len(log),
+            'reasoning_log': log
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'reasoning_log': []
+        }), 500
 
 
 @orchestration_bp.route('/api/orchestrate', methods=['POST'])
@@ -179,6 +247,8 @@ def orchestrate():
       10  Regular conversation (Sonnet PATH 3)
           + Phase 2A: background memory extraction thread
           + Phase 2B: memory context injection into api_system_prompt
+          + Phase 4:  reasoning engine (reason_about_request) fires before
+                      analyze_task_with_sonnet; FALLBACK returns to original path
     """
     try:
         overall_start = time.time()
@@ -1010,72 +1080,374 @@ Be comprehensive and professional."""
                     })
 
             # ================================================================
-            # REGULAR AI ORCHESTRATION (PATH 3 - Sonnet)
+            # REGULAR AI ORCHESTRATION (PATH 3)
+            # Phase 4: Reasoning engine fires first. On FALLBACK or any error,
+            # falls through to the original analyze_task_with_sonnet() path.
+            # All 4 decision types are handled before the original path runs.
             # ================================================================
-            try:
-                print(f"Analyzing task: {user_request[:100]}...")
-                analysis = analyze_task_with_sonnet(user_request, knowledge_base=knowledge_base,
-                                                    file_paths=file_paths, file_contents=file_contents)
-                task_type = analysis.get('task_type', 'general')
-                confidence = analysis.get('confidence', 0.5)
-                escalate = analysis.get('escalate_to_opus', False)
-                specialists_needed = analysis.get('specialists_needed', [])
-                knowledge_applied = analysis.get('knowledge_applied', False)
-                knowledge_sources = analysis.get('knowledge_sources', [])
 
-                if specialists_needed:
-                    specialists_needed = [s for s in specialists_needed if s and s.lower() != 'none']
+            # ----------------------------------------------------------------
+            # Phase 4: REASONING ENGINE
+            # Added: March 08, 2026
+            # ----------------------------------------------------------------
+            reasoning_result = None
+            _reasoning_handled = False
 
-                orchestrator = 'sonnet'
-                opus_guidance = None
+            if _REASONING_ENGINE_AVAILABLE and not file_contents and not file_paths:
+                try:
+                    print(f"Phase 4: reasoning engine firing for: {user_request[:80]}...")
 
-                if escalate:
-                    print("Escalating to Opus...")
-                    orchestrator = 'opus'
+                    # Gather context for the reasoning engine
+                    _re_memories = ""
+                    if _MEMORY_RETRIEVAL_AVAILABLE:
+                        try:
+                            _re_raw_memories = retrieve_relevant_memories(user_request, limit=10)
+                            if _re_raw_memories:
+                                _re_memories = format_memories_for_prompt(_re_raw_memories)
+                        except Exception as _re_mem_err:
+                            print(f"Phase 4: memory retrieval for reasoning failed (non-critical): {_re_mem_err}")
+
+                    _re_manifest = ""
                     try:
-                        opus_result = handle_with_opus(user_request, analysis, knowledge_base=knowledge_base,
-                                                       file_paths=file_paths, file_contents=file_contents)
-                        opus_guidance = opus_result.get('strategic_analysis', '')
-                        if opus_result.get('specialist_assignments'):
-                            for assignment in opus_result.get('specialist_assignments', []):
-                                specialist = assignment.get('ai') or assignment.get('specialist')
-                                if specialist and specialist.lower() != 'none':
-                                    specialists_needed.append(specialist)
-                    except Exception as opus_error:
-                        print(f"Opus guidance failed: {opus_error}")
+                        _re_manifest = get_manifest_summary()
+                    except Exception as _re_man_err:
+                        print(f"Phase 4: manifest retrieval failed (non-critical): {_re_man_err}")
 
-                specialist_results = []
-                specialist_output = None
-                research_agent_ran = False
+                    _re_kb_context = ""
+                    try:
+                        from knowledge_query_bridge import query_ingested_knowledge
+                        _re_kb_context = query_ingested_knowledge(user_request) or ""
+                    except Exception as _re_kb_err:
+                        print(f"Phase 4: KB context for reasoning failed (non-critical): {_re_kb_err}")
 
-                if specialists_needed:
-                    for specialist_info in specialists_needed:
-                        if isinstance(specialist_info, dict):
-                            specialist = specialist_info.get('specialist') or specialist_info.get('ai')
-                            specialist_task = specialist_info.get('task', user_request)
+                    reasoning_result = reason_about_request(
+                        user_request=user_request,
+                        memories=_re_memories,
+                        capabilities_manifest=_re_manifest,
+                        kb_context=_re_kb_context,
+                        conversation_history=conversation_context,
+                    )
+
+                    decision = reasoning_result.get('decision', 'FALLBACK')
+                    print(f"Phase 4: decision={decision} ({reasoning_result.get('execution_time_ms', 0)}ms)")
+
+                    # --- RESPOND_DIRECTLY: response is already in the JSON ---
+                    if decision == 'RESPOND_DIRECTLY':
+                        re_response_text = reasoning_result.get('response') or ''
+                        if re_response_text:
+                            formatted_output = convert_markdown_to_html(re_response_text)
+                            total_time = time.time() - overall_start
+                            db.execute(
+                                'UPDATE tasks SET status = %s, assigned_orchestrator = %s, duration_seconds = %s WHERE id = %s',
+                                ('completed', 'reasoning_engine_direct', total_time, task_id)
+                            )
+                            db.commit()
+                            add_message(conversation_id, 'assistant', re_response_text, task_id,
+                                       {'orchestrator': 'reasoning_engine_direct',
+                                        'reasoning_decision': decision,
+                                        'execution_time': total_time})
+                            # Phase 2A: background memory extraction
+                            if _MEMORY_EXTRACTION_AVAILABLE:
+                                try:
+                                    _task_data = {
+                                        'user_request': user_request,
+                                        'ai_response': re_response_text,
+                                        'model_used': 'reasoning_engine_direct',
+                                        'task_type': 'direct_response',
+                                        'execution_time': total_time,
+                                        'task_id': task_id,
+                                        'project_id': project_id,
+                                        'consensus_score': None,
+                                    }
+                                    threading.Thread(
+                                        target=_trigger_memory_extraction,
+                                        args=(_task_data,),
+                                        daemon=True
+                                    ).start()
+                                except Exception:
+                                    pass
+                            _reasoning_handled = True
+                            return jsonify({
+                                'success': True, 'task_id': task_id,
+                                'conversation_id': conversation_id,
+                                'result': formatted_output,
+                                'orchestrator': 'reasoning_engine_direct',
+                                'reasoning_decision': decision,
+                                'execution_time': total_time,
+                                'knowledge_applied': bool(_re_kb_context),
+                                'formatting_applied': True,
+                                'specialists_used': [], 'consensus': None,
+                                'suggestions': [], 'curious_question': None,
+                                'document_created': False, 'document_url': None,
+                                'document_id': None, 'document_type': None,
+                            })
                         else:
-                            specialist = specialist_info
-                            specialist_task = user_request
-                        if specialist and specialist.lower() != 'none':
-                            print(f"Executing specialist: {specialist}")
-                            result = execute_specialist_task(specialist, specialist_task,
-                                                             file_paths=file_paths, file_contents=file_contents)
-                            specialist_results.append(result)
-                            if result.get('success') and result.get('output'):
-                                specialist_output = result.get('output')
-                                if specialist.lower() == 'research_agent':
-                                    research_agent_ran = True
-                                    print(f"Research agent completed - will synthesize with Sonnet")
+                            # Empty response — fall through to original path
+                            print("Phase 4: RESPOND_DIRECTLY had empty response — falling through")
 
-                from orchestration.ai_clients import call_claude_opus, call_claude_sonnet
+                    # --- NEEDS_CLARIFICATION: ask the user for more info ---
+                    elif decision == 'NEEDS_CLARIFICATION':
+                        questions = reasoning_result.get('clarification_questions') or []
+                        if questions:
+                            clarification_text = (
+                                "Before I can give you the best answer, I have a couple of questions:\n\n"
+                                + "\n".join(f"- {q}" for q in questions)
+                            )
+                            formatted_output = convert_markdown_to_html(clarification_text)
+                            total_time = time.time() - overall_start
+                            db.execute(
+                                'UPDATE tasks SET status = %s, assigned_orchestrator = %s, duration_seconds = %s WHERE id = %s',
+                                ('completed', 'reasoning_engine_clarify', total_time, task_id)
+                            )
+                            db.commit()
+                            add_message(conversation_id, 'assistant', clarification_text, task_id,
+                                       {'orchestrator': 'reasoning_engine_clarify',
+                                        'reasoning_decision': decision,
+                                        'execution_time': total_time})
+                            _reasoning_handled = True
+                            return jsonify({
+                                'success': True, 'task_id': task_id,
+                                'conversation_id': conversation_id,
+                                'result': formatted_output,
+                                'orchestrator': 'reasoning_engine_clarify',
+                                'reasoning_decision': decision,
+                                'needs_input': True,
+                                'execution_time': total_time,
+                                'specialists_used': [], 'consensus': None,
+                                'suggestions': [], 'curious_question': None,
+                                'document_created': False, 'document_url': None,
+                                'document_id': None, 'document_type': None,
+                            })
+                        else:
+                            print("Phase 4: NEEDS_CLARIFICATION had no questions — falling through")
 
-                def get_knowledge_context_for_prompt(kb, user_req, max_context=6000):
-                    if not kb:
-                        return ""
-                    try:
-                        context = kb.get_context_for_task(user_req, max_context=max_context)
-                        if context:
-                            return f"""\n\n{'=' * 70}
+                    # --- USE_TOOL: route to tool_router ---
+                    elif decision == 'USE_TOOL':
+                        tool_name = reasoning_result.get('tool_name')
+                        tool_parameters = reasoning_result.get('tool_parameters')
+                        if tool_name:
+                            tool_result = _execute_tool(tool_name, tool_parameters, user_request)
+                            total_time = time.time() - overall_start
+
+                            if tool_result.get('needs_clarification'):
+                                # Tool needs more info — ask user
+                                clarification_msg = tool_result.get('clarification_message', tool_result.get('message', ''))
+                                formatted_output = convert_markdown_to_html(clarification_msg)
+                                db.execute(
+                                    'UPDATE tasks SET status = %s, assigned_orchestrator = %s, duration_seconds = %s WHERE id = %s',
+                                    ('completed', f'tool_{tool_name}_clarify', total_time, task_id)
+                                )
+                                db.commit()
+                                add_message(conversation_id, 'assistant', clarification_msg, task_id,
+                                           {'orchestrator': f'tool_{tool_name}_clarify',
+                                            'reasoning_decision': decision,
+                                            'tool_name': tool_name,
+                                            'execution_time': total_time})
+                                _reasoning_handled = True
+                                return jsonify({
+                                    'success': True, 'task_id': task_id,
+                                    'conversation_id': conversation_id,
+                                    'result': formatted_output,
+                                    'orchestrator': f'tool_{tool_name}_clarify',
+                                    'reasoning_decision': decision,
+                                    'needs_input': True,
+                                    'execution_time': total_time,
+                                    'specialists_used': [], 'consensus': None,
+                                    'suggestions': [], 'curious_question': None,
+                                    'document_created': False, 'document_url': None,
+                                    'document_id': None, 'document_type': None,
+                                })
+
+                            elif tool_result.get('success') and tool_result.get('file_path'):
+                                # Tool produced a file — save and return download link
+                                tool_file_path = tool_result['file_path']
+                                tool_file_type = tool_result.get('file_type', 'xlsx')
+                                tool_message = tool_result.get('message', 'File generated.')
+                                try:
+                                    file_size = os.path.getsize(tool_file_path)
+                                    filename = os.path.basename(tool_file_path)
+                                    shift_length = tool_result.get('shift_length', '')
+                                    pattern_key = tool_result.get('pattern_key', tool_name)
+                                    doc_title = (
+                                        f"{shift_length}-Hour {str(pattern_key).upper().replace('_', ' ')} Schedule"
+                                        if shift_length else filename
+                                    )
+                                    doc_id = save_generated_document(
+                                        filename=filename,
+                                        original_name=doc_title,
+                                        document_type=tool_file_type,
+                                        file_path=tool_file_path,
+                                        file_size=file_size,
+                                        task_id=task_id,
+                                        conversation_id=conversation_id,
+                                        project_id=project_id,
+                                        title=doc_title,
+                                        description=tool_message,
+                                        category='schedule' if tool_name == 'schedule_generator' else 'generated',
+                                    )
+                                    document_url = f'/api/generated-documents/{doc_id}/download'
+                                except Exception as _tool_save_err:
+                                    print(f"Phase 4: could not save tool file (non-critical): {_tool_save_err}")
+                                    doc_id = None
+                                    document_url = None
+
+                                formatted_output = convert_markdown_to_html(tool_message)
+                                db.execute(
+                                    'UPDATE tasks SET status = %s, assigned_orchestrator = %s, duration_seconds = %s WHERE id = %s',
+                                    ('completed', f'tool_{tool_name}', total_time, task_id)
+                                )
+                                db.commit()
+                                add_message(conversation_id, 'assistant', tool_message, task_id,
+                                           {'orchestrator': f'tool_{tool_name}',
+                                            'reasoning_decision': decision,
+                                            'tool_name': tool_name,
+                                            'document_created': True,
+                                            'document_url': document_url,
+                                            'execution_time': total_time})
+                                _reasoning_handled = True
+                                return jsonify({
+                                    'success': True, 'task_id': task_id,
+                                    'conversation_id': conversation_id,
+                                    'result': formatted_output,
+                                    'orchestrator': f'tool_{tool_name}',
+                                    'reasoning_decision': decision,
+                                    'tool_name': tool_name,
+                                    'document_created': True,
+                                    'document_url': document_url,
+                                    'document_id': doc_id,
+                                    'document_type': tool_file_type,
+                                    'execution_time': total_time,
+                                    'specialists_used': [], 'consensus': None,
+                                    'suggestions': [], 'curious_question': None,
+                                })
+
+                            elif tool_result.get('success') and tool_result.get('message'):
+                                # Tool returned text (research agent)
+                                tool_message = tool_result['message']
+                                formatted_output = convert_markdown_to_html(tool_message)
+                                db.execute(
+                                    'UPDATE tasks SET status = %s, assigned_orchestrator = %s, duration_seconds = %s WHERE id = %s',
+                                    ('completed', f'tool_{tool_name}', total_time, task_id)
+                                )
+                                db.commit()
+                                add_message(conversation_id, 'assistant', tool_message, task_id,
+                                           {'orchestrator': f'tool_{tool_name}',
+                                            'reasoning_decision': decision,
+                                            'tool_name': tool_name,
+                                            'execution_time': total_time})
+                                _reasoning_handled = True
+                                return jsonify({
+                                    'success': True, 'task_id': task_id,
+                                    'conversation_id': conversation_id,
+                                    'result': formatted_output,
+                                    'orchestrator': f'tool_{tool_name}',
+                                    'reasoning_decision': decision,
+                                    'tool_name': tool_name,
+                                    'execution_time': total_time,
+                                    'specialists_used': [], 'consensus': None,
+                                    'suggestions': [], 'curious_question': None,
+                                    'document_created': False, 'document_url': None,
+                                    'document_id': None, 'document_type': None,
+                                })
+
+                            else:
+                                # Tool failed — fall through to original path
+                                print(f"Phase 4: tool {tool_name} failed or returned empty — falling through")
+                        else:
+                            print("Phase 4: USE_TOOL had no tool_name — falling through")
+
+                    # --- ESCALATE_TO_OPUS: let the original path handle it ---
+                    elif decision == 'ESCALATE_TO_OPUS':
+                        # Set escalate flag so the existing Opus path below runs
+                        print("Phase 4: ESCALATE_TO_OPUS — handing to existing Opus path")
+                        # We do NOT set _reasoning_handled — fall through intentionally
+                        # but override analysis to force Opus escalation
+                        reasoning_result['_force_opus'] = True
+
+                    # --- FALLBACK or unknown: fall through silently ---
+                    else:
+                        print(f"Phase 4: decision={decision} — falling through to analyze_task_with_sonnet")
+
+                except Exception as _re_outer_err:
+                    import traceback
+                    print(f"Phase 4: reasoning engine outer error (non-critical, falling through): {traceback.format_exc()}")
+                    reasoning_result = None
+
+            # ----------------------------------------------------------------
+            # Original PATH 3: analyze_task_with_sonnet
+            # Runs when: reasoning engine not available, FALLBACK, ESCALATE_TO_OPUS,
+            # or any error in the reasoning block above.
+            # ----------------------------------------------------------------
+            if not _reasoning_handled:
+                try:
+                    print(f"Analyzing task: {user_request[:100]}...")
+                    analysis = analyze_task_with_sonnet(user_request, knowledge_base=knowledge_base,
+                                                        file_paths=file_paths, file_contents=file_contents)
+                    task_type = analysis.get('task_type', 'general')
+                    confidence = analysis.get('confidence', 0.5)
+                    escalate = analysis.get('escalate_to_opus', False)
+                    specialists_needed = analysis.get('specialists_needed', [])
+                    knowledge_applied = analysis.get('knowledge_applied', False)
+                    knowledge_sources = analysis.get('knowledge_sources', [])
+
+                    # If reasoning engine said ESCALATE_TO_OPUS, force it
+                    if reasoning_result and reasoning_result.get('_force_opus'):
+                        escalate = True
+                        print("Phase 4: forcing Opus escalation as directed by reasoning engine")
+
+                    if specialists_needed:
+                        specialists_needed = [s for s in specialists_needed if s and s.lower() != 'none']
+
+                    orchestrator = 'sonnet'
+                    opus_guidance = None
+
+                    if escalate:
+                        print("Escalating to Opus...")
+                        orchestrator = 'opus'
+                        try:
+                            opus_result = handle_with_opus(user_request, analysis, knowledge_base=knowledge_base,
+                                                           file_paths=file_paths, file_contents=file_contents)
+                            opus_guidance = opus_result.get('strategic_analysis', '')
+                            if opus_result.get('specialist_assignments'):
+                                for assignment in opus_result.get('specialist_assignments', []):
+                                    specialist = assignment.get('ai') or assignment.get('specialist')
+                                    if specialist and specialist.lower() != 'none':
+                                        specialists_needed.append(specialist)
+                        except Exception as opus_error:
+                            print(f"Opus guidance failed: {opus_error}")
+
+                    specialist_results = []
+                    specialist_output = None
+                    research_agent_ran = False
+
+                    if specialists_needed:
+                        for specialist_info in specialists_needed:
+                            if isinstance(specialist_info, dict):
+                                specialist = specialist_info.get('specialist') or specialist_info.get('ai')
+                                specialist_task = specialist_info.get('task', user_request)
+                            else:
+                                specialist = specialist_info
+                                specialist_task = user_request
+                            if specialist and specialist.lower() != 'none':
+                                print(f"Executing specialist: {specialist}")
+                                result = execute_specialist_task(specialist, specialist_task,
+                                                                 file_paths=file_paths, file_contents=file_contents)
+                                specialist_results.append(result)
+                                if result.get('success') and result.get('output'):
+                                    specialist_output = result.get('output')
+                                    if specialist.lower() == 'research_agent':
+                                        research_agent_ran = True
+                                        print(f"Research agent completed - will synthesize with Sonnet")
+
+                    from orchestration.ai_clients import call_claude_opus, call_claude_sonnet
+
+                    def get_knowledge_context_for_prompt(kb, user_req, max_context=6000):
+                        if not kb:
+                            return ""
+                        try:
+                            context = kb.get_context_for_task(user_req, max_context=max_context)
+                            if context:
+                                return f"""\n\n{'=' * 70}
 SHIFTWORK SOLUTIONS PROPRIETARY KNOWLEDGE BASE
 This content is drawn from hundreds of real consulting engagements
 across dozens of industries over 30+ years of practice.
@@ -1091,108 +1463,108 @@ rules, or findings from the sources listed below.
 {'=' * 70}
 END KNOWLEDGE BASE - Answer using the above as your primary source.
 {'=' * 70}\n\n"""
-                        return ""
-                    except Exception as e:
-                        print(f"Knowledge context retrieval failed: {e}")
-                        return ""
+                            return ""
+                        except Exception as e:
+                            print(f"Knowledge context retrieval failed: {e}")
+                            return ""
 
-                knowledge_context = get_knowledge_context_for_prompt(knowledge_base, user_request)
+                    knowledge_context = get_knowledge_context_for_prompt(knowledge_base, user_request)
 
-                learning_context = ""
-                try:
-                    learning_context = get_learning_context()
-                    if learning_context:
-                        print(f"Retrieved learning context ({len(learning_context)} chars)")
-                except Exception as learn_ctx_error:
-                    print(f"Could not get learning context (non-critical): {learn_ctx_error}")
-
-                # ----------------------------------------------------------------
-                # CLIENT PROFILE CONTEXT — try/finally ensures db_temp is closed
-                # ----------------------------------------------------------------
-                client_profile_context = ""
-                if project_id:
+                    learning_context = ""
                     try:
-                        db_temp = get_db()
-                        try:
-                            project = db_temp.execute(
-                                'SELECT client_name FROM projects WHERE project_id = %s', (project_id,)
-                            ).fetchone()
-                        finally:
-                            db_temp.close()
-                        if project and project['client_name']:
-                            client_profile_context = get_client_profile_context(project['client_name'])
-                            if client_profile_context:
-                                print(f"Retrieved client profile for {project['client_name']}")
-                    except Exception as profile_error:
-                        print(f"Could not get client profile (non-critical): {profile_error}")
+                        learning_context = get_learning_context()
+                        if learning_context:
+                            print(f"Retrieved learning context ({len(learning_context)} chars)")
+                    except Exception as learn_ctx_error:
+                        print(f"Could not get learning context (non-critical): {learn_ctx_error}")
 
-                avoidance_context = ""
-                try:
-                    avoidance_context = get_avoidance_context(days=30, limit=5)
-                    if avoidance_context:
-                        print(f"Retrieved avoidance patterns")
-                except Exception as avoid_error:
-                    print(f"Could not get avoidance context (non-critical): {avoid_error}")
-
-                # ----------------------------------------------------------------
-                # SPECIALIZED CONTEXT — try/finally ensures db_temp is closed
-                # ----------------------------------------------------------------
-                specialized_context = ""
-                try:
-                    specialist_kb = get_specialized_knowledge()
-                    industry = None
+                    # ----------------------------------------------------------------
+                    # CLIENT PROFILE CONTEXT — try/finally ensures db_temp is closed
+                    # ----------------------------------------------------------------
+                    client_profile_context = ""
                     if project_id:
-                        db_temp = get_db()
                         try:
-                            proj = db_temp.execute(
-                                'SELECT industry FROM projects WHERE project_id = %s', (project_id,)
-                            ).fetchone()
-                        finally:
-                            db_temp.close()
-                        if proj:
-                            industry = proj['industry']
-                    specialized_context = specialist_kb.build_expertise_context(user_request, industry)
-                    if specialized_context:
-                        print(f"Injected specialized knowledge for {industry or 'general'}")
-                except Exception as spec_error:
-                    print(f"Could not get specialized knowledge: {spec_error}")
+                            db_temp = get_db()
+                            try:
+                                project = db_temp.execute(
+                                    'SELECT client_name FROM projects WHERE project_id = %s', (project_id,)
+                                ).fetchone()
+                            finally:
+                                db_temp.close()
+                            if project and project['client_name']:
+                                client_profile_context = get_client_profile_context(project['client_name'])
+                                if client_profile_context:
+                                    print(f"Retrieved client profile for {project['client_name']}")
+                        except Exception as profile_error:
+                            print(f"Could not get client profile (non-critical): {profile_error}")
 
-                summary_context = ""
-                try:
-                    summarizer = get_conversation_summarizer()
-                    if summarizer.should_summarize(conversation_id):
-                        from orchestration.ai_clients import call_claude_sonnet
-                        summarizer.summarize_conversation(conversation_id, call_claude_sonnet)
-                    summary_context = summarizer.get_conversation_context(conversation_id)
-                    if summary_context:
-                        print(f"Retrieved conversation summary")
-                except Exception as summary_error:
-                    print(f"Could not get conversation summary: {summary_error}")
-
-                intelligence = None
-                try:
-                    intelligence = EnhancedIntelligence()
-                    print("EnhancedIntelligence initialized")
-                except Exception as intel_error:
-                    print(f"EnhancedIntelligence init failed (non-critical): {intel_error}")
-
-                # ----------------------------------------------------------------
-                # PROJECT CONTEXT — try/finally ensures db_temp is closed
-                # ----------------------------------------------------------------
-                project_context = ""
-                if project_id:
+                    avoidance_context = ""
                     try:
-                        from database_file_management import get_file_stats_by_project
-                        db_temp = get_db()
+                        avoidance_context = get_avoidance_context(days=30, limit=5)
+                        if avoidance_context:
+                            print(f"Retrieved avoidance patterns")
+                    except Exception as avoid_error:
+                        print(f"Could not get avoidance context (non-critical): {avoid_error}")
+
+                    # ----------------------------------------------------------------
+                    # SPECIALIZED CONTEXT — try/finally ensures db_temp is closed
+                    # ----------------------------------------------------------------
+                    specialized_context = ""
+                    try:
+                        specialist_kb = get_specialized_knowledge()
+                        industry = None
+                        if project_id:
+                            db_temp = get_db()
+                            try:
+                                proj = db_temp.execute(
+                                    'SELECT industry FROM projects WHERE project_id = %s', (project_id,)
+                                ).fetchone()
+                            finally:
+                                db_temp.close()
+                            if proj:
+                                industry = proj['industry']
+                        specialized_context = specialist_kb.build_expertise_context(user_request, industry)
+                        if specialized_context:
+                            print(f"Injected specialized knowledge for {industry or 'general'}")
+                    except Exception as spec_error:
+                        print(f"Could not get specialized knowledge: {spec_error}")
+
+                    summary_context = ""
+                    try:
+                        summarizer = get_conversation_summarizer()
+                        if summarizer.should_summarize(conversation_id):
+                            from orchestration.ai_clients import call_claude_sonnet
+                            summarizer.summarize_conversation(conversation_id, call_claude_sonnet)
+                        summary_context = summarizer.get_conversation_context(conversation_id)
+                        if summary_context:
+                            print(f"Retrieved conversation summary")
+                    except Exception as summary_error:
+                        print(f"Could not get conversation summary: {summary_error}")
+
+                    intelligence = None
+                    try:
+                        intelligence = EnhancedIntelligence()
+                        print("EnhancedIntelligence initialized")
+                    except Exception as intel_error:
+                        print(f"EnhancedIntelligence init failed (non-critical): {intel_error}")
+
+                    # ----------------------------------------------------------------
+                    # PROJECT CONTEXT — try/finally ensures db_temp is closed
+                    # ----------------------------------------------------------------
+                    project_context = ""
+                    if project_id:
                         try:
-                            project = db_temp.execute(
-                                'SELECT * FROM projects WHERE project_id = %s', (project_id,)
-                            ).fetchone()
-                        finally:
-                            db_temp.close()
-                        if project:
-                            file_stats = get_file_stats_by_project(project_id)
-                            project_context = f"""
+                            from database_file_management import get_file_stats_by_project
+                            db_temp = get_db()
+                            try:
+                                project = db_temp.execute(
+                                    'SELECT * FROM projects WHERE project_id = %s', (project_id,)
+                                ).fetchone()
+                            finally:
+                                db_temp.close()
+                            if project:
+                                file_stats = get_file_stats_by_project(project_id)
+                                project_context = f"""
 
 === CURRENT PROJECT CONTEXT ===
 You are working inside the "{project['client_name']}" PROJECT FOLDER.
@@ -1206,21 +1578,21 @@ This project folder contains: {file_stats.get('total_files', 0)} files
 ===
 
 """
-                    except Exception as proj_ctx_error:
-                        print(f"Could not load project context: {proj_ctx_error}")
+                        except Exception as proj_ctx_error:
+                            print(f"Could not load project context: {proj_ctx_error}")
 
-                conversation_history = ""
-                if conversation_context and len(conversation_context) > 1:
-                    conversation_history = "\n\n=== CONVERSATION HISTORY ===\n"
-                    for msg in conversation_context[:-1]:
-                        role_label = "User" if msg['role'] == 'user' else "Assistant"
-                        content_preview = msg['content'][:500] + '...' if len(msg['content']) > 500 else msg['content']
-                        conversation_history += f"{role_label}: {content_preview}\n"
-                    conversation_history += "=== END CONVERSATION HISTORY ===\n\n"
+                    conversation_history = ""
+                    if conversation_context and len(conversation_context) > 1:
+                        conversation_history = "\n\n=== CONVERSATION HISTORY ===\n"
+                        for msg in conversation_context[:-1]:
+                            role_label = "User" if msg['role'] == 'user' else "Assistant"
+                            content_preview = msg['content'][:500] + '...' if len(msg['content']) > 500 else msg['content']
+                            conversation_history += f"{role_label}: {content_preview}\n"
+                        conversation_history += "=== END CONVERSATION HISTORY ===\n\n"
 
-                if research_agent_ran and specialist_output:
-                    print(f"Synthesizing research agent results with Sonnet...")
-                    synthesis_prompt = f"""{project_context}{conversation_history}
+                    if research_agent_ran and specialist_output:
+                        print(f"Synthesizing research agent results with Sonnet...")
+                        synthesis_prompt = f"""{project_context}{conversation_history}
 USER QUESTION: {user_request}
 
 CURRENT WEB RESEARCH RESULTS (retrieved this moment via Tavily):
@@ -1240,25 +1612,25 @@ INSTRUCTIONS:
 - If the research reveals something directly relevant to shift work operations, highlight it
 
 Provide a complete, synthesized answer now:"""
-                    print(f"Sending synthesis prompt to Sonnet ({len(synthesis_prompt)} chars)...")
-                    response = call_claude_sonnet(synthesis_prompt, conversation_history=None,
-                                                  files_attached=False, system_prompt=None)
-                    if isinstance(response, dict):
-                        if response.get('error'):
-                            print(f"Synthesis failed, using raw research output")
-                            actual_output = specialist_output
+                        print(f"Sending synthesis prompt to Sonnet ({len(synthesis_prompt)} chars)...")
+                        response = call_claude_sonnet(synthesis_prompt, conversation_history=None,
+                                                      files_attached=False, system_prompt=None)
+                        if isinstance(response, dict):
+                            if response.get('error'):
+                                print(f"Synthesis failed, using raw research output")
+                                actual_output = specialist_output
+                            else:
+                                actual_output = response.get('content', '')
+                                print(f"Research synthesis complete ({len(actual_output)} chars)")
                         else:
-                            actual_output = response.get('content', '')
-                            print(f"Research synthesis complete ({len(actual_output)} chars)")
+                            actual_output = str(response)
+
+                    elif specialist_output and not research_agent_ran:
+                        actual_output = specialist_output
+
                     else:
-                        actual_output = str(response)
-
-                elif specialist_output and not research_agent_ran:
-                    actual_output = specialist_output
-
-                else:
-                    if file_contents:
-                        file_section = f"""
+                        if file_contents:
+                            file_section = f"""
 
 ========================================================================
 ATTACHED FILES - READ THESE CAREFULLY
@@ -1268,12 +1640,12 @@ ATTACHED FILES - READ THESE CAREFULLY
 
 ========================================================================
 """
-                    else:
-                        file_section = ""
+                        else:
+                            file_section = ""
 
-                    identity_block = ""
-                    if knowledge_context:
-                        identity_block = """
+                        identity_block = ""
+                        if knowledge_context:
+                            identity_block = """
 ========================================================================
 IDENTITY AND INSTRUCTIONS
 ========================================================================
@@ -1296,224 +1668,224 @@ preferences, implementation, or change management:
 
 """
 
-                    ingested_kb_context = ""
-                    try:
-                        from knowledge_query_bridge import query_ingested_knowledge
-                        ingested_kb_context = query_ingested_knowledge(user_request)
-                        if ingested_kb_context:
-                            print(f"Ingested KB: added {len(ingested_kb_context)} chars of context from uploaded documents")
-                    except Exception as ikb_err:
-                        print(f"Ingested KB query failed (non-critical): {ikb_err}")
-
-                    # ----------------------------------------------------------------
-                    # Phase 2B: MEMORY CONTEXT RETRIEVAL
-                    # Retrieve persistent memories relevant to this request.
-                    # Memory context is injected into api_system_prompt (not just
-                    # completion_prompt) so it has equal authority to the knowledge
-                    # base and is not overridden by the knowledge base identity block.
-                    # Non-critical — failure falls back to empty string.
-                    # Updated: March 08, 2026 (moved from completion_prompt to system prompt)
-                    # ----------------------------------------------------------------
-                    handler10_memory_context = ""
-                    if _MEMORY_RETRIEVAL_AVAILABLE:
+                        ingested_kb_context = ""
                         try:
-                            h10_memories = retrieve_relevant_memories(user_request, limit=10)
-                            if h10_memories:
-                                handler10_memory_context = format_memories_for_prompt(h10_memories)
-                                print(f"Phase 2B: retrieved {len(h10_memories)} memories "
-                                      f"({len(handler10_memory_context)} chars) for system prompt")
-                            else:
-                                print("Phase 2B: no relevant memories found for this request")
-                        except Exception as h10_mem_err:
-                            print(f"Phase 2B: memory retrieval failed (non-critical): {h10_mem_err}")
-                            handler10_memory_context = ""
+                            from knowledge_query_bridge import query_ingested_knowledge
+                            ingested_kb_context = query_ingested_knowledge(user_request)
+                            if ingested_kb_context:
+                                print(f"Ingested KB: added {len(ingested_kb_context)} chars of context from uploaded documents")
+                        except Exception as ikb_err:
+                            print(f"Ingested KB query failed (non-critical): {ikb_err}")
 
-                    completion_prompt = f"""{project_context}{file_context}{conversation_history}{learning_context}{client_profile_context}{avoidance_context}{specialized_context}{summary_context}{ingested_kb_context}{file_section}
+                        # ----------------------------------------------------------------
+                        # Phase 2B: MEMORY CONTEXT RETRIEVAL
+                        # Retrieve persistent memories relevant to this request.
+                        # Memory context is injected into api_system_prompt (not just
+                        # completion_prompt) so it has equal authority to the knowledge
+                        # base and is not overridden by the knowledge base identity block.
+                        # Non-critical — failure falls back to empty string.
+                        # Updated: March 08, 2026 (moved from completion_prompt to system prompt)
+                        # ----------------------------------------------------------------
+                        handler10_memory_context = ""
+                        if _MEMORY_RETRIEVAL_AVAILABLE:
+                            try:
+                                h10_memories = retrieve_relevant_memories(user_request, limit=10)
+                                if h10_memories:
+                                    handler10_memory_context = format_memories_for_prompt(h10_memories)
+                                    print(f"Phase 2B: retrieved {len(h10_memories)} memories "
+                                          f"({len(handler10_memory_context)} chars) for system prompt")
+                                else:
+                                    print("Phase 2B: no relevant memories found for this request")
+                            except Exception as h10_mem_err:
+                                print(f"Phase 2B: memory retrieval failed (non-critical): {h10_mem_err}")
+                                handler10_memory_context = ""
+
+                        completion_prompt = f"""{project_context}{file_context}{conversation_history}{learning_context}{client_profile_context}{avoidance_context}{specialized_context}{summary_context}{ingested_kb_context}{file_section}
 USER REQUEST: {user_request}
 
 Please complete this request fully. Provide the actual deliverable.
 Be comprehensive and professional."""
 
-                    if opus_guidance:
-                        completion_prompt += f"\n\nSTRATEGIC GUIDANCE:\n{opus_guidance}"
+                        if opus_guidance:
+                            completion_prompt += f"\n\nSTRATEGIC GUIDANCE:\n{opus_guidance}"
 
-                    if file_contents:
-                        print(f"Completion prompt contains {len(file_contents)} chars of file content")
+                        if file_contents:
+                            print(f"Completion prompt contains {len(file_contents)} chars of file content")
 
-                    # ----------------------------------------------------------------
-                    # Phase 2B: MEMORY INJECTED INTO SYSTEM PROMPT
-                    # Memory context is appended to api_system_prompt so it has
-                    # equal authority to the knowledge base. Previously it was in
-                    # completion_prompt (user message) where the knowledge base
-                    # identity block overrode it.
-                    # Fixed: March 08, 2026
-                    # ----------------------------------------------------------------
-                    api_system_prompt = None
-                    if knowledge_context or identity_block or handler10_memory_context:
-                        api_system_prompt = f"{knowledge_context}{identity_block}{handler10_memory_context}".strip()
+                        # ----------------------------------------------------------------
+                        # Phase 2B: MEMORY INJECTED INTO SYSTEM PROMPT
+                        # Memory context is appended to api_system_prompt so it has
+                        # equal authority to the knowledge base. Previously it was in
+                        # completion_prompt (user message) where the knowledge base
+                        # identity block overrode it.
+                        # Fixed: March 08, 2026
+                        # ----------------------------------------------------------------
+                        api_system_prompt = None
+                        if knowledge_context or identity_block or handler10_memory_context:
+                            api_system_prompt = f"{knowledge_context}{identity_block}{handler10_memory_context}".strip()
 
-                    if orchestrator == 'opus':
-                        response = call_claude_opus(completion_prompt, conversation_history=conversation_context,
-                                                   files_attached=bool(file_contents), system_prompt=api_system_prompt)
-                    else:
-                        response = call_claude_sonnet(completion_prompt, conversation_history=conversation_context,
-                                                      files_attached=bool(file_contents), system_prompt=api_system_prompt)
-
-                    if isinstance(response, dict):
-                        if response.get('error'):
-                            actual_output = f"Error: {response.get('content', 'Unknown error')}"
+                        if orchestrator == 'opus':
+                            response = call_claude_opus(completion_prompt, conversation_history=conversation_context,
+                                                       files_attached=bool(file_contents), system_prompt=api_system_prompt)
                         else:
-                            actual_output = response.get('content', '')
-                    else:
-                        actual_output = str(response)
+                            response = call_claude_sonnet(completion_prompt, conversation_history=conversation_context,
+                                                          files_attached=bool(file_contents), system_prompt=api_system_prompt)
 
-                print(f"Task completed. Output length: {len(actual_output) if actual_output else 0} chars")
-                formatted_output = convert_markdown_to_html(actual_output)
+                        if isinstance(response, dict):
+                            if response.get('error'):
+                                actual_output = f"Error: {response.get('content', 'Unknown error')}"
+                            else:
+                                actual_output = response.get('content', '')
+                        else:
+                            actual_output = str(response)
 
-                consensus_result = None
-                if enable_consensus and actual_output and not actual_output.startswith('Error'):
-                    try:
-                        consensus_result = validate_with_consensus(actual_output)
-                    except Exception as consensus_error:
-                        print(f"Consensus validation failed: {consensus_error}")
+                    print(f"Task completed. Output length: {len(actual_output) if actual_output else 0} chars")
+                    formatted_output = convert_markdown_to_html(actual_output)
 
-                total_time = time.time() - overall_start
-                db.execute(
-                    'UPDATE tasks SET status = %s, assigned_orchestrator = %s, duration_seconds = %s WHERE id = %s',
-                    ('completed', orchestrator, total_time, task_id)
-                )
-                db.commit()
-
-                add_message(conversation_id, 'assistant', actual_output, task_id,
-                           {'orchestrator': orchestrator, 'knowledge_applied': knowledge_applied,
-                            'execution_time': total_time})
-
-                suggestions = []
-                if proactive:
-                    try:
-                        suggestions = proactive.post_process_result(task_id, user_request, actual_output if actual_output else '')
-                    except Exception as suggest_error:
-                        print(f"Suggestion generation failed: {suggest_error}")
-
-                if intelligence and actual_output and not actual_output.startswith('Error'):
-                    try:
-                        intelligence.learn_from_interaction(user_request, actual_output, user_feedback=None)
-                        print("EnhancedIntelligence learned from this interaction")
-                    except Exception as learn_error:
-                        print(f"EnhancedIntelligence learning failed (non-critical): {learn_error}")
-
-                # ----------------------------------------------------------------
-                # CLIENT PROFILE UPDATE — try/finally ensures db_temp is closed
-                # ----------------------------------------------------------------
-                if project_id:
-                    try:
-                        db_temp = get_db()
+                    consensus_result = None
+                    if enable_consensus and actual_output and not actual_output.startswith('Error'):
                         try:
-                            project = db_temp.execute(
-                                'SELECT client_name, industry FROM projects WHERE project_id = %s', (project_id,)
-                            ).fetchone()
-                        finally:
-                            db_temp.close()
-                        if project and project['client_name']:
-                            interaction_data = {'approach': orchestrator, 'approach_worked': True,
-                                               'industry': project['industry'], 'preferences': {}}
-                            update_client_profile(project['client_name'], interaction_data)
-                            print(f"Updated profile for {project['client_name']}")
-                    except Exception as profile_update_error:
-                        print(f"Client profile update failed (non-critical): {profile_update_error}")
+                            consensus_result = validate_with_consensus(actual_output)
+                        except Exception as consensus_error:
+                            print(f"Consensus validation failed: {consensus_error}")
 
-                try:
-                    learn_from_conversation(user_request, actual_output if actual_output else '')
-                except Exception as learn_error:
-                    print(f"Auto-learning failed (non-critical): {learn_error}")
-
-                curious_question = None
-                try:
-                    curiosity_engine = get_curiosity_engine()
-                    curiosity_check = curiosity_engine.should_be_curious(
-                        conversation_id,
-                        {'user_request': user_request, 'ai_response': actual_output if actual_output else '',
-                         'task_completed': True}
+                    total_time = time.time() - overall_start
+                    db.execute(
+                        'UPDATE tasks SET status = %s, assigned_orchestrator = %s, duration_seconds = %s WHERE id = %s',
+                        ('completed', orchestrator, total_time, task_id)
                     )
-                    if curiosity_check['should_ask']:
-                        curious_question = curiosity_check['question']
-                        print(f"Curious follow-up: {curious_question}")
-                except Exception as curiosity_error:
-                    print(f"Curiosity engine failed (non-critical): {curiosity_error}")
+                    db.commit()
 
-                document_created = False
-                document_url = None
-                document_id = None
-                document_type = None
+                    add_message(conversation_id, 'assistant', actual_output, task_id,
+                               {'orchestrator': orchestrator, 'knowledge_applied': knowledge_applied,
+                                'execution_time': total_time})
 
-                try:
-                    from document_generator import is_document_request, generate_document
-                    if is_document_request(user_request) and actual_output and not actual_output.startswith('Error'):
-                        print(f"Document request detected - generating .docx file")
-                        doc_result = generate_document(
-                            user_request=user_request, ai_response_text=actual_output,
-                            task_id=task_id, conversation_id=conversation_id, project_id=project_id
-                        )
-                        if doc_result.get('success'):
-                            document_created = True
-                            document_url = doc_result['document_url']
-                            document_id = doc_result.get('document_id')
-                            document_type = 'docx'
-                            print(f"Document generated: {document_url}")
-                        else:
-                            print(f"Document generation failed (non-critical): {doc_result.get('error')}")
-                except Exception as doc_gen_error:
-                    print(f"Document generation error (non-critical): {doc_gen_error}")
+                    suggestions = []
+                    if proactive:
+                        try:
+                            suggestions = proactive.post_process_result(task_id, user_request, actual_output if actual_output else '')
+                        except Exception as suggest_error:
+                            print(f"Suggestion generation failed: {suggest_error}")
 
-                # ================================================================
-                # Phase 2A: BACKGROUND MEMORY EXTRACTION
-                # Non-blocking daemon thread - user gets response immediately.
-                # ================================================================
-                if _MEMORY_EXTRACTION_AVAILABLE and actual_output and not actual_output.startswith('Error'):
+                    if intelligence and actual_output and not actual_output.startswith('Error'):
+                        try:
+                            intelligence.learn_from_interaction(user_request, actual_output, user_feedback=None)
+                            print("EnhancedIntelligence learned from this interaction")
+                        except Exception as learn_error:
+                            print(f"EnhancedIntelligence learning failed (non-critical): {learn_error}")
+
+                    # ----------------------------------------------------------------
+                    # CLIENT PROFILE UPDATE — try/finally ensures db_temp is closed
+                    # ----------------------------------------------------------------
+                    if project_id:
+                        try:
+                            db_temp = get_db()
+                            try:
+                                project = db_temp.execute(
+                                    'SELECT client_name, industry FROM projects WHERE project_id = %s', (project_id,)
+                                ).fetchone()
+                            finally:
+                                db_temp.close()
+                            if project and project['client_name']:
+                                interaction_data = {'approach': orchestrator, 'approach_worked': True,
+                                                   'industry': project['industry'], 'preferences': {}}
+                                update_client_profile(project['client_name'], interaction_data)
+                                print(f"Updated profile for {project['client_name']}")
+                        except Exception as profile_update_error:
+                            print(f"Client profile update failed (non-critical): {profile_update_error}")
+
                     try:
-                        _task_data = {
-                            'user_request': user_request,
-                            'ai_response': actual_output,
-                            'model_used': orchestrator,
-                            'task_type': task_type,
-                            'execution_time': total_time,
-                            'task_id': task_id,
-                            'project_id': project_id,
-                            'consensus_score': (
-                                consensus_result.get('agreement_score')
-                                if isinstance(consensus_result, dict) else None
-                            )
-                        }
-                        _mem_thread = threading.Thread(
-                            target=_trigger_memory_extraction,
-                            args=(_task_data,),
-                            daemon=True
+                        learn_from_conversation(user_request, actual_output if actual_output else '')
+                    except Exception as learn_error:
+                        print(f"Auto-learning failed (non-critical): {learn_error}")
+
+                    curious_question = None
+                    try:
+                        curiosity_engine = get_curiosity_engine()
+                        curiosity_check = curiosity_engine.should_be_curious(
+                            conversation_id,
+                            {'user_request': user_request, 'ai_response': actual_output if actual_output else '',
+                             'task_completed': True}
                         )
-                        _mem_thread.start()
-                        print(f"Phase 2A: memory extraction thread started for task_id={task_id}")
-                    except Exception as _mem_thread_err:
-                        print(f"Phase 2A: memory thread start failed (non-critical): {_mem_thread_err}")
+                        if curiosity_check['should_ask']:
+                            curious_question = curiosity_check['question']
+                            print(f"Curious follow-up: {curious_question}")
+                    except Exception as curiosity_error:
+                        print(f"Curiosity engine failed (non-critical): {curiosity_error}")
 
-                return jsonify({
-                    'success': True, 'task_id': task_id, 'conversation_id': conversation_id,
-                    'result': formatted_output, 'orchestrator': orchestrator,
-                    'specialists_used': [s.get('specialist') for s in specialist_results] if specialist_results else [],
-                    'consensus': consensus_result, 'execution_time': total_time,
-                    'knowledge_applied': knowledge_applied, 'knowledge_used': knowledge_applied,
-                    'knowledge_sources': knowledge_sources, 'formatting_applied': True,
-                    'suggestions': suggestions, 'curious_question': curious_question,
-                    'document_created': document_created, 'document_url': document_url,
-                    'document_id': document_id, 'document_type': document_type
-                })
+                    document_created = False
+                    document_url = None
+                    document_id = None
+                    document_type = None
 
-            except Exception as orchestration_error:
-                import traceback
-                print(f"Orchestration error: {traceback.format_exc()}")
-                db.execute('UPDATE tasks SET status = %s WHERE id = %s', ('failed', task_id))
-                db.commit()
-                add_message(conversation_id, 'assistant', f"Error: {str(orchestration_error)}", task_id, {'error': True})
-                return jsonify({'success': False, 'error': f'Orchestration failed: {str(orchestration_error)}',
-                               'task_id': task_id, 'conversation_id': conversation_id}), 500
+                    try:
+                        from document_generator import is_document_request, generate_document
+                        if is_document_request(user_request) and actual_output and not actual_output.startswith('Error'):
+                            print(f"Document request detected - generating .docx file")
+                            doc_result = generate_document(
+                                user_request=user_request, ai_response_text=actual_output,
+                                task_id=task_id, conversation_id=conversation_id, project_id=project_id
+                            )
+                            if doc_result.get('success'):
+                                document_created = True
+                                document_url = doc_result['document_url']
+                                document_id = doc_result.get('document_id')
+                                document_type = 'docx'
+                                print(f"Document generated: {document_url}")
+                            else:
+                                print(f"Document generation failed (non-critical): {doc_result.get('error')}")
+                    except Exception as doc_gen_error:
+                        print(f"Document generation error (non-critical): {doc_gen_error}")
+
+                    # ================================================================
+                    # Phase 2A: BACKGROUND MEMORY EXTRACTION
+                    # Non-blocking daemon thread - user gets response immediately.
+                    # ================================================================
+                    if _MEMORY_EXTRACTION_AVAILABLE and actual_output and not actual_output.startswith('Error'):
+                        try:
+                            _task_data = {
+                                'user_request': user_request,
+                                'ai_response': actual_output,
+                                'model_used': orchestrator,
+                                'task_type': task_type,
+                                'execution_time': total_time,
+                                'task_id': task_id,
+                                'project_id': project_id,
+                                'consensus_score': (
+                                    consensus_result.get('agreement_score')
+                                    if isinstance(consensus_result, dict) else None
+                                )
+                            }
+                            _mem_thread = threading.Thread(
+                                target=_trigger_memory_extraction,
+                                args=(_task_data,),
+                                daemon=True
+                            )
+                            _mem_thread.start()
+                            print(f"Phase 2A: memory extraction thread started for task_id={task_id}")
+                        except Exception as _mem_thread_err:
+                            print(f"Phase 2A: memory thread start failed (non-critical): {_mem_thread_err}")
+
+                    return jsonify({
+                        'success': True, 'task_id': task_id, 'conversation_id': conversation_id,
+                        'result': formatted_output, 'orchestrator': orchestrator,
+                        'specialists_used': [s.get('specialist') for s in specialist_results] if specialist_results else [],
+                        'consensus': consensus_result, 'execution_time': total_time,
+                        'knowledge_applied': knowledge_applied, 'knowledge_used': knowledge_applied,
+                        'knowledge_sources': knowledge_sources, 'formatting_applied': True,
+                        'suggestions': suggestions, 'curious_question': curious_question,
+                        'document_created': document_created, 'document_url': document_url,
+                        'document_id': document_id, 'document_type': document_type
+                    })
+
+                except Exception as orchestration_error:
+                    import traceback
+                    print(f"Orchestration error: {traceback.format_exc()}")
+                    db.execute('UPDATE tasks SET status = %s WHERE id = %s', ('failed', task_id))
+                    db.commit()
+                    add_message(conversation_id, 'assistant', f"Error: {str(orchestration_error)}", task_id, {'error': True})
+                    return jsonify({'success': False, 'error': f'Orchestration failed: {str(orchestration_error)}',
+                                   'task_id': task_id, 'conversation_id': conversation_id}), 500
 
         finally:
             db.close()
