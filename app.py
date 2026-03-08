@@ -265,27 +265,58 @@ except Exception as e:
     print(f"Output Formatter initialization failed: {e}")
 
 # ============================================================================
-# PHASE 3: WARM THE CAPABILITIES MANIFEST CACHE ON STARTUP
-# Generate the manifest once now so the first AI request gets a cached result
-# instead of paying the generation cost mid-request. The summary is logged
-# so Jim can confirm capability detection is working from deploy logs.
-# Wrapped in try/except — never blocks startup if it fails.
-# Added: March 08, 2026
+# PHASE 3: DEFERRED CAPABILITIES MANIFEST WARM
+# The knowledge base initializes in a background thread (~30 seconds).
+# We cannot warm the manifest immediately at startup because is_ready will
+# be False until the KB thread completes. Instead we launch a daemon thread
+# that polls until the KB is ready (up to 120 seconds), then generates the
+# manifest with the correct KB stats. By the time the first user request
+# arrives, the manifest is cached and correct.
+# Updated: March 08, 2026 (Pass 2 — deferred warm replaces immediate warm)
 # ============================================================================
-print("Initializing capabilities manifest...")
+print("Scheduling deferred capabilities manifest warm (waiting for KB ready)...")
 try:
-    from intelligence.capabilities_manifest import generate_capabilities_manifest, get_manifest_summary
-    _kb_stats = None
-    if knowledge_base is not None:
-        _kb_stats = {
-            'doc_count': len(getattr(knowledge_base, 'knowledge_index', {})),
-            'is_ready': getattr(knowledge_base, 'is_ready', False),
-        }
-    generate_capabilities_manifest(kb_stats=_kb_stats)
-    _caps_summary = get_manifest_summary()
-    print(f"Capabilities manifest ready: {_caps_summary}")
+    import threading as _threading
+
+    def _warm_manifest_when_kb_ready(kb_ref, max_wait=120):
+        """
+        Background thread: poll until KB is ready, then warm the manifest.
+        Falls back to generating without KB stats if KB never becomes ready.
+        """
+        import time as _time
+        deadline = _time.time() + max_wait
+        while _time.time() < deadline:
+            if kb_ref is not None and getattr(kb_ref, 'is_ready', False):
+                break
+            _time.sleep(2)
+
+        try:
+            from intelligence.capabilities_manifest import (
+                generate_capabilities_manifest,
+                get_manifest_summary,
+            )
+            _kb_stats = None
+            if kb_ref is not None and getattr(kb_ref, 'is_ready', False):
+                _kb_stats = {
+                    'doc_count': len(getattr(kb_ref, 'knowledge_index', {})),
+                    'is_ready': True,
+                }
+            generate_capabilities_manifest(kb_stats=_kb_stats)
+            _summary = get_manifest_summary()
+            print(f"✅ Capabilities manifest ready: {_summary}")
+        except Exception as _e:
+            print(f"⚠️ Deferred manifest warm failed (non-fatal): {_e}")
+
+    _warm_thread = _threading.Thread(
+        target=_warm_manifest_when_kb_ready,
+        args=(knowledge_base,),
+        daemon=True,
+        name='manifest-warmer',
+    )
+    _warm_thread.start()
+    print("Manifest warmer thread started — will log 'Capabilities manifest ready' when KB is loaded.")
 except Exception as e:
-    print(f"Capabilities manifest generation failed (non-fatal): {e}")
+    print(f"Capabilities manifest warm thread failed to start (non-fatal): {e}")
 
 # Basic routes
 @app.route('/')
