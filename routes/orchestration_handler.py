@@ -1,72 +1,29 @@
 """
 Orchestration Handler - Main AI Task Processing (REFACTORED)
 Created: January 31, 2026
-Last Updated: March 06, 2026 - FULL CONNECTION LEAK FIX: all bare db.close() calls
+Last Updated: March 07, 2026 - Phase 2B Memory Injection Fix
 
 CHANGELOG:
 
+- March 07, 2026: Phase 2B MEMORY INJECTION FIX
+  * ROOT CAUSE: handler10_memory_context was never present in this file.
+    The March 06 connection leak fix session replaced the file without
+    carrying forward the memory injection code. Result: memory retrieval
+    worked correctly (confirmed via /api/memory/preview) but the context
+    was never inserted into completion_prompt so the AI never saw it.
+  * FIX 1: Added Phase 2B import block (retrieve_relevant_memories,
+    format_memories_for_prompt) after Phase 2A import block.
+  * FIX 2: Added handler10_memory_context retrieval block in Handler 10
+    else branch, immediately after ingested_kb_context try/except.
+  * FIX 3: Added {handler10_memory_context} to completion_prompt f-string
+    between {ingested_kb_context} and {file_section}.
+  * No other logic changes. All handlers unchanged.
+
 - March 06, 2026 (Session 2): FULL CONNECTION LEAK FIX - all bare db.close() calls
-  * Root cause: Previous fix (Session 1) only addressed 4 db_temp blocks in Handler 10.
-    An additional audit found 18 more bare db.close() calls across Handlers 3.5, 3.6,
-    4.5, 4.6, 9, and 10 (code assistant path, schedule paths, proactive clarification).
-    Any db.execute() raising an exception (e.g. under pool pressure, schema mismatch)
-    would cause db.close() to be skipped, leaking a connection slot. Python GC would
-    later collect the leaked wrapper and fire the "garbage collected without close()"
-    warning at unpredictable times during heavy computation.
-  * Fix: Wrapped ALL bare db = get_db() / db.close() blocks in try/finally throughout
-    the entire orchestrate() function. db.close() now always fires regardless of whether
-    the query succeeds or raises.
-  * Affected handlers:
-      Handler 3.5 (contract, no clarification) - 1 block
-      Handler 3.5 (contract, with clarification) - 1 block (INSERT + UPDATE)
-      Handler 3.6 (survey, no clarification) - 1 block
-      Handler 3.6 (survey, with clarification) - 1 block (INSERT + UPDATE)
-      Handler 4.5 (background labor) - 1 block
-      Handler 4.6 (introspection) - 2 separate db blocks merged to 1
-      Handler 9 (GPT-4 file analysis) - 1 block (was if/else/except each closing)
-      Handler 10 (proactive clarification path) - 1 block
-      Handler 10 (code assistant path) - 1 block
-      Handler 10 (schedule generate path) - 1 block
-      Handler 10 (schedule in-progress path) - 1 block
-      Handler 10 (main Sonnet/Opus path) - 1 block (covers all exit points)
-  * No logic changes. No handler behavior changes. Pure leak prevention.
-  * db_temp blocks in Handler 10 were already fixed in Session 1 (unchanged).
-
 - March 06, 2026 (Session 1): CONNECTION LEAK FIX - db_temp try/finally
-  * Root cause: 4 db_temp blocks in Handler 10 called db_temp.close()
-    without try/finally. If any db_temp.execute() raised an exception
-    (e.g. under pool pressure), db_temp.close() was never called, leaking
-    a connection slot back to the pool. These at-risk leaks combined with
-    the guaranteed leaks in enhanced_intelligence.py to produce exactly
-    4 leaked connections per /api/orchestrate request.
-  * Fix: Wrapped all 4 db_temp blocks in try/finally so db_temp.close()
-    always fires regardless of whether the query succeeds or fails.
-    Affected blocks:
-      1. client_profile_context lookup (SELECT client_name FROM projects)
-      2. specialized_context industry lookup (SELECT industry FROM projects)
-      3. project_context full project lookup (SELECT * FROM projects)
-      4. client profile update lookup (SELECT client_name, industry FROM projects)
-  * No logic changes. No handler behavior changes. Pure leak prevention.
-
 - March 05, 2026: Phase 2A-fix - POSTGRESQL PLACEHOLDER FIX
-  * Root cause: All inline db.execute() calls in orchestrate() were using
-    SQLite-style ? placeholders. get_db() returns a PostgreSQL connection
-    (via db_engine.get_db_connection), which requires %s placeholders.
-    This caused: "syntax error at or near ','" on every orchestrate() call.
-  * Fix: Replaced ALL ? placeholders with %s throughout orchestrate().
-    Affected handlers: 3.5, 3.6, 4.5, 4.6, 9, 10, and schedule handler block.
-  * Also fixed: execution_time_seconds -> duration_seconds in all UPDATE tasks
-    statements. The tasks table schema uses duration_seconds (not
-    execution_time_seconds), so these UPDATE statements were silently
-    failing or would fail on a schema-strict DB.
-  * No logic changes. No handler behavior changes. Pure syntax correction.
-
 - March 05, 2026: Phase 2A - ADDED BACKGROUND MEMORY EXTRACTION
-  * Added threading import, safe memory package import, and daemon thread
-    at end of Handler 10. No existing logic changed.
-
 - March 05, 2026: FIXED UnboundLocalError: local import os inside orchestrate()
-
 - February 28, 2026 (Session 2): SIMPLIFIED SURVEY BUILDER FORM
 - February 28, 2026 (Session 1): ADDED HANDLER 3.6 SURVEY BUILDER
 - February 28, 2026: FIXED UnboundLocalError on labor_response
@@ -162,6 +119,21 @@ except ImportError:
 except Exception as _mem_import_err:
     print(f"Phase 2A Memory Extraction: import failed ({_mem_import_err}) - extraction disabled")
 
+# ============================================================================
+# Phase 2B: Memory retrieval import
+# Safe import - if memory_retriever not available, injection falls back to "".
+# Added: March 07, 2026
+# ============================================================================
+_MEMORY_RETRIEVAL_AVAILABLE = False
+try:
+    from memory.memory_retriever import retrieve_relevant_memories, format_memories_for_prompt
+    _MEMORY_RETRIEVAL_AVAILABLE = True
+    print("Phase 2B Memory Retrieval: loaded")
+except ImportError:
+    print("Phase 2B Memory Retrieval: memory_retriever not found - retrieval disabled")
+except Exception as _mem_retr_err:
+    print(f"Phase 2B Memory Retrieval: import failed ({_mem_retr_err}) - retrieval disabled")
+
 orchestration_bp = Blueprint('orchestration', __name__)
 
 
@@ -191,6 +163,7 @@ def orchestrate():
       9   GPT-4 file analysis
       10  Regular conversation (Sonnet PATH 3)
           + Phase 2A: background memory extraction thread
+          + Phase 2B: memory context injection into completion_prompt
     """
     try:
         overall_start = time.time()
@@ -647,7 +620,6 @@ I'll post the complete analysis here when finished, including detailed insights.
 
                     add_message(conversation_id, 'user', user_request)
 
-                    # Single db block covering both INSERT and UPDATE — guaranteed close
                     db = get_db()
                     try:
                         cursor = db.execute(
@@ -1121,7 +1093,6 @@ END KNOWLEDGE BASE - Answer using the above as your primary source.
 
                 # ----------------------------------------------------------------
                 # CLIENT PROFILE CONTEXT — try/finally ensures db_temp is closed
-                # even if the query fails (March 06, 2026 leak fix Session 1)
                 # ----------------------------------------------------------------
                 client_profile_context = ""
                 if project_id:
@@ -1150,7 +1121,6 @@ END KNOWLEDGE BASE - Answer using the above as your primary source.
 
                 # ----------------------------------------------------------------
                 # SPECIALIZED CONTEXT — try/finally ensures db_temp is closed
-                # even if the query fails (March 06, 2026 leak fix Session 1)
                 # ----------------------------------------------------------------
                 specialized_context = ""
                 try:
@@ -1193,7 +1163,6 @@ END KNOWLEDGE BASE - Answer using the above as your primary source.
 
                 # ----------------------------------------------------------------
                 # PROJECT CONTEXT — try/finally ensures db_temp is closed
-                # even if the query fails (March 06, 2026 leak fix Session 1)
                 # ----------------------------------------------------------------
                 project_context = ""
                 if project_id:
@@ -1321,7 +1290,28 @@ preferences, implementation, or change management:
                     except Exception as ikb_err:
                         print(f"Ingested KB query failed (non-critical): {ikb_err}")
 
-                    completion_prompt = f"""{project_context}{file_context}{conversation_history}{learning_context}{client_profile_context}{avoidance_context}{specialized_context}{summary_context}{ingested_kb_context}{file_section}
+                    # ----------------------------------------------------------------
+                    # Phase 2B: MEMORY CONTEXT INJECTION
+                    # Retrieve persistent memories relevant to this request and inject
+                    # them into the completion prompt so the AI can use facts from
+                    # prior sessions. Non-critical — failure falls back to empty string.
+                    # Added: March 07, 2026
+                    # ----------------------------------------------------------------
+                    handler10_memory_context = ""
+                    if _MEMORY_RETRIEVAL_AVAILABLE:
+                        try:
+                            h10_memories = retrieve_relevant_memories(user_request, limit=10)
+                            if h10_memories:
+                                handler10_memory_context = format_memories_for_prompt(h10_memories)
+                                print(f"Phase 2B: injected {len(h10_memories)} memories "
+                                      f"({len(handler10_memory_context)} chars) into completion_prompt")
+                            else:
+                                print("Phase 2B: no relevant memories found for this request")
+                        except Exception as h10_mem_err:
+                            print(f"Phase 2B: memory retrieval failed (non-critical): {h10_mem_err}")
+                            handler10_memory_context = ""
+
+                    completion_prompt = f"""{project_context}{file_context}{conversation_history}{learning_context}{client_profile_context}{avoidance_context}{specialized_context}{summary_context}{ingested_kb_context}{handler10_memory_context}{file_section}
 USER REQUEST: {user_request}
 
 Please complete this request fully. Provide the actual deliverable.
@@ -1389,7 +1379,6 @@ Be comprehensive and professional."""
 
                 # ----------------------------------------------------------------
                 # CLIENT PROFILE UPDATE — try/finally ensures db_temp is closed
-                # even if the query fails (March 06, 2026 leak fix Session 1)
                 # ----------------------------------------------------------------
                 if project_id:
                     try:
@@ -1454,7 +1443,6 @@ Be comprehensive and professional."""
                 # ================================================================
                 # Phase 2A: BACKGROUND MEMORY EXTRACTION
                 # Non-blocking daemon thread - user gets response immediately.
-                # Only runs if memory package loaded successfully at import time.
                 # ================================================================
                 if _MEMORY_EXTRACTION_AVAILABLE and actual_output and not actual_output.startswith('Error'):
                     try:
