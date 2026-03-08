@@ -1,9 +1,27 @@
 """
 AI SWARM SYSTEM CAPABILITIES MANIFEST - ROBUST VERSION
 Created: January 29, 2026
-Last Updated: February 28, 2026 - ADDED IDENTITY SYSTEM MESSAGE FOR GPT-4/DEEPSEEK/GEMINI
+Last Updated: March 08, 2026 — Phase 3 Self-Awareness: dynamic manifest wired in
 
 CHANGELOG:
+
+- March 08, 2026: Phase 3 Self-Awareness — DYNAMIC MANIFEST WIRED IN
+  WHAT CHANGED:
+  - get_system_capabilities_prompt() now calls
+    intelligence.capabilities_manifest.generate_capabilities_manifest()
+    first. If the dynamic manifest returns a valid string (>50 chars),
+    it is returned directly. If the import fails or the result is too
+    short, the function falls back to the static SYSTEM_CAPABILITIES
+    constant defined in this file.
+  - This means task_analysis.py and execute_specialist_task() require
+    ZERO changes — they already call get_system_capabilities_prompt()
+    and will automatically receive the dynamic manifest going forward.
+  - All other functions (get_identity_system_message,
+    inject_capabilities_into_prompt, get_capability_summary,
+    verify_capabilities_loaded, can_handle_files, etc.) are completely
+    unchanged. No existing functionality is affected.
+  - The static SYSTEM_CAPABILITIES constant is retained as the fallback.
+    It is never removed.
 
 - February 28, 2026: ADDED IDENTITY SYSTEM MESSAGE + SURVEY AWARENESS
   PROBLEM 1: GPT-4 (and DeepSeek/Gemini) responded "As an AI developed by
@@ -80,7 +98,10 @@ def get_identity_system_message():
 
 
 # =============================================================================
-# SYSTEM CAPABILITIES MANIFEST - LEADS WITH FILE HANDLING
+# STATIC SYSTEM CAPABILITIES MANIFEST
+# Retained as the fallback if intelligence.capabilities_manifest fails.
+# get_system_capabilities_prompt() tries the dynamic manifest first and
+# falls back to this string if anything goes wrong.
 # =============================================================================
 
 SYSTEM_CAPABILITIES = """
@@ -333,21 +354,35 @@ powers - use them to provide maximum value to users.
 === END CAPABILITIES ===
 """
 
+
 # =============================================================================
 # CAPABILITY INJECTION FUNCTION
+# Updated March 08, 2026: tries dynamic manifest first, falls back to static.
+# task_analysis.py calls this function — zero changes needed there.
 # =============================================================================
 
 def get_system_capabilities_prompt():
     """
     Get the system capabilities prompt to inject into AI calls.
 
-    This should be added to the beginning of EVERY prompt sent to the AI
-    so it knows what it can do AND how to respond confidently about files.
+    March 08, 2026: Now returns the dynamic capabilities manifest from
+    intelligence.capabilities_manifest.generate_capabilities_manifest()
+    when available. Falls back to the static SYSTEM_CAPABILITIES constant
+    if the dynamic manifest module is unavailable or returns an empty result.
 
     Returns:
-        str: The capabilities manifest
+        str: The capabilities manifest (dynamic preferred, static fallback)
     """
-    return SYSTEM_CAPABILITIES
+    try:
+        from intelligence.capabilities_manifest import generate_capabilities_manifest
+        dynamic = generate_capabilities_manifest()
+        if dynamic and len(dynamic) > 50:
+            return dynamic
+        print("⚠️ [system_capabilities] Dynamic manifest too short — using static fallback")
+        return SYSTEM_CAPABILITIES
+    except Exception as e:
+        print(f"⚠️ [system_capabilities] Dynamic manifest unavailable ({e}) — using static fallback")
+        return SYSTEM_CAPABILITIES
 
 
 def inject_capabilities_into_prompt(user_prompt):
@@ -360,11 +395,11 @@ def inject_capabilities_into_prompt(user_prompt):
     Returns:
         str: The prompt with capabilities injected at the beginning
     """
-    return f"{SYSTEM_CAPABILITIES}\n\nNow, please respond to this user request:\n\n{user_prompt}"
+    return f"{get_system_capabilities_prompt()}\n\nNow, please respond to this user request:\n\n{user_prompt}"
 
 
 # =============================================================================
-# CAPABILITY CHECK HELPERS
+# CAPABILITY CHECK HELPERS — unchanged from original
 # =============================================================================
 
 def can_handle_files():
@@ -459,7 +494,7 @@ def verify_capabilities_loaded():
     """
     return {
         'capabilities_module_loaded': True,
-        'capabilities_prompt_length': len(SYSTEM_CAPABILITIES),
+        'capabilities_prompt_length': len(get_system_capabilities_prompt()),
         'identity_system_message_length': len(IDENTITY_SYSTEM_MESSAGE),
         'file_handling_enabled': can_handle_files(),
         'downloadable_files_enabled': True,
