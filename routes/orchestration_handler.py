@@ -1226,7 +1226,7 @@ Be comprehensive and professional."""
                         tool_name = reasoning_result.get('tool_name')
                         tool_parameters = reasoning_result.get('tool_parameters')
                         if tool_name:
-                            tool_result = _execute_tool(tool_name, tool_parameters, user_request)
+                            tool_result = _execute_tool(tool_name, tool_parameters, user_request, _re_kb_context)
                             total_time = time.time() - overall_start
 
                             if tool_result.get('needs_clarification'):
