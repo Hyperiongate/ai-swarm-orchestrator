@@ -1,9 +1,31 @@
 """
 Orchestration Handler - Main AI Task Processing (REFACTORED)
 Created: January 31, 2026
-Last Updated: March 08, 2026 - Phase 4 Reasoning Loop Wiring
+Last Updated: March 09, 2026 - Phase 5 Learning Wiring
 
 CHANGELOG:
+
+- March 09, 2026: Phase 5 LEARNING WIRING
+  * Added Phase 5 safe import block (after Phase 4 block):
+      _ROUTING_OPTIMIZER_AVAILABLE, get_routing_insights, record_outcome,
+      _detect_task_category_for_routing. Same try/except/flag pattern as
+      all prior phases. If routing_optimizer not deployed, all Phase 5 code
+      is silently skipped with zero impact on existing functionality.
+  * Added routing_insights fetch block inside the Phase 4 reasoning block,
+      immediately before the reason_about_request() call. Fetches
+      get_routing_insights() in a try/except. On any failure, routing_insights
+      stays "" and orchestration continues normally.
+  * Added routing_insights= kwarg to the reason_about_request() call.
+      reasoning_engine.py already accepts this parameter (delivered Phase 3a).
+  * Added _trigger_record_outcome() helper function (near _trigger_memory_extraction).
+      Wraps record_outcome() in try/except so any failure is logged and ignored.
+  * Added record_outcome background thread start at 2 PATH 3 completion points:
+      - RESPOND_DIRECTLY return (reasoning engine handles request directly)
+      - Regular PATH 3 final return (sonnet or opus handled request)
+      Both fire as daemon threads — user gets response immediately.
+      USE_TOOL and NEEDS_CLARIFICATION are NOT wired (no AI model outcome to record).
+  NO OTHER CHANGES. All handlers 1–9, all existing PATH 3 logic, and all
+  Phase 2A/2B/4 wiring are completely unchanged.
 
 - March 08, 2026: Phase 4 REASONING LOOP WIRING
   * Added Phase 4 safe import block (after Phase 2B block):
@@ -187,6 +209,26 @@ except ImportError:
 except Exception as _re_import_err:
     print(f"Phase 4 Reasoning Engine: import failed ({_re_import_err}) - fallback active")
 
+# ============================================================================
+# Phase 5: Routing Optimizer import
+# Safe import - if routing_optimizer not yet deployed, all Phase 5 learning
+# wiring is silently skipped. No impact on any existing functionality.
+# Added: March 09, 2026
+# ============================================================================
+_ROUTING_OPTIMIZER_AVAILABLE = False
+try:
+    from intelligence.routing_optimizer import (
+        get_routing_insights as _get_routing_insights,
+        record_outcome as _record_outcome,
+    )
+    from orchestration.task_analysis import _detect_task_category as _detect_task_category_for_routing
+    _ROUTING_OPTIMIZER_AVAILABLE = True
+    print("Phase 5 Routing Optimizer: loaded")
+except ImportError:
+    print("Phase 5 Routing Optimizer: not found - learning wiring disabled")
+except Exception as _ro_import_err:
+    print(f"Phase 5 Routing Optimizer: import failed ({_ro_import_err}) - learning wiring disabled")
+
 orchestration_bp = Blueprint('orchestration', __name__)
 
 
@@ -249,6 +291,8 @@ def orchestrate():
           + Phase 2B: memory context injection into api_system_prompt
           + Phase 4:  reasoning engine (reason_about_request) fires before
                       analyze_task_with_sonnet; FALLBACK returns to original path
+          + Phase 5:  routing_insights injected into reasoning engine;
+                      record_outcome() called after each AI completion
     """
     try:
         overall_start = time.time()
@@ -1084,11 +1128,14 @@ Be comprehensive and professional."""
             # Phase 4: Reasoning engine fires first. On FALLBACK or any error,
             # falls through to the original analyze_task_with_sonnet() path.
             # All 4 decision types are handled before the original path runs.
+            # Phase 5: routing_insights injected into reasoning engine;
+            # record_outcome() fires as background thread at each completion.
             # ================================================================
 
             # ----------------------------------------------------------------
             # Phase 4: REASONING ENGINE
             # Added: March 08, 2026
+            # Phase 5: routing_insights + record_outcome added March 09, 2026
             # ----------------------------------------------------------------
             reasoning_result = None
             _reasoning_handled = False
@@ -1120,12 +1167,33 @@ Be comprehensive and professional."""
                     except Exception as _re_kb_err:
                         print(f"Phase 4: KB context for reasoning failed (non-critical): {_re_kb_err}")
 
+                    # --------------------------------------------------------
+                    # Phase 5: ROUTING INSIGHTS FETCH
+                    # Fetch routing intelligence accumulated from past outcomes.
+                    # Injected into the reasoning engine prompt so it can use
+                    # past performance data when making routing decisions.
+                    # Non-critical — failure falls back to empty string.
+                    # Added: March 09, 2026
+                    # --------------------------------------------------------
+                    _re_routing_insights = ""
+                    if _ROUTING_OPTIMIZER_AVAILABLE:
+                        try:
+                            _re_routing_insights = _get_routing_insights()
+                            if _re_routing_insights:
+                                print(f"Phase 5: routing_insights injected ({len(_re_routing_insights)} chars)")
+                            else:
+                                print("Phase 5: no routing insights available yet (not enough data)")
+                        except Exception as _re_ri_err:
+                            print(f"Phase 5: routing_insights fetch failed (non-critical): {_re_ri_err}")
+                            _re_routing_insights = ""
+
                     reasoning_result = reason_about_request(
                         user_request=user_request,
                         memories=_re_memories,
                         capabilities_manifest=_re_manifest,
                         kb_context=_re_kb_context,
                         conversation_history=conversation_context,
+                        routing_insights=_re_routing_insights,
                     )
 
                     decision = reasoning_result.get('decision', 'FALLBACK')
@@ -1166,6 +1234,20 @@ Be comprehensive and professional."""
                                     ).start()
                                 except Exception:
                                     pass
+                            # Phase 5: record outcome for learning
+                            if _ROUTING_OPTIMIZER_AVAILABLE:
+                                try:
+                                    _ro_category = _detect_task_category_for_routing(user_request)
+                                    threading.Thread(
+                                        target=_trigger_record_outcome,
+                                        args=(_ro_category, 'reasoning_engine_direct',
+                                              int(total_time * 1000), None, False),
+                                        daemon=True
+                                    ).start()
+                                    print(f"Phase 5: record_outcome thread started "
+                                          f"(category={_ro_category}, model=reasoning_engine_direct)")
+                                except Exception as _ro_err:
+                                    print(f"Phase 5: record_outcome thread start failed (non-critical): {_ro_err}")
                             _reasoning_handled = True
                             return jsonify({
                                 'success': True, 'task_id': task_id,
@@ -1866,6 +1948,34 @@ Be comprehensive and professional."""
                         except Exception as _mem_thread_err:
                             print(f"Phase 2A: memory thread start failed (non-critical): {_mem_thread_err}")
 
+                    # ================================================================
+                    # Phase 5: RECORD OUTCOME FOR ROUTING LEARNING
+                    # Non-blocking daemon thread - fires after response is assembled.
+                    # Records model used, execution time, and consensus score so
+                    # routing_optimizer can accumulate performance data over time.
+                    # Added: March 09, 2026
+                    # ================================================================
+                    if _ROUTING_OPTIMIZER_AVAILABLE and actual_output and not actual_output.startswith('Error'):
+                        try:
+                            _ro_category = _detect_task_category_for_routing(user_request)
+                            _ro_consensus = (
+                                consensus_result.get('agreement_score')
+                                if isinstance(consensus_result, dict) else None
+                            )
+                            _ro_was_escalated = (orchestrator == 'opus')
+                            threading.Thread(
+                                target=_trigger_record_outcome,
+                                args=(_ro_category, orchestrator,
+                                      int(total_time * 1000),
+                                      _ro_consensus, _ro_was_escalated),
+                                daemon=True
+                            ).start()
+                            print(f"Phase 5: record_outcome thread started "
+                                  f"(category={_ro_category}, model={orchestrator}, "
+                                  f"escalated={_ro_was_escalated})")
+                        except Exception as _ro_thread_err:
+                            print(f"Phase 5: record_outcome thread start failed (non-critical): {_ro_thread_err}")
+
                     return jsonify({
                         'success': True, 'task_id': task_id, 'conversation_id': conversation_id,
                         'result': formatted_output, 'orchestrator': orchestrator,
@@ -1911,6 +2021,42 @@ def _trigger_memory_extraction(task_data):
     except Exception as e:
         import logging
         logging.getLogger(__name__).error(f"_trigger_memory_extraction failed: {e}")
+
+
+# ============================================================================
+# Phase 5: RECORD OUTCOME HELPER
+# Added: March 09, 2026
+#
+# Wrapper that calls record_outcome() inside a try/except so any failure
+# in the routing optimizer cannot affect the main request thread.
+# Runs as a daemon thread - killed on app shutdown (acceptable).
+#
+# Args:
+#   task_category (str): Category from _detect_task_category_for_routing()
+#   model_used (str):    Orchestrator that handled the request
+#   execution_time_ms (int): Total request time in milliseconds
+#   consensus_score (float|None): Agreement score from consensus validation
+#   was_escalated (bool): True if request was escalated to Opus
+# ============================================================================
+
+def _trigger_record_outcome(task_category, model_used, execution_time_ms,
+                             consensus_score=None, was_escalated=False):
+    """
+    Wrapper that calls record_outcome() inside a try/except so any
+    failure in the routing optimizer cannot affect the main request thread.
+    Runs as a daemon thread - killed on app shutdown (acceptable).
+    """
+    try:
+        _record_outcome(
+            task_category=task_category,
+            model_used=model_used,
+            execution_time_ms=execution_time_ms,
+            consensus_score=consensus_score,
+            was_escalated=was_escalated,
+        )
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"_trigger_record_outcome failed: {e}")
 
 
 # ============================================================================
