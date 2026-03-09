@@ -2,36 +2,25 @@
 intelligence/routing_optimizer.py
 AI Swarm Orchestrator — Phase 5: Learning That Changes Behavior
 Created: March 09, 2026
-Last Updated: March 09, 2026 — Initial build (Phase 5, Deliverable 1)
+Last Updated: March 09, 2026 — Fix missing conn.commit() in writes
 
 CHANGELOG:
 - March 09, 2026: Phase 5 Deliverable 1 — NEW FILE
   Tracks which AI model performs best per task category and feeds that
   intelligence into the Phase 4 reasoning engine as routing bias.
 
-  WHAT IT DOES:
-    - record_outcome(): Called after every completed request. Upserts a
-      running average into routing_preferences for (task_category, model).
-    - get_preferred_model(): Returns the best model for a category based
-      on accumulated avg_score (minimum 3 attempts before trusting the data).
-    - get_routing_insights(): Returns a human-readable string summarizing
-      all routing preferences — injected into the reasoning engine prompt.
-
-  DATABASE:
-    Uses the routing_preferences table created in Phase 1 migration.
-    Columns: id, task_category, preferred_model, success_count,
-             total_count, avg_score, updated_at.
-    Adds a UNIQUE index on (task_category, preferred_model) on first use
-    so that INSERT ... ON CONFLICT DO UPDATE works correctly.
-
-  DESIGN RULES:
-    - This module SUGGESTS routing — it does not override the reasoning engine.
-    - Minimum 3 attempts per (category, model) pair before recommendations.
-    - All DB calls use get_db_connection() context manager.
-    - Row access by column name only (RealDictCursor).
-    - %s placeholders throughout.
-    - TRUE/FALSE for booleans (not 1/0).
-    - Never raises — all functions return safe defaults on error.
+- March 09, 2026: BUG FIX — Missing conn.commit() in write operations
+  ROOT CAUSE: get_db_connection() used as a context manager closes the
+  connection on __exit__ WITHOUT calling commit(). psycopg2 rolls back
+  any uncommitted transaction on close. Every INSERT in record_outcome()
+  and every CREATE INDEX in _ensure_unique_index() was silently rolled
+  back, leaving routing_preferences permanently empty.
+  FIX: Added explicit conn.commit() after each write operation:
+    - _ensure_unique_index(): after CREATE UNIQUE INDEX
+    - record_outcome(): after INSERT ... ON CONFLICT DO UPDATE
+  Read-only functions (get_preferred_model, get_routing_insights,
+  get_all_routing_data) are unchanged — no commit needed for SELECTs.
+  NO OTHER CHANGES. All logic, scoring, and structure unchanged.
 
 AUTHOR: Jim @ Shiftwork Solutions LLC
 """
@@ -67,6 +56,9 @@ def _ensure_unique_index():
     Create a UNIQUE index on routing_preferences(task_category, preferred_model)
     if it does not already exist. Required for INSERT ... ON CONFLICT DO UPDATE.
     Called once per process. Any failure is logged but never raised.
+
+    FIX (March 09, 2026): Added conn.commit() after CREATE UNIQUE INDEX.
+    Without it, the DDL was silently rolled back on context manager exit.
     """
     try:
         from db_engine import get_db_connection
@@ -77,6 +69,7 @@ def _ensure_unique_index():
                     uix_routing_preferences_category_model
                 ON routing_preferences (task_category, preferred_model)
             """)
+            conn.commit()  # FIX: was missing — DDL rolled back without this
         _TABLE_READY['ready'] = True
         print("✅ [routing_optimizer] routing_preferences unique index ready")
     except Exception as e:
@@ -119,6 +112,10 @@ def record_outcome(
 
     Returns:
         bool: True if recorded successfully, False on any error.
+
+    FIX (March 09, 2026): Added conn.commit() after INSERT ... ON CONFLICT.
+    Without it, every upsert was silently rolled back on context manager exit,
+    leaving routing_preferences permanently empty.
     """
     try:
         if not _TABLE_READY['ready']:
@@ -159,6 +156,7 @@ def record_outcome(
                     ) / (routing_preferences.total_count + 1),
                     updated_at    = NOW()
             """, (category, model, success_increment, score))
+            conn.commit()  # FIX: was missing — INSERT rolled back without this
 
         print(f"📊 [routing_optimizer] Recorded: {category}/{model} "
               f"score={score:.1f} ({exec_ms}ms)")
