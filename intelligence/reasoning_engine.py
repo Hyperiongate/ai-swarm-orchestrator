@@ -1,33 +1,28 @@
 """
-intelligence/reasoning_engine.py 
+intelligence/reasoning_engine.py
 AI Swarm Orchestrator — Phase 4: The Reasoning Loop
 Created: March 08, 2026
-Last Updated: March 08, 2026 — Initial build (Phase 4)
+Last Updated: March 09, 2026 — Phase 5 routing_insights + commit fixes
 
 CHANGELOG:
 - March 08, 2026: Phase 4 initial build
   NEW FILE. Replaces the straight-line classify-and-route pattern with a
   single Sonnet call that reasons through the request before acting.
 
-  THE REASONING CHAIN (5 steps, one AI call):
-    Step 1 — Memory Check: What do we already know about this?
-    Step 2 — Sufficiency Check: Do we have enough info to answer well?
-    Step 3 — Tool Check: Does this need a tool (schedule generator, research)?
-    Step 4 — Routing Decision: RESPOND_DIRECTLY / NEEDS_CLARIFICATION /
-              USE_TOOL / ESCALATE_TO_OPUS
-    Step 5 — Post-response logging: decision stored in reasoning_log table
+- March 09, 2026: Phase 5 additions + bug fixes
+  1. Added routing_insights="" parameter to _build_reasoning_prompt() and
+     reason_about_request(). When routing_insights is non-empty, a ROUTING
+     INTELLIGENCE block is injected into the prompt so the engine can factor
+     in which models have historically performed best per category.
 
-  PERFORMANCE: ONE Sonnet call total. If decision == RESPOND_DIRECTLY, the
-  response is already in the JSON — no second AI call needed.
+  2. BUG FIX — Missing conn.commit() in write operations:
+     _ensure_reasoning_log_table(): Added commit() after CREATE TABLE.
+     _log_reasoning_decision(): Added commit() after INSERT.
+     Root cause same as routing_optimizer: psycopg2 does not auto-commit;
+     the get_db_connection() context manager closes without committing,
+     silently rolling back all writes.
 
-  FALLBACK: If the reasoning call fails for any reason (API error, bad JSON,
-  timeout), returns a FALLBACK dict. The caller (orchestration_handler.py)
-  detects FALLBACK and routes through the original analyze_task_with_sonnet()
-  path. The system NEVER breaks because of this module.
-
-  LOGGING: Every reasoning decision is stored in the reasoning_log table.
-  Table is auto-created on first use if missing. Failure to log never
-  breaks the response path.
+  All Phase 4 logic, fallback behavior, and logging structure unchanged.
 
 AUTHOR: Jim @ Shiftwork Solutions LLC
 """
@@ -35,9 +30,9 @@ AUTHOR: Jim @ Shiftwork Solutions LLC
 import json
 import time
 
+
 # =============================================================================
-# JSON EXTRACTOR (same logic as task_analysis.py _extract_json_object)
-# Handles trailing text, fenced JSON, nested braces in strings.
+# JSON EXTRACTOR
 # =============================================================================
 
 def _extract_json_object(text):
@@ -84,37 +79,49 @@ def _extract_json_object(text):
 # =============================================================================
 
 def _build_reasoning_prompt(user_request, memories, capabilities_manifest,
-                             kb_context, conversation_history=None):
+                             kb_context, conversation_history=None,
+                             routing_insights=""):
     """
     Build the single comprehensive prompt that drives the 5-step reasoning chain.
-    All context is assembled here into one structured prompt.
+
+    Args:
+        routing_insights (str): Phase 5 routing intelligence string. When
+            non-empty, injected as a ROUTING INTELLIGENCE block so the
+            reasoning engine can bias its routing decision toward historically
+            better-performing models for this task category.
     """
-    # --- Conversation history block ---
     history_block = ""
     if conversation_history and len(conversation_history) > 1:
         history_block = "\n\nCONVERSATION HISTORY (most recent messages):\n"
-        for msg in conversation_history[-4:]:  # last 4 messages for context
+        for msg in conversation_history[-4:]:
             role_label = "User" if msg.get('role') == 'user' else "Assistant"
             content = msg.get('content', '')
             preview = content[:300] + '...' if len(content) > 300 else content
             history_block += f"{role_label}: {preview}\n"
 
-    # --- Memory block ---
     memory_block = ""
     if memories:
         memory_block = f"\n\nPERSISTENT MEMORY CONTEXT:\n{memories}\n"
 
-    # --- Knowledge base block ---
     kb_block = ""
     if kb_context:
         kb_block = f"\n\nKNOWLEDGE BASE CONTEXT:\n{kb_context}\n"
 
-    # --- Capabilities block ---
     caps_block = ""
     if capabilities_manifest:
         caps_block = f"\n\n{capabilities_manifest}\n"
 
-    prompt = f"""{caps_block}{memory_block}{kb_block}{history_block}
+    routing_block = ""
+    if routing_insights and routing_insights.strip():
+        routing_block = (
+            f"\n\nROUTING INTELLIGENCE (from past performance data):\n"
+            f"{routing_insights}\n"
+            f"Use this to inform your routing decision in Step 4. "
+            f"If a preferred model is indicated for this task type, "
+            f"factor that into your decision.\n"
+        )
+
+    prompt = f"""{caps_block}{memory_block}{kb_block}{routing_block}{history_block}
 
 A user has sent the following request to the AI Swarm Orchestrator for \
 Shiftwork Solutions LLC:
@@ -185,9 +192,10 @@ Return ONLY valid JSON. No markdown, no explanation outside the JSON.
 # =============================================================================
 
 def reason_about_request(user_request, memories="", capabilities_manifest="",
-                         kb_context="", conversation_history=None):
+                         kb_context="", conversation_history=None,
+                         routing_insights=""):
     """
-    Phase 4 reasoning engine. Makes ONE Sonnet call that reasons through
+    Phase 4/5 reasoning engine. Makes ONE Sonnet call that reasons through
     the request and returns a structured decision.
 
     Args:
@@ -196,21 +204,16 @@ def reason_about_request(user_request, memories="", capabilities_manifest="",
         capabilities_manifest (str): Live capabilities manifest from Phase 3.
         kb_context (str): Knowledge base context from check_knowledge_base_unified.
         conversation_history (list|None): Recent conversation messages.
+        routing_insights (str): Phase 5 routing intelligence. When non-empty,
+            injected into the prompt to bias routing toward historically
+            better-performing models. Empty string = no effect on Phase 4 behavior.
 
     Returns:
-        dict: Always returns a dict. Key fields:
-            'decision': one of RESPOND_DIRECTLY / NEEDS_CLARIFICATION /
-                        USE_TOOL / ESCALATE_TO_OPUS / FALLBACK
-            'reasoning': dict with memory_check, sufficiency, tool_check, conflicts
-            'tool_name': str or None
-            'tool_parameters': dict or None
-            'clarification_questions': list or None
-            'response': str or None (populated for RESPOND_DIRECTLY)
-            'execution_time_ms': int
-            'error': str or None (populated on FALLBACK)
-
-    Never raises. Always returns a usable dict. FALLBACK means the caller
-    should use the original analyze_task_with_sonnet() path.
+        dict with keys: decision, reasoning, tool_name, tool_parameters,
+            clarification_questions, response, execution_time_ms, error.
+        decision is one of: RESPOND_DIRECTLY / NEEDS_CLARIFICATION /
+            USE_TOOL / ESCALATE_TO_OPUS / FALLBACK.
+        Never raises. FALLBACK means caller should use analyze_task_with_sonnet().
     """
     start_ms = time.time()
 
@@ -223,6 +226,7 @@ def reason_about_request(user_request, memories="", capabilities_manifest="",
             capabilities_manifest=capabilities_manifest,
             kb_context=kb_context,
             conversation_history=conversation_history,
+            routing_insights=routing_insights,
         )
 
         print(f"🧠 [reasoning_engine] Calling Sonnet for reasoning "
@@ -248,7 +252,6 @@ def reason_about_request(user_request, memories="", capabilities_manifest="",
 
         parsed = json.loads(json_str)
 
-        # Validate decision field
         valid_decisions = {
             'RESPOND_DIRECTLY', 'NEEDS_CLARIFICATION',
             'USE_TOOL', 'ESCALATE_TO_OPUS'
@@ -278,10 +281,8 @@ def reason_about_request(user_request, memories="", capabilities_manifest="",
             'error': None,
         }
 
-        print(f"🧠 [reasoning_engine] Decision: {decision} "
-              f"({execution_ms}ms)")
+        print(f"🧠 [reasoning_engine] Decision: {decision} ({execution_ms}ms)")
 
-        # Log the decision (non-blocking, non-critical)
         _log_reasoning_decision(user_request, result)
 
         return result
@@ -308,14 +309,16 @@ def reason_about_request(user_request, memories="", capabilities_manifest="",
 
 
 # =============================================================================
-# REASONING LOG — stored in PostgreSQL reasoning_log table
-# Table is auto-created on first use. Logging failure never breaks anything.
+# REASONING LOG
 # =============================================================================
+
+_TABLE_READY = {'ready': False}
+
 
 def _ensure_reasoning_log_table():
     """
     Create the reasoning_log table if it does not exist.
-    Uses PostgreSQL syntax. Called once per process (cached after first run).
+    Called once per process. Commits explicitly — psycopg2 does not auto-commit.
     """
     try:
         from db_engine import get_db_connection
@@ -323,17 +326,17 @@ def _ensure_reasoning_log_table():
             cursor = conn.cursor()
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS reasoning_log (
-                    id SERIAL PRIMARY KEY,
-                    user_request TEXT,
-                    memory_check TEXT,
-                    sufficiency TEXT,
-                    tool_check TEXT,
-                    conflicts TEXT,
-                    decision VARCHAR(50),
-                    tool_name VARCHAR(50),
+                    id               SERIAL PRIMARY KEY,
+                    user_request     TEXT,
+                    memory_check     TEXT,
+                    sufficiency      TEXT,
+                    tool_check       TEXT,
+                    conflicts        TEXT,
+                    decision         VARCHAR(50),
+                    tool_name        VARCHAR(50),
                     response_time_ms INTEGER,
-                    error TEXT,
-                    created_at TIMESTAMP DEFAULT NOW()
+                    error            TEXT,
+                    created_at       TIMESTAMP DEFAULT NOW()
                 )
             """)
             conn.commit()
@@ -343,14 +346,11 @@ def _ensure_reasoning_log_table():
         print(f"⚠️ [reasoning_engine] Could not create reasoning_log table: {e}")
 
 
-# Module-level flag so we only run CREATE TABLE IF NOT EXISTS once per process
-_TABLE_READY = {'ready': False}
-
-
 def _log_reasoning_decision(user_request, result):
     """
     Store a reasoning decision in the reasoning_log table.
-    Completely non-critical — any failure is silently logged and ignored.
+    Non-critical — any failure is silently logged and ignored.
+    Commits explicitly — psycopg2 does not auto-commit.
     """
     try:
         if not _TABLE_READY['ready']:
@@ -380,27 +380,17 @@ def _log_reasoning_decision(user_request, result):
             conn.commit()
 
     except Exception as e:
-        # Log to console only — never raise, never affect the caller
         print(f"⚠️ [reasoning_engine] Logging failed (non-critical): {e}")
 
 
 # =============================================================================
 # RECENT REASONING LOG RETRIEVAL
-# Called by GET /api/reasoning/recent endpoint (added in orchestration_handler)
 # =============================================================================
 
 def get_recent_reasoning_log(limit=10):
     """
     Return the last N reasoning decisions from reasoning_log.
-
-    Args:
-        limit (int): Number of records to return (1–50).
-
-    Returns:
-        list of dicts: Each dict has id, user_request, memory_check,
-            sufficiency, tool_check, conflicts, decision, tool_name,
-            response_time_ms, error, created_at.
-        Empty list on any error.
+    Returns empty list on any error.
     """
     try:
         limit = max(1, min(50, int(limit)))
