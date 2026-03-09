@@ -1,5 +1,5 @@
 """
-intelligence/reasoning_engine.py
+intelligence/reasoning_engine.py 
 AI Swarm Orchestrator — Phase 4: The Reasoning Loop
 Created: March 08, 2026
 Last Updated: March 08, 2026 — Initial build (Phase 4)
