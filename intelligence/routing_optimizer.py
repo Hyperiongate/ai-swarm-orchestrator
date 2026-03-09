@@ -2,25 +2,28 @@
 intelligence/routing_optimizer.py
 AI Swarm Orchestrator — Phase 5: Learning That Changes Behavior
 Created: March 09, 2026
-Last Updated: March 09, 2026 — Fix missing conn.commit() in writes
+Last Updated: March 09, 2026 — Fix table schema mismatch + missing commits
 
 CHANGELOG:
 - March 09, 2026: Phase 5 Deliverable 1 — NEW FILE
   Tracks which AI model performs best per task category and feeds that
   intelligence into the Phase 4 reasoning engine as routing bias.
 
-- March 09, 2026: BUG FIX — Missing conn.commit() in write operations
-  ROOT CAUSE: get_db_connection() used as a context manager closes the
-  connection on __exit__ WITHOUT calling commit(). psycopg2 rolls back
-  any uncommitted transaction on close. Every INSERT in record_outcome()
-  and every CREATE INDEX in _ensure_unique_index() was silently rolled
-  back, leaving routing_preferences permanently empty.
-  FIX: Added explicit conn.commit() after each write operation:
-    - _ensure_unique_index(): after CREATE UNIQUE INDEX
-    - record_outcome(): after INSERT ... ON CONFLICT DO UPDATE
-  Read-only functions (get_preferred_model, get_routing_insights,
-  get_all_routing_data) are unchanged — no commit needed for SELECTs.
-  NO OTHER CHANGES. All logic, scoring, and structure unchanged.
+- March 09, 2026: BUG FIX #1 — Missing conn.commit() in write operations
+  ROOT CAUSE: get_db_connection() context manager closes without commit().
+  FIX: Added conn.commit() after INSERT in record_outcome().
+
+- March 09, 2026: BUG FIX #2 — routing_preferences table has wrong schema
+  ROOT CAUSE: Phase 1 migration created routing_preferences with different
+  column names than Phase 5 expects. Every SELECT and INSERT failed with
+  "column does not exist".
+  FIX: Replaced _ensure_unique_index() with _ensure_table_schema() which:
+    1. Checks whether routing_preferences has the expected Phase 5 columns.
+    2. If columns are missing/wrong, DROPs the old table and RECREATEs it
+       with the correct schema. Phase 5 never wrote valid data to the old
+       table (all writes failed), so no data is lost.
+    3. Creates the UNIQUE index required for INSERT ... ON CONFLICT.
+    4. Commits all DDL operations explicitly.
 
 AUTHOR: Jim @ Shiftwork Solutions LLC
 """
@@ -43,37 +46,83 @@ VALID_CATEGORIES = {
     'labor', 'unknown',
 }
 
-# Minimum number of recorded outcomes before we trust the preference data
 MIN_SAMPLE_SIZE = 3
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TABLE SETUP — routing_preferences UNIQUE index (idempotent, run once)
+# TABLE SETUP
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _ensure_unique_index():
+def _ensure_table_schema():
     """
-    Create a UNIQUE index on routing_preferences(task_category, preferred_model)
-    if it does not already exist. Required for INSERT ... ON CONFLICT DO UPDATE.
-    Called once per process. Any failure is logged but never raised.
+    Ensure routing_preferences has the correct Phase 5 schema.
 
-    FIX (March 09, 2026): Added conn.commit() after CREATE UNIQUE INDEX.
-    Without it, the DDL was silently rolled back on context manager exit.
+    Phase 1 created this table with different column names. This function:
+      1. Checks for the presence of the 'task_category' column.
+      2. If missing, DROPs the old table and CREATEs it fresh with the
+         correct Phase 5 columns.
+      3. Creates the UNIQUE index on (task_category, preferred_model)
+         required for INSERT ... ON CONFLICT DO UPDATE.
+      4. Commits all DDL explicitly.
+
+    Safe to drop: Phase 5 never successfully wrote to the old table because
+    all INSERTs failed due to the wrong column names. Zero valid data exists.
+    Called once per process. Any failure is logged but never raised.
     """
     try:
         from db_engine import get_db_connection
+
         with get_db_connection() as conn:
             cursor = conn.cursor()
+
+            # Check if task_category column exists
+            cursor.execute("""
+                SELECT COUNT(*) AS cnt
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name   = 'routing_preferences'
+                  AND column_name  = 'task_category'
+            """)
+            row = cursor.fetchone()
+            has_correct_schema = (row['cnt'] > 0)
+
+            if not has_correct_schema:
+                print("⚠️ [routing_optimizer] routing_preferences has wrong schema "
+                      "— dropping and recreating with Phase 5 schema...")
+
+                cursor.execute("DROP TABLE IF EXISTS routing_preferences CASCADE")
+                conn.commit()
+
+                cursor.execute("""
+                    CREATE TABLE routing_preferences (
+                        id              SERIAL PRIMARY KEY,
+                        task_category   VARCHAR(100) NOT NULL,
+                        preferred_model VARCHAR(50)  NOT NULL,
+                        success_count   INTEGER      DEFAULT 0,
+                        total_count     INTEGER      DEFAULT 0,
+                        avg_score       NUMERIC(5,2) DEFAULT 5.0,
+                        updated_at      TIMESTAMP    DEFAULT NOW()
+                    )
+                """)
+                conn.commit()
+                print("✅ [routing_optimizer] routing_preferences table created "
+                      "with Phase 5 schema")
+            else:
+                print("✅ [routing_optimizer] routing_preferences schema verified")
+
+            # Create unique index (IF NOT EXISTS — safe to re-run)
             cursor.execute("""
                 CREATE UNIQUE INDEX IF NOT EXISTS
                     uix_routing_preferences_category_model
                 ON routing_preferences (task_category, preferred_model)
             """)
-            conn.commit()  # FIX: was missing — DDL rolled back without this
+            conn.commit()
+            print("✅ [routing_optimizer] routing_preferences unique index ready")
+
         _TABLE_READY['ready'] = True
-        print("✅ [routing_optimizer] routing_preferences unique index ready")
+
     except Exception as e:
-        print(f"⚠️ [routing_optimizer] Could not create unique index: {e}")
+        print(f"⚠️ [routing_optimizer] _ensure_table_schema failed: {e}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -94,39 +143,30 @@ def record_outcome(
 
     Args:
         task_category (str): Category of the task (e.g. 'scheduling', 'code').
-                             Normalized to lowercase. Unknown values stored as 'unknown'.
-        model_used (str):    Model that handled the request ('sonnet', 'gpt4', etc.).
-                             Unknown values stored as-is (max 50 chars).
-        execution_time_ms (int): Wall-clock time for the response in milliseconds.
-        user_feedback (float|None): User rating 1-10, or None if not provided.
+        model_used (str):    Model that handled the request.
+        execution_time_ms (int): Wall-clock time for the response in ms.
+        user_feedback (float|None): User rating 1-10, or None.
         consensus_score (float|None): Consensus agreement score 0-10, or None.
         was_escalated (bool): True if the request was escalated to Opus.
 
     Scoring logic:
         Base score = 5.0 (neutral).
-        User feedback (1-10) maps directly to score if provided.
-        Consensus score (0-10) blended in at 30% weight if user feedback absent.
-        Escalation deducts 1.0 (the system needed help).
-        Fast responses (< 3000ms) add 0.5. Very slow (> 15000ms) deduct 0.5.
-        Score clamped to 1.0 – 10.0.
+        User feedback maps directly if provided.
+        Consensus score blended at 30% weight if no user feedback.
+        Escalation deducts 1.0. Fast (<3000ms) adds 0.5. Slow (>15000ms) deducts 0.5.
+        Score clamped to 1.0-10.0.
 
     Returns:
         bool: True if recorded successfully, False on any error.
-
-    FIX (March 09, 2026): Added conn.commit() after INSERT ... ON CONFLICT.
-    Without it, every upsert was silently rolled back on context manager exit,
-    leaving routing_preferences permanently empty.
     """
     try:
         if not _TABLE_READY['ready']:
-            _ensure_unique_index()
+            _ensure_table_schema()
 
-        # Normalize inputs
         category = str(task_category or 'unknown').lower().strip()[:100]
         model = str(model_used or 'unknown').lower().strip()[:50]
         exec_ms = int(execution_time_ms or 0)
 
-        # Calculate a composite score for this outcome
         score = _calculate_score(
             user_feedback=user_feedback,
             consensus_score=consensus_score,
@@ -156,7 +196,7 @@ def record_outcome(
                     ) / (routing_preferences.total_count + 1),
                     updated_at    = NOW()
             """, (category, model, success_increment, score))
-            conn.commit()  # FIX: was missing — INSERT rolled back without this
+            conn.commit()
 
         print(f"📊 [routing_optimizer] Recorded: {category}/{model} "
               f"score={score:.1f} ({exec_ms}ms)")
@@ -169,10 +209,9 @@ def record_outcome(
 
 def _calculate_score(user_feedback, consensus_score, execution_time_ms, was_escalated):
     """
-    Derive a 1.0–10.0 composite score for a single outcome.
-    See record_outcome() docstring for full scoring logic.
+    Derive a 1.0-10.0 composite score for a single outcome.
     """
-    score = 5.0  # neutral baseline
+    score = 5.0
 
     if user_feedback is not None:
         try:
@@ -183,16 +222,13 @@ def _calculate_score(user_feedback, consensus_score, execution_time_ms, was_esca
     elif consensus_score is not None:
         try:
             cs = float(consensus_score)
-            # Blend: 70% baseline, 30% consensus
             score = (score * 0.7) + (cs * 0.3)
         except (TypeError, ValueError):
             pass
 
-    # Escalation penalty
     if was_escalated:
         score -= 1.0
 
-    # Speed adjustment
     if execution_time_ms < 3000:
         score += 0.5
     elif execution_time_ms > 15000:
@@ -208,23 +244,8 @@ def _calculate_score(user_feedback, consensus_score, execution_time_ms, was_esca
 def get_preferred_model(task_category):
     """
     Return the best-performing model for a given task category.
-
-    Requires at least MIN_SAMPLE_SIZE (3) recorded outcomes for a
-    (category, model) pair before trusting the data. Returns None if
-    insufficient data exists — the reasoning engine's default routing applies.
-
-    Args:
-        task_category (str): Task category to look up.
-
-    Returns:
-        dict | None:
-            {
-                'preferred_model': 'gpt4',
-                'avg_score': 8.5,
-                'total_tasks': 12,
-                'reason': 'gpt4 scores 8.5 avg on 12 scheduling tasks'
-            }
-            or None if no reliable data.
+    Requires MIN_SAMPLE_SIZE (3) recorded outcomes before trusting the data.
+    Returns None if insufficient data — reasoning engine default routing applies.
     """
     try:
         category = str(task_category or '').lower().strip()[:100]
@@ -271,16 +292,8 @@ def get_routing_insights():
     """
     Return a human-readable summary of all current routing preferences.
     Injected into the Phase 4 reasoning engine prompt as additional context.
-
-    Only includes (category, model) pairs with >= MIN_SAMPLE_SIZE outcomes.
-    Groups by category and reports the best model per category.
-
-    Returns:
-        str: A one-paragraph insight string, or empty string if no data.
-             Example:
-             "Based on past performance: GPT4 performs best on scheduling
-              tasks (avg score 8.5 over 12 tasks); SONNET performs best on
-              research tasks (avg score 9.1 over 8 tasks)."
+    Only includes pairs with >= MIN_SAMPLE_SIZE outcomes.
+    Returns empty string if no qualifying data exists.
     """
     try:
         from db_engine import get_db_connection
@@ -297,7 +310,6 @@ def get_routing_insights():
         if not rows:
             return ""
 
-        # Group by category, keep best model per category
         by_category = defaultdict(list)
         for row in rows:
             by_category[row['task_category']].append(row)
@@ -323,19 +335,14 @@ def get_routing_insights():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# get_all_routing_data()  — for the /api/learning/routing-preferences endpoint
+# get_all_routing_data()
 # ─────────────────────────────────────────────────────────────────────────────
 
 def get_all_routing_data():
     """
     Return all routing preference records for API display.
     No minimum sample size filter — returns everything accumulated so far.
-
-    Returns:
-        list of dicts, ordered by task_category then avg_score descending.
-        Each dict: task_category, preferred_model, success_count,
-                   total_count, avg_score, updated_at.
-        Empty list on error.
+    Returns empty list on error.
     """
     try:
         from db_engine import get_db_connection
