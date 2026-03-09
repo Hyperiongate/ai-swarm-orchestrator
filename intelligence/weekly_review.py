@@ -2,34 +2,7 @@
 intelligence/weekly_review.py
 Weekly Review Engine for AI Swarm Orchestrator
 Created: March 09, 2026
-
-PURPOSE:
-Replaces swarm_self_evaluation.py with proper PostgreSQL support and
-Phase 5 learning actions. Runs once per week (manually or via API endpoint)
-to analyze the past week's performance and ACT on the findings.
-
-DESIGN:
-- ONE Sonnet call for the full analysis (vs old multi-class, multi-call design)
-- Collects metrics from PostgreSQL (all ? -> %s, COUNT(*) AS cnt)
-- After generating the report, takes 4 concrete actions:
-  1. Calls generate_enhancements_from_patterns() from prompt_optimizer
-     to auto-generate prompt enhancements from observed patterns
-  2. Stores a routing intelligence summary as a semantic memory so
-     the reasoning engine can use it via memory retrieval
-  3. Deactivates memories older than 60 days with low relevance
-  4. Stores the full review summary as a semantic memory
-
-PUBLIC API (used by routes/learning.py):
-  run_weekly_review(days=7) -> dict
-  get_latest_review() -> dict | None
-
-DATABASE:
-  weekly_reviews table — created on first use via _ensure_table()
-  Columns: id SERIAL, run_at TIMESTAMP, period_days INT,
-           health_score INT, trend VARCHAR(50), tasks_processed INT,
-           success_rate FLOAT, gaps_count INT,
-           high_priority_gaps_count INT, actions_taken JSONB,
-           full_report JSONB
+Last Updated: March 09, 2026 — Bug fixes: enhancements count + raw Sonnet call
 
 CHANGELOG:
 - March 09, 2026: Created. Replaces swarm_self_evaluation.py.
@@ -41,16 +14,25 @@ CHANGELOG:
     memory relevance pruning, store review as semantic memory,
     weekly_reviews table, run_weekly_review() / get_latest_review() API.
 
+- March 09, 2026: BUG FIX 1 — enhancements_generated stored wrong type
+  generate_enhancements_from_patterns() returns a list of dicts, not an int.
+  Fixed _take_phase5_actions() to store len(stored) instead of the list itself.
+
+- March 09, 2026: BUG FIX 2 — AI analysis used call_claude_sonnet() which
+  injects capabilities + FORMATTING_REQUIREMENTS, corrupting JSON parse.
+  Switched _run_ai_analysis() to call_claude_sonnet_raw() with a lean
+  system prompt, identical pattern to memory/memory_extractor.py.
+  This ensures the weekly review AI call returns clean parseable JSON.
+
 Author: Jim @ Shiftwork Solutions LLC
 """
 
 import json
-import re
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 
 from database import get_db
-from orchestration.ai_clients import call_claude_sonnet
+from orchestration.ai_clients import call_claude_sonnet_raw
 
 
 # ============================================================================
@@ -102,22 +84,15 @@ def _ensure_table():
 
 
 # ============================================================================
-# METRICS COLLECTOR  (PostgreSQL — %s placeholders, AS cnt, named access)
+# METRICS COLLECTOR
 # ============================================================================
 
 def _collect_metrics(days: int = 7) -> Dict[str, Any]:
     """
     Collect performance metrics for the past N days from PostgreSQL.
-
-    Carries forward all metric categories from swarm_self_evaluation.py:
-    tasks, consensus, specialists, escalations, orchestrator distribution,
-    conversations, documents, feedback, knowledge base usage.
-
-    Changed from original:
-    - ? -> %s
-    - fetchone()[0] -> fetchone()['cnt']  (RealDictCursor is dict-only)
-    - 1/0 boolean literals -> TRUE/FALSE
-    - Added explicit column aliases (AS cnt, AS usage_count, etc.)
+    All queries use %s placeholders and named column aliases for RealDictCursor.
+    Each metric section is wrapped in its own try/except so one missing table
+    does not abort the entire collection.
     """
     cutoff = datetime.now() - timedelta(days=days)
     cutoff_str = cutoff.strftime('%Y-%m-%d %H:%M:%S')
@@ -238,10 +213,8 @@ def _collect_metrics(days: int = 7) -> Dict[str, Any]:
                 (cutoff_str,)
             ).fetchone()
             total_escalations = esc_total['cnt'] if esc_total else 0
-
             total_tasks_val = metrics['tasks'].get('total', 0)
             escalation_rate = round((total_escalations / total_tasks_val * 100), 2) if total_tasks_val > 0 else 0
-
             metrics['escalations'] = {
                 'total': total_escalations,
                 'escalation_rate': escalation_rate,
@@ -281,7 +254,6 @@ def _collect_metrics(days: int = 7) -> Dict[str, Any]:
             total_messages = msg_total['cnt'] if msg_total else 0
 
             avg_msg = round(total_messages / total_conversations, 2) if total_conversations > 0 else 0
-
             metrics['conversations'] = {
                 'total': total_conversations,
                 'total_messages': total_messages,
@@ -289,7 +261,8 @@ def _collect_metrics(days: int = 7) -> Dict[str, Any]:
             }
         except Exception as e:
             print(f"weekly_review: conversation metrics error: {e}")
-            metrics['conversations'] = {'total': 0, 'total_messages': 0, 'avg_messages_per_conversation': 0}
+            metrics['conversations'] = {'total': 0, 'total_messages': 0,
+                                         'avg_messages_per_conversation': 0}
 
         # ---- DOCUMENT METRICS ----
         try:
@@ -336,13 +309,15 @@ def _collect_metrics(days: int = 7) -> Dict[str, Any]:
             else:
                 metrics['feedback'] = {
                     'total_submissions': 0, 'avg_overall_rating': 0,
-                    'avg_quality_rating': 0, 'avg_accuracy_rating': 0, 'avg_usefulness_rating': 0,
+                    'avg_quality_rating': 0, 'avg_accuracy_rating': 0,
+                    'avg_usefulness_rating': 0,
                 }
         except Exception as e:
             print(f"weekly_review: feedback metrics error: {e}")
             metrics['feedback'] = {
                 'total_submissions': 0, 'avg_overall_rating': 0,
-                'avg_quality_rating': 0, 'avg_accuracy_rating': 0, 'avg_usefulness_rating': 0,
+                'avg_quality_rating': 0, 'avg_accuracy_rating': 0,
+                'avg_usefulness_rating': 0,
             }
 
         # ---- KNOWLEDGE BASE USAGE ----
@@ -354,7 +329,6 @@ def _collect_metrics(days: int = 7) -> Dict[str, Any]:
             kb_count = kb_row['cnt'] if kb_row else 0
             total_tasks_val = metrics['tasks'].get('total', 0)
             kb_rate = round((kb_count / total_tasks_val * 100), 2) if total_tasks_val > 0 else 0
-
             metrics['knowledge_base'] = {
                 'tasks_using_knowledge': kb_count,
                 'knowledge_usage_rate': kb_rate,
@@ -400,7 +374,7 @@ def _collect_metrics(days: int = 7) -> Dict[str, Any]:
 
 
 # ============================================================================
-# GAP ANALYSIS  (carried forward from swarm_self_evaluation.py, no DB calls)
+# GAP ANALYSIS
 # ============================================================================
 
 def _analyze_gaps(metrics: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -475,19 +449,18 @@ def _analyze_gaps(metrics: Dict[str, Any]) -> List[Dict[str, Any]]:
             'recommendation': 'Improve knowledge base indexing and relevance matching',
         })
 
-    # Sort by severity
     severity_order = {'high': 0, 'medium': 1, 'low': 2}
     gaps.sort(key=lambda x: severity_order.get(x.get('severity', 'low'), 3))
     return gaps
 
 
 # ============================================================================
-# HEALTH SCORE  (carried forward from SwarmReportGenerator._calculate_health_score)
+# HEALTH SCORE
 # ============================================================================
 
 def _calculate_health_score(metrics: Dict[str, Any]) -> int:
     """
-    Calculate overall swarm health score (0–100).
+    Calculate overall swarm health score (0-100).
     Weights: task success 40%, response time 20%, consensus 20%, satisfaction 20%.
     Carried forward from original formula in swarm_self_evaluation.py.
     """
@@ -522,21 +495,21 @@ def _determine_trend(health_score: int, gaps: List[Dict]) -> str:
 
 
 # ============================================================================
-# AI ANALYSIS  (one Sonnet call for the full review)
+# AI ANALYSIS
 # ============================================================================
 
-def _run_ai_analysis(metrics: Dict[str, Any], gaps: List[Dict], health_score: int) -> Dict[str, Any]:
+def _run_ai_analysis(metrics: Dict[str, Any], gaps: List[Dict],
+                     health_score: int) -> Dict[str, Any]:
     """
-    Make a single Sonnet call to analyze metrics, identify patterns,
-    and produce recommendations and prompt enhancement suggestions.
+    Make a single Sonnet call to analyze metrics and produce recommendations.
+
+    Uses call_claude_sonnet_raw() (not call_claude_sonnet()) so the response
+    is clean JSON without capabilities/formatting injection corrupting the parse.
+    This is the same pattern used by memory/memory_extractor.py.
 
     Returns a dict with keys:
-    - executive_summary (str)
-    - recommendations (list of dicts)
-    - prompt_enhancement_suggestions (list of dicts: {category, text})
-    - routing_patterns (str — plain text summary for memory injection)
-    - next_week_focus (list of str)
-    - raw_analysis (str)
+        executive_summary, recommendations, prompt_enhancement_suggestions,
+        routing_patterns, next_week_focus, raw_analysis
     """
     tasks = metrics.get('tasks', {})
     consensus = metrics.get('consensus', {})
@@ -545,8 +518,14 @@ def _run_ai_analysis(metrics: Dict[str, Any], gaps: List[Dict], health_score: in
     routing = metrics.get('routing_preferences', [])
     orchestrators = metrics.get('orchestrator_distribution', {})
 
-    prompt = f"""You are analyzing the weekly performance of an AI Swarm Orchestrator 
-for Shiftwork Solutions LLC, a 24/7 shift operations consulting firm.
+    system_prompt = (
+        "You are a performance analyst for the AI Swarm Orchestrator at "
+        "Shiftwork Solutions LLC, a 24/7 shift operations consulting firm. "
+        "You analyze system metrics and return structured JSON recommendations. "
+        "Return ONLY valid JSON — no markdown, no preamble, no trailing text."
+    )
+
+    user_prompt = f"""Analyze the weekly performance of the AI Swarm Orchestrator.
 
 === PERFORMANCE METRICS (last {metrics.get('days_analyzed', 7)} days) ===
 
@@ -580,9 +559,9 @@ ROUTING PREFERENCES ACCUMULATED:
 GAPS IDENTIFIED:
 {json.dumps(gaps, indent=2) if gaps else 'No significant gaps detected'}
 
-=== YOUR TASK ===
+=== REQUIRED RESPONSE FORMAT ===
 
-Analyze this data and respond in this exact JSON format:
+Return this exact JSON structure with no other text:
 
 {{
   "executive_summary": "2-3 sentence summary of the week",
@@ -597,40 +576,42 @@ Analyze this data and respond in this exact JSON format:
   "prompt_enhancement_suggestions": [
     {{
       "task_category": "scheduling|survey|code|research|client_consulting|content|analysis|labor|document|general",
-      "enhancement_text": "Specific instruction to add to prompts for this category to improve quality",
+      "enhancement_text": "Specific instruction to add to prompts for this category",
       "reason": "Why this enhancement would help"
     }}
   ],
-  "routing_patterns": "Plain text summary of routing patterns observed: which models perform best for which task types, escalation patterns, anything the reasoning engine should know when making routing decisions",
+  "routing_patterns": "Plain text 2-4 sentence summary of routing patterns: which models perform best for which task types, escalation patterns, what the reasoning engine should know",
   "next_week_focus": ["Focus area 1", "Focus area 2", "Focus area 3"]
 }}
 
 Rules:
-- Only suggest prompt_enhancement_suggestions if you see real patterns in the data supporting them
-- Keep enhancement_text practical and under 150 words — it will be injected into AI prompts
-- routing_patterns should be 2-4 sentences of plain English, not JSON
-- Limit recommendations to 5 maximum, prioritize by impact
-- Return ONLY the JSON, no preamble or trailing text
-"""
+- Only suggest prompt_enhancement_suggestions if real patterns in the data support them
+- Keep enhancement_text under 150 words
+- Limit recommendations to 5 maximum, ordered by impact
+- Return ONLY the JSON object, nothing else"""
 
     try:
-        response = call_claude_sonnet(prompt, max_tokens=2000)
+        response = call_claude_sonnet_raw(
+            prompt=user_prompt,
+            system_prompt=system_prompt,
+            max_tokens=2000,
+        )
+
         if not response or response.get('error'):
             print(f"weekly_review: AI analysis call failed: {response}")
             return _fallback_analysis(metrics, gaps, health_score)
 
         content = response.get('content', '{}')
 
-        # Extract JSON — strip code fences, find first complete object
+        # Strip code fences if present
         if '```json' in content:
             content = content.split('```json')[1].split('```')[0].strip()
         elif '```' in content:
             content = content.split('```')[1].split('```')[0].strip()
 
-        # Find first { to last } to handle any trailing text
+        # Find first complete JSON object
         start = content.find('{')
         if start >= 0:
-            # Walk to find matching closing brace
             depth, in_string, escape_next = 0, False, False
             for i, ch in enumerate(content[start:], start):
                 if escape_next:
@@ -688,7 +669,7 @@ def _fallback_analysis(metrics: Dict, gaps: List[Dict], health_score: int) -> Di
 
 
 # ============================================================================
-# PHASE 5 ACTIONS  (the new purpose of this file)
+# PHASE 5 ACTIONS
 # ============================================================================
 
 def _take_phase5_actions(analysis: Dict[str, Any], metrics: Dict[str, Any],
@@ -696,15 +677,14 @@ def _take_phase5_actions(analysis: Dict[str, Any], metrics: Dict[str, Any],
     """
     After generating the report, take 4 concrete Phase 5 learning actions:
 
-    1. generate_enhancements_from_patterns() — prompt_optimizer does the heavy
-       lifting; we just call it here as the weekly trigger.
-    2. Store routing_patterns as a semantic memory so the reasoning engine
-       can retrieve it via memory retrieval.
+    1. generate_enhancements_from_patterns() — weekly trigger for prompt_optimizer.
+    2. Store routing_patterns as a semantic memory for the reasoning engine.
     3. Deactivate memories older than 60 days with low relevance (< 0.3).
     4. Store the review executive_summary as a semantic memory.
 
     Returns dict describing what was done (stored in weekly_reviews.actions_taken).
-    All actions are wrapped in try/except — any failure is logged and skipped.
+    All actions are individually wrapped in try/except — any failure is logged
+    and skipped without aborting the review.
     """
     actions = {
         'enhancements_generated': 0,
@@ -716,12 +696,15 @@ def _take_phase5_actions(analysis: Dict[str, Any], metrics: Dict[str, Any],
 
     # ------------------------------------------------------------------
     # ACTION 1: Generate prompt enhancements from patterns
+    # generate_enhancements_from_patterns() returns a LIST of stored dicts.
+    # Store the count (len), not the list itself.
     # ------------------------------------------------------------------
     try:
         from intelligence.prompt_optimizer import generate_enhancements_from_patterns
-        count = generate_enhancements_from_patterns()
-        actions['enhancements_generated'] = count
-        print(f"weekly_review: Phase 5 Action 1 — generated {count} prompt enhancements")
+        stored = generate_enhancements_from_patterns()
+        actions['enhancements_generated'] = len(stored) if isinstance(stored, list) else 0
+        print(f"weekly_review: Phase 5 Action 1 — generated "
+              f"{actions['enhancements_generated']} prompt enhancements")
     except Exception as e:
         msg = f"generate_enhancements_from_patterns failed: {e}"
         print(f"weekly_review: {msg}")
@@ -735,7 +718,6 @@ def _take_phase5_actions(analysis: Dict[str, Any], metrics: Dict[str, Any],
         try:
             db = get_db()
             try:
-                # Check memories table exists
                 mem_exists = db.execute(
                     """SELECT table_name FROM information_schema.tables
                        WHERE table_schema = 'public' AND table_name = 'memories'"""
@@ -746,7 +728,8 @@ def _take_phase5_actions(analysis: Dict[str, Any], metrics: Dict[str, Any],
                             (memory_type, category, content, relevance_score,
                              source_task_id, created_at)
                         VALUES
-                            ('semantic', 'routing_intelligence', %s, 0.8, NULL, CURRENT_TIMESTAMP)
+                            ('semantic', 'routing_intelligence', %s, 0.8,
+                             NULL, CURRENT_TIMESTAMP)
                     """, (routing_patterns,))
                     db.commit()
                     actions['routing_memory_stored'] = True
@@ -772,7 +755,6 @@ def _take_phase5_actions(analysis: Dict[str, Any], metrics: Dict[str, Any],
                    WHERE table_schema = 'public' AND table_name = 'memories'"""
             ).fetchone()
             if mem_exists:
-                # Check if is_active column exists
                 col_exists = db.execute(
                     """SELECT column_name FROM information_schema.columns
                        WHERE table_schema = 'public'
@@ -780,7 +762,7 @@ def _take_phase5_actions(analysis: Dict[str, Any], metrics: Dict[str, Any],
                          AND column_name = 'is_active'"""
                 ).fetchone()
                 if col_exists:
-                    result = db.execute("""
+                    cursor = db.execute("""
                         UPDATE memories
                         SET is_active = FALSE
                         WHERE created_at < %s
@@ -789,8 +771,7 @@ def _take_phase5_actions(analysis: Dict[str, Any], metrics: Dict[str, Any],
                           AND memory_type NOT IN ('procedural', 'semantic')
                     """, (cutoff_60,))
                     db.commit()
-                    # rowcount may not be reliable on all psycopg2 versions
-                    deactivated = getattr(result, 'rowcount', 0) or 0
+                    deactivated = getattr(cursor, 'rowcount', 0) or 0
                     actions['old_memories_deactivated'] = deactivated
                     print(f"weekly_review: Phase 5 Action 3 — deactivated {deactivated} old memories")
                 else:
@@ -826,7 +807,8 @@ def _take_phase5_actions(analysis: Dict[str, Any], metrics: Dict[str, Any],
                             (memory_type, category, content, relevance_score,
                              source_task_id, created_at)
                         VALUES
-                            ('semantic', 'system_review', %s, 0.7, NULL, CURRENT_TIMESTAMP)
+                            ('semantic', 'system_review', %s, 0.7,
+                             NULL, CURRENT_TIMESTAMP)
                     """, (memory_content,))
                     db.commit()
                     actions['memory_stored'] = True
@@ -856,7 +838,6 @@ def _save_review(period_days: int, health_score: int, trend: str,
     """
     tasks = metrics.get('tasks', {})
     try:
-        success_rate_val = tasks.get('success_rate', 0)
         full_report = {
             'metrics': metrics,
             'gaps': gaps,
@@ -876,7 +857,7 @@ def _save_review(period_days: int, health_score: int, trend: str,
                 health_score,
                 trend,
                 tasks.get('total', 0),
-                float(success_rate_val),
+                float(tasks.get('success_rate', 0)),
                 len(gaps),
                 sum(1 for g in gaps if g.get('severity') == 'high'),
                 json.dumps(actions),
@@ -903,48 +884,43 @@ def run_weekly_review(days: int = 7) -> Dict[str, Any]:
 
     Steps:
     1. Ensure weekly_reviews table exists
-    2. Collect 7-day metrics from PostgreSQL
+    2. Collect metrics from PostgreSQL
     3. Analyze gaps (pure logic, no DB)
-    4. Calculate health score
+    4. Calculate health score and trend
     5. Make ONE Sonnet call for analysis, recommendations, enhancements
     6. Take Phase 5 actions (enhancements, memories, pruning)
     7. Save to weekly_reviews table
     8. Return complete result dict
 
     Args:
-        days (int): Number of days to analyze. Default 7.
+        days (int): Number of days to analyze. Default 7, max 90.
 
     Returns:
         dict with keys: success, review_id, health_score, trend,
         executive_summary, recommendations, actions_taken,
-        gaps_count, high_priority_gaps_count, next_week_focus
+        gaps_count, high_priority_gaps_count, next_week_focus,
+        metrics_summary
     """
     print(f"🔍 weekly_review: Starting {days}-day review...")
     _ensure_table()
 
     try:
-        # Step 2: Metrics
         print("  📊 Collecting metrics...")
         metrics = _collect_metrics(days=days)
 
-        # Step 3: Gap analysis
         print("  🔎 Analyzing gaps...")
         gaps = _analyze_gaps(metrics)
 
-        # Step 4: Health score + trend
         health_score = _calculate_health_score(metrics)
         trend = _determine_trend(health_score, gaps)
         print(f"  💊 Health score: {health_score}/100, trend: {trend}")
 
-        # Step 5: AI analysis
         print("  🤖 Running AI analysis (1 Sonnet call)...")
         analysis = _run_ai_analysis(metrics, gaps, health_score)
 
-        # Step 6: Phase 5 actions
         print("  ⚡ Taking Phase 5 actions...")
         actions = _take_phase5_actions(analysis, metrics, health_score)
 
-        # Step 7: Save
         print("  💾 Saving review...")
         review_id = _save_review(days, health_score, trend, metrics, gaps, analysis, actions)
 
@@ -995,7 +971,6 @@ def run_weekly_review(days: int = 7) -> Dict[str, Any]:
 def get_latest_review() -> Optional[Dict[str, Any]]:
     """
     Retrieve the most recent weekly review from the database.
-
     Returns dict with review data, or None if no reviews exist yet.
     """
     _ensure_table()
@@ -1035,3 +1010,4 @@ def get_latest_review() -> Optional[Dict[str, Any]]:
 
 
 # I did no harm and this file is not truncated
+
