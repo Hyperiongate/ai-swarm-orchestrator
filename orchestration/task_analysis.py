@@ -1,9 +1,29 @@
 """
 Task Analysis Module - WITH UNIFIED KNOWLEDGE BASE (Project Files + Knowledge Management)
 Created: January 21, 2026
-Last Updated: March 07, 2026 - PHASE 2B: MEMORY RETRIEVAL WIRED IN
+Last Updated: March 09, 2026 — Phase 5: Prompt enhancement injection
 
 CHANGELOG:
+- March 09, 2026: Phase 5 — PROMPT ENHANCEMENT INJECTION
+  WHAT CHANGED:
+  - Added _detect_task_category() helper function (placed after
+    get_learning_context(), before _extract_json_object()). Uses keyword
+    scoring to classify the user request into one of 9 categories:
+    scheduling, survey, code, research, client_consulting, content,
+    analysis, labor, document. Returns 'general' if no keywords match.
+    No AI call — fast and synchronous.
+  - In analyze_task_with_sonnet(): after the Phase 2B memory_context
+    try/except block, added a matching try/except block that calls
+    _detect_task_category() and get_enhancements() from prompt_optimizer.
+    The result (enhancement_context) is appended to analysis_prompt
+    directly after memory_context. If the import or fetch fails for any
+    reason, enhancement_context stays "" and orchestration continues
+    normally.
+  - In handle_with_opus(): identical enhancement injection pattern applied
+    after the Phase 2B memory_context block.
+  NO OTHER CHANGES: All function signatures, routing logic, specialist
+    dispatch, time-sensitive override, knowledge base integration, JSON
+    extraction, file handling, and memory injection are completely unchanged.
 
 - March 07, 2026: PHASE 2B: MEMORY RETRIEVAL WIRED IN
   WHAT CHANGED: Memory retrieval is now injected into every AI call.
@@ -271,6 +291,83 @@ def get_learning_context():
     except Exception as e:
         print(f"⚠️ Learning context unavailable: {e}")
         return ""
+
+
+# ============================================================================
+# TASK CATEGORY DETECTOR
+# Added March 09, 2026 (Phase 5)
+#
+# Classifies the user request into one of 9 task categories using keyword
+# scoring. Used by analyze_task_with_sonnet() and handle_with_opus() to
+# fetch relevant prompt enhancements from prompt_optimizer.
+#
+# No AI call — fast, synchronous, and non-critical.
+# Returns 'general' if no category keywords match.
+# ============================================================================
+
+_CATEGORY_KEYWORDS = {
+    'scheduling': [
+        'schedule', 'shift', 'rotation', '2-2-3', '4-on', 'crew', 'pattern',
+        '12-hour', '8-hour', 'continental', 'panama', 'dupont', 'fixed day',
+        'rotating', 'days off', 'coverage', 'staffing level',
+    ],
+    'survey': [
+        'survey', 'poll', 'questionnaire', 'employee preference',
+        'workforce opinion', 'feedback form', 'swingshift',
+    ],
+    'code': [
+        'code', 'script', 'python', 'function', 'bug', 'error', 'debug',
+        'program', 'flask', 'database', 'sql', 'api', 'deploy', 'github',
+    ],
+    'research': [
+        'research', 'look up', 'find', 'search', 'latest', 'regulation',
+        'osha', 'law', 'study', 'news', 'current', 'recent', 'what is',
+    ],
+    'client_consulting': [
+        'client', 'facility', 'plant', 'site', 'engagement', 'project',
+        'proposal', 'contract', 'implementation', 'change management',
+    ],
+    'content': [
+        'write', 'draft', 'article', 'blog', 'email', 'presentation',
+        'report', 'document', 'format', 'marketing',
+    ],
+    'analysis': [
+        'analyze', 'calculate', 'compare', 'cost', 'overtime', 'labor',
+        'productivity', 'metrics', 'data', 'spreadsheet', 'excel',
+    ],
+    'labor': [
+        'labor cost', 'headcount', 'staffing', 'workforce', 'overtime cost',
+        'wage', 'pay', 'compensation', 'benefit', 'temp worker',
+    ],
+    'document': [
+        'manual', 'guide', 'template', 'form', 'pdf', 'word', 'docx',
+        'upload', 'file', 'attachment',
+    ],
+}
+
+
+def _detect_task_category(user_request):
+    """
+    Classify a user request into a task category for prompt enhancement lookup.
+
+    Scores each category by counting how many of its keywords appear in the
+    request. Returns the highest-scoring category, or 'general' if none match.
+
+    Args:
+        user_request (str): The user's request text.
+
+    Returns:
+        str: One of: scheduling, survey, code, research, client_consulting,
+             content, analysis, labor, document, general.
+    """
+    req_lower = str(user_request or '').lower()
+    scores = {cat: 0 for cat in _CATEGORY_KEYWORDS}
+    for cat, keywords in _CATEGORY_KEYWORDS.items():
+        for kw in keywords:
+            if kw in req_lower:
+                scores[cat] += 1
+    best = max(scores, key=scores.get)
+    return best if scores[best] > 0 else 'general'
 
 
 # ============================================================================
@@ -910,7 +1007,14 @@ def check_knowledge_base_unified(user_request, project_knowledge_base):
 def analyze_task_with_sonnet(user_request, knowledge_base=None, file_paths=None, file_contents=None):
     """
     Sonnet analyzes task WITH unified knowledge + system capabilities + FILE ATTACHMENTS
-    + MEMORY CONTEXT (Phase 2B).
+    + MEMORY CONTEXT (Phase 2B) + PROMPT ENHANCEMENTS (Phase 5).
+
+    UPDATED March 09, 2026 (Phase 5):
+    - Detects task category via _detect_task_category().
+    - Fetches active prompt enhancements for that category from prompt_optimizer.
+    - enhancement_context is appended to the prompt directly after memory_context.
+    - Enhancement fetch is wrapped in try/except — any failure is logged and
+      silently skipped. Orchestration never fails because of this module.
 
     UPDATED March 07, 2026 (Phase 2B):
     - Retrieves relevant memories from the memory store before building the prompt.
@@ -950,6 +1054,26 @@ def analyze_task_with_sonnet(user_request, knowledge_base=None, file_paths=None,
     except Exception as mem_err:
         print(f"⚠️ [task_analysis] Memory retrieval failed (non-fatal): {mem_err}")
         memory_context = ""
+
+    # =========================================================================
+    # PHASE 5: PROMPT ENHANCEMENT INJECTION
+    # Fetch active enhancements for the detected task category and inject
+    # them into the prompt as additional guidelines.
+    # Wrapped in try/except — enhancement failure must never break orchestration.
+    # =========================================================================
+    enhancement_context = ""
+    try:
+        from intelligence.prompt_optimizer import get_enhancements
+        task_category = _detect_task_category(user_request)
+        enhancement_context = get_enhancements(task_category, as_text=True)
+        if enhancement_context:
+            print(f"📋 [task_analysis] Enhancements injected for category='{task_category}': "
+                  f"{len(enhancement_context)} chars")
+        else:
+            print(f"📋 [task_analysis] No enhancements for category='{task_category}'")
+    except Exception as enh_err:
+        print(f"⚠️ [task_analysis] Enhancement fetch failed (non-fatal): {enh_err}")
+        enhancement_context = ""
 
     analysis_prompt = f"""{capabilities}
 
@@ -1008,6 +1132,8 @@ VIOLATION OF THESE RULES = LOSS OF CREDIBILITY
 {kb_check['knowledge_context']}
 
 {memory_context}
+
+{enhancement_context}
 
 """
 
@@ -1210,7 +1336,13 @@ Respond ONLY with valid JSON:
 def handle_with_opus(user_request, sonnet_analysis, knowledge_base=None, file_paths=None, file_contents=None):
     """
     Opus handles complex requests WITH unified knowledge + system capabilities + FILES
-    + MEMORY CONTEXT (Phase 2B).
+    + MEMORY CONTEXT (Phase 2B) + PROMPT ENHANCEMENTS (Phase 5).
+
+    UPDATED March 09, 2026 (Phase 5):
+    - Detects task category via _detect_task_category().
+    - Fetches active prompt enhancements for that category from prompt_optimizer.
+    - enhancement_context is appended to the prompt directly after memory_context.
+    - Enhancement fetch is wrapped in try/except — any failure is silently skipped.
 
     UPDATED March 07, 2026 (Phase 2B):
     - Retrieves relevant memories from the memory store before building the prompt.
@@ -1248,6 +1380,26 @@ def handle_with_opus(user_request, sonnet_analysis, knowledge_base=None, file_pa
         print(f"⚠️ [handle_with_opus] Memory retrieval failed (non-fatal): {mem_err}")
         memory_context = ""
 
+    # =========================================================================
+    # PHASE 5: PROMPT ENHANCEMENT INJECTION
+    # Fetch active enhancements for the detected task category and inject
+    # them into the prompt as additional guidelines.
+    # Wrapped in try/except — enhancement failure must never break orchestration.
+    # =========================================================================
+    enhancement_context = ""
+    try:
+        from intelligence.prompt_optimizer import get_enhancements
+        task_category = _detect_task_category(user_request)
+        enhancement_context = get_enhancements(task_category, as_text=True)
+        if enhancement_context:
+            print(f"📋 [handle_with_opus] Enhancements injected for category='{task_category}': "
+                  f"{len(enhancement_context)} chars")
+        else:
+            print(f"📋 [handle_with_opus] No enhancements for category='{task_category}'")
+    except Exception as enh_err:
+        print(f"⚠️ [handle_with_opus] Enhancement fetch failed (non-fatal): {enh_err}")
+        enhancement_context = ""
+
     opus_prompt = f"""{capabilities}
 
 You are the strategic supervisor in the AI Swarm for Shiftwork Solutions LLC.
@@ -1280,6 +1432,8 @@ SPEAK LIKE AN EXPERIENCED PARTNER, NOT A SALES BROCHURE.
 {kb_check['knowledge_context']}
 
 {memory_context}
+
+{enhancement_context}
 
 """
 
