@@ -1,9 +1,19 @@
 """
 PATTERN-BASED SCHEDULE GENERATOR
 Created: January 26, 2026
-Last Updated: March 08, 2026 - FIXED DUPONT PATTERN
+Last Updated: March 08, 2026 — Added override_crew_patterns for AI-driven generation
 
 CHANGES:
+- March 08, 2026: Added override_crew_patterns parameter to create_schedule()
+  * AI-driven tool_router.py now validates a Sonnet-generated crew pattern
+    and passes it via override_crew_patterns to the Excel formatter.
+  * When override_crew_patterns is provided and non-empty, it replaces
+    pattern_data['crew_patterns'] for the Excel output — everything else
+    (formatting, legend, notes, save path) is completely unchanged.
+  * When override_crew_patterns is None or empty, create_schedule() behaves
+    exactly as before — zero change to existing behavior.
+  * Three lines added; nothing else touched.
+
 - March 08, 2026: FIXED DUPONT PATTERN
   * Previous pattern started with nights (industry-generic version)
   * Corrected to match standard pay-week aligned DuPont:
@@ -245,7 +255,25 @@ class PatternScheduleGenerator:
             return self.patterns_8_hour.get(pattern_key, {}).get('description', 'Pattern not found')
         return 'Invalid shift length'
     
-    def create_schedule(self, shift_length, pattern_key, start_date=None, weeks_to_show=8):
+    def create_schedule(self, shift_length, pattern_key, start_date=None,
+                        weeks_to_show=8, override_crew_patterns=None):
+        """
+        Generate an Excel schedule workbook.
+
+        Args:
+            shift_length (int): 8 or 12.
+            pattern_key (str): Key into patterns_12_hour or patterns_8_hour.
+            start_date (datetime|None): Start date (defaults to next Monday).
+            weeks_to_show (int): How many weeks of the pattern to display.
+            override_crew_patterns (dict|None): If provided, substitute these
+                AI-validated crew patterns in place of the hardcoded ones.
+                Format: {'Crew A': ['D','N','O',...], ...}
+                The caller (tool_router._run_schedule_generator) is responsible
+                for validating the override before passing it here.
+
+        Returns:
+            str: Absolute file path of the saved .xlsx file.
+        """
         if shift_length == 12:
             pattern_data = self.patterns_12_hour.get(pattern_key)
         elif shift_length == 8:
@@ -255,6 +283,16 @@ class PatternScheduleGenerator:
         
         if not pattern_data:
             raise ValueError(f"Pattern '{pattern_key}' not found for {shift_length}-hour shifts")
+
+        # ----------------------------------------------------------------
+        # AI override: substitute validated AI-generated crew patterns.
+        # All other pattern metadata (description, notes, cycle_days) is
+        # preserved from the registry so the Excel output is fully labelled.
+        # Added: March 08, 2026
+        # ----------------------------------------------------------------
+        if override_crew_patterns:
+            pattern_data = dict(pattern_data)           # shallow copy — do not mutate registry
+            pattern_data['crew_patterns'] = override_crew_patterns
         
         if start_date is None:
             today = datetime.now()
