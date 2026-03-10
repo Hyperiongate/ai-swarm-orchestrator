@@ -166,6 +166,7 @@ def _collect_metrics(days: int = 7) -> Dict[str, Any]:
             }
         except Exception as e:
             print(f"weekly_review: task metrics error: {e}")
+            db.rollback()
             metrics['tasks'] = {'total': 0, 'completed': 0, 'failed': 0,
                                  'success_rate': 0, 'avg_execution_time_seconds': 0}
 
@@ -199,6 +200,7 @@ def _collect_metrics(days: int = 7) -> Dict[str, Any]:
             }
         except Exception as e:
             print(f"weekly_review: consensus metrics error: {e}")
+            db.rollback()
             metrics['consensus'] = {'total_validations': 0, 'consensus_achieved': 0,
                                      'consensus_rate': 0, 'avg_agreement_score': 0.0}
 
@@ -207,7 +209,6 @@ def _collect_metrics(days: int = 7) -> Dict[str, Any]:
             spec_rows = db.execute("""
                 SELECT specialist_name,
                        COUNT(*) AS usage_count,
-                       SUM(CASE WHEN success = TRUE THEN 1 ELSE 0 END) AS success_count,
                        AVG(execution_time_seconds) AS avg_time
                 FROM specialist_calls
                 WHERE created_at >= %s
@@ -218,17 +219,15 @@ def _collect_metrics(days: int = 7) -> Dict[str, Any]:
             specialists = []
             for row in spec_rows:
                 usage = row['usage_count'] or 0
-                succ  = row['success_count'] or 0
                 specialists.append({
                     'name': row['specialist_name'],
                     'usage_count': usage,
-                    'success_count': succ,
-                    'success_rate': round((succ / usage * 100), 2) if usage > 0 else 0,
                     'avg_execution_time': round(float(row['avg_time']), 2) if row['avg_time'] else 0,
                 })
             metrics['specialists'] = specialists
         except Exception as e:
             print(f"weekly_review: specialist metrics error: {e}")
+            db.rollback()
             metrics['specialists'] = []
 
         # ---- ESCALATION METRICS ----
@@ -247,6 +246,7 @@ def _collect_metrics(days: int = 7) -> Dict[str, Any]:
             }
         except Exception as e:
             print(f"weekly_review: escalation metrics error: {e}")
+            db.rollback()
             metrics['escalations'] = {'total': 0, 'escalation_rate': 0}
 
         # ---- ORCHESTRATOR DISTRIBUTION ----
@@ -263,6 +263,7 @@ def _collect_metrics(days: int = 7) -> Dict[str, Any]:
             }
         except Exception as e:
             print(f"weekly_review: orchestrator distribution error: {e}")
+            db.rollback()
             metrics['orchestrator_distribution'] = {}
 
         # ---- CONVERSATION METRICS ----
@@ -287,6 +288,7 @@ def _collect_metrics(days: int = 7) -> Dict[str, Any]:
             }
         except Exception as e:
             print(f"weekly_review: conversation metrics error: {e}")
+            db.rollback()
             metrics['conversations'] = {'total': 0, 'total_messages': 0,
                                          'avg_messages_per_conversation': 0}
 
@@ -312,6 +314,7 @@ def _collect_metrics(days: int = 7) -> Dict[str, Any]:
             }
         except Exception as e:
             print(f"weekly_review: document metrics error: {e}")
+            db.rollback()
             metrics['documents'] = {'total_generated': 0, 'by_type': {}}
 
         # ---- USER FEEDBACK METRICS ----
@@ -340,6 +343,7 @@ def _collect_metrics(days: int = 7) -> Dict[str, Any]:
                 }
         except Exception as e:
             print(f"weekly_review: feedback metrics error: {e}")
+            db.rollback()
             metrics['feedback'] = {
                 'total_submissions': 0, 'avg_overall_rating': 0,
                 'avg_quality_rating': 0, 'avg_accuracy_rating': 0,
@@ -361,6 +365,7 @@ def _collect_metrics(days: int = 7) -> Dict[str, Any]:
             }
         except Exception as e:
             print(f"weekly_review: knowledge_base metrics error: {e}")
+            db.rollback()
             metrics['knowledge_base'] = {'tasks_using_knowledge': 0, 'knowledge_usage_rate': 0}
 
         # ---- ROUTING PREFERENCES (Phase 5 data) ----
@@ -391,6 +396,7 @@ def _collect_metrics(days: int = 7) -> Dict[str, Any]:
                 metrics['routing_preferences'] = []
         except Exception as e:
             print(f"weekly_review: routing_preferences error: {e}")
+            db.rollback()
             metrics['routing_preferences'] = []
 
     finally:
