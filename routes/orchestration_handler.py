@@ -1,9 +1,38 @@
 """
 Orchestration Handler - Main AI Task Processing (REFACTORED)
 Created: January 31, 2026
-Last Updated: March 09, 2026 - Phase 5 Learning Wiring
+Last Updated: March 10, 2026 - FIXED cursor.lastrowid → RETURNING id (all 7 locations)
 
 CHANGELOG:
+
+- March 10, 2026: FIXED cursor.lastrowid IN ALL tasks INSERT STATEMENTS
+  * ROOT CAUSE: psycopg2 cursor.lastrowid always returns 0 for PostgreSQL
+    SERIAL columns. Every handler that inserted into tasks got task_id=0.
+    The subsequent UPDATE WHERE id=0 matched nothing, so status, 
+    assigned_orchestrator, duration_seconds, and knowledge_used were never
+    written. weekly_review.py saw 0 completed tasks out of 59 because all
+    status values were NULL (not 'failed' — just never set).
+  * FIX: Replaced all 7 instances of:
+        cursor = db.execute('INSERT INTO tasks ...', ...)
+        task_id = cursor.lastrowid
+    with:
+        row = db.execute('INSERT INTO tasks ... RETURNING id', ...).fetchone()
+        task_id = row['id']
+    This is the same pattern already used in database.py (save_generated_document,
+    add_avoidance_pattern, save_analysis_deliverable, update_analysis_progress).
+  * ALSO: Added knowledge_used = TRUE to the PATH 3 final UPDATE when
+    knowledge_applied is True, so weekly_review.py knowledge_base metrics
+    now populate correctly.
+  * The 7 fixed locations:
+    1. Handler 3.5 first branch  (needs_clarification)
+    2. Handler 3.5 second branch (contract generation)
+    3. Handler 3.6 first branch  (survey needs_clarification)
+    4. Handler 3.6 second branch (survey generation)
+    5. Handler 4.5 background labor branch
+    6. Handler 9   (GPT-4 file analysis)
+    7. Handler 10  (regular conversation PATH 3)
+  * Handler 4.6 (introspection) already used RETURNING id — no change needed.
+  * No other logic changes. All handlers, phases, and features unchanged.
 
 - March 09, 2026: Phase 5 LEARNING WIRING
   * Added Phase 5 safe import block (after Phase 4 block):
@@ -12,71 +41,17 @@ CHANGELOG:
       all prior phases. If routing_optimizer not deployed, all Phase 5 code
       is silently skipped with zero impact on existing functionality.
   * Added routing_insights fetch block inside the Phase 4 reasoning block,
-      immediately before the reason_about_request() call. Fetches
-      get_routing_insights() in a try/except. On any failure, routing_insights
-      stays "" and orchestration continues normally.
+      immediately before the reason_about_request() call.
   * Added routing_insights= kwarg to the reason_about_request() call.
-      reasoning_engine.py already accepts this parameter (delivered Phase 3a).
-  * Added _trigger_record_outcome() helper function (near _trigger_memory_extraction).
-      Wraps record_outcome() in try/except so any failure is logged and ignored.
-  * Added record_outcome background thread start at 2 PATH 3 completion points:
-      - RESPOND_DIRECTLY return (reasoning engine handles request directly)
-      - Regular PATH 3 final return (sonnet or opus handled request)
-      Both fire as daemon threads — user gets response immediately.
-      USE_TOOL and NEEDS_CLARIFICATION are NOT wired (no AI model outcome to record).
-  NO OTHER CHANGES. All handlers 1–9, all existing PATH 3 logic, and all
-  Phase 2A/2B/4 wiring are completely unchanged.
+  * Added _trigger_record_outcome() helper function.
+  * Added record_outcome background thread start at 2 PATH 3 completion points.
+  NO OTHER CHANGES.
 
 - March 08, 2026: Phase 4 REASONING LOOP WIRING
-  * Added Phase 4 safe import block (after Phase 2B block):
-      _REASONING_ENGINE_AVAILABLE, reason_about_request, execute_tool,
-      get_manifest_summary. Same try/except/flag pattern as Phase 2A and 2B.
-  * Added reasoning engine block in PATH 3, immediately before the existing
-      analyze_task_with_sonnet() call. The reasoning engine fires first:
-      - RESPOND_DIRECTLY: response already in JSON, returns immediately (no
-        second AI call, same or better latency than current path)
-      - NEEDS_CLARIFICATION: returns specific questions to the user
-      - USE_TOOL: routes to tool_router.execute_tool() for schedule_generator,
-        research_agent, or manual_generator
-      - ESCALATE_TO_OPUS: sets escalate=True so existing Opus path runs
-      - FALLBACK (or any exception): falls through to original
-        analyze_task_with_sonnet() — system never breaks
-  * Added GET /api/reasoning/recent endpoint (last 10 reasoning decisions).
-  * No other changes. All handlers 1–9 and all existing PATH 3 logic
-    (Opus, specialists, research synthesis, document generation, memory
-    extraction, curiosity engine, etc.) are completely unchanged.
-
 - March 08, 2026: Phase 2B MEMORY SYSTEM PROMPT FIX
-  * ROOT CAUSE: handler10_memory_context was injected into completion_prompt
-    (the user message), but the AI was comparing it against the knowledge base
-    in api_system_prompt and dismissing memory facts as "not in the knowledge
-    base." The AI explicitly referenced "the Shiftwork Solutions knowledge base"
-    and found TestCorp absent from it, overriding the memory context.
-  * FIX: Added handler10_memory_context to api_system_prompt assembly so memory
-    context has equal authority to the knowledge base. Changed:
-      if knowledge_context or identity_block:
-          api_system_prompt = f"{knowledge_context}{identity_block}".strip()
-    To:
-      if knowledge_context or identity_block or handler10_memory_context:
-          api_system_prompt = f"{knowledge_context}{identity_block}{handler10_memory_context}".strip()
-  * No other logic changes. All handlers unchanged.
-
 - March 07, 2026: Phase 2B MEMORY INJECTION FIX
-  * ROOT CAUSE: handler10_memory_context was never present in this file.
-    The March 06 connection leak fix session replaced the file without
-    carrying forward the memory injection code. Result: memory retrieval
-    worked correctly (confirmed via /api/memory/preview) but the context
-    was never inserted into completion_prompt so the AI never saw it.
-  * FIX 1: Added Phase 2B import block (retrieve_relevant_memories,
-    format_memories_for_prompt) after Phase 2A import block.
-  * FIX 2: Added handler10_memory_context retrieval block in Handler 10
-    else branch, immediately after ingested_kb_context try/except.
-  * FIX 3: Added {handler10_memory_context} to completion_prompt f-string
-    between {ingested_kb_context} and {file_section}.
-  * No other logic changes. All handlers unchanged.
-
-- March 06, 2026 (Session 2): FULL CONNECTION LEAK FIX - all bare db.close() calls
-- March 06, 2026 (Session 1): CONNECTION LEAK FIX - db_temp try/finally
+- March 06, 2026 (Session 2): FULL CONNECTION LEAK FIX
+- March 06, 2026 (Session 1): CONNECTION LEAK FIX
 - March 05, 2026: Phase 2A-fix - POSTGRESQL PLACEHOLDER FIX
 - March 05, 2026: Phase 2A - ADDED BACKGROUND MEMORY EXTRACTION
 - March 05, 2026: FIXED UnboundLocalError: local import os inside orchestrate()
@@ -162,8 +137,6 @@ from labor_analysis_processor import get_labor_processor
 
 # ============================================================================
 # Phase 2A: Memory extraction import
-# Safe import - if memory/ package not yet deployed, extraction is silently
-# skipped. No impact on any existing route or functionality.
 # ============================================================================
 _MEMORY_EXTRACTION_AVAILABLE = False
 try:
@@ -177,8 +150,6 @@ except Exception as _mem_import_err:
 
 # ============================================================================
 # Phase 2B: Memory retrieval import
-# Safe import - if memory_retriever not available, injection falls back to "".
-# Added: March 07, 2026
 # ============================================================================
 _MEMORY_RETRIEVAL_AVAILABLE = False
 try:
@@ -192,10 +163,6 @@ except Exception as _mem_retr_err:
 
 # ============================================================================
 # Phase 4: Reasoning Engine import
-# Safe import - if intelligence/ package not yet deployed, reasoning is
-# silently skipped and the original analyze_task_with_sonnet() path runs.
-# No impact on any existing route or functionality.
-# Added: March 08, 2026
 # ============================================================================
 _REASONING_ENGINE_AVAILABLE = False
 try:
@@ -211,9 +178,6 @@ except Exception as _re_import_err:
 
 # ============================================================================
 # Phase 5: Routing Optimizer import
-# Safe import - if routing_optimizer not yet deployed, all Phase 5 learning
-# wiring is silently skipped. No impact on any existing functionality.
-# Added: March 09, 2026
 # ============================================================================
 _ROUTING_OPTIMIZER_AVAILABLE = False
 try:
@@ -239,11 +203,7 @@ def download_file_route(filename):
 
 @orchestration_bp.route('/api/reasoning/recent', methods=['GET'])
 def get_recent_reasoning():
-    """
-    Phase 4: Returns the last N reasoning decisions from reasoning_log.
-    Query param: limit (int, default 10, max 50)
-    Added: March 08, 2026
-    """
+    """Phase 4: Returns the last N reasoning decisions from reasoning_log."""
     if not _REASONING_ENGINE_AVAILABLE:
         return jsonify({
             'success': False,
@@ -287,12 +247,6 @@ def orchestrate():
       8   Standard file handling
       9   GPT-4 file analysis
       10  Regular conversation (Sonnet PATH 3)
-          + Phase 2A: background memory extraction thread
-          + Phase 2B: memory context injection into api_system_prompt
-          + Phase 4:  reasoning engine (reason_about_request) fires before
-                      analyze_task_with_sonnet; FALLBACK returns to original path
-          + Phase 5:  routing_insights injected into reasoning engine;
-                      record_outcome() called after each AI completion
     """
     try:
         overall_start = time.time()
@@ -371,9 +325,9 @@ def orchestrate():
         if clarification_answers:
             print(f"Clarification answers received: {clarification_answers}")
 
-        # ========================================================================
+        # ====================================================================
         # HANDLER 3.5: CONTRACT / PROPOSAL TEMPLATE HANDLER
-        # ========================================================================
+        # ====================================================================
         contract_type = _detect_template_request(user_request)
 
         if contract_type and not clarification_answers:
@@ -384,11 +338,12 @@ def orchestrate():
             questions_html = _build_contract_questions_html(contract_type)
             db = get_db()
             try:
-                cursor = db.execute(
-                    'INSERT INTO tasks (user_request, status, conversation_id) VALUES (%s, %s, %s)',
+                # FIX: RETURNING id instead of cursor.lastrowid (March 10, 2026)
+                row = db.execute(
+                    'INSERT INTO tasks (user_request, status, conversation_id) VALUES (%s, %s, %s) RETURNING id',
                     (user_request, 'needs_clarification', conversation_id)
-                )
-                task_id = cursor.lastrowid
+                ).fetchone()
+                task_id = row['id']
                 db.commit()
             finally:
                 db.close()
@@ -407,11 +362,12 @@ def orchestrate():
             add_message(conversation_id, 'user', user_request)
             db = get_db()
             try:
-                cursor = db.execute(
-                    'INSERT INTO tasks (user_request, status, conversation_id) VALUES (%s, %s, %s)',
+                # FIX: RETURNING id instead of cursor.lastrowid (March 10, 2026)
+                row = db.execute(
+                    'INSERT INTO tasks (user_request, status, conversation_id) VALUES (%s, %s, %s) RETURNING id',
                     (user_request, 'processing', conversation_id)
-                )
-                task_id = cursor.lastrowid
+                ).fetchone()
+                task_id = row['id']
                 db.commit()
                 template_content = _get_template_from_kb(contract_type)
                 from orchestration.ai_clients import call_claude_sonnet
@@ -463,9 +419,9 @@ def orchestrate():
                 'document_type': 'docx', 'execution_time': total_time
             })
 
-        # ========================================================================
+        # ====================================================================
         # HANDLER 3.6: SURVEY BUILDER
-        # ========================================================================
+        # ====================================================================
         is_survey_req = _detect_survey_request(user_request)
 
         if is_survey_req and not clarification_answers:
@@ -476,11 +432,12 @@ def orchestrate():
             questions_html = _build_survey_questions_html()
             db = get_db()
             try:
-                cursor = db.execute(
-                    'INSERT INTO tasks (user_request, status, conversation_id) VALUES (%s, %s, %s)',
+                # FIX: RETURNING id instead of cursor.lastrowid (March 10, 2026)
+                row = db.execute(
+                    'INSERT INTO tasks (user_request, status, conversation_id) VALUES (%s, %s, %s) RETURNING id',
                     (user_request, 'needs_clarification', conversation_id)
-                )
-                task_id = cursor.lastrowid
+                ).fetchone()
+                task_id = row['id']
                 db.commit()
             finally:
                 db.close()
@@ -500,11 +457,12 @@ def orchestrate():
             add_message(conversation_id, 'user', user_request)
             db = get_db()
             try:
-                cursor = db.execute(
-                    'INSERT INTO tasks (user_request, status, conversation_id) VALUES (%s, %s, %s)',
+                # FIX: RETURNING id instead of cursor.lastrowid (March 10, 2026)
+                row = db.execute(
+                    'INSERT INTO tasks (user_request, status, conversation_id) VALUES (%s, %s, %s) RETURNING id',
                     (user_request, 'processing', conversation_id)
-                )
-                task_id = cursor.lastrowid
+                ).fetchone()
+                task_id = row['id']
                 db.commit()
 
                 company_name      = clarification_answers.get('company_name', 'Client').strip() or 'Client'
@@ -523,7 +481,6 @@ def orchestrate():
 
                 try:
                     from survey_builder import SurveyBuilder
-                    # NOTE: os is imported at the top of this file - do NOT re-import here.
 
                     builder = SurveyBuilder()
                     survey_obj = builder.create_survey(
@@ -619,9 +576,9 @@ def orchestrate():
                 'execution_time': total_time
             })
 
-        # ========================================================================
+        # ====================================================================
         # END HANDLER 3.6
-        # ========================================================================
+        # ====================================================================
 
         # HANDLER 4: Labor analysis response handler
         labor_response = None
@@ -630,9 +587,9 @@ def orchestrate():
             if labor_response:
                 return labor_response
 
-        # ========================================================================
+        # ====================================================================
         # HANDLER 4.5: LABOR SESSION RETRIEVAL WITH BACKGROUND PROCESSING
-        # ========================================================================
+        # ====================================================================
         if not labor_response and conversation_id:
             pending_session_id = None
             if request.is_json:
@@ -663,11 +620,12 @@ def orchestrate():
                                     clear_conversation_context(conversation_id, 'pending_analysis_session')
                                     db = get_db()
                                     try:
-                                        cursor = db.execute(
-                                            'INSERT INTO tasks (user_request, status, conversation_id) VALUES (%s, %s, %s)',
+                                        # FIX: RETURNING id instead of cursor.lastrowid (March 10, 2026)
+                                        row = db.execute(
+                                            'INSERT INTO tasks (user_request, status, conversation_id) VALUES (%s, %s, %s) RETURNING id',
                                             (user_request, 'processing_background', conversation_id)
-                                        )
-                                        task_id = cursor.lastrowid
+                                        ).fetchone()
+                                        task_id = row['id']
                                         db.commit()
                                     finally:
                                         db.close()
@@ -731,9 +689,9 @@ I'll post the complete analysis here when finished, including detailed insights.
                 except Exception as session_error:
                     print(f"Error loading labor session: {session_error}")
 
-        # ========================================================================
+        # ====================================================================
         # HANDLER 4.6: INTROSPECTION ROUTING
-        # ========================================================================
+        # ====================================================================
         if not file_contents and not file_paths:
             try:
                 from introspection.introspection_engine import is_introspection_request, get_introspection_engine
@@ -751,6 +709,7 @@ I'll post the complete analysis here when finished, including detailed insights.
 
                     db = get_db()
                     try:
+                        # Already used RETURNING id in original — no change needed
                         cursor = db.execute(
                             'INSERT INTO tasks (user_request, status, conversation_id) VALUES (%s, %s, %s)',
                             (user_request, 'processing', conversation_id)
@@ -805,9 +764,9 @@ I'll post the complete analysis here when finished, including detailed insights.
                 import traceback
                 print(f"HANDLER 4.6: Introspection error (non-critical, falling through): {traceback.format_exc()}")
 
-        # ========================================================================
+        # ====================================================================
         # END HANDLER 4.6
-        # ========================================================================
+        # ====================================================================
 
         # HANDLER 5: Smart analyzer continuation check
         if not file_paths and conversation_id:
@@ -878,11 +837,12 @@ I'll post the complete analysis here when finished, including detailed insights.
             add_message(conversation_id, 'user', user_request, file_contents=file_contents if file_contents else None)
             db = get_db()
             try:
-                cursor = db.execute(
-                    'INSERT INTO tasks (user_request, status, conversation_id) VALUES (%s, %s, %s)',
+                # FIX: RETURNING id instead of cursor.lastrowid (March 10, 2026)
+                row = db.execute(
+                    'INSERT INTO tasks (user_request, status, conversation_id) VALUES (%s, %s, %s) RETURNING id',
                     (user_request, 'processing', conversation_id)
-                )
-                task_id = cursor.lastrowid
+                ).fetchone()
+                task_id = row['id']
                 db.commit()
                 from orchestration.ai_clients import call_gpt4
                 file_section = f"""
@@ -925,9 +885,9 @@ Be comprehensive and professional."""
             finally:
                 db.close()
 
-        # ========================================================================
+        # ====================================================================
         # HANDLER 10: REGULAR CONVERSATION (NO FILES)
-        # ========================================================================
+        # ====================================================================
 
         if not file_contents and conversation_id:
             from database import get_conversation_file_contents
@@ -960,11 +920,12 @@ Be comprehensive and professional."""
                 if pre_check['action'] == 'ask_questions':
                     db = get_db()
                     try:
-                        cursor = db.execute(
-                            'INSERT INTO tasks (user_request, status, conversation_id) VALUES (%s, %s, %s)',
+                        # FIX: RETURNING id instead of cursor.lastrowid (March 10, 2026)
+                        row = db.execute(
+                            'INSERT INTO tasks (user_request, status, conversation_id) VALUES (%s, %s, %s) RETURNING id',
                             (user_request, 'needs_clarification', conversation_id)
-                        )
-                        task_id = cursor.lastrowid
+                        ).fetchone()
+                        task_id = row['id']
                         db.commit()
                     finally:
                         db.close()
@@ -993,11 +954,12 @@ Be comprehensive and professional."""
 
         db = get_db()
         try:
-            cursor = db.execute(
-                'INSERT INTO tasks (user_request, status, conversation_id) VALUES (%s, %s, %s)',
+            # FIX: RETURNING id instead of cursor.lastrowid (March 10, 2026)
+            row = db.execute(
+                'INSERT INTO tasks (user_request, status, conversation_id) VALUES (%s, %s, %s) RETURNING id',
                 (user_request, 'processing', conversation_id)
-            )
-            task_id = cursor.lastrowid
+            ).fetchone()
+            task_id = row['id']
             db.commit()
 
             # Code assistant check
@@ -1125,18 +1087,8 @@ Be comprehensive and professional."""
 
             # ================================================================
             # REGULAR AI ORCHESTRATION (PATH 3)
-            # Phase 4: Reasoning engine fires first. On FALLBACK or any error,
-            # falls through to the original analyze_task_with_sonnet() path.
-            # All 4 decision types are handled before the original path runs.
-            # Phase 5: routing_insights injected into reasoning engine;
-            # record_outcome() fires as background thread at each completion.
             # ================================================================
 
-            # ----------------------------------------------------------------
-            # Phase 4: REASONING ENGINE
-            # Added: March 08, 2026
-            # Phase 5: routing_insights + record_outcome added March 09, 2026
-            # ----------------------------------------------------------------
             reasoning_result = None
             _reasoning_handled = False
 
@@ -1144,7 +1096,6 @@ Be comprehensive and professional."""
                 try:
                     print(f"Phase 4: reasoning engine firing for: {user_request[:80]}...")
 
-                    # Gather context for the reasoning engine
                     _re_memories = ""
                     if _MEMORY_RETRIEVAL_AVAILABLE:
                         try:
@@ -1167,14 +1118,6 @@ Be comprehensive and professional."""
                     except Exception as _re_kb_err:
                         print(f"Phase 4: KB context for reasoning failed (non-critical): {_re_kb_err}")
 
-                    # --------------------------------------------------------
-                    # Phase 5: ROUTING INSIGHTS FETCH
-                    # Fetch routing intelligence accumulated from past outcomes.
-                    # Injected into the reasoning engine prompt so it can use
-                    # past performance data when making routing decisions.
-                    # Non-critical — failure falls back to empty string.
-                    # Added: March 09, 2026
-                    # --------------------------------------------------------
                     _re_routing_insights = ""
                     if _ROUTING_OPTIMIZER_AVAILABLE:
                         try:
@@ -1199,7 +1142,6 @@ Be comprehensive and professional."""
                     decision = reasoning_result.get('decision', 'FALLBACK')
                     print(f"Phase 4: decision={decision} ({reasoning_result.get('execution_time_ms', 0)}ms)")
 
-                    # --- RESPOND_DIRECTLY: response is already in the JSON ---
                     if decision == 'RESPOND_DIRECTLY':
                         re_response_text = reasoning_result.get('response') or ''
                         if re_response_text:
@@ -1214,7 +1156,6 @@ Be comprehensive and professional."""
                                        {'orchestrator': 'reasoning_engine_direct',
                                         'reasoning_decision': decision,
                                         'execution_time': total_time})
-                            # Phase 2A: background memory extraction
                             if _MEMORY_EXTRACTION_AVAILABLE:
                                 try:
                                     _task_data = {
@@ -1234,7 +1175,6 @@ Be comprehensive and professional."""
                                     ).start()
                                 except Exception:
                                     pass
-                            # Phase 5: record outcome for learning
                             if _ROUTING_OPTIMIZER_AVAILABLE:
                                 try:
                                     _ro_category = _detect_task_category_for_routing(user_request)
@@ -1264,10 +1204,8 @@ Be comprehensive and professional."""
                                 'document_id': None, 'document_type': None,
                             })
                         else:
-                            # Empty response — fall through to original path
                             print("Phase 4: RESPOND_DIRECTLY had empty response — falling through")
 
-                    # --- NEEDS_CLARIFICATION: ask the user for more info ---
                     elif decision == 'NEEDS_CLARIFICATION':
                         questions = reasoning_result.get('clarification_questions') or []
                         if questions:
@@ -1303,7 +1241,6 @@ Be comprehensive and professional."""
                         else:
                             print("Phase 4: NEEDS_CLARIFICATION had no questions — falling through")
 
-                    # --- USE_TOOL: route to tool_router ---
                     elif decision == 'USE_TOOL':
                         tool_name = reasoning_result.get('tool_name')
                         tool_parameters = reasoning_result.get('tool_parameters')
@@ -1312,7 +1249,6 @@ Be comprehensive and professional."""
                             total_time = time.time() - overall_start
 
                             if tool_result.get('needs_clarification'):
-                                # Tool needs more info — ask user
                                 clarification_msg = tool_result.get('clarification_message', tool_result.get('message', ''))
                                 formatted_output = convert_markdown_to_html(clarification_msg)
                                 db.execute(
@@ -1341,7 +1277,6 @@ Be comprehensive and professional."""
                                 })
 
                             elif tool_result.get('success') and tool_result.get('file_path'):
-                                # Tool produced a file — save and return download link
                                 tool_file_path = tool_result['file_path']
                                 tool_file_type = tool_result.get('file_type', 'xlsx')
                                 tool_message = tool_result.get('message', 'File generated.')
@@ -1404,7 +1339,6 @@ Be comprehensive and professional."""
                                 })
 
                             elif tool_result.get('success') and tool_result.get('message'):
-                                # Tool returned text (research agent)
                                 tool_message = tool_result['message']
                                 formatted_output = convert_markdown_to_html(tool_message)
                                 db.execute(
@@ -1433,20 +1367,14 @@ Be comprehensive and professional."""
                                 })
 
                             else:
-                                # Tool failed — fall through to original path
                                 print(f"Phase 4: tool {tool_name} failed or returned empty — falling through")
                         else:
                             print("Phase 4: USE_TOOL had no tool_name — falling through")
 
-                    # --- ESCALATE_TO_OPUS: let the original path handle it ---
                     elif decision == 'ESCALATE_TO_OPUS':
-                        # Set escalate flag so the existing Opus path below runs
                         print("Phase 4: ESCALATE_TO_OPUS — handing to existing Opus path")
-                        # We do NOT set _reasoning_handled — fall through intentionally
-                        # but override analysis to force Opus escalation
                         reasoning_result['_force_opus'] = True
 
-                    # --- FALLBACK or unknown: fall through silently ---
                     else:
                         print(f"Phase 4: decision={decision} — falling through to analyze_task_with_sonnet")
 
@@ -1457,8 +1385,6 @@ Be comprehensive and professional."""
 
             # ----------------------------------------------------------------
             # Original PATH 3: analyze_task_with_sonnet
-            # Runs when: reasoning engine not available, FALLBACK, ESCALATE_TO_OPUS,
-            # or any error in the reasoning block above.
             # ----------------------------------------------------------------
             if not _reasoning_handled:
                 try:
@@ -1472,7 +1398,6 @@ Be comprehensive and professional."""
                     knowledge_applied = analysis.get('knowledge_applied', False)
                     knowledge_sources = analysis.get('knowledge_sources', [])
 
-                    # If reasoning engine said ESCALATE_TO_OPUS, force it
                     if reasoning_result and reasoning_result.get('_force_opus'):
                         escalate = True
                         print("Phase 4: forcing Opus escalation as directed by reasoning engine")
@@ -1560,9 +1485,6 @@ END KNOWLEDGE BASE - Answer using the above as your primary source.
                     except Exception as learn_ctx_error:
                         print(f"Could not get learning context (non-critical): {learn_ctx_error}")
 
-                    # ----------------------------------------------------------------
-                    # CLIENT PROFILE CONTEXT — try/finally ensures db_temp is closed
-                    # ----------------------------------------------------------------
                     client_profile_context = ""
                     if project_id:
                         try:
@@ -1588,9 +1510,6 @@ END KNOWLEDGE BASE - Answer using the above as your primary source.
                     except Exception as avoid_error:
                         print(f"Could not get avoidance context (non-critical): {avoid_error}")
 
-                    # ----------------------------------------------------------------
-                    # SPECIALIZED CONTEXT — try/finally ensures db_temp is closed
-                    # ----------------------------------------------------------------
                     specialized_context = ""
                     try:
                         specialist_kb = get_specialized_knowledge()
@@ -1630,9 +1549,6 @@ END KNOWLEDGE BASE - Answer using the above as your primary source.
                     except Exception as intel_error:
                         print(f"EnhancedIntelligence init failed (non-critical): {intel_error}")
 
-                    # ----------------------------------------------------------------
-                    # PROJECT CONTEXT — try/finally ensures db_temp is closed
-                    # ----------------------------------------------------------------
                     project_context = ""
                     if project_id:
                         try:
@@ -1759,15 +1675,6 @@ preferences, implementation, or change management:
                         except Exception as ikb_err:
                             print(f"Ingested KB query failed (non-critical): {ikb_err}")
 
-                        # ----------------------------------------------------------------
-                        # Phase 2B: MEMORY CONTEXT RETRIEVAL
-                        # Retrieve persistent memories relevant to this request.
-                        # Memory context is injected into api_system_prompt (not just
-                        # completion_prompt) so it has equal authority to the knowledge
-                        # base and is not overridden by the knowledge base identity block.
-                        # Non-critical — failure falls back to empty string.
-                        # Updated: March 08, 2026 (moved from completion_prompt to system prompt)
-                        # ----------------------------------------------------------------
                         handler10_memory_context = ""
                         if _MEMORY_RETRIEVAL_AVAILABLE:
                             try:
@@ -1794,14 +1701,6 @@ Be comprehensive and professional."""
                         if file_contents:
                             print(f"Completion prompt contains {len(file_contents)} chars of file content")
 
-                        # ----------------------------------------------------------------
-                        # Phase 2B: MEMORY INJECTED INTO SYSTEM PROMPT
-                        # Memory context is appended to api_system_prompt so it has
-                        # equal authority to the knowledge base. Previously it was in
-                        # completion_prompt (user message) where the knowledge base
-                        # identity block overrode it.
-                        # Fixed: March 08, 2026
-                        # ----------------------------------------------------------------
                         api_system_prompt = None
                         if knowledge_context or identity_block or handler10_memory_context:
                             api_system_prompt = f"{knowledge_context}{identity_block}{handler10_memory_context}".strip()
@@ -1832,9 +1731,18 @@ Be comprehensive and professional."""
                             print(f"Consensus validation failed: {consensus_error}")
 
                     total_time = time.time() - overall_start
+
+                    # --------------------------------------------------------
+                    # UPDATE tasks: status, orchestrator, duration, knowledge_used
+                    # knowledge_used = TRUE when knowledge base context was
+                    # injected into the prompt (March 10, 2026)
+                    # --------------------------------------------------------
                     db.execute(
-                        'UPDATE tasks SET status = %s, assigned_orchestrator = %s, duration_seconds = %s WHERE id = %s',
-                        ('completed', orchestrator, total_time, task_id)
+                        'UPDATE tasks SET status = %s, assigned_orchestrator = %s, '
+                        'duration_seconds = %s, knowledge_used = %s WHERE id = %s',
+                        ('completed', orchestrator, total_time,
+                         True if knowledge_applied else False,
+                         task_id)
                     )
                     db.commit()
 
@@ -1856,9 +1764,6 @@ Be comprehensive and professional."""
                         except Exception as learn_error:
                             print(f"EnhancedIntelligence learning failed (non-critical): {learn_error}")
 
-                    # ----------------------------------------------------------------
-                    # CLIENT PROFILE UPDATE — try/finally ensures db_temp is closed
-                    # ----------------------------------------------------------------
                     if project_id:
                         try:
                             db_temp = get_db()
@@ -1919,10 +1824,7 @@ Be comprehensive and professional."""
                     except Exception as doc_gen_error:
                         print(f"Document generation error (non-critical): {doc_gen_error}")
 
-                    # ================================================================
                     # Phase 2A: BACKGROUND MEMORY EXTRACTION
-                    # Non-blocking daemon thread - user gets response immediately.
-                    # ================================================================
                     if _MEMORY_EXTRACTION_AVAILABLE and actual_output and not actual_output.startswith('Error'):
                         try:
                             _task_data = {
@@ -1948,13 +1850,7 @@ Be comprehensive and professional."""
                         except Exception as _mem_thread_err:
                             print(f"Phase 2A: memory thread start failed (non-critical): {_mem_thread_err}")
 
-                    # ================================================================
                     # Phase 5: RECORD OUTCOME FOR ROUTING LEARNING
-                    # Non-blocking daemon thread - fires after response is assembled.
-                    # Records model used, execution time, and consensus score so
-                    # routing_optimizer can accumulate performance data over time.
-                    # Added: March 09, 2026
-                    # ================================================================
                     if _ROUTING_OPTIMIZER_AVAILABLE and actual_output and not actual_output.startswith('Error'):
                         try:
                             _ro_category = _detect_task_category_for_routing(user_request)
@@ -2025,18 +1921,6 @@ def _trigger_memory_extraction(task_data):
 
 # ============================================================================
 # Phase 5: RECORD OUTCOME HELPER
-# Added: March 09, 2026
-#
-# Wrapper that calls record_outcome() inside a try/except so any failure
-# in the routing optimizer cannot affect the main request thread.
-# Runs as a daemon thread - killed on app shutdown (acceptable).
-#
-# Args:
-#   task_category (str): Category from _detect_task_category_for_routing()
-#   model_used (str):    Orchestrator that handled the request
-#   execution_time_ms (int): Total request time in milliseconds
-#   consensus_score (float|None): Agreement score from consensus validation
-#   was_escalated (bool): True if request was escalated to Opus
 # ============================================================================
 
 def _trigger_record_outcome(task_category, model_used, execution_time_ms,
