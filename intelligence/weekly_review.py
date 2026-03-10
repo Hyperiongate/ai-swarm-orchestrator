@@ -2,9 +2,22 @@
 intelligence/weekly_review.py
 Weekly Review Engine for AI Swarm Orchestrator
 Created: March 09, 2026
-Last Updated: March 09, 2026 — Bug fixes: enhancements count + raw Sonnet call
+Last Updated: March 10, 2026 — Fixed NULL-status legacy tasks polluting success rate
 
 CHANGELOG:
+- March 10, 2026: FIX — NULL-status legacy tasks excluded from total task count
+  ROOT CAUSE: The total tasks COUNT(*) query counted all 72 tasks including
+  65 legacy NULL-status rows inserted before the RETURNING id fix was deployed.
+  Those tasks had task_id=0, so their UPDATE SET status='completed' matched
+  nothing and their status was never written. The denominator was 72 while
+  only 7 tasks had real status data, giving a false 9.72% success rate.
+  FIX: Added AND status IS NOT NULL to the total tasks COUNT query only.
+  All other queries (completed, failed, avg_time, escalations, orchestrator
+  distribution, knowledge_used) already filter by specific column values
+  that implicitly exclude NULL-status rows — those are untouched.
+  Expected result: health score jumps from ~33 to ~69 (accurate for dev phase,
+  limited by zero consensus data and zero user feedback submissions).
+
 - March 09, 2026: Created. Replaces swarm_self_evaluation.py.
   Carries forward: performance metrics collection, gap analysis,
     recommendation engine, health score formula, report structure.
@@ -93,6 +106,13 @@ def _collect_metrics(days: int = 7) -> Dict[str, Any]:
     All queries use %s placeholders and named column aliases for RealDictCursor.
     Each metric section is wrapped in its own try/except so one missing table
     does not abort the entire collection.
+
+    NOTE on NULL-status exclusion (March 10, 2026):
+    The total task count uses AND status IS NOT NULL to exclude legacy rows
+    inserted before the RETURNING id fix. Those rows were never properly
+    updated (task_id=0 meant the UPDATE matched nothing), so their status
+    stayed NULL. They are not failures — they are ghosts from the pre-fix era.
+    Counting them as failures produced a false ~10% success rate.
     """
     cutoff = datetime.now() - timedelta(days=days)
     cutoff_str = cutoff.strftime('%Y-%m-%d %H:%M:%S')
@@ -107,8 +127,14 @@ def _collect_metrics(days: int = 7) -> Dict[str, Any]:
     try:
         # ---- TASK METRICS ----
         try:
+            # FIX March 10, 2026: AND status IS NOT NULL excludes legacy NULL-status
+            # rows inserted before the RETURNING id fix was deployed. Those tasks
+            # were never properly completed or failed — their status was simply
+            # never written. Excluding them gives an accurate denominator.
             total = db.execute(
-                'SELECT COUNT(*) AS cnt FROM tasks WHERE created_at >= %s', (cutoff_str,)
+                'SELECT COUNT(*) AS cnt FROM tasks '
+                'WHERE created_at >= %s AND status IS NOT NULL',
+                (cutoff_str,)
             ).fetchone()
             total_tasks = total['cnt'] if total else 0
 
@@ -1010,4 +1036,3 @@ def get_latest_review() -> Optional[Dict[str, Any]]:
 
 
 # I did no harm and this file is not truncated
-
