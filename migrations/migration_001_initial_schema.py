@@ -2,7 +2,7 @@
 AI SWARM ORCHESTRATOR - Database Migration 001
 File: migrations/migration_001_initial_schema.py
 Created: March 02, 2026
-Last Updated: March 06, 2026 - SAVEPOINT FIX: ALTER TABLE transaction isolation
+Last Updated: March 09, 2026 - Added knowledge_used column to tasks table
 
 PURPOSE:
     Authoritative schema definition for the entire AI Swarm Orchestrator system.
@@ -10,6 +10,16 @@ PURPOSE:
     Safe to run multiple times — all statements use CREATE TABLE IF NOT EXISTS.
 
 CHANGELOG:
+    - March 09, 2026: ADDED knowledge_used TO tasks TABLE
+      * tasks.knowledge_used BOOLEAN DEFAULT FALSE added to CREATE TABLE
+        and to extra_columns ALTER TABLE patch list.
+      * Required by weekly_review.py _collect_metrics() knowledge_base section
+        which queries WHERE knowledge_used = TRUE. Without this column the
+        query raised UndefinedColumn and the metric defaulted to 0.
+      * orchestration_handler.py sets knowledge_used = TRUE in the UPDATE
+        when knowledge base context was injected into the prompt.
+      * No other changes to any table, index, or migration logic.
+
     - March 06, 2026: SAVEPOINT FIX - ALTER TABLE transaction isolation
       * Root cause: The extra_columns and bool_cols ALTER TABLE loops ran in a
         single shared PostgreSQL transaction. When any statement raised an error
@@ -28,12 +38,7 @@ CHANGELOG:
     - March 06, 2026: COLUMN PATCHES - conversation_summaries + user_profiles
       * conversation_summaries: Added message_range, summary_text,
         mentioned_entities, key_decisions to extra_columns ALTER TABLE section.
-        Root cause: conversation_summarizer.py was rebuilt to use these column
-        names but the original migration only had summary, key_topics, action_items.
-        The CREATE TABLE now includes all columns; ALTER TABLE patches the live DB.
       * user_profiles: Added profile_data column to CREATE TABLE and extra_columns.
-        Root cause: EnhancedIntelligence queries profile_data but migration
-        only defined preferences column. Both now present for compatibility.
       * proactive_suggestions: Added reasoning column to CREATE TABLE and
         extra_columns (proactive_curiosity_engine.py inserts this field).
 
@@ -42,11 +47,8 @@ CHANGELOG:
       * Added CREATE UNIQUE INDEX IF NOT EXISTS to patch existing production table.
 
     - March 05, 2026 (Phase 2A): MEMORY_STORE SCHEMA FIX
-
     - March 05, 2026 (Phase 9b): PROJECT_FILES COLUMN FIX
-
     - March 03, 2026 (Phase 9): COMPLETE SCHEMA REWRITE to match app code.
-
     - March 02, 2026: Initial creation for PostgreSQL migration (Phase 1).
 
 USAGE:
@@ -92,6 +94,9 @@ def run_migration():
 
     tables = []
 
+    # -------------------------------------------------------------------------
+    # TASKS — March 09, 2026: added knowledge_used BOOLEAN DEFAULT FALSE
+    # -------------------------------------------------------------------------
     tables.append(f"""
         CREATE TABLE IF NOT EXISTS tasks (
             id {pk},
@@ -111,6 +116,7 @@ def run_migration():
             error_message TEXT,
             conversation_id TEXT,
             knowledge_sources TEXT,
+            knowledge_used {bool_false},
             created_at {ts},
             completed_at TIMESTAMP,
             metadata TEXT
@@ -1073,6 +1079,7 @@ def run_migration():
             ("tasks", "conversation_id", "TEXT"),
             ("tasks", "knowledge_sources", "TEXT"),
             ("tasks", "completed_at", "TIMESTAMP"),
+            ("tasks", "knowledge_used", "BOOLEAN DEFAULT FALSE"),  # March 09, 2026
             # conversations table
             ("conversations", "conversation_id", "TEXT"),
             ("conversations", "mode", "TEXT DEFAULT 'quick'"),
