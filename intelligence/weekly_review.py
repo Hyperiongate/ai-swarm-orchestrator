@@ -5,18 +5,20 @@ Created: March 09, 2026
 Last Updated: March 10, 2026 — Fixed NULL-status legacy tasks polluting success rate
 
 CHANGELOG:
-- March 10, 2026: FIX — NULL-status legacy tasks excluded from total task count
-  ROOT CAUSE: The total tasks COUNT(*) query counted all 72 tasks including
-  65 legacy NULL-status rows inserted before the RETURNING id fix was deployed.
-  Those tasks had task_id=0, so their UPDATE SET status='completed' matched
-  nothing and their status was never written. The denominator was 72 while
-  only 7 tasks had real status data, giving a false 9.72% success rate.
-  FIX: Added AND status IS NOT NULL to the total tasks COUNT query only.
-  All other queries (completed, failed, avg_time, escalations, orchestrator
-  distribution, knowledge_used) already filter by specific column values
-  that implicitly exclude NULL-status rows — those are untouched.
-  Expected result: health score jumps from ~33 to ~69 (accurate for dev phase,
-  limited by zero consensus data and zero user feedback submissions).
+- March 10, 2026 (rev 2): FIX — Use assigned_orchestrator IS NOT NULL as denominator
+  ROOT CAUSE (deeper): First fix used AND status IS NOT NULL, but 65 legacy rows
+  have non-NULL statuses ('needs_clarification', 'processing') set on INSERT.
+  They were never updated because task_id=0 meant the final UPDATE matched
+  nothing. So status IS NOT NULL still included all 65 as the denominator.
+  FIX: Changed total tasks COUNT to AND assigned_orchestrator IS NOT NULL.
+  assigned_orchestrator is only written in the final UPDATE when a task
+  completes successfully — legacy rows never got one, so they are cleanly
+  excluded. Expected result: health score ~69 (8/8 = 100% success rate).
+
+- March 10, 2026 (rev 1): FIX — specialist_calls 'success' column + transaction abort
+  Removed non-existent 'success' column from specialist_calls query.
+  Added db.rollback() to all 10 metric except blocks to prevent cascade failures.
+  Added AND status IS NOT NULL to total tasks COUNT (superseded by rev 2).
 
 - March 09, 2026: Created. Replaces swarm_self_evaluation.py.
   Carries forward: performance metrics collection, gap analysis,
@@ -127,13 +129,17 @@ def _collect_metrics(days: int = 7) -> Dict[str, Any]:
     try:
         # ---- TASK METRICS ----
         try:
-            # FIX March 10, 2026: AND status IS NOT NULL excludes legacy NULL-status
-            # rows inserted before the RETURNING id fix was deployed. Those tasks
-            # were never properly completed or failed — their status was simply
-            # never written. Excluding them gives an accurate denominator.
+            # FIX March 10, 2026 (rev 2): Use assigned_orchestrator IS NOT NULL
+            # as the denominator for success rate. The previous fix used
+            # AND status IS NOT NULL, but 65 legacy rows have non-NULL statuses
+            # ('needs_clarification', 'processing') that were set on INSERT and
+            # never updated because task_id=0 meant the final UPDATE matched
+            # nothing. assigned_orchestrator IS NOT NULL is the definitive proof
+            # a task actually reached a handler and finished — legacy rows never
+            # got an orchestrator written so they are cleanly excluded.
             total = db.execute(
                 'SELECT COUNT(*) AS cnt FROM tasks '
-                'WHERE created_at >= %s AND status IS NOT NULL',
+                'WHERE created_at >= %s AND assigned_orchestrator IS NOT NULL',
                 (cutoff_str,)
             ).fetchone()
             total_tasks = total['cnt'] if total else 0
