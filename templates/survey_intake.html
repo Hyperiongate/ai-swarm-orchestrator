@@ -1,0 +1,1054 @@
+<!DOCTYPE html>
+<!--
+    SURVEY IN A BOX — Client Intake Form
+    File: templates/survey_intake.html
+    Created: March 10, 2026
+    Last Updated: March 10, 2026 — Initial creation, Phase 1 Step 1.2
+
+    PURPOSE:
+        Public-facing intake form served at GET /survey/start.
+        Standalone page — NOT inside the Swarm UI chrome.
+        Mobile-responsive. Shiftwork Solutions branded.
+        Submits via fetch() POST to /api/survey/intake/submit.
+        Shows inline validation errors and a thank-you state on success.
+
+    FIELD NAMES (must match routes/survey_intake.py exactly):
+        company_name, contact_name, email, phone, industry,
+        employee_count, department_count, department_names (array),
+        current_schedule_type, crew_count, shift_start_times, union_status,
+        biggest_challenges (array), previously_surveyed (bool),
+        last_survey_date, preferred_administration, preferred_delivery_date,
+        referral_source, additional_notes
+
+    CHANGELOG:
+        - March 10, 2026: Initial creation.
+-->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Start Your Survey — Shiftwork Solutions LLC</title>
+    <style>
+        /* ----------------------------------------------------------------
+           RESET & BASE
+        ---------------------------------------------------------------- */
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+                         'Helvetica Neue', Arial, sans-serif;
+            font-size: 16px;
+            line-height: 1.6;
+            color: #222;
+            background: #f0f4f8;
+            min-height: 100vh;
+        }
+
+        /* ----------------------------------------------------------------
+           BRAND COLORS
+           Primary Navy:  #1a3a5c
+           Accent Teal:   #1a7a8a
+           Orange:        #e07b2a
+           Light bg:      #f0f4f8
+        ---------------------------------------------------------------- */
+
+        /* ----------------------------------------------------------------
+           HEADER
+        ---------------------------------------------------------------- */
+        .site-header {
+            background: #1a3a5c;
+            color: #fff;
+            padding: 0;
+        }
+        .header-inner {
+            max-width: 860px;
+            margin: 0 auto;
+            padding: 18px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+        .header-brand {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+        .brand-logo {
+            width: 52px;
+            height: 52px;
+            background: #fff;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 900;
+            font-size: 13px;
+            color: #1a3a5c;
+            letter-spacing: -0.5px;
+            text-align: center;
+            line-height: 1.2;
+            flex-shrink: 0;
+        }
+        .brand-text h1 {
+            font-size: 1.1rem;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            color: #fff;
+        }
+        .brand-text p {
+            font-size: 0.78rem;
+            color: #a8c8d8;
+            margin-top: 1px;
+        }
+        .header-contact {
+            text-align: right;
+            font-size: 0.82rem;
+            color: #a8c8d8;
+        }
+        .header-contact a {
+            color: #e07b2a;
+            text-decoration: none;
+            font-weight: 600;
+        }
+        .header-contact a:hover { text-decoration: underline; }
+
+        /* ----------------------------------------------------------------
+           HERO BAND
+        ---------------------------------------------------------------- */
+        .hero-band {
+            background: linear-gradient(135deg, #1a7a8a 0%, #1a3a5c 100%);
+            color: #fff;
+            text-align: center;
+            padding: 36px 24px 32px;
+        }
+        .hero-band h2 {
+            font-size: 1.65rem;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+        .hero-band p {
+            font-size: 0.97rem;
+            color: #cce8ee;
+            max-width: 580px;
+            margin: 0 auto;
+        }
+
+        /* ----------------------------------------------------------------
+           TRUST BAR
+        ---------------------------------------------------------------- */
+        .trust-bar {
+            background: #e07b2a;
+            color: #fff;
+            text-align: center;
+            font-size: 0.82rem;
+            font-weight: 600;
+            padding: 9px 24px;
+            letter-spacing: 0.03em;
+        }
+
+        /* ----------------------------------------------------------------
+           MAIN LAYOUT
+        ---------------------------------------------------------------- */
+        .page-body {
+            max-width: 860px;
+            margin: 0 auto;
+            padding: 32px 16px 60px;
+        }
+
+        /* ----------------------------------------------------------------
+           FORM CARD
+        ---------------------------------------------------------------- */
+        .form-card {
+            background: #fff;
+            border-radius: 10px;
+            box-shadow: 0 2px 16px rgba(0,0,0,0.09);
+            overflow: hidden;
+        }
+
+        /* Section headers inside the card */
+        .section-header {
+            background: #1a3a5c;
+            color: #fff;
+            padding: 13px 24px;
+            font-size: 0.92rem;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+        .section-body {
+            padding: 24px 24px 8px;
+        }
+
+        /* ----------------------------------------------------------------
+           FORM ELEMENTS
+        ---------------------------------------------------------------- */
+        .field-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 18px;
+            margin-bottom: 18px;
+        }
+        .field-row.single { grid-template-columns: 1fr; }
+        .field-row.triple { grid-template-columns: 1fr 1fr 1fr; }
+
+        @media (max-width: 580px) {
+            .field-row { grid-template-columns: 1fr; }
+            .field-row.triple { grid-template-columns: 1fr; }
+        }
+
+        .field-group { display: flex; flex-direction: column; gap: 5px; }
+
+        label {
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: #333;
+        }
+        label .req {
+            color: #c0392b;
+            margin-left: 2px;
+        }
+        label .opt {
+            font-weight: 400;
+            color: #888;
+            font-size: 0.8rem;
+            margin-left: 4px;
+        }
+
+        input[type="text"],
+        input[type="email"],
+        input[type="tel"],
+        input[type="number"],
+        input[type="date"],
+        select,
+        textarea {
+            width: 100%;
+            padding: 9px 12px;
+            border: 1.5px solid #ccd6dd;
+            border-radius: 6px;
+            font-size: 0.93rem;
+            font-family: inherit;
+            color: #222;
+            background: #fafbfc;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            -webkit-appearance: none;
+        }
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: #1a7a8a;
+            box-shadow: 0 0 0 3px rgba(26,122,138,0.15);
+            background: #fff;
+        }
+        input.error, select.error, textarea.error {
+            border-color: #c0392b;
+            background: #fff8f8;
+        }
+        textarea { resize: vertical; min-height: 88px; }
+
+        /* Department dynamic rows */
+        .dept-list { display: flex; flex-direction: column; gap: 8px; }
+        .dept-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .dept-row input { flex: 1; }
+        .btn-remove-dept {
+            background: none;
+            border: 1.5px solid #ccd6dd;
+            border-radius: 6px;
+            color: #888;
+            cursor: pointer;
+            font-size: 1.1rem;
+            padding: 5px 10px;
+            line-height: 1;
+            flex-shrink: 0;
+            transition: border-color 0.2s, color 0.2s;
+        }
+        .btn-remove-dept:hover { border-color: #c0392b; color: #c0392b; }
+
+        .btn-add-dept {
+            margin-top: 8px;
+            background: none;
+            border: 1.5px dashed #1a7a8a;
+            border-radius: 6px;
+            color: #1a7a8a;
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 600;
+            padding: 7px 14px;
+            transition: background 0.2s;
+        }
+        .btn-add-dept:hover { background: #f0f9fb; }
+
+        /* Checkbox grid for challenges */
+        .checkbox-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px 18px;
+        }
+        @media (max-width: 420px) { .checkbox-grid { grid-template-columns: 1fr; } }
+
+        .checkbox-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+        }
+        .checkbox-item input[type="checkbox"] {
+            width: 17px;
+            height: 17px;
+            flex-shrink: 0;
+            cursor: pointer;
+            accent-color: #1a7a8a;
+            border: 1.5px solid #ccd6dd;
+            border-radius: 3px;
+        }
+        .checkbox-item span { font-size: 0.88rem; color: #333; }
+
+        /* Radio for previously surveyed */
+        .radio-group {
+            display: flex;
+            gap: 22px;
+            align-items: center;
+        }
+        .radio-item {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            cursor: pointer;
+        }
+        .radio-item input[type="radio"] {
+            width: 17px;
+            height: 17px;
+            cursor: pointer;
+            accent-color: #1a7a8a;
+        }
+        .radio-item span { font-size: 0.93rem; }
+
+        /* Conditional show/hide */
+        .conditional-field {
+            display: none;
+            margin-top: 14px;
+        }
+        .conditional-field.visible { display: block; }
+
+        /* ----------------------------------------------------------------
+           FIELD HINT TEXT
+        ---------------------------------------------------------------- */
+        .field-hint {
+            font-size: 0.78rem;
+            color: #777;
+            margin-top: 3px;
+        }
+
+        /* ----------------------------------------------------------------
+           ERROR MESSAGES
+        ---------------------------------------------------------------- */
+        .field-error {
+            font-size: 0.8rem;
+            color: #c0392b;
+            margin-top: 3px;
+            display: none;
+        }
+        .field-error.visible { display: block; }
+
+        .form-errors-banner {
+            background: #fdf0ee;
+            border: 1.5px solid #c0392b;
+            border-radius: 7px;
+            padding: 14px 18px;
+            margin: 0 24px 20px;
+            display: none;
+        }
+        .form-errors-banner.visible { display: block; }
+        .form-errors-banner p {
+            font-size: 0.88rem;
+            color: #c0392b;
+            font-weight: 600;
+            margin-bottom: 6px;
+        }
+        .form-errors-banner ul {
+            margin-left: 16px;
+            font-size: 0.85rem;
+            color: #c0392b;
+        }
+
+        /* ----------------------------------------------------------------
+           SUBMIT BUTTON
+        ---------------------------------------------------------------- */
+        .submit-section {
+            padding: 20px 24px 28px;
+            text-align: center;
+        }
+        .btn-submit {
+            background: #e07b2a;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 700;
+            padding: 14px 42px;
+            cursor: pointer;
+            letter-spacing: 0.02em;
+            transition: background 0.2s, transform 0.15s;
+            min-width: 220px;
+        }
+        .btn-submit:hover { background: #c96820; }
+        .btn-submit:active { transform: scale(0.98); }
+        .btn-submit:disabled {
+            background: #bbb;
+            cursor: not-allowed;
+        }
+        .submit-note {
+            margin-top: 10px;
+            font-size: 0.8rem;
+            color: #888;
+        }
+
+        /* ----------------------------------------------------------------
+           SPINNER
+        ---------------------------------------------------------------- */
+        .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255,255,255,0.4);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+            vertical-align: middle;
+            margin-right: 6px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ----------------------------------------------------------------
+           THANK-YOU STATE
+        ---------------------------------------------------------------- */
+        #thank-you {
+            display: none;
+            text-align: center;
+            padding: 56px 24px;
+        }
+        #thank-you .ty-icon {
+            font-size: 3.5rem;
+            margin-bottom: 18px;
+        }
+        #thank-you h2 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #1a3a5c;
+            margin-bottom: 12px;
+        }
+        #thank-you p {
+            color: #555;
+            font-size: 0.97rem;
+            max-width: 480px;
+            margin: 0 auto 10px;
+        }
+        #thank-you .ty-detail {
+            font-size: 0.85rem;
+            color: #888;
+            margin-top: 18px;
+        }
+        #thank-you a {
+            color: #1a7a8a;
+            font-weight: 600;
+        }
+
+        /* ----------------------------------------------------------------
+           FOOTER
+        ---------------------------------------------------------------- */
+        .site-footer {
+            background: #1a3a5c;
+            color: #a8c8d8;
+            text-align: center;
+            padding: 22px 24px;
+            font-size: 0.82rem;
+            margin-top: 40px;
+        }
+        .site-footer a { color: #e07b2a; text-decoration: none; }
+        .site-footer a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+
+<!-- ============================================================
+     HEADER
+============================================================ -->
+<header class="site-header">
+    <div class="header-inner">
+        <div class="header-brand">
+            <div class="brand-logo">SW<br>SOL</div>
+            <div class="brand-text">
+                <h1>Shiftwork Solutions LLC</h1>
+                <p>Employee Survey Services for 24/7 Operations</p>
+            </div>
+        </div>
+        <div class="header-contact">
+            <div><a href="tel:4157635005">(415) 763-5005</a></div>
+            <div><a href="https://www.shift-work.com" target="_blank">www.shift-work.com</a></div>
+        </div>
+    </div>
+</header>
+
+<!-- ============================================================
+     HERO
+============================================================ -->
+<div class="hero-band">
+    <h2>Start Your Employee Survey</h2>
+    <p>Tell us about your operation. Jim will review your submission within 1–2 business days
+       and contact you to discuss next steps.</p>
+</div>
+
+<div class="trust-bar">
+    30+ Years of Experience &nbsp;·&nbsp; Hundreds of Facilities Served &nbsp;·&nbsp;
+    16 Industries &nbsp;·&nbsp; Confidential &amp; Professional
+</div>
+
+<!-- ============================================================
+     PAGE BODY
+============================================================ -->
+<main class="page-body">
+
+    <!-- Form-level error banner -->
+    <div id="form-errors-banner" class="form-errors-banner">
+        <p>Please correct the following before submitting:</p>
+        <ul id="form-errors-list"></ul>
+    </div>
+
+    <!-- ========================================================
+         FORM CARD
+    ======================================================== -->
+    <div class="form-card" id="intake-form-card">
+        <form id="intake-form" novalidate>
+
+            <!-- ---- SECTION 1: Company & Contact ---- -->
+            <div class="section-header">1. Company &amp; Contact Information</div>
+            <div class="section-body">
+
+                <div class="field-row">
+                    <div class="field-group">
+                        <label for="company_name">Company Name <span class="req">*</span></label>
+                        <input type="text" id="company_name" name="company_name"
+                               placeholder="e.g. Acme Manufacturing Corp."
+                               autocomplete="organization">
+                        <span class="field-error" id="err-company_name"></span>
+                    </div>
+                    <div class="field-group">
+                        <label for="industry">Industry <span class="req">*</span></label>
+                        <select id="industry" name="industry">
+                            <option value="">— Select Industry —</option>
+                            <option value="manufacturing">Manufacturing</option>
+                            <option value="pharmaceutical">Pharmaceutical</option>
+                            <option value="food_processing">Food Processing</option>
+                            <option value="mining">Mining</option>
+                            <option value="distribution">Distribution &amp; Logistics</option>
+                            <option value="chemical">Chemical</option>
+                            <option value="utilities">Utilities</option>
+                            <option value="paper_pulp">Paper / Pulp</option>
+                            <option value="oil_gas">Oil &amp; Gas</option>
+                            <option value="other">Other</option>
+                        </select>
+                        <span class="field-error" id="err-industry"></span>
+                    </div>
+                </div>
+
+                <div class="field-row">
+                    <div class="field-group">
+                        <label for="contact_name">Contact Person Name <span class="req">*</span></label>
+                        <input type="text" id="contact_name" name="contact_name"
+                               placeholder="e.g. Jane Smith"
+                               autocomplete="name">
+                        <span class="field-error" id="err-contact_name"></span>
+                    </div>
+                    <div class="field-group">
+                        <label for="email">Email Address <span class="req">*</span></label>
+                        <input type="email" id="email" name="email"
+                               placeholder="e.g. jane.smith@company.com"
+                               autocomplete="email">
+                        <span class="field-error" id="err-email"></span>
+                    </div>
+                </div>
+
+                <div class="field-row">
+                    <div class="field-group">
+                        <label for="phone">Phone Number <span class="opt">(optional)</span></label>
+                        <input type="tel" id="phone" name="phone"
+                               placeholder="e.g. (555) 123-4567"
+                               autocomplete="tel">
+                    </div>
+                    <div class="field-group">
+                        <label for="referral_source">How did you hear about us? <span class="opt">(optional)</span></label>
+                        <input type="text" id="referral_source" name="referral_source"
+                               placeholder="e.g. LinkedIn, Google, referral, shift-work.com">
+                    </div>
+                </div>
+
+            </div><!-- /section-body -->
+
+            <!-- ---- SECTION 2: Operation Details ---- -->
+            <div class="section-header">2. Operation Details</div>
+            <div class="section-body">
+
+                <div class="field-row">
+                    <div class="field-group">
+                        <label for="employee_count">Employees in Shiftwork Operations <span class="req">*</span></label>
+                        <input type="number" id="employee_count" name="employee_count"
+                               placeholder="e.g. 250" min="1" max="99999">
+                        <span class="field-error" id="err-employee_count"></span>
+                    </div>
+                    <div class="field-group">
+                        <label for="union_status">Union / Non-Union</label>
+                        <select id="union_status" name="union_status">
+                            <option value="non-union">Non-Union</option>
+                            <option value="union">Union</option>
+                            <option value="mixed">Mixed (Some Departments Union)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="field-row">
+                    <div class="field-group">
+                        <label for="current_schedule_type">Current Schedule Type <span class="req">*</span></label>
+                        <select id="current_schedule_type" name="current_schedule_type">
+                            <option value="">— Select Schedule Type —</option>
+                            <option value="8hr_fixed">8-Hour Fixed</option>
+                            <option value="8hr_rotating">8-Hour Rotating</option>
+                            <option value="10hr">10-Hour</option>
+                            <option value="12hr_fixed">12-Hour Fixed</option>
+                            <option value="12hr_rotating">12-Hour Rotating</option>
+                            <option value="other">Other / Mixed</option>
+                        </select>
+                        <span class="field-error" id="err-current_schedule_type"></span>
+                    </div>
+                    <div class="field-group">
+                        <label for="crew_count">Number of Crews <span class="opt">(optional)</span></label>
+                        <input type="number" id="crew_count" name="crew_count"
+                               placeholder="e.g. 4" min="1" max="99">
+                        <span class="field-hint">How many rotating crews operate the facility?</span>
+                    </div>
+                </div>
+
+                <div class="field-row single">
+                    <div class="field-group">
+                        <label for="shift_start_times">Current Shift Start Times <span class="opt">(optional)</span></label>
+                        <input type="text" id="shift_start_times" name="shift_start_times"
+                               placeholder="e.g. 6am, 2pm, 10pm  OR  7am, 7pm">
+                        <span class="field-hint">List the shift start times currently in use, separated by commas.</span>
+                    </div>
+                </div>
+
+                <!-- Department Names — dynamic add/remove -->
+                <div class="field-row single">
+                    <div class="field-group">
+                        <label>Departments / Areas <span class="opt">(optional — add as many as needed)</span></label>
+                        <div class="dept-list" id="dept-list">
+                            <div class="dept-row">
+                                <input type="text" class="dept-input"
+                                       placeholder="e.g. Receiving">
+                                <button type="button" class="btn-remove-dept"
+                                        onclick="removeDept(this)" title="Remove">✕</button>
+                            </div>
+                        </div>
+                        <button type="button" class="btn-add-dept" onclick="addDept()">
+                            + Add Another Department
+                        </button>
+                        <span class="field-hint">Enter each department or work area that will participate in the survey.</span>
+                    </div>
+                </div>
+
+            </div><!-- /section-body -->
+
+            <!-- ---- SECTION 3: Challenges & Survey Goals ---- -->
+            <div class="section-header">3. Challenges &amp; Survey Goals</div>
+            <div class="section-body">
+
+                <div class="field-row single" style="margin-bottom: 20px;">
+                    <div class="field-group">
+                        <label>Biggest Challenges <span class="opt">(select all that apply)</span></label>
+                        <div class="checkbox-grid" style="margin-top: 8px;">
+                            <label class="checkbox-item">
+                                <input type="checkbox" name="biggest_challenges" value="recruiting">
+                                <span>Recruiting / Staffing</span>
+                            </label>
+                            <label class="checkbox-item">
+                                <input type="checkbox" name="biggest_challenges" value="retention">
+                                <span>Employee Retention</span>
+                            </label>
+                            <label class="checkbox-item">
+                                <input type="checkbox" name="biggest_challenges" value="overtime">
+                                <span>Overtime Costs</span>
+                            </label>
+                            <label class="checkbox-item">
+                                <input type="checkbox" name="biggest_challenges" value="work_life_balance">
+                                <span>Work-Life Balance</span>
+                            </label>
+                            <label class="checkbox-item">
+                                <input type="checkbox" name="biggest_challenges" value="schedule_design">
+                                <span>Schedule Design</span>
+                            </label>
+                            <label class="checkbox-item">
+                                <input type="checkbox" name="biggest_challenges" value="coverage_absenteeism">
+                                <span>Coverage / Absenteeism</span>
+                            </label>
+                            <label class="checkbox-item">
+                                <input type="checkbox" name="biggest_challenges" value="communication">
+                                <span>Communication</span>
+                            </label>
+                            <label class="checkbox-item">
+                                <input type="checkbox" name="biggest_challenges" value="other">
+                                <span>Other</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="field-row single">
+                    <div class="field-group">
+                        <label>Have you surveyed employees before?</label>
+                        <div class="radio-group" style="margin-top: 6px;">
+                            <label class="radio-item">
+                                <input type="radio" name="previously_surveyed" value="no" checked>
+                                <span>No</span>
+                            </label>
+                            <label class="radio-item">
+                                <input type="radio" name="previously_surveyed" value="yes">
+                                <span>Yes</span>
+                            </label>
+                        </div>
+                        <!-- Conditional: last survey date -->
+                        <div class="conditional-field" id="field-last-survey">
+                            <div class="field-group" style="max-width: 260px;">
+                                <label for="last_survey_date">When was your last survey? <span class="opt">(approximate)</span></label>
+                                <input type="text" id="last_survey_date" name="last_survey_date"
+                                       placeholder="e.g. 2023, or March 2022">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div><!-- /section-body -->
+
+            <!-- ---- SECTION 4: Survey Administration ---- -->
+            <div class="section-header">4. Survey Administration Preferences</div>
+            <div class="section-body">
+
+                <div class="field-row">
+                    <div class="field-group">
+                        <label for="preferred_administration">Preferred Survey Method</label>
+                        <select id="preferred_administration" name="preferred_administration">
+                            <option value="online">Online (employees use link/QR code)</option>
+                            <option value="paper_bubble_sheets">Paper Bubble Sheets (printed, completed, scanned)</option>
+                            <option value="unsure">Not Sure — I'd like guidance</option>
+                        </select>
+                        <span class="field-hint">Online is faster; paper works well for facilities without easy computer access.</span>
+                    </div>
+                    <div class="field-group">
+                        <label for="preferred_delivery_date">Preferred Survey Launch Date <span class="opt">(optional)</span></label>
+                        <input type="date" id="preferred_delivery_date" name="preferred_delivery_date">
+                        <span class="field-hint">Approximate target date to begin the survey with employees.</span>
+                    </div>
+                </div>
+
+            </div><!-- /section-body -->
+
+            <!-- ---- SECTION 5: Additional Notes ---- -->
+            <div class="section-header">5. Additional Notes</div>
+            <div class="section-body" style="padding-bottom: 24px;">
+
+                <div class="field-row single">
+                    <div class="field-group">
+                        <label for="additional_notes">Anything else we should know? <span class="opt">(optional)</span></label>
+                        <textarea id="additional_notes" name="additional_notes"
+                                  placeholder="Describe your situation, goals, constraints, or anything else that would help us understand your needs."></textarea>
+                    </div>
+                </div>
+
+            </div><!-- /section-body -->
+
+            <!-- ---- SUBMIT ---- -->
+            <div class="submit-section">
+                <button type="submit" class="btn-submit" id="btn-submit">
+                    Submit My Information
+                </button>
+                <p class="submit-note">
+                    All information is kept strictly confidential. Jim will respond within 1–2 business days.
+                </p>
+            </div>
+
+        </form><!-- /#intake-form -->
+
+        <!-- ---- THANK YOU (shown after successful submit) ---- -->
+        <div id="thank-you">
+            <div class="ty-icon">✅</div>
+            <h2>Thank You!</h2>
+            <p>
+                Your information has been received. Jim will review your submission
+                and contact you within 1–2 business days to discuss next steps.
+            </p>
+            <p style="margin-top: 8px;">
+                Questions in the meantime? Call us at
+                <strong><a href="tel:4157635005">(415) 763-5005</a></strong> or visit
+                <a href="https://www.shift-work.com" target="_blank">www.shift-work.com</a>.
+            </p>
+            <p class="ty-detail" id="ty-ref"></p>
+        </div>
+
+    </div><!-- /.form-card -->
+
+</main><!-- /.page-body -->
+
+<!-- ============================================================
+     FOOTER
+============================================================ -->
+<footer class="site-footer">
+    <p>
+        &copy; 2026 Shiftwork Solutions LLC &nbsp;·&nbsp;
+        <a href="https://www.shift-work.com" target="_blank">www.shift-work.com</a> &nbsp;·&nbsp;
+        <a href="tel:4157635005">(415) 763-5005</a> &nbsp;·&nbsp;
+        San Rafael, California
+    </p>
+</footer>
+
+<!-- ============================================================
+     JAVASCRIPT
+============================================================ -->
+<script>
+// -------------------------------------------------------------------
+// DEPARTMENT DYNAMIC ROWS
+// -------------------------------------------------------------------
+function addDept() {
+    const list = document.getElementById('dept-list');
+    const row = document.createElement('div');
+    row.className = 'dept-row';
+    row.innerHTML = `
+        <input type="text" class="dept-input" placeholder="e.g. Shipping">
+        <button type="button" class="btn-remove-dept"
+                onclick="removeDept(this)" title="Remove">✕</button>
+    `;
+    list.appendChild(row);
+    row.querySelector('input').focus();
+}
+
+function removeDept(btn) {
+    const list = document.getElementById('dept-list');
+    // Always keep at least one row
+    if (list.querySelectorAll('.dept-row').length > 1) {
+        btn.parentElement.remove();
+    } else {
+        btn.parentElement.querySelector('input').value = '';
+    }
+}
+
+// -------------------------------------------------------------------
+// CONDITIONAL FIELD: previously surveyed → show last survey date
+// -------------------------------------------------------------------
+document.querySelectorAll('input[name="previously_surveyed"]').forEach(function(radio) {
+    radio.addEventListener('change', function() {
+        const field = document.getElementById('field-last-survey');
+        if (this.value === 'yes') {
+            field.classList.add('visible');
+        } else {
+            field.classList.remove('visible');
+            document.getElementById('last_survey_date').value = '';
+        }
+    });
+});
+
+// -------------------------------------------------------------------
+// COLLECT DEPARTMENT NAMES FROM DYNAMIC ROWS
+// -------------------------------------------------------------------
+function getDepartmentNames() {
+    const inputs = document.querySelectorAll('.dept-input');
+    const names = [];
+    inputs.forEach(function(inp) {
+        const val = inp.value.trim();
+        if (val) names.push(val);
+    });
+    return names;
+}
+
+// -------------------------------------------------------------------
+// COLLECT CHALLENGES FROM CHECKBOXES
+// -------------------------------------------------------------------
+function getChallenges() {
+    const checked = document.querySelectorAll('input[name="biggest_challenges"]:checked');
+    return Array.from(checked).map(function(cb) { return cb.value; });
+}
+
+// -------------------------------------------------------------------
+// CLIENT-SIDE VALIDATION
+// Returns array of {field, message} objects. Empty = valid.
+// -------------------------------------------------------------------
+function validateForm() {
+    const errors = [];
+
+    function checkRequired(id, label) {
+        const el = document.getElementById(id);
+        const val = el ? el.value.trim() : '';
+        if (!val) {
+            errors.push({ field: id, message: label + ' is required.' });
+            if (el) el.classList.add('error');
+        } else {
+            if (el) el.classList.remove('error');
+        }
+    }
+
+    function clearError(id) {
+        const el = document.getElementById(id);
+        if (el) el.classList.remove('error');
+    }
+
+    checkRequired('company_name', 'Company name');
+    checkRequired('contact_name', 'Contact person name');
+    checkRequired('email', 'Email address');
+    checkRequired('industry', 'Industry');
+    checkRequired('employee_count', 'Number of employees');
+    checkRequired('current_schedule_type', 'Current schedule type');
+
+    // Email format
+    const emailEl = document.getElementById('email');
+    if (emailEl && emailEl.value.trim()) {
+        const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRe.test(emailEl.value.trim())) {
+            errors.push({ field: 'email', message: 'Please enter a valid email address.' });
+            emailEl.classList.add('error');
+        }
+    }
+
+    return errors;
+}
+
+// -------------------------------------------------------------------
+// SHOW / CLEAR FIELD-LEVEL ERRORS
+// -------------------------------------------------------------------
+function showFieldErrors(errors) {
+    // Clear all first
+    document.querySelectorAll('.field-error').forEach(function(el) {
+        el.textContent = '';
+        el.classList.remove('visible');
+    });
+
+    errors.forEach(function(e) {
+        const errEl = document.getElementById('err-' + e.field);
+        if (errEl) {
+            errEl.textContent = e.message;
+            errEl.classList.add('visible');
+        }
+    });
+}
+
+function clearFieldErrors() {
+    document.querySelectorAll('.field-error').forEach(function(el) {
+        el.textContent = '';
+        el.classList.remove('visible');
+    });
+    document.querySelectorAll('input.error, select.error, textarea.error').forEach(function(el) {
+        el.classList.remove('error');
+    });
+}
+
+// -------------------------------------------------------------------
+// SHOW BANNER ERRORS (server-side or aggregate)
+// -------------------------------------------------------------------
+function showBannerErrors(messages) {
+    const banner = document.getElementById('form-errors-banner');
+    const list = document.getElementById('form-errors-list');
+    list.innerHTML = messages.map(function(m) {
+        return '<li>' + m + '</li>';
+    }).join('');
+    banner.classList.add('visible');
+    banner.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function clearBannerErrors() {
+    const banner = document.getElementById('form-errors-banner');
+    banner.classList.remove('visible');
+    document.getElementById('form-errors-list').innerHTML = '';
+}
+
+// -------------------------------------------------------------------
+// FORM SUBMIT
+// -------------------------------------------------------------------
+document.getElementById('intake-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    clearBannerErrors();
+    clearFieldErrors();
+
+    // Client-side validation
+    const validationErrors = validateForm();
+    if (validationErrors.length > 0) {
+        showFieldErrors(validationErrors);
+        showBannerErrors(validationErrors.map(function(e) { return e.message; }));
+        return;
+    }
+
+    // Build payload
+    const payload = {
+        company_name:            document.getElementById('company_name').value.trim(),
+        contact_name:            document.getElementById('contact_name').value.trim(),
+        email:                   document.getElementById('email').value.trim().toLowerCase(),
+        phone:                   document.getElementById('phone').value.trim(),
+        industry:                document.getElementById('industry').value,
+        employee_count:          parseInt(document.getElementById('employee_count').value) || null,
+        department_count:        getDepartmentNames().length || null,
+        department_names:        getDepartmentNames(),
+        current_schedule_type:   document.getElementById('current_schedule_type').value,
+        crew_count:              parseInt(document.getElementById('crew_count').value) || null,
+        shift_start_times:       document.getElementById('shift_start_times').value.trim(),
+        union_status:            document.getElementById('union_status').value,
+        biggest_challenges:      getChallenges(),
+        previously_surveyed:     document.querySelector('input[name="previously_surveyed"]:checked').value === 'yes',
+        last_survey_date:        document.getElementById('last_survey_date').value.trim(),
+        preferred_administration: document.getElementById('preferred_administration').value,
+        preferred_delivery_date: document.getElementById('preferred_delivery_date').value,
+        referral_source:         document.getElementById('referral_source').value.trim(),
+        additional_notes:        document.getElementById('additional_notes').value.trim()
+    };
+
+    // UI: loading state
+    const btn = document.getElementById('btn-submit');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Submitting...';
+
+    try {
+        const response = await fetch('/api/survey/intake/submit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            // Show thank-you state
+            document.getElementById('intake-form').style.display = 'none';
+            const ty = document.getElementById('thank-you');
+            ty.style.display = 'block';
+            if (result.client_id) {
+                document.getElementById('ty-ref').textContent =
+                    'Reference #' + result.client_id + '  —  ' + new Date().toLocaleDateString();
+            }
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        } else {
+            // Show server-side errors
+            const messages = result.errors || [result.message || 'An unexpected error occurred.'];
+            showBannerErrors(messages);
+            btn.disabled = false;
+            btn.innerHTML = 'Submit My Information';
+        }
+
+    } catch (err) {
+        showBannerErrors(['A network error occurred. Please check your connection and try again.']);
+        btn.disabled = false;
+        btn.innerHTML = 'Submit My Information';
+    }
+});
+</script>
+
+</body>
+</html>
+<!-- I did no harm and this file is not truncated -->
