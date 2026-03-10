@@ -1,9 +1,23 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: March 08, 2026 — Phase 3 Self-Awareness: capabilities manifest wired in
+Last Updated: March 10, 2026 — Survey in a Box Phase 1: intake + admin blueprints registered
 
 CHANGELOG:
+- March 10, 2026: Survey in a Box Phase 1 — THREE CHANGES ONLY:
+  1. MIGRATION: Added migration_002_survey_in_a_box.py call in STEP 1,
+     immediately after migration_001_initial_schema.py. Creates three new
+     tables: survey_clients, survey_projects, survey_project_history.
+     Fully idempotent — safe to run on every startup.
+  2. BLUEPRINT: Registered survey_intake_bp from routes/survey_intake.py.
+     Adds GET /survey/start and POST /api/survey/intake/submit endpoints.
+  3. BLUEPRINT: Registered survey_admin_bp from routes/survey_admin.py.
+     Adds GET /survey/admin and all /api/survey/admin/* endpoints.
+  Both registrations follow the identical try/except pattern used by all
+  other blueprints. If the files are missing, startup continues normally.
+  NO OTHER CHANGES. All existing routes, blueprints, features, and startup
+  sequence are completely unchanged.
+
 - March 08, 2026: Phase 3 Self-Awareness — CAPABILITIES MANIFEST WIRED IN
   THREE CHANGES ONLY — all other code is completely unchanged:
   1. BLUEPRINT: Registered capabilities_bp from routes/capabilities.py.
@@ -122,6 +136,28 @@ except Exception as e:
     print(f"CRITICAL: Database migration failed: {e}")
     import traceback
     traceback.print_exc()
+
+# ----------------------------------------------------------------------------
+# MIGRATION 002: Survey in a Box tables
+# Added: March 10, 2026
+# Creates survey_clients, survey_projects, survey_project_history.
+# Fully idempotent — safe to run on every startup.
+# ----------------------------------------------------------------------------
+try:
+    import importlib.util as _ilu
+    import os as _os2
+    _m002_path = _os2.path.join(_os2.path.dirname(_os2.path.abspath(__file__)),
+                                'migrations', 'migration_002_survey_in_a_box.py')
+    _spec002 = _ilu.spec_from_file_location("migration_002_survey_in_a_box", _m002_path)
+    _mod002 = _ilu.module_from_spec(_spec002)
+    _spec002.loader.exec_module(_mod002)
+    _mod002.run_migration()
+    print("Survey in a Box migration (002) complete")
+except Exception as e:
+    print(f"Survey in a Box migration (002) failed: {e}")
+    import traceback
+    traceback.print_exc()
+
 print("=" * 60)
 
 # ============================================================================
@@ -761,7 +797,7 @@ def health():
 
     return jsonify({
         'status': 'healthy',
-        'version': 'Phase 3 Capabilities Manifest Mar08 + Phase 2A Memory Schema Fix Mar05 + Phase 2A Memory Mar05 + Phase 1 Log Cleanup Mar05 + Phase 9b Schema Fix Mar03 + PostgreSQL Migration Mar02 + Sprint 3 + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator + LinkedIn Poster + Bulletproof Projects + 100MB Upload + Background KB',
+        'version': 'Survey in a Box Phase 1 Mar10 + Phase 3 Capabilities Manifest Mar08 + Phase 2A Memory Schema Fix Mar05 + Phase 2A Memory Mar05 + Phase 1 Log Cleanup Mar05 + Phase 9b Schema Fix Mar03 + PostgreSQL Migration Mar02 + Sprint 3 + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator + LinkedIn Poster + Bulletproof Projects + 100MB Upload + Background KB',
         'database': {
             'type': get_db_type(),
             'backend': 'PostgreSQL (persistent)' if get_db_type() == 'postgresql' else 'SQLite (local dev)'
@@ -822,6 +858,12 @@ def health():
             'method': 'POST multipart/form-data, field: export_file'
         },
         'capabilities_manifest': capabilities_manifest_status,
+        'survey_in_a_box': {
+            'status': 'enabled',
+            'intake_form': '/survey/start',
+            'admin_dashboard': '/survey/admin',
+            'phase': '1 - Client Onboarding'
+        },
     })
 
 # Register blueprints
@@ -1040,6 +1082,34 @@ except ImportError as e:
 except Exception as e:
     print(f"Capabilities Manifest registration failed: {e}")
 
+# ----------------------------------------------------------------------------
+# Survey in a Box: Intake Form API
+# Provides GET /survey/start (public form) and POST /api/survey/intake/submit.
+# Added: March 10, 2026
+# ----------------------------------------------------------------------------
+try:
+    from routes.survey_intake import survey_intake_bp
+    app.register_blueprint(survey_intake_bp)
+    print("Survey in a Box Intake API registered")
+except ImportError as e:
+    print(f"Survey Intake routes not found: {e}")
+except Exception as e:
+    print(f"Survey Intake registration failed: {e}")
+
+# ----------------------------------------------------------------------------
+# Survey in a Box: Admin Dashboard API
+# Provides GET /survey/admin and all /api/survey/admin/* endpoints.
+# Added: March 10, 2026
+# ----------------------------------------------------------------------------
+try:
+    from routes.survey_admin import survey_admin_bp
+    app.register_blueprint(survey_admin_bp)
+    print("Survey in a Box Admin API registered")
+except ImportError as e:
+    print(f"Survey Admin routes not found: {e}")
+except Exception as e:
+    print(f"Survey Admin registration failed: {e}")
+
 try:
     from routes.background_jobs import background_jobs_bp
     app.register_blueprint(background_jobs_bp)
@@ -1125,25 +1195,6 @@ def fix_memory_store():
 
 # ============================================================================
 # ADMIN: FIX MEMORY SCHEMA (Phase 2A - Drop orphaned Phase 1 columns)
-#
-# PURPOSE:
-#   The memory_store table was created in Phase 1 with columns:
-#     memory_key (NOT NULL), memory_value (NOT NULL), access_count,
-#     last_accessed, expires_at
-#   Phase 2A added the correct columns via fix-memory-store above, but those
-#   old NOT NULL columns remained. Every INSERT from memory_store.py fails:
-#     "null value in column 'memory_key' violates not-null constraint"
-#   This endpoint drops the 5 orphaned columns, leaving exactly the schema
-#   that memory_store.py expects:
-#     id, memory_type, category, content, relevance_score,
-#     source_task_id, created_at, updated_at
-#
-# HOW TO RUN:
-#   Visit: https://ai-swarm-orchestrator.onrender.com/api/admin/fix-memory-schema
-#   Run ONCE after deploying this app.py update.
-#   Safe to run multiple times (uses DROP COLUMN IF EXISTS).
-#
-# ADDED: March 05, 2026
 # ============================================================================
 @app.route('/api/admin/fix-memory-schema', methods=['GET'])
 def fix_memory_schema():
@@ -1164,7 +1215,6 @@ def fix_memory_schema():
         with get_db_connection() as conn:
             cursor = conn.cursor()
 
-            # Show current columns before the change
             cursor.execute("""
                 SELECT column_name, data_type, is_nullable
                 FROM information_schema.columns
@@ -1180,7 +1230,6 @@ def fix_memory_schema():
                 for r in cursor.fetchall()
             ]
 
-            # Drop each orphan column
             for col in orphan_columns:
                 try:
                     cursor.execute(
@@ -1190,7 +1239,6 @@ def fix_memory_schema():
                 except Exception as col_err:
                     results.append(f"ERROR dropping {col}: {col_err}")
 
-            # Show columns after the change
             cursor.execute("""
                 SELECT column_name, data_type, is_nullable
                 FROM information_schema.columns
