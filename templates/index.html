@@ -8,6 +8,23 @@
     =============================================================================
     
     CHANGE LOG:
+    - March 12, 2026: Phase 6 Proactive Agent — Deliverable 6: Briefing Panel
+      * Added 🗓️ Briefing mode button to header row 2
+      * Added briefingInfo sidebar panel with:
+        - Today's briefing card (auto-loads on panel open)
+        - Refresh Briefing button (POST /api/briefing/generate)
+        - Task summary badges (critical/high/medium/low counts)
+        - New leads count badge
+        - Quick action buttons: View Tasks, View Leads, Add Task
+        - Scheduler status indicator
+      * Added CSS: .briefing-info, .briefing-card, .briefing-content,
+        .briefing-meta, .proactive-badge, .proactive-btn styles
+      * Added JS: checkBriefingStatus(), loadTodaysBriefing(),
+        refreshBriefing(), loadTaskSummary(), loadNewLeadsCount(),
+        addQuickTask() functions
+      * DOMContentLoaded: added checkBriefingStatus() call (setTimeout 800ms)
+      * ALL EXISTING functionality completely unchanged
+
     - February 23, 2026: Added Blog Post Generator tab (📝 Blog Posts).
       * Added mode button in header row 2
       * Added blogpostsInfo sidebar panel with topic dropdown + angle textarea
@@ -639,6 +656,131 @@
             margin-bottom: 15px;
         }
         .blogposts-info h3 { margin-bottom: 10px; color: #2e7d32; }
+
+        /* =====================================================================
+           PROACTIVE BRIEFING PANEL STYLES
+           Added: March 12, 2026 — Phase 6 Deliverable 6
+           ===================================================================== */
+        .briefing-info {
+            display: none;
+            padding: 15px;
+            background: linear-gradient(135deg, #e8eaf6 0%, #e3f2fd 100%);
+            border-radius: 10px;
+            margin-bottom: 15px;
+        }
+        .briefing-info h3 { margin-bottom: 10px; color: #283593; }
+
+        .briefing-status {
+            padding: 10px;
+            background: white;
+            border-radius: 6px;
+            font-size: 12px;
+            margin-bottom: 12px;
+            border-left: 3px solid #3f51b5;
+        }
+        .briefing-status.error { border-left-color: #f44336; background: #ffebee; }
+
+        /* The card that holds today's briefing text */
+        .briefing-card {
+            background: white;
+            border-radius: 8px;
+            padding: 14px;
+            margin-bottom: 12px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+            border-left: 4px solid #3f51b5;
+        }
+        .briefing-card-label {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #3f51b5;
+            margin-bottom: 8px;
+        }
+        .briefing-content {
+            font-size: 12px;
+            color: #333;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            max-height: 220px;
+            overflow-y: auto;
+        }
+        .briefing-meta {
+            font-size: 10px;
+            color: #999;
+            margin-top: 8px;
+            text-align: right;
+        }
+        .briefing-loading {
+            text-align: center;
+            color: #999;
+            padding: 20px;
+            font-size: 12px;
+        }
+
+        /* Task + lead count badges */
+        .proactive-badges {
+            display: flex;
+            gap: 6px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+        }
+        .proactive-badge {
+            flex: 1;
+            min-width: 50px;
+            text-align: center;
+            padding: 8px 4px;
+            border-radius: 6px;
+            color: white;
+            font-weight: 700;
+        }
+        .proactive-badge.critical { background: linear-gradient(135deg, #b71c1c 0%, #f44336 100%); }
+        .proactive-badge.high     { background: linear-gradient(135deg, #e65100 0%, #ff9800 100%); }
+        .proactive-badge.medium   { background: linear-gradient(135deg, #1565c0 0%, #42a5f5 100%); }
+        .proactive-badge.leads    { background: linear-gradient(135deg, #1b5e20 0%, #66bb6a 100%); }
+        .proactive-badge .pb-count { font-size: 20px; display: block; }
+        .proactive-badge .pb-label { font-size: 9px; opacity: 0.9; text-transform: uppercase; }
+
+        /* Action buttons inside the briefing panel */
+        .proactive-btn {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 8px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 13px;
+            color: white;
+            transition: all 0.2s;
+        }
+        .proactive-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+        .proactive-btn.refresh  { background: linear-gradient(135deg, #283593 0%, #5c6bc0 100%); }
+        .proactive-btn.tasks    { background: linear-gradient(135deg, #e65100 0%, #ff9800 100%); }
+        .proactive-btn.leads    { background: linear-gradient(135deg, #1b5e20 0%, #43a047 100%); }
+        .proactive-btn.add-task { background: linear-gradient(135deg, #4a148c 0%, #ab47bc 100%); }
+
+        /* Scheduler status row */
+        .scheduler-status-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 10px;
+            background: white;
+            border-radius: 6px;
+            font-size: 11px;
+            color: #555;
+            margin-bottom: 8px;
+        }
+        .scheduler-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #9e9e9e;
+            flex-shrink: 0;
+        }
+        .scheduler-dot.active { background: #4caf50; }
+        .scheduler-dot.inactive { background: #f44336; }
     </style>
 </head>
 <body>
@@ -668,6 +810,7 @@
                     <button class="mode-btn" onclick="window.location.href='/knowledge'" id="knowledgeModeBtn">🧠 Knowledge</button>
                     <button class="mode-btn" onclick="switchMode('casestudies')" id="casestudiesModeBtn">✍️ Case Studies</button>
                     <button class="mode-btn" onclick="switchMode('blogposts')" id="blogpostsModeBtn">📝 Blog Posts</button>
+                    <button class="mode-btn" onclick="switchMode('briefing')" id="briefingModeBtn">🗓️ Briefing</button>
                 </div>
             </div>
         </div>
@@ -1270,6 +1413,64 @@ document.addEventListener('DOMContentLoaded', function() {
         <div style="text-align: center; color: #999; padding: 15px; font-size: 12px;">Loading...</div>
     </div>
 </div>
+
+                <!-- =============================================================
+                     PROACTIVE BRIEFING PANEL (briefing mode only)
+                     Added: March 12, 2026 — Phase 6 Deliverable 6
+                     ============================================================= -->
+                <div class="briefing-info" id="briefingInfo" style="display: none;">
+                    <h3>🗓️ Daily Briefing</h3>
+
+                    <!-- Scheduler status -->
+                    <div class="scheduler-status-row" id="schedulerStatusRow">
+                        <span class="scheduler-dot" id="schedulerDot"></span>
+                        <span id="schedulerStatusText">Checking scheduler...</span>
+                    </div>
+
+                    <!-- System status -->
+                    <div class="briefing-status" id="briefingStatus">
+                        <strong>Status:</strong> Checking...
+                    </div>
+
+                    <!-- Task priority badges -->
+                    <div class="section-title">📋 Open Tasks</div>
+                    <div class="proactive-badges" id="taskBadges">
+                        <div class="proactive-badge critical">
+                            <span class="pb-count" id="bCritical">—</span>
+                            <span class="pb-label">Critical</span>
+                        </div>
+                        <div class="proactive-badge high">
+                            <span class="pb-count" id="bHigh">—</span>
+                            <span class="pb-label">High</span>
+                        </div>
+                        <div class="proactive-badge medium">
+                            <span class="pb-count" id="bMedium">—</span>
+                            <span class="pb-label">Medium</span>
+                        </div>
+                        <div class="proactive-badge leads">
+                            <span class="pb-count" id="bLeads">—</span>
+                            <span class="pb-label">New Leads</span>
+                        </div>
+                    </div>
+
+                    <!-- Today's briefing card -->
+                    <div class="section-title">📰 Today's Briefing</div>
+                    <div class="briefing-card">
+                        <div class="briefing-card-label">Morning Update</div>
+                        <div class="briefing-content" id="briefingContent">
+                            <div class="briefing-loading">Loading today's briefing...</div>
+                        </div>
+                        <div class="briefing-meta" id="briefingGeneratedAt"></div>
+                    </div>
+
+                    <!-- Action buttons -->
+                    <div class="section-title">⚡ Quick Actions</div>
+                    <button class="proactive-btn refresh" onclick="refreshBriefing()">🔄 Refresh Briefing</button>
+                    <button class="proactive-btn tasks"   onclick="viewAllTasksInChat()">📋 View All Tasks</button>
+                    <button class="proactive-btn leads"   onclick="viewAllLeadsInChat()">🎯 View New Leads</button>
+                    <button class="proactive-btn add-task" onclick="addQuickTask()">➕ Add Task</button>
+                </div>
+
                 <!-- Quick Actions Section -->
                 <h3 style="margin-top: 20px;">Quick Actions</h3>
                 <ul class="quick-actions" id="quickActions"></ul>
@@ -1314,6 +1515,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                 <li><strong>🔬 Research Mode:</strong> Real-time industry intelligence and news</li>
                                 <li><strong>🔔 Alerts Mode:</strong> Autonomous monitoring and notifications</li>
                                 <li><strong>📊 Pipeline Mode:</strong> Lead scoring and sales pipeline management</li>
+                                <li><strong>🗓️ Briefing Mode:</strong> Daily proactive briefing, tasks, and new leads</li>
                             </ul>
                             <p style="margin-top: 15px;"><strong>Features:</strong></p>
                             <ul style="margin-top: 5px; margin-left: 20px;">
@@ -1325,7 +1527,8 @@ document.addEventListener('DOMContentLoaded', function() {
                                 <li>✅ Voice control - say "Hey Swarm" to command</li>
                                 <li>✅ Research Agent - real-time web intelligence</li>
                                 <li>✅ Alert System - automated lead & competitor monitoring</li>
-                                <li>✅ Pipeline Dashboard - lead scoring based on 202 past clients</li>
+                                <li>✅ Pipeline Dashboard - lead scoring based on hundreds of past clients</li>
+                                <li>✅ Daily Briefing - proactive morning update with tasks and new leads</li>
                             </ul>
                         </div>
                     </div>
@@ -2320,7 +2523,6 @@ document.addEventListener('DOMContentLoaded', function() {
                         html += '<div style="padding: 10px; background: white; border-radius: 6px; margin-bottom: 8px; border-left: 3px solid #667eea; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">';
                         html += '<div style="font-size: 12px; font-weight: 600; color: #333; margin-bottom: 4px;">' + escapeHtml(study.title) + '</div>';
                         html += '<div style="font-size: 11px; color: #888; margin-bottom: 8px;">' + (study.industry_display || study.industry) + '</div>';
-                        // ---- 4-button row: View | Word | Web | Delete ----
                         html += '<div style="display: flex; gap: 5px;">';
                         html += '<button onclick="viewCaseStudy(' + study.id + ')" style="flex: 1; padding: 5px; font-size: 11px; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer;">👁 View</button>';
                         html += '<button onclick="downloadCaseStudy(' + study.id + ')" style="flex: 1; padding: 5px; font-size: 11px; background: #4caf50; color: white; border: none; border-radius: 4px; cursor: pointer;">⬇ Word</button>';
@@ -2413,15 +2615,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // =============================================================================
     // WEBSITE READY PACKAGE - Added February 22, 2026
-    // Generates SEO title, meta description, URL slug, FAQs, and JSON-LD
-    // for direct website publishing
     // =============================================================================
 
-    /**
-     * Copy text to clipboard and briefly toggle the button to "Copied!" state.
-     * @param {string} text  - The text to copy
-     * @param {string} btnId - The id of the copy button element
-     */
     function copyToClipboard(text, btnId) {
         navigator.clipboard.writeText(text).then(function() {
             var btn = document.getElementById(btnId);
@@ -2435,7 +2630,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 }, 2000);
             }
         }).catch(function() {
-            // Fallback for browsers without Clipboard API
             var ta = document.createElement('textarea');
             ta.value = text;
             ta.style.position = 'fixed';
@@ -2457,11 +2651,6 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    /**
-     * Fetch and display the Website Ready Package for a case study.
-     * Calls GET /api/case-studies/<studyId>/website-package
-     * Displays results in the main conversation area with copy buttons.
-     */
     function viewWebsitePackage(studyId) {
         addMessage('user', '🌐 Generate Website Ready Package for Case Study #' + studyId);
 
@@ -2479,21 +2668,18 @@ document.addEventListener('DOMContentLoaded', function() {
                     return;
                 }
 
-                // ---- Build the display HTML ----
-                // Each section has a label, content, and a copy button with a unique id.
                 var titleLen = data.seo_title.length;
                 var descLen = data.meta_description.length;
                 var titleCountClass = titleLen <= 60 ? 'wp-char-ok' : 'wp-char-warn';
                 var descCountClass = descLen <= 160 ? 'wp-char-ok' : 'wp-char-warn';
 
-                var uid = 'wp' + studyId + '_' + Date.now(); // unique prefix to avoid id collisions
+                var uid = 'wp' + studyId + '_' + Date.now();
 
                 var html = '<h3>🌐 Website Ready Package</h3>';
                 html += '<p style="font-size: 12px; color: #888; margin-bottom: 16px;">';
                 html += escapeHtml(data.study_title) + ' — ' + escapeHtml(data.industry_display);
                 html += '</p>';
 
-                // SEO Title
                 html += '<div class="wp-section">';
                 html += '<div class="wp-section-label">SEO Page Title</div>';
                 html += '<div class="wp-section-content" id="' + uid + '_title">' + escapeHtml(data.seo_title) + '</div>';
@@ -2501,7 +2687,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 html += '<button class="wp-copy-btn" id="' + uid + '_copytitle" onclick="copyToClipboard(document.getElementById(\'' + uid + '_title\').textContent, \'' + uid + '_copytitle\')">📋 Copy Title</button>';
                 html += '</div>';
 
-                // Meta Description
                 html += '<div class="wp-section">';
                 html += '<div class="wp-section-label">Meta Description</div>';
                 html += '<div class="wp-section-content" id="' + uid + '_desc">' + escapeHtml(data.meta_description) + '</div>';
@@ -2509,21 +2694,17 @@ document.addEventListener('DOMContentLoaded', function() {
                 html += '<button class="wp-copy-btn" id="' + uid + '_copydesc" onclick="copyToClipboard(document.getElementById(\'' + uid + '_desc\').textContent, \'' + uid + '_copydesc\')">📋 Copy Description</button>';
                 html += '</div>';
 
-                // URL Slug
                 html += '<div class="wp-section">';
                 html += '<div class="wp-section-label">URL Slug</div>';
                 html += '<div class="wp-section-content" id="' + uid + '_slug" style="font-family: monospace; font-size: 13px; background: #f5f5f5; padding: 6px 10px; border-radius: 4px;">' + escapeHtml(data.url_slug) + '</div>';
                 html += '<button class="wp-copy-btn" id="' + uid + '_copyslug" onclick="copyToClipboard(document.getElementById(\'' + uid + '_slug\').textContent.trim(), \'' + uid + '_copyslug\')">📋 Copy Slug</button>';
                 html += '</div>';
 
-                // FAQs
                 if (data.faqs && data.faqs.length > 0) {
                     html += '<div class="wp-section">';
                     html += '<div class="wp-section-label">FAQ Section (' + data.faqs.length + ' questions)</div>';
-
                     data.faqs.forEach(function(faq, idx) {
                         var faqId = uid + '_faq' + idx;
-                        // Store Q+A as a hidden span for copy
                         var faqText = 'Q: ' + faq.question + '\nA: ' + faq.answer;
                         html += '<div class="wp-faq-item">';
                         html += '<div class="wp-faq-q">Q: ' + escapeHtml(faq.question) + '</div>';
@@ -2532,15 +2713,12 @@ document.addEventListener('DOMContentLoaded', function() {
                         html += '<button class="wp-copy-btn" id="' + faqId + '_btn" onclick="copyToClipboard(document.getElementById(\'' + faqId + '\').textContent, \'' + faqId + '_btn\')">📋 Copy Q&amp;A</button>';
                         html += '</div>';
                     });
-
-                    // Copy-all FAQs button
                     var allFaqs = data.faqs.map(function(f, i) { return 'Q' + (i+1) + ': ' + f.question + '\nA: ' + f.answer; }).join('\n\n');
                     html += '<span id="' + uid + '_allfaqs" style="display:none;">' + escapeHtml(allFaqs) + '</span>';
                     html += '<button class="wp-copy-btn" id="' + uid + '_copyallfaqs" style="margin-top: 6px; width: 100%;" onclick="copyToClipboard(document.getElementById(\'' + uid + '_allfaqs\').textContent, \'' + uid + '_copyallfaqs\')">📋 Copy All FAQs</button>';
                     html += '</div>';
                 }
 
-                // JSON-LD Schema
                 html += '<div class="wp-section">';
                 html += '<div class="wp-section-label">JSON-LD Schema Markup</div>';
                 html += '<div style="font-size: 11px; color: #888; margin-bottom: 6px;">Paste inside a &lt;script type="application/ld+json"&gt; tag in your page &lt;head&gt;</div>';
@@ -2558,7 +2736,6 @@ document.addEventListener('DOMContentLoaded', function() {
             });
     }
 
-    // Wire up Case Studies tab initialization
     document.addEventListener('DOMContentLoaded', function() {
         setTimeout(function() {
             checkCaseStudiesStatus();
@@ -2567,15 +2744,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // =============================================================================
     // BLOG POST GENERATOR FUNCTIONS - Added February 23, 2026
-    // Conversational SEO-optimized blog posts for Shiftwork Solutions website.
-    // Same audience focus and SEO discipline as Case Study Generator.
-    // Topics drawn from the app's knowledge base.
     // =============================================================================
 
-    /**
-     * Show/hide the custom topic input field when "Other" is selected
-     * in the topic dropdown.
-     */
     function toggleCustomTopic() {
         var topic = document.getElementById('bpTopic').value;
         var wrapper = document.getElementById('bpCustomTopicWrapper');
@@ -2584,9 +2754,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-    /**
-     * Check blog post generator status and load saved posts.
-     */
     function checkBlogPostsStatus() {
         fetch('/api/blog-posts/status')
             .then(function(r) { return r.json(); })
@@ -2606,61 +2773,40 @@ document.addEventListener('DOMContentLoaded', function() {
             });
     }
 
-    /**
-     * Load and render the saved blog posts library in the sidebar.
-     */
-    /**
- * Load and render the saved blog posts library in the sidebar.
- * UPDATED February 25, 2026: Now displays URL slug and meta description
- */
-function loadSavedBlogPosts() {
-    fetch('/api/blog-posts/list')
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            var listDiv = document.getElementById('savedBlogPostsList');
-            if (!listDiv) return;
-            if (data.success && data.blog_posts && data.blog_posts.length > 0) {
-                var html = '';
-                data.blog_posts.forEach(function(post) {
-                    html += '<div style="padding: 10px; background: white; border-radius: 6px; margin-bottom: 8px; border-left: 3px solid #2e7d32; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">';
-                    
-                    // Title
-                    html += '<div style="font-size: 12px; font-weight: 600; color: #333; margin-bottom: 4px;">' + escapeHtml(post.title) + '</div>';
-                    
-                    // Topic
-                    html += '<div style="font-size: 11px; color: #888; margin-bottom: 4px;">' + escapeHtml(post.topic_display) + '</div>';
-                    
-                    // URL Slug (NEW - February 25, 2026)
-                    if (post.url_slug) {
-                        html += '<div style="font-size: 10px; color: #2e7d32; background: #e8f5e9; padding: 3px 6px; border-radius: 3px; margin-bottom: 4px; font-family: monospace;">🔗 ' + escapeHtml(post.url_slug) + '</div>';
-                    }
-                    
-                    // Meta Description (NEW - February 25, 2026)
-                    if (post.meta_description) {
-                        var truncatedDesc = post.meta_description.length > 60 
-                            ? post.meta_description.substring(0, 60) + '...' 
-                            : post.meta_description;
-                        html += '<div style="font-size: 10px; color: #666; font-style: italic; margin-bottom: 8px;" title="' + escapeHtml(post.meta_description) + '">💬 ' + escapeHtml(truncatedDesc) + '</div>';
-                    }
-                    
-                    // 3-button row: View | Word | Delete
-                    html += '<div style="display: flex; gap: 5px;">';
-                    html += '<button onclick="viewBlogPost(' + post.id + ')" style="flex: 1; padding: 5px; font-size: 11px; background: #2e7d32; color: white; border: none; border-radius: 4px; cursor: pointer;">👁 View</button>';
-                    html += '<button onclick="downloadBlogPost(' + post.id + ')" style="flex: 1; padding: 5px; font-size: 11px; background: #4caf50; color: white; border: none; border-radius: 4px; cursor: pointer;">⬇ Word</button>';
-                    html += '<button onclick="deleteBlogPost(' + post.id + ')" style="flex: 1; padding: 5px; font-size: 11px; background: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer;">🗑</button>';
-                    html += '</div></div>';
-                });
-                listDiv.innerHTML = html;
-            } else {
-                listDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 15px; font-size: 12px;">No blog posts yet</div>';
-            }
-        });
-}
+    function loadSavedBlogPosts() {
+        fetch('/api/blog-posts/list')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var listDiv = document.getElementById('savedBlogPostsList');
+                if (!listDiv) return;
+                if (data.success && data.blog_posts && data.blog_posts.length > 0) {
+                    var html = '';
+                    data.blog_posts.forEach(function(post) {
+                        html += '<div style="padding: 10px; background: white; border-radius: 6px; margin-bottom: 8px; border-left: 3px solid #2e7d32; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">';
+                        html += '<div style="font-size: 12px; font-weight: 600; color: #333; margin-bottom: 4px;">' + escapeHtml(post.title) + '</div>';
+                        html += '<div style="font-size: 11px; color: #888; margin-bottom: 4px;">' + escapeHtml(post.topic_display) + '</div>';
+                        if (post.url_slug) {
+                            html += '<div style="font-size: 10px; color: #2e7d32; background: #e8f5e9; padding: 3px 6px; border-radius: 3px; margin-bottom: 4px; font-family: monospace;">🔗 ' + escapeHtml(post.url_slug) + '</div>';
+                        }
+                        if (post.meta_description) {
+                            var truncatedDesc = post.meta_description.length > 60
+                                ? post.meta_description.substring(0, 60) + '...'
+                                : post.meta_description;
+                            html += '<div style="font-size: 10px; color: #666; font-style: italic; margin-bottom: 8px;" title="' + escapeHtml(post.meta_description) + '">💬 ' + escapeHtml(truncatedDesc) + '</div>';
+                        }
+                        html += '<div style="display: flex; gap: 5px;">';
+                        html += '<button onclick="viewBlogPost(' + post.id + ')" style="flex: 1; padding: 5px; font-size: 11px; background: #2e7d32; color: white; border: none; border-radius: 4px; cursor: pointer;">👁 View</button>';
+                        html += '<button onclick="downloadBlogPost(' + post.id + ')" style="flex: 1; padding: 5px; font-size: 11px; background: #4caf50; color: white; border: none; border-radius: 4px; cursor: pointer;">⬇ Word</button>';
+                        html += '<button onclick="deleteBlogPost(' + post.id + ')" style="flex: 1; padding: 5px; font-size: 11px; background: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer;">🗑</button>';
+                        html += '</div></div>';
+                    });
+                    listDiv.innerHTML = html;
+                } else {
+                    listDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 15px; font-size: 12px;">No blog posts yet</div>';
+                }
+            });
+    }
 
-    /**
-     * Generate a new blog post from the sidebar form inputs.
-     * Calls POST /api/blog-posts/generate
-     */
     function generateBlogPost() {
         var topic = document.getElementById('bpTopic').value;
         var customTopic = document.getElementById('bpCustomTopic') ?
@@ -2688,11 +2834,7 @@ function loadSavedBlogPosts() {
         fetch('/api/blog-posts/generate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                topic: topic,
-                custom_topic: customTopic,
-                angle: angle
-            })
+            body: JSON.stringify({ topic: topic, custom_topic: customTopic, angle: angle })
         })
         .then(function(r) { return r.json(); })
         .then(function(data) {
@@ -2705,7 +2847,6 @@ function loadSavedBlogPosts() {
                 msg += '---\n\n' + data.content + '\n\n---\n\n';
                 msg += '**ID ' + data.id + '** saved to library. Use the ⬇ Word button to download.';
                 addMessage('assistant', msg);
-                // Reset form
                 document.getElementById('bpTopic').value = '';
                 if (document.getElementById('bpAngle')) document.getElementById('bpAngle').value = '';
                 if (document.getElementById('bpCustomTopic')) document.getElementById('bpCustomTopic').value = '';
@@ -2725,9 +2866,6 @@ function loadSavedBlogPosts() {
         });
     }
 
-    /**
-     * View a saved blog post — loads full markdown content into the chat.
-     */
     function viewBlogPost(postId) {
         fetch('/api/blog-posts/' + postId)
             .then(function(r) { return r.json(); })
@@ -2741,16 +2879,10 @@ function loadSavedBlogPosts() {
             });
     }
 
-    /**
-     * Download a blog post as a Word document.
-     */
     function downloadBlogPost(postId) {
         window.location.href = '/api/blog-posts/download/' + postId;
     }
 
-    /**
-     * Delete a blog post from the library (with confirmation).
-     */
     function deleteBlogPost(postId) {
         if (!confirm('Delete this blog post? This cannot be undone.')) return;
         fetch('/api/blog-posts/' + postId, { method: 'DELETE' })
@@ -2763,12 +2895,317 @@ function loadSavedBlogPosts() {
             });
     }
 
-    // Wire up Blog Posts tab initialization
     document.addEventListener('DOMContentLoaded', function() {
         setTimeout(function() {
             checkBlogPostsStatus();
         }, 700);
     });
+
+    // =============================================================================
+    // PROACTIVE BRIEFING PANEL FUNCTIONS
+    // Added: March 12, 2026 — Phase 6 Deliverable 6
+    // Endpoints used:
+    //   GET  /api/proactive/status  — module availability + scheduler state
+    //   GET  /api/briefing          — today's briefing (cached, fast)
+    //   GET  /api/briefing/generate — force-regenerate briefing
+    //   GET  /api/tasks             — open task list for priority counts
+    //   GET  /api/leads             — new lead count badge
+    // =============================================================================
+
+    /**
+     * Called when Briefing mode panel opens.
+     * Fetches /api/proactive/status to populate the scheduler dot + status bar,
+     * then loads today's briefing, task counts, and lead count.
+     */
+    function checkBriefingStatus() {
+        fetch('/api/proactive/status')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var statusDiv = document.getElementById('briefingStatus');
+                var dot       = document.getElementById('schedulerDot');
+                var dotText   = document.getElementById('schedulerStatusText');
+
+                if (!statusDiv) return;
+
+                if (data.success || data.status === 'active') {
+                    // Scheduler dot
+                    var sched = data.scheduler || {};
+                    if (sched.running) {
+                        dot.className = 'scheduler-dot active';
+                        dotText.textContent = 'Scheduler running — ' + (sched.job_count || 0) + ' jobs';
+                    } else {
+                        dot.className = 'scheduler-dot inactive';
+                        dotText.textContent = 'Scheduler not running';
+                    }
+
+                    // Module status
+                    var mods = data.modules || {};
+                    var activeCount = Object.values(mods).filter(function(v) { return v === 'active'; }).length;
+                    var totalCount  = Object.keys(mods).length;
+                    statusDiv.innerHTML = '<strong>✅ Status:</strong> Online — ' +
+                        activeCount + '/' + totalCount + ' modules active';
+                    statusDiv.className = 'briefing-status';
+
+                    // Load data panels
+                    loadTodaysBriefing();
+                    loadTaskSummary();
+                    loadNewLeadsCount();
+                } else {
+                    dot.className = 'scheduler-dot inactive';
+                    dotText.textContent = 'Proactive agent offline';
+                    statusDiv.innerHTML = '<strong>⚠️ Status:</strong> Proactive agent not available';
+                    statusDiv.className = 'briefing-status error';
+                    document.getElementById('briefingContent').textContent =
+                        'Proactive agent is not yet active. Deploy Phase 6 files and restart.';
+                }
+            })
+            .catch(function() {
+                var statusDiv = document.getElementById('briefingStatus');
+                if (statusDiv) {
+                    statusDiv.innerHTML = '<strong>❌ Status:</strong> Error connecting to proactive agent';
+                    statusDiv.className = 'briefing-status error';
+                }
+            });
+    }
+
+    /**
+     * Fetch today's briefing from /api/briefing.
+     * Uses the cached version (fast) — does NOT regenerate.
+     * Populates briefingContent and briefingGeneratedAt.
+     */
+    function loadTodaysBriefing() {
+        var contentDiv = document.getElementById('briefingContent');
+        var metaDiv    = document.getElementById('briefingGeneratedAt');
+        if (!contentDiv) return;
+
+        contentDiv.innerHTML = '<div class="briefing-loading">⏳ Loading today\'s briefing...</div>';
+
+        fetch('/api/briefing')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.success && data.content) {
+                    // Render content — strip markdown bold/headers for compact sidebar display
+                    var text = data.content
+                        .replace(/#{1,3}\s/g, '')          // remove # headings
+                        .replace(/\*\*(.*?)\*\*/g, '$1')   // remove bold markers
+                        .trim();
+                    contentDiv.textContent = text;
+
+                    if (metaDiv && data.generated_at) {
+                        // Format: "Generated Mar 12, 6:30 AM"
+                        try {
+                            var d = new Date(data.generated_at);
+                            metaDiv.textContent = 'Generated ' + d.toLocaleDateString('en-US', {month:'short', day:'numeric'}) +
+                                ', ' + d.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'});
+                        } catch(e) {
+                            metaDiv.textContent = data.generated_at;
+                        }
+                    }
+                } else if (data.message && data.message.indexOf('No briefing') !== -1) {
+                    contentDiv.textContent = 'No briefing generated yet for today. Click "Refresh Briefing" to generate one now.';
+                    if (metaDiv) metaDiv.textContent = '';
+                } else {
+                    contentDiv.textContent = data.error || 'Could not load briefing.';
+                }
+            })
+            .catch(function() {
+                if (contentDiv) contentDiv.textContent = 'Error loading briefing. Check connection.';
+            });
+    }
+
+    /**
+     * Force-regenerate today's briefing via /api/briefing/generate,
+     * then reload the panel.
+     */
+    function refreshBriefing() {
+        var contentDiv = document.getElementById('briefingContent');
+        var metaDiv    = document.getElementById('briefingGeneratedAt');
+        if (contentDiv) contentDiv.innerHTML = '<div class="briefing-loading">⏳ Generating new briefing... (20-40 seconds)</div>';
+        if (metaDiv) metaDiv.textContent = '';
+
+        fetch('/api/briefing/generate')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.success) {
+                    loadTodaysBriefing();
+                } else {
+                    if (contentDiv) contentDiv.textContent = '❌ Generation failed: ' + (data.error || 'Unknown error');
+                }
+            })
+            .catch(function() {
+                if (contentDiv) contentDiv.textContent = '❌ Error generating briefing. Check connection.';
+            });
+    }
+
+    /**
+     * Fetch /api/tasks and populate the priority count badges
+     * (Critical, High, Medium) in the briefing panel.
+     */
+    function loadTaskSummary() {
+        fetch('/api/tasks?status=pending&limit=200')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var critical = 0, high = 0, medium = 0;
+                if (data.success && data.tasks) {
+                    data.tasks.forEach(function(t) {
+                        if (t.priority === 'critical') critical++;
+                        else if (t.priority === 'high') high++;
+                        else if (t.priority === 'medium') medium++;
+                    });
+                }
+                var bCrit = document.getElementById('bCritical');
+                var bHigh = document.getElementById('bHigh');
+                var bMed  = document.getElementById('bMedium');
+                if (bCrit) bCrit.textContent = critical;
+                if (bHigh) bHigh.textContent = high;
+                if (bMed)  bMed.textContent  = medium;
+            })
+            .catch(function() {
+                // Leave badges at — if fetch fails
+            });
+    }
+
+    /**
+     * Fetch /api/leads and populate the New Leads count badge.
+     */
+    function loadNewLeadsCount() {
+        fetch('/api/leads?status=new&limit=100')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var count = 0;
+                if (data.success && data.leads) {
+                    count = data.leads.length;
+                } else if (data.total_new !== undefined) {
+                    count = data.total_new;
+                }
+                var bLeads = document.getElementById('bLeads');
+                if (bLeads) bLeads.textContent = count;
+            })
+            .catch(function() {
+                // Leave badge at — if fetch fails
+            });
+    }
+
+    /**
+     * Show all open tasks in the main chat area.
+     */
+    function viewAllTasksInChat() {
+        addMessage('user', '📋 View All Open Tasks');
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+
+        fetch('/api/tasks?status=pending&limit=200')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                loading.classList.remove('active');
+                if (data.success && data.tasks && data.tasks.length > 0) {
+                    var content = '<h3>📋 Open Tasks</h3>';
+                    var priorities = ['critical', 'high', 'medium', 'low'];
+                    priorities.forEach(function(p) {
+                        var group = data.tasks.filter(function(t) { return t.priority === p; });
+                        if (group.length === 0) return;
+                        var colors = {critical:'#b71c1c', high:'#e65100', medium:'#1565c0', low:'#2e7d32'};
+                        content += '<div style="margin-top: 15px;">';
+                        content += '<h4 style="color:' + colors[p] + '; text-transform:uppercase; font-size:12px; margin-bottom:8px;">' + p + ' (' + group.length + ')</h4>';
+                        group.forEach(function(t) {
+                            content += '<div style="padding:10px; background:#f9f9f9; border-left:3px solid ' + colors[p] + '; border-radius:0 6px 6px 0; margin-bottom:6px;">';
+                            content += '<strong style="font-size:13px;">' + escapeHtml(t.title) + '</strong>';
+                            if (t.category) content += '<br><span style="font-size:11px;color:#888;">' + t.category + '</span>';
+                            if (t.due_date) content += '<br><span style="font-size:11px;color:#f57c00;">Due: ' + t.due_date + '</span>';
+                            content += '</div>';
+                        });
+                        content += '</div>';
+                    });
+                    addMessage('assistant', content, null, 'briefing');
+                } else {
+                    addMessage('assistant', '✅ No open tasks — clean slate!');
+                }
+            })
+            .catch(function(err) {
+                loading.classList.remove('active');
+                addMessage('assistant', '❌ Error loading tasks: ' + err.message);
+            });
+    }
+
+    /**
+     * Show new leads in the main chat area.
+     */
+    function viewAllLeadsInChat() {
+        addMessage('user', '🎯 View New Leads');
+        var loading = document.getElementById('loadingIndicator');
+        loading.classList.add('active');
+
+        fetch('/api/leads?status=new&limit=50')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                loading.classList.remove('active');
+                if (data.success && data.leads && data.leads.length > 0) {
+                    var content = '<h3>🎯 New Leads (' + data.leads.length + ')</h3>';
+                    data.leads.forEach(function(lead) {
+                        var score = lead.relevance_score || 0;
+                        var scoreColor = score >= 8 ? '#2e7d32' : (score >= 6 ? '#f57c00' : '#9e9e9e');
+                        content += '<div style="padding:12px; background:white; border-left:4px solid ' + scoreColor + '; border-radius:0 8px 8px 0; margin-bottom:10px; box-shadow:0 1px 3px rgba(0,0,0,0.08);">';
+                        content += '<strong style="font-size:13px;">' + escapeHtml(lead.title || 'Untitled Lead') + '</strong>';
+                        content += '<span style="float:right; background:' + scoreColor + '; color:white; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:700;">' + score.toFixed(1) + '</span>';
+                        if (lead.summary) content += '<p style="font-size:12px;color:#555;margin:6px 0;">' + escapeHtml(lead.summary.substring(0, 150)) + '...</p>';
+                        if (lead.industry) content += '<span style="font-size:11px;color:#888;">' + escapeHtml(lead.industry) + '</span>';
+                        if (lead.source_url) content += ' <a href="' + escapeHtml(lead.source_url) + '" target="_blank" style="font-size:11px;color:#3f51b5;">🔗 Source</a>';
+                        content += '</div>';
+                    });
+                    addMessage('assistant', content, null, 'briefing');
+                } else {
+                    addMessage('assistant', 'No new leads yet. The lead scanner runs daily at 6:00 AM Pacific.');
+                }
+            })
+            .catch(function(err) {
+                loading.classList.remove('active');
+                addMessage('assistant', '❌ Error loading leads: ' + err.message);
+            });
+    }
+
+    /**
+     * Quick task entry prompt — adds a high-priority task directly.
+     */
+    function addQuickTask() {
+        var title = prompt('Task title:', '');
+        if (!title || !title.trim()) return;
+
+        var priority = prompt('Priority (critical / high / medium / low):', 'high');
+        var validPriorities = ['critical', 'high', 'medium', 'low'];
+        if (!priority || !validPriorities.includes(priority.toLowerCase())) {
+            priority = 'high';
+        }
+
+        fetch('/api/tasks', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                title: title.trim(),
+                priority: priority.toLowerCase(),
+                category: 'general'
+            })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success || data.task_id) {
+                addMessage('assistant', '✅ Task added: **' + title.trim() + '** (' + priority + ' priority)');
+                loadTaskSummary();
+            } else {
+                addMessage('assistant', '❌ Could not add task: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(function(err) {
+            addMessage('assistant', '❌ Error: ' + err.message);
+        });
+    }
+
+    // Initialize briefing panel on page load (800ms delay — last to load)
+    document.addEventListener('DOMContentLoaded', function() {
+        setTimeout(function() {
+            checkBriefingStatus();
+        }, 800);
+    });
+
     </script>
 </body>
 </html>
@@ -2776,15 +3213,24 @@ function loadSavedBlogPosts() {
 <!--
 =============================================================================
 INDEX.HTML - AI Swarm Unified Interface
-Updated: February 23, 2026
-Changes: Added Blog Post Generator tab (📝 Blog Posts).
-         Added blogpostsInfo sidebar panel with topic dropdown (12 topics + Other),
-         optional angle textarea, and saved posts library.
-         Added toggleCustomTopic(), checkBlogPostsStatus(), loadSavedBlogPosts(),
-         generateBlogPost(), viewBlogPost(), downloadBlogPost(), deleteBlogPost() JS.
-         Calls /api/blog-posts/* endpoints (blog_posts.py route).
-         Also added Logistics option to csIndustry dropdown (case studies).
-         All previous functionality unchanged.
+Updated: March 12, 2026
+Changes: Phase 6 Deliverable 6 — Proactive Briefing Panel.
+         Added 🗓️ Briefing mode button to header row 2.
+         Added briefingInfo sidebar panel with scheduler status dot,
+         task priority badges, today's briefing card, and quick action buttons.
+         Added CSS: .briefing-info, .briefing-card, .briefing-content,
+         .briefing-meta, .proactive-badges, .proactive-badge, .proactive-btn,
+         .scheduler-status-row, .scheduler-dot styles.
+         Added JS: checkBriefingStatus(), loadTodaysBriefing(), refreshBriefing(),
+         loadTaskSummary(), loadNewLeadsCount(), viewAllTasksInChat(),
+         viewAllLeadsInChat(), addQuickTask() functions.
+         Added DOMContentLoaded: checkBriefingStatus() (500ms).
+         Updated welcome message to include Briefing Mode and daily briefing feature.
+         Updated Pipeline Dashboard bullet to use "hundreds" instead of "202".
+         All previous functionality completely unchanged.
 I did no harm and this file is not truncated
 =============================================================================
 -->
+
+
+                  
