@@ -1,9 +1,32 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: March 10, 2026 — Survey in a Box Phase 1: intake + admin blueprints registered
+Last Updated: March 12, 2026 — Phase 6 Proactive Agent: proactive_bp registered
 
 CHANGELOG:
+- March 12, 2026: Phase 6 Proactive Agent — ONE CHANGE ONLY:
+  1. BLUEPRINT: Registered proactive_bp from routes/proactive.py.
+     Inserted immediately after the survey_admin_bp block, before
+     background_jobs_bp. Follows the identical try/except pattern used
+     by all other blueprints. If routes/proactive.py is missing, startup
+     continues normally.
+     Adds endpoints:
+       GET  /api/briefing
+       GET  /api/briefing/generate
+       GET  /api/briefing/history
+       GET  /api/tasks
+       POST /api/tasks
+       PUT  /api/tasks/<id>
+       PUT  /api/tasks/<id>/complete
+       PUT  /api/tasks/<id>/defer
+       GET  /api/leads             (active after Deliverable 3)
+       PUT  /api/leads/<id>/review (active after Deliverable 3)
+       GET  /api/monitor/services  (active after Deliverable 4)
+       POST /api/monitor/services  (active after Deliverable 4)
+       GET  /api/proactive/status
+  NO OTHER CHANGES. All existing routes, blueprints, features, and startup
+  sequence are completely unchanged.
+
 - March 10, 2026: Survey in a Box Phase 1 — THREE CHANGES ONLY:
   1. MIGRATION: Added migration_002_survey_in_a_box.py call in STEP 1,
      immediately after migration_001_initial_schema.py. Creates three new
@@ -797,7 +820,7 @@ def health():
 
     return jsonify({
         'status': 'healthy',
-        'version': 'Survey in a Box Phase 1 Mar10 + Phase 3 Capabilities Manifest Mar08 + Phase 2A Memory Schema Fix Mar05 + Phase 2A Memory Mar05 + Phase 1 Log Cleanup Mar05 + Phase 9b Schema Fix Mar03 + PostgreSQL Migration Mar02 + Sprint 3 + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator + LinkedIn Poster + Bulletproof Projects + 100MB Upload + Background KB',
+        'version': 'Phase 6 Proactive Agent Mar12 + Survey in a Box Phase 1 Mar10 + Phase 3 Capabilities Manifest Mar08 + Phase 2A Memory Schema Fix Mar05 + Phase 2A Memory Mar05 + Phase 1 Log Cleanup Mar05 + Phase 9b Schema Fix Mar03 + PostgreSQL Migration Mar02 + Sprint 3 + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator + LinkedIn Poster + Bulletproof Projects + 100MB Upload + Background KB',
         'database': {
             'type': get_db_type(),
             'backend': 'PostgreSQL (persistent)' if get_db_type() == 'postgresql' else 'SQLite (local dev)'
@@ -863,6 +886,13 @@ def health():
             'intake_form': '/survey/start',
             'admin_dashboard': '/survey/admin',
             'phase': '1 - Client Onboarding'
+        },
+        'proactive_agent': {
+            'status': 'enabled',
+            'briefing_url': '/api/briefing',
+            'tasks_url': '/api/tasks',
+            'status_url': '/api/proactive/status',
+            'phase': '6 - Proactive Agent (Deliverables 1-2 active)',
         },
     })
 
@@ -1109,6 +1139,21 @@ except ImportError as e:
     print(f"Survey Admin routes not found: {e}")
 except Exception as e:
     print(f"Survey Admin registration failed: {e}")
+
+# ----------------------------------------------------------------------------
+# Phase 6: Proactive Agent API
+# Provides /api/briefing, /api/tasks, /api/leads (stub until D3),
+# /api/monitor/services (stub until D4), /api/proactive/status endpoints.
+# Added: March 12, 2026
+# ----------------------------------------------------------------------------
+try:
+    from routes.proactive import proactive_bp
+    app.register_blueprint(proactive_bp)
+    print("Phase 6 Proactive Agent API registered")
+except ImportError as e:
+    print(f"Proactive Agent routes not found: {e}")
+except Exception as e:
+    print(f"Proactive Agent registration failed: {e}")
 
 try:
     from routes.background_jobs import background_jobs_bp
