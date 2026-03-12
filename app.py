@@ -1,9 +1,31 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: March 12, 2026 — Phase 6 Proactive Agent: proactive_bp registered
+Last Updated: March 12, 2026 — Phase 6 Deliverable 7: Scheduler + Swarm self-registration
 
 CHANGELOG:
+- March 12, 2026: Phase 6 Deliverable 7 — FOUR CHANGES ONLY:
+  1. CHANGELOG: Updated header to reflect D7.
+  2. SCHEDULER: After all blueprints are registered, calls init_scheduler(app)
+     from proactive.scheduler. Uses a PostgreSQL advisory lock so only one
+     Gunicorn worker starts the scheduler — the second worker silently skips.
+     Wrapped in try/except — startup continues if scheduler fails.
+     Starts 6 background jobs:
+       06:00 AM Pacific  — lead_scanner.scan_for_leads()
+       06:15 AM Pacific  — task_manager.auto_generate_tasks_from_memory()
+       06:30 AM Pacific  — daily_briefing.generate_daily_briefing()
+       Every 30 min      — app_monitor.check_all_services()
+       Every 10 min      — self-ping keep-alive (6 AM–8 PM Pacific)
+       Monday 06:00 AM   — intelligence.weekly_review (Phase 5, skipped if absent)
+  3. SWARM SELF-REGISTRATION: After scheduler init, calls auto_register_swarm()
+     from proactive.app_monitor. Registers the Swarm's own /health endpoint
+     as a monitored service (UPSERT — safe to call on every startup).
+     Wrapped in try/except — startup continues if registration fails.
+  4. HEALTH ENDPOINT: Updated proactive_agent.phase string from
+     'Deliverables 1-2 active' to 'Deliverables 1-7 active'.
+  NO OTHER CHANGES. All existing routes, blueprints, features, and startup
+  sequence are completely unchanged.
+
 - March 12, 2026: Phase 6 Proactive Agent — ONE CHANGE ONLY:
   1. BLUEPRINT: Registered proactive_bp from routes/proactive.py.
      Inserted immediately after the survey_admin_bp block, before
@@ -892,7 +914,7 @@ def health():
             'briefing_url': '/api/briefing',
             'tasks_url': '/api/tasks',
             'status_url': '/api/proactive/status',
-            'phase': '6 - Proactive Agent (Deliverables 1-2 active)',
+            'phase': '6 - Proactive Agent (Deliverables 1-7 active)',
         },
     })
 
@@ -1142,8 +1164,8 @@ except Exception as e:
 
 # ----------------------------------------------------------------------------
 # Phase 6: Proactive Agent API
-# Provides /api/briefing, /api/tasks, /api/leads (stub until D3),
-# /api/monitor/services (stub until D4), /api/proactive/status endpoints.
+# Provides /api/briefing, /api/tasks, /api/leads, /api/monitor/services,
+# /api/proactive/status endpoints.
 # Added: March 12, 2026
 # ----------------------------------------------------------------------------
 try:
@@ -1321,6 +1343,35 @@ def fix_memory_schema():
             'error': str(e),
             'traceback': traceback.format_exc()
         }), 500
+
+# ============================================================================
+# PHASE 6: BACKGROUND SCHEDULER INIT
+# Must run AFTER all blueprints are registered so all proactive.* modules
+# are importable. Uses a PostgreSQL advisory lock — only one Gunicorn worker
+# starts the scheduler. The second worker silently skips.
+# Added: March 12, 2026 (Deliverable 7)
+# ============================================================================
+try:
+    from proactive.scheduler import init_scheduler
+    init_scheduler(app)
+except ImportError as e:
+    print(f"Scheduler not found (non-fatal): {e}")
+except Exception as e:
+    print(f"Scheduler init failed (non-fatal): {e}")
+
+# ============================================================================
+# PHASE 6: SWARM SELF-REGISTRATION
+# Register the Swarm's own /health endpoint as a monitored service.
+# UPSERT on service_name — safe to call on every startup.
+# Added: March 12, 2026 (Deliverable 7)
+# ============================================================================
+try:
+    from proactive.app_monitor import auto_register_swarm
+    auto_register_swarm()
+except ImportError as e:
+    print(f"App Monitor not found (non-fatal): {e}")
+except Exception as e:
+    print(f"Swarm self-registration failed (non-fatal): {e}")
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
