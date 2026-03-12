@@ -1,0 +1,581 @@
+"""
+AI SWARM ORCHESTRATOR - Proactive Agent API Routes
+File: routes/proactive.py
+Created: March 12, 2026
+Last Updated: March 12, 2026 — Phase 6 Deliverable 2: Initial implementation
+
+PURPOSE:
+    Flask blueprint exposing all Proactive Agent endpoints.
+    Covers briefings, tasks, leads (stub), and monitor (stub).
+    Leads and monitor stubs return 503 with a clear message until those
+    modules are deployed in Deliverables 3 and 4.
+
+ENDPOINTS:
+    GET  /api/briefing                — latest briefing (generates on-demand if none today)
+    GET  /api/briefing/generate       — force-regenerate today's briefing
+    GET  /api/briefing/history        — past N days (?days=7)
+
+    GET  /api/tasks                   — all pending tasks (sorted by priority)
+    POST /api/tasks                   — create a task manually
+    PUT  /api/tasks/<id>              — update a task
+    PUT  /api/tasks/<id>/complete     — mark a task completed
+    PUT  /api/tasks/<id>/defer        — defer a task
+
+    GET  /api/leads                   — new/unreviewed leads (stub until Deliverable 3)
+    PUT  /api/leads/<id>/review       — review/dismiss a lead (stub)
+
+    GET  /api/monitor/services        — monitored services health (stub until Deliverable 4)
+    POST /api/monitor/services        — register a service to monitor (stub)
+
+    GET  /api/proactive/status        — overall proactive system status
+
+CHANGELOG:
+- March 12, 2026: Phase 6 Deliverable 2 — Initial implementation
+  * All briefing endpoints fully functional
+  * All task endpoints fully functional
+  * Leads and monitor endpoints are documented stubs — return 503 until
+    their backing modules are deployed
+  * /api/proactive/status shows which modules are live vs. pending
+  * Blueprint registered in app.py (see app.py changelog for that change)
+
+AUTHOR: Jim @ Shiftwork Solutions LLC (managed by Claude)
+"""
+
+import logging
+from flask import Blueprint, jsonify, request
+
+logger = logging.getLogger(__name__)
+
+proactive_bp = Blueprint('proactive', __name__)
+
+
+# ============================================================================
+# HELPER — safe module import with clear error message
+# ============================================================================
+
+def _module_not_ready(module_name: str, deliverable: str):
+    """Return a standard 503 response for modules not yet deployed."""
+    return jsonify({
+        'success': False,
+        'error': f'{module_name} not yet deployed',
+        'detail': f'This endpoint will be active after Phase 6 {deliverable} is deployed.',
+    }), 503
+
+
+# ============================================================================
+# BRIEFING ENDPOINTS
+# ============================================================================
+
+@proactive_bp.route('/api/briefing', methods=['GET'])
+def get_briefing():
+    """
+    GET /api/briefing
+
+    Returns the latest daily briefing.
+    If no briefing exists for today, generates one on-demand before returning.
+    This is the primary endpoint called by the frontend on page load.
+    """
+    try:
+        from proactive.daily_briefing import (
+            get_briefing_for_date,
+            generate_daily_briefing,
+        )
+        from datetime import date
+
+        today_iso = date.today().isoformat()
+
+        # Check if today's briefing already exists
+        briefing = get_briefing_for_date(today_iso)
+
+        if not briefing:
+            # Generate on-demand — first load of the day
+            logger.info("No briefing for today — generating on-demand")
+            result = generate_daily_briefing()
+            if result.get('success') or result.get('content'):
+                briefing = {
+                    'briefing_id':   result.get('briefing_id'),
+                    'briefing_date': result.get('briefing_date'),
+                    'content':       result.get('content'),
+                    'data_summary':  result.get('data_summary', {}),
+                    'generated_at':  result.get('generated_at'),
+                }
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': 'Failed to generate briefing',
+                    'detail': result.get('error', 'Unknown error'),
+                }), 500
+
+        return jsonify({
+            'success': True,
+            'briefing': briefing,
+        })
+
+    except Exception as e:
+        logger.error(f"GET /api/briefing failed: {e}")
+        import traceback
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc(),
+        }), 500
+
+
+@proactive_bp.route('/api/briefing/generate', methods=['GET'])
+def force_generate_briefing():
+    """
+    GET /api/briefing/generate
+
+    Force-regenerate today's briefing, overwriting any existing one.
+    Use this when Jim wants a fresh briefing after adding tasks or leads.
+    """
+    try:
+        from proactive.daily_briefing import generate_daily_briefing
+
+        result = generate_daily_briefing()
+
+        status_code = 200 if result.get('success') else 207
+        return jsonify(result), status_code
+
+    except Exception as e:
+        logger.error(f"GET /api/briefing/generate failed: {e}")
+        import traceback
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc(),
+        }), 500
+
+
+@proactive_bp.route('/api/briefing/history', methods=['GET'])
+def briefing_history():
+    """
+    GET /api/briefing/history?days=7
+
+    Returns briefings from the past N days (default 7, max 90).
+    """
+    try:
+        days = int(request.args.get('days', 7))
+    except (ValueError, TypeError):
+        days = 7
+
+    try:
+        from proactive.daily_briefing import get_briefing_history
+
+        briefings = get_briefing_history(days=days)
+        return jsonify({
+            'success':  True,
+            'days':     days,
+            'count':    len(briefings),
+            'briefings': briefings,
+        })
+
+    except Exception as e:
+        logger.error(f"GET /api/briefing/history failed: {e}")
+        import traceback
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc(),
+        }), 500
+
+
+# ============================================================================
+# TASK ENDPOINTS
+# ============================================================================
+
+@proactive_bp.route('/api/tasks', methods=['GET'])
+def get_tasks():
+    """
+    GET /api/tasks
+
+    Returns pending and in-progress tasks, sorted by priority.
+    Optional query params: ?category=client_work  ?priority=high  ?limit=50
+    """
+    try:
+        from proactive.task_manager import get_pending_tasks
+
+        limit    = int(request.args.get('limit', 50))
+        category = request.args.get('category')
+        priority = request.args.get('priority')
+
+        tasks = get_pending_tasks(limit=limit, category=category, priority=priority)
+
+        return jsonify({
+            'success': True,
+            'count':   len(tasks),
+            'tasks':   tasks,
+        })
+
+    except Exception as e:
+        logger.error(f"GET /api/tasks failed: {e}")
+        import traceback
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc(),
+        }), 500
+
+
+@proactive_bp.route('/api/tasks', methods=['POST'])
+def create_task():
+    """
+    POST /api/tasks
+
+    Create a task manually.
+    Body (JSON):
+        title        (str, required)
+        description  (str, optional)
+        priority     (str, optional) — critical|high|medium|low
+        category     (str, optional) — client_work|lead_generation|app_maintenance|
+                                        marketing|learning|admin
+        project_name (str, optional)
+        due_date     (str, optional) — ISO date 'YYYY-MM-DD'
+    """
+    try:
+        from proactive.task_manager import add_task
+
+        data = request.get_json(force=True, silent=True) or {}
+
+        title = data.get('title', '').strip()
+        if not title:
+            return jsonify({
+                'success': False,
+                'error': 'title is required',
+            }), 400
+
+        task_id = add_task(
+            title        = title,
+            description  = data.get('description'),
+            priority     = data.get('priority', 'medium'),
+            category     = data.get('category', 'admin'),
+            source       = 'user',
+            due_date     = data.get('due_date'),
+            project_name = data.get('project_name'),
+        )
+
+        return jsonify({
+            'success': True,
+            'task_id': task_id,
+            'message': f"Task #{task_id} created: {title}",
+        }), 201
+
+    except ValueError as ve:
+        return jsonify({'success': False, 'error': str(ve)}), 400
+    except Exception as e:
+        logger.error(f"POST /api/tasks failed: {e}")
+        import traceback
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc(),
+        }), 500
+
+
+@proactive_bp.route('/api/tasks/<int:task_id>', methods=['PUT'])
+def update_task(task_id: int):
+    """
+    PUT /api/tasks/<id>
+
+    Update one or more fields on a task.
+    Body (JSON): any combination of title, description, priority, status,
+                 category, due_date, project_name, notes
+    """
+    try:
+        from proactive.task_manager import update_task as _update_task
+
+        data = request.get_json(force=True, silent=True) or {}
+
+        if not data:
+            return jsonify({'success': False, 'error': 'Request body is empty'}), 400
+
+        updated = _update_task(task_id, **data)
+
+        if updated:
+            return jsonify({'success': True, 'task_id': task_id, 'updated': True})
+        else:
+            return jsonify({
+                'success': False,
+                'error': f'Task {task_id} not found or nothing changed',
+            }), 404
+
+    except ValueError as ve:
+        return jsonify({'success': False, 'error': str(ve)}), 400
+    except Exception as e:
+        logger.error(f"PUT /api/tasks/{task_id} failed: {e}")
+        import traceback
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc(),
+        }), 500
+
+
+@proactive_bp.route('/api/tasks/<int:task_id>/complete', methods=['PUT'])
+def complete_task(task_id: int):
+    """
+    PUT /api/tasks/<id>/complete
+
+    Mark a task as completed.
+    Body (JSON, optional): { "notes": "Done — sent to client" }
+    """
+    try:
+        from proactive.task_manager import complete_task as _complete_task
+
+        data  = request.get_json(force=True, silent=True) or {}
+        notes = data.get('notes')
+
+        updated = _complete_task(task_id, notes=notes)
+
+        if updated:
+            return jsonify({
+                'success': True,
+                'task_id': task_id,
+                'status':  'completed',
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error':   f'Task {task_id} not found or already completed',
+            }), 404
+
+    except Exception as e:
+        logger.error(f"PUT /api/tasks/{task_id}/complete failed: {e}")
+        import traceback
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc(),
+        }), 500
+
+
+@proactive_bp.route('/api/tasks/<int:task_id>/defer', methods=['PUT'])
+def defer_task(task_id: int):
+    """
+    PUT /api/tasks/<id>/defer
+
+    Defer a task with an optional new due date and reason.
+    Body (JSON, optional):
+        { "new_due_date": "2026-03-20", "reason": "Waiting on client data" }
+    """
+    try:
+        from proactive.task_manager import defer_task as _defer_task
+
+        data         = request.get_json(force=True, silent=True) or {}
+        new_due_date = data.get('new_due_date')
+        reason       = data.get('reason')
+
+        updated = _defer_task(task_id, new_due_date=new_due_date, reason=reason)
+
+        if updated:
+            return jsonify({
+                'success':      True,
+                'task_id':      task_id,
+                'status':       'deferred',
+                'new_due_date': new_due_date,
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error':   f'Task {task_id} not found or already completed',
+            }), 404
+
+    except Exception as e:
+        logger.error(f"PUT /api/tasks/{task_id}/defer failed: {e}")
+        import traceback
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc(),
+        }), 500
+
+
+# ============================================================================
+# LEAD ENDPOINTS (stubs until Deliverable 3: proactive/lead_scanner.py)
+# ============================================================================
+
+@proactive_bp.route('/api/leads', methods=['GET'])
+def get_leads():
+    """
+    GET /api/leads
+    Returns new/unreviewed leads. Active after Deliverable 3 is deployed.
+    """
+    try:
+        from proactive.lead_scanner import get_new_leads
+        limit = int(request.args.get('limit', 10))
+        leads = get_new_leads(limit=limit)
+        return jsonify({'success': True, 'count': len(leads), 'leads': leads})
+    except ImportError:
+        return _module_not_ready('Lead Scanner', 'Deliverable 3')
+    except Exception as e:
+        logger.error(f"GET /api/leads failed: {e}")
+        import traceback
+        return jsonify({
+            'success': False, 'error': str(e),
+            'traceback': traceback.format_exc(),
+        }), 500
+
+
+@proactive_bp.route('/api/leads/<int:lead_id>/review', methods=['PUT'])
+def review_lead(lead_id: int):
+    """
+    PUT /api/leads/<id>/review
+    Mark a lead as reviewed, contacted, or dismissed.
+    Active after Deliverable 3 is deployed.
+    Body: { "status": "reviewed" | "contacted" | "dismissed" }
+    """
+    try:
+        from proactive.lead_scanner import update_lead_status
+        data   = request.get_json(force=True, silent=True) or {}
+        status = data.get('status', 'reviewed')
+        updated = update_lead_status(lead_id, status)
+        if updated:
+            return jsonify({'success': True, 'lead_id': lead_id, 'status': status})
+        return jsonify({'success': False, 'error': f'Lead {lead_id} not found'}), 404
+    except ImportError:
+        return _module_not_ready('Lead Scanner', 'Deliverable 3')
+    except Exception as e:
+        logger.error(f"PUT /api/leads/{lead_id}/review failed: {e}")
+        import traceback
+        return jsonify({
+            'success': False, 'error': str(e),
+            'traceback': traceback.format_exc(),
+        }), 500
+
+
+# ============================================================================
+# MONITOR ENDPOINTS (stubs until Deliverable 4: proactive/app_monitor.py)
+# ============================================================================
+
+@proactive_bp.route('/api/monitor/services', methods=['GET'])
+def get_monitored_services():
+    """
+    GET /api/monitor/services
+    Returns all monitored services with latest health status.
+    Active after Deliverable 4 is deployed.
+    """
+    try:
+        from proactive.app_monitor import get_health_summary
+        summary = get_health_summary()
+        return jsonify({'success': True, 'health_summary': summary})
+    except ImportError:
+        return _module_not_ready('App Monitor', 'Deliverable 4')
+    except Exception as e:
+        logger.error(f"GET /api/monitor/services failed: {e}")
+        import traceback
+        return jsonify({
+            'success': False, 'error': str(e),
+            'traceback': traceback.format_exc(),
+        }), 500
+
+
+@proactive_bp.route('/api/monitor/services', methods=['POST'])
+def register_monitored_service():
+    """
+    POST /api/monitor/services
+    Register a new service to monitor.
+    Body: { "service_name": "...", "endpoint_url": "...", "check_interval_minutes": 60 }
+    Active after Deliverable 4 is deployed.
+    """
+    try:
+        from proactive.app_monitor import register_service
+        data = request.get_json(force=True, silent=True) or {}
+        service_name = data.get('service_name', '').strip()
+        endpoint_url = data.get('endpoint_url', '').strip()
+        interval     = int(data.get('check_interval_minutes', 60))
+
+        if not service_name or not endpoint_url:
+            return jsonify({
+                'success': False,
+                'error': 'service_name and endpoint_url are required',
+            }), 400
+
+        service_id = register_service(service_name, endpoint_url, interval)
+        return jsonify({
+            'success': True,
+            'service_id': service_id,
+            'service_name': service_name,
+        }), 201
+    except ImportError:
+        return _module_not_ready('App Monitor', 'Deliverable 4')
+    except Exception as e:
+        logger.error(f"POST /api/monitor/services failed: {e}")
+        import traceback
+        return jsonify({
+            'success': False, 'error': str(e),
+            'traceback': traceback.format_exc(),
+        }), 500
+
+
+# ============================================================================
+# PROACTIVE STATUS ENDPOINT
+# ============================================================================
+
+@proactive_bp.route('/api/proactive/status', methods=['GET'])
+def proactive_status():
+    """
+    GET /api/proactive/status
+
+    Returns the status of all proactive system components.
+    Shows which modules are live and which are pending future deliverables.
+    Scheduler status will be populated in Deliverable 5.
+    """
+    status = {
+        'success': True,
+        'modules': {},
+        'scheduler': {
+            'status': 'not_yet_deployed',
+            'detail': 'Scheduler will be active after Phase 6 Deliverable 5',
+        },
+    }
+
+    # Task Manager
+    try:
+        from proactive.task_manager import get_task_summary
+        summary = get_task_summary()
+        status['modules']['task_manager'] = {
+            'status': 'active',
+            'total_pending_tasks': summary.get('total_pending', 0),
+        }
+    except Exception as e:
+        status['modules']['task_manager'] = {'status': 'error', 'error': str(e)}
+
+    # Daily Briefing
+    try:
+        from proactive.daily_briefing import get_latest_briefing
+        latest = get_latest_briefing()
+        status['modules']['daily_briefing'] = {
+            'status': 'active',
+            'latest_briefing_date': latest['briefing_date'] if latest else None,
+        }
+    except Exception as e:
+        status['modules']['daily_briefing'] = {'status': 'error', 'error': str(e)}
+
+    # Lead Scanner (Deliverable 3)
+    try:
+        from proactive.lead_scanner import get_lead_summary
+        status['modules']['lead_scanner'] = {'status': 'active'}
+    except ImportError:
+        status['modules']['lead_scanner'] = {
+            'status': 'pending',
+            'detail': 'Deploys with Phase 6 Deliverable 3',
+        }
+    except Exception as e:
+        status['modules']['lead_scanner'] = {'status': 'error', 'error': str(e)}
+
+    # App Monitor (Deliverable 4)
+    try:
+        from proactive.app_monitor import get_health_summary
+        status['modules']['app_monitor'] = {'status': 'active'}
+    except ImportError:
+        status['modules']['app_monitor'] = {
+            'status': 'pending',
+            'detail': 'Deploys with Phase 6 Deliverable 4',
+        }
+    except Exception as e:
+        status['modules']['app_monitor'] = {'status': 'error', 'error': str(e)}
+
+    return jsonify(status)
+
+
+# I did no harm and this file is not truncated
