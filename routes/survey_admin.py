@@ -1172,12 +1172,4 @@ def run_acceptance_test():
 
 
 # I did no harm and this file is not truncated
-```
 
----
-
-**One file to deploy:** `routes/survey_admin.py`
-
-**How to use it after deploy:**
-```
-https://your-app.onrender.com/api/survey/admin/acceptance-test?password=YOUR_PASSWORD
