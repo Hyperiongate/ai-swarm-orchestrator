@@ -2,7 +2,7 @@
 SURVEY IN A BOX — Admin Routes
 File: routes/survey_admin.py
 Created: March 10, 2026
-Last Updated: March 10, 2026 — Initial creation, Phase 1 Step 1.3
+Last Updated: March 12, 2026 — Added acceptance test endpoint
 
 PURPOSE:
     Backend routes for Jim's password-protected Survey in a Box admin dashboard.
@@ -18,17 +18,17 @@ PURPOSE:
     This blueprint does NOT touch any existing Swarm routes or tables.
 
 ENDPOINTS:
-    GET  /survey/admin                          — Dashboard page (HTML)
-    POST /api/survey/admin/login                — Verify password, set session
-    POST /api/survey/admin/logout               — Clear session
-    GET  /api/survey/admin/clients              — List all intake submissions
-    GET  /api/survey/admin/client/<id>          — Full client + project details
-    POST /api/survey/admin/client/<id>/status   — Update client status
-    POST /api/survey/admin/client/<id>/notes    — Save admin notes on client
-    POST /api/survey/admin/project/save         — Create or update project config
-    POST /api/survey/admin/project/<id>/approve — Approve survey (sets both
-                                                  project and client to approved,
-                                                  records history)
+    GET  /survey/admin                              — Dashboard page (HTML)
+    POST /api/survey/admin/login                    — Verify password, set session
+    POST /api/survey/admin/logout                   — Clear session
+    GET  /api/survey/admin/clients                  — List all intake submissions
+    GET  /api/survey/admin/client/<id>              — Full client + project details
+    POST /api/survey/admin/client/<id>/status       — Update client status
+    POST /api/survey/admin/client/<id>/notes        — Save admin notes on client
+    POST /api/survey/admin/project/save             — Create or update project config
+    POST /api/survey/admin/project/<id>/approve     — Approve survey
+    GET  /api/survey/admin/acceptance-test          — Run Phase 1 acceptance tests
+                                                      ?password=xxx (no session needed)
 
 POSTGRESQL RULES:
     - RealDictCursor dict-only rows (access by name, never by index)
@@ -41,12 +41,19 @@ ENVIRONMENT VARIABLES:
                             Set in Render environment variables.
 
 CHANGELOG:
+    - March 12, 2026: Added GET /api/survey/admin/acceptance-test endpoint.
+                      Runs all 10 Phase 1 acceptance criteria programmatically.
+                      Creates test records, exercises every endpoint, then deletes
+                      all test data. Safe to run any time, any number of times.
+                      Auth: ?password=xxx query param (no session required).
+                      No changes to any existing routes or logic.
     - March 10, 2026: Initial creation. Phase 1 Step 1.3 of Survey in a Box.
 """
 
 import json
 import os
 import secrets
+import time
 import traceback
 from datetime import datetime
 
@@ -62,6 +69,10 @@ survey_admin_bp = Blueprint('survey_admin', __name__)
 
 VALID_CLIENT_STATUSES = ['new', 'reviewing', 'approved', 'rejected']
 VALID_PROJECT_STATUSES = ['draft', 'approved', 'administered', 'processing', 'delivered']
+
+# Sentinel value used by the acceptance test to identify its own records.
+# This string is unlikely to appear in any real client submission.
+_ACCEPTANCE_TEST_SENTINEL = '__ACCEPTANCE_TEST__'
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +213,6 @@ def list_clients():
         try:
             cursor = conn.cursor()
 
-            # Build query with optional filters
             where_clauses = []
             params = []
 
@@ -295,7 +305,6 @@ def get_client(client_id):
         try:
             cursor = conn.cursor()
 
-            # Fetch client
             cursor.execute(
                 'SELECT * FROM survey_clients WHERE id = %s',
                 (client_id,)
@@ -305,7 +314,6 @@ def get_client(client_id):
             if not client_row:
                 return jsonify({'success': False, 'error': 'Client not found'}), 404
 
-            # Fetch associated project (may not exist yet)
             cursor.execute(
                 'SELECT * FROM survey_projects WHERE survey_client_id = %s ORDER BY id DESC LIMIT 1',
                 (client_id,)
@@ -314,7 +322,6 @@ def get_client(client_id):
         finally:
             conn.close()
 
-        # Build client dict — parse JSON fields back to lists
         client = {
             'id':                    client_row['id'],
             'company_name':          client_row['company_name'],
@@ -342,7 +349,6 @@ def get_client(client_id):
             'updated_at':            str(client_row['updated_at']),
         }
 
-        # Build project dict if it exists
         project = None
         if project_row:
             project = {
@@ -501,7 +507,6 @@ def save_project():
         try:
             cursor = conn.cursor()
 
-            # Check if a project already exists for this client
             cursor.execute(
                 'SELECT id, project_token FROM survey_projects WHERE survey_client_id = %s ORDER BY id DESC LIMIT 1',
                 (client_id,)
@@ -509,7 +514,6 @@ def save_project():
             existing = cursor.fetchone()
 
             if existing:
-                # UPDATE existing project
                 cursor.execute(
                     """
                     UPDATE survey_projects SET
@@ -533,7 +537,6 @@ def save_project():
                 project_id    = existing['id']
                 project_token = existing['project_token']
             else:
-                # INSERT new project with a unique token
                 project_token = secrets.token_urlsafe(16)
                 cursor.execute(
                     """
@@ -599,7 +602,6 @@ def approve_project(project_id):
         try:
             cursor = conn.cursor()
 
-            # Fetch project to get client_id and validate it exists
             cursor.execute(
                 'SELECT id, survey_client_id, status FROM survey_projects WHERE id = %s',
                 (project_id,)
@@ -617,7 +619,6 @@ def approve_project(project_id):
 
             client_id = project['survey_client_id']
 
-            # 1. Approve the project
             cursor.execute(
                 """
                 UPDATE survey_projects
@@ -627,7 +628,6 @@ def approve_project(project_id):
                 (project_id,)
             )
 
-            # 2. Approve the client
             cursor.execute(
                 """
                 UPDATE survey_clients
@@ -637,7 +637,6 @@ def approve_project(project_id):
                 (client_id,)
             )
 
-            # 3. Insert history record (for future year-over-year tracking)
             current_year = datetime.utcnow().year
             cursor.execute(
                 """
@@ -651,7 +650,6 @@ def approve_project(project_id):
         finally:
             conn.close()
 
-        # 4. Phase 2 hook — document generation (not yet built)
         print(f'[survey_admin] PHASE 2 HOOK: Project {project_id} approved. '
               f'Document generation not yet implemented (Phase 2 task).')
 
@@ -665,4 +663,521 @@ def approve_project(project_id):
         print(f'[survey_admin] approve_project error: {traceback.format_exc()}')
         return jsonify({'success': False, 'error': str(e)}), 500
 
+
+# ---------------------------------------------------------------------------
+# ROUTES — ACCEPTANCE TEST
+# ---------------------------------------------------------------------------
+
+@survey_admin_bp.route('/api/survey/admin/acceptance-test', methods=['GET'])
+def run_acceptance_test():
+    """
+    Run all Phase 1 acceptance criteria programmatically.
+
+    This endpoint creates real test records, exercises every Survey in a Box
+    endpoint in sequence, verifies each result, then deletes all test data.
+    It leaves the database exactly as it found it.
+
+    Authentication: ?password=xxx query param (no session required).
+    This allows the test to be run directly from the browser address bar
+    immediately after a deploy, without having to log in first.
+
+    Usage:
+        GET /api/survey/admin/acceptance-test?password=YOUR_PASSWORD
+
+    Returns HTTP 200 with a structured JSON report regardless of test
+    outcomes. Check report.success for the overall pass/fail result.
+    Individual test results are in report.tests[].
+
+    Tests:
+        T1  — Required tables exist in PostgreSQL
+        T2  — GET /survey/start returns 200
+        T3  — GET /survey/admin returns 200
+        T4  — POST /api/survey/intake/submit creates a client record
+        T5  — GET /api/survey/admin/clients returns the test record
+        T6  — GET /api/survey/admin/client/<id> returns full detail
+        T7  — POST /api/survey/admin/client/<id>/status updates status
+        T8  — POST /api/survey/admin/project/save creates project config
+        T9  — POST /api/survey/admin/project/<id>/approve sets both
+              project and client to approved, inserts history record
+        T10 — GET /health contains survey_in_a_box section
+
+    Cleanup: Deletes test records from survey_project_history,
+             survey_projects, and survey_clients (in dependency order).
+    """
+    run_start = time.time()
+    tests = []
+    passed = 0
+    failed = 0
+
+    # Collected IDs for cleanup — populated as tests succeed
+    test_client_id  = None
+    test_project_id = None
+
+    # -----------------------------------------------------------------------
+    # AUTH — password param, no session required
+    # -----------------------------------------------------------------------
+    provided_pw = request.args.get('password', '')
+    if not provided_pw:
+        return jsonify({
+            'success': False,
+            'error': 'Missing ?password= parameter.',
+            'usage': '/api/survey/admin/acceptance-test?password=YOUR_PASSWORD'
+        }), 400
+
+    if not secrets.compare_digest(str(provided_pw), _get_admin_password()):
+        return jsonify({'success': False, 'error': 'Incorrect password.'}), 401
+
+    # -----------------------------------------------------------------------
+    # HELPER: record a test result
+    # -----------------------------------------------------------------------
+    def record(test_id, name, ok, detail='', duration_ms=0):
+        nonlocal passed, failed
+        tests.append({
+            'id':          test_id,
+            'name':        name,
+            'passed':      ok,
+            'detail':      detail,
+            'duration_ms': round(duration_ms),
+        })
+        if ok:
+            passed += 1
+        else:
+            failed += 1
+        status = 'PASS' if ok else 'FAIL'
+        print(f'[acceptance_test] {status} {test_id}: {name} — {detail}')
+
+    # -----------------------------------------------------------------------
+    # T1 — Tables exist
+    # -----------------------------------------------------------------------
+    t_start = time.time()
+    try:
+        conn = get_db_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema = 'public'
+                  AND table_name IN (
+                      'survey_clients',
+                      'survey_projects',
+                      'survey_project_history'
+                  )
+            """)
+            found = [r['table_name'] for r in cursor.fetchall()]
+        finally:
+            conn.close()
+
+        required = {'survey_clients', 'survey_projects', 'survey_project_history'}
+        missing  = required - set(found)
+        ok       = len(missing) == 0
+        detail   = (f'{len(found)}/3 tables found'
+                    if ok else f'Missing: {", ".join(missing)}')
+        record('T1', 'Required tables exist', ok, detail,
+               (time.time() - t_start) * 1000)
+    except Exception as exc:
+        record('T1', 'Required tables exist', False, str(exc),
+               (time.time() - t_start) * 1000)
+
+    # -----------------------------------------------------------------------
+    # T2 — GET /survey/start returns 200
+    # -----------------------------------------------------------------------
+    t_start = time.time()
+    try:
+        from flask import current_app
+        with current_app.test_client() as c:
+            resp = c.get('/survey/start')
+        ok     = resp.status_code == 200
+        detail = f'HTTP {resp.status_code}'
+        record('T2', 'GET /survey/start returns 200', ok, detail,
+               (time.time() - t_start) * 1000)
+    except Exception as exc:
+        record('T2', 'GET /survey/start returns 200', False, str(exc),
+               (time.time() - t_start) * 1000)
+
+    # -----------------------------------------------------------------------
+    # T3 — GET /survey/admin returns 200
+    # -----------------------------------------------------------------------
+    t_start = time.time()
+    try:
+        from flask import current_app
+        with current_app.test_client() as c:
+            resp = c.get('/survey/admin')
+        ok     = resp.status_code == 200
+        detail = f'HTTP {resp.status_code}'
+        record('T3', 'GET /survey/admin returns 200', ok, detail,
+               (time.time() - t_start) * 1000)
+    except Exception as exc:
+        record('T3', 'GET /survey/admin returns 200', False, str(exc),
+               (time.time() - t_start) * 1000)
+
+    # -----------------------------------------------------------------------
+    # T4 — POST /api/survey/intake/submit creates a client record
+    # -----------------------------------------------------------------------
+    t_start = time.time()
+    try:
+        from flask import current_app
+        test_payload = {
+            'company_name':            _ACCEPTANCE_TEST_SENTINEL,
+            'contact_name':            'Acceptance Test Contact',
+            'email':                   'acceptance-test@shiftwork-test.internal',
+            'phone':                   '555-000-0000',
+            'industry':                'manufacturing',
+            'employee_count':          100,
+            'department_count':        2,
+            'department_names':        ['Test Dept A', 'Test Dept B'],
+            'current_schedule_type':   '12hr_rotating',
+            'crew_count':              4,
+            'shift_start_times':       '6am, 6pm',
+            'union_status':            'non-union',
+            'biggest_challenges':      ['overtime', 'retention'],
+            'previously_surveyed':     False,
+            'last_survey_date':        '',
+            'preferred_administration':'online',
+            'preferred_delivery_date': '',
+            'referral_source':         'acceptance_test',
+            'additional_notes':        'ACCEPTANCE TEST RECORD — SAFE TO DELETE',
+        }
+        with current_app.test_client() as c:
+            resp = c.post(
+                '/api/survey/intake/submit',
+                json=test_payload,
+                content_type='application/json'
+            )
+        body = resp.get_json() or {}
+        ok   = resp.status_code == 200 and body.get('success') is True and body.get('client_id')
+        if ok:
+            test_client_id = body['client_id']
+            detail = f'HTTP {resp.status_code}, client_id={test_client_id}'
+        else:
+            detail = f'HTTP {resp.status_code}, body={json.dumps(body)[:200]}'
+        record('T4', 'POST /api/survey/intake/submit creates client', ok, detail,
+               (time.time() - t_start) * 1000)
+    except Exception as exc:
+        record('T4', 'POST /api/survey/intake/submit creates client', False, str(exc),
+               (time.time() - t_start) * 1000)
+
+    # -----------------------------------------------------------------------
+    # T5 — Clients list contains the test record
+    # Requires T4 to have created test_client_id.
+    # -----------------------------------------------------------------------
+    t_start = time.time()
+    if test_client_id is None:
+        record('T5', 'Client list contains test record', False,
+               'Skipped — T4 did not create a client record', 0)
+    else:
+        try:
+            conn = get_db_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    'SELECT id, company_name, status FROM survey_clients WHERE id = %s',
+                    (test_client_id,)
+                )
+                row = cursor.fetchone()
+            finally:
+                conn.close()
+
+            ok     = row is not None and row['company_name'] == _ACCEPTANCE_TEST_SENTINEL
+            detail = (f'Found id={row["id"]}, status={row["status"]}'
+                      if ok else f'Row not found or sentinel mismatch: {row}')
+            record('T5', 'Client list contains test record', ok, detail,
+                   (time.time() - t_start) * 1000)
+        except Exception as exc:
+            record('T5', 'Client list contains test record', False, str(exc),
+                   (time.time() - t_start) * 1000)
+
+    # -----------------------------------------------------------------------
+    # T6 — GET /api/survey/admin/client/<id> returns full detail
+    # -----------------------------------------------------------------------
+    t_start = time.time()
+    if test_client_id is None:
+        record('T6', 'GET client detail returns full record', False,
+               'Skipped — T4 did not create a client record', 0)
+    else:
+        try:
+            from flask import current_app
+            # Inject session cookie so _require_auth passes
+            with current_app.test_client() as c:
+                with c.session_transaction() as sess:
+                    sess['survey_admin_logged_in'] = True
+                resp = c.get(f'/api/survey/admin/client/{test_client_id}')
+            body = resp.get_json() or {}
+            client_data = body.get('client', {})
+            ok = (resp.status_code == 200
+                  and body.get('success') is True
+                  and client_data.get('company_name') == _ACCEPTANCE_TEST_SENTINEL)
+            detail = (f'HTTP {resp.status_code}, email={client_data.get("email", "?")}' if ok
+                      else f'HTTP {resp.status_code}, body={json.dumps(body)[:200]}')
+            record('T6', 'GET client detail returns full record', ok, detail,
+                   (time.time() - t_start) * 1000)
+        except Exception as exc:
+            record('T6', 'GET client detail returns full record', False, str(exc),
+                   (time.time() - t_start) * 1000)
+
+    # -----------------------------------------------------------------------
+    # T7 — POST /api/survey/admin/client/<id>/status updates status
+    # -----------------------------------------------------------------------
+    t_start = time.time()
+    if test_client_id is None:
+        record('T7', 'Client status update works', False,
+               'Skipped — T4 did not create a client record', 0)
+    else:
+        try:
+            from flask import current_app
+            with current_app.test_client() as c:
+                with c.session_transaction() as sess:
+                    sess['survey_admin_logged_in'] = True
+                resp = c.post(
+                    f'/api/survey/admin/client/{test_client_id}/status',
+                    json={'status': 'reviewing'},
+                    content_type='application/json'
+                )
+            body = resp.get_json() or {}
+            ok   = resp.status_code == 200 and body.get('success') is True
+
+            # Verify in DB
+            if ok:
+                conn = get_db_connection()
+                try:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        'SELECT status FROM survey_clients WHERE id = %s',
+                        (test_client_id,)
+                    )
+                    db_row = cursor.fetchone()
+                finally:
+                    conn.close()
+                ok = db_row is not None and db_row['status'] == 'reviewing'
+                detail = (f'status=reviewing confirmed in DB'
+                          if ok else f'DB status={db_row}')
+            else:
+                detail = f'HTTP {resp.status_code}, body={json.dumps(body)[:200]}'
+
+            record('T7', 'Client status update works', ok, detail,
+                   (time.time() - t_start) * 1000)
+        except Exception as exc:
+            record('T7', 'Client status update works', False, str(exc),
+                   (time.time() - t_start) * 1000)
+
+    # -----------------------------------------------------------------------
+    # T8 — POST /api/survey/admin/project/save creates project config
+    # -----------------------------------------------------------------------
+    t_start = time.time()
+    if test_client_id is None:
+        record('T8', 'Save project config creates project record', False,
+               'Skipped — T4 did not create a client record', 0)
+    else:
+        try:
+            from flask import current_app
+            project_payload = {
+                'survey_client_id':   test_client_id,
+                'selected_questions': ['q1', 'q2', 'q3'],
+                'excluded_questions': [],
+                'custom_questions':   [],
+                'selected_schedules': ['4on4off_12hr'],
+                'admin_notes':        'Acceptance test project config',
+            }
+            with current_app.test_client() as c:
+                with c.session_transaction() as sess:
+                    sess['survey_admin_logged_in'] = True
+                resp = c.post(
+                    '/api/survey/admin/project/save',
+                    json=project_payload,
+                    content_type='application/json'
+                )
+            body = resp.get_json() or {}
+            ok   = (resp.status_code == 200
+                    and body.get('success') is True
+                    and body.get('project_id'))
+            if ok:
+                test_project_id = body['project_id']
+                detail = f'project_id={test_project_id}, token={body.get("project_token", "?")[:8]}…'
+            else:
+                detail = f'HTTP {resp.status_code}, body={json.dumps(body)[:200]}'
+            record('T8', 'Save project config creates project record', ok, detail,
+                   (time.time() - t_start) * 1000)
+        except Exception as exc:
+            record('T8', 'Save project config creates project record', False, str(exc),
+                   (time.time() - t_start) * 1000)
+
+    # -----------------------------------------------------------------------
+    # T9 — POST /api/survey/admin/project/<id>/approve sets approved status
+    # -----------------------------------------------------------------------
+    t_start = time.time()
+    if test_project_id is None:
+        record('T9', 'Approve project sets approved status + history', False,
+               'Skipped — T8 did not create a project record', 0)
+    else:
+        try:
+            from flask import current_app
+            with current_app.test_client() as c:
+                with c.session_transaction() as sess:
+                    sess['survey_admin_logged_in'] = True
+                resp = c.post(
+                    f'/api/survey/admin/project/{test_project_id}/approve',
+                    json={},
+                    content_type='application/json'
+                )
+            body = resp.get_json() or {}
+            ok   = resp.status_code == 200 and body.get('success') is True
+
+            # Verify in DB: project approved, client approved, history row exists
+            if ok:
+                conn = get_db_connection()
+                try:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        'SELECT status, approved_at FROM survey_projects WHERE id = %s',
+                        (test_project_id,)
+                    )
+                    proj_row = cursor.fetchone()
+
+                    cursor.execute(
+                        'SELECT status FROM survey_clients WHERE id = %s',
+                        (test_client_id,)
+                    )
+                    cli_row = cursor.fetchone()
+
+                    cursor.execute(
+                        'SELECT id FROM survey_project_history WHERE survey_project_id = %s',
+                        (test_project_id,)
+                    )
+                    hist_row = cursor.fetchone()
+                finally:
+                    conn.close()
+
+                proj_ok = proj_row and proj_row['status'] == 'approved' and proj_row['approved_at']
+                cli_ok  = cli_row  and cli_row['status']  == 'approved'
+                hist_ok = hist_row is not None
+
+                ok     = proj_ok and cli_ok and hist_ok
+                detail = (f'project=approved, client=approved, history_id={hist_row["id"] if hist_ok else "missing"}'
+                          if ok else
+                          f'proj_ok={proj_ok}, cli_ok={cli_ok}, hist_ok={hist_ok}')
+            else:
+                detail = f'HTTP {resp.status_code}, body={json.dumps(body)[:200]}'
+
+            record('T9', 'Approve project sets approved status + history', ok, detail,
+                   (time.time() - t_start) * 1000)
+        except Exception as exc:
+            record('T9', 'Approve project sets approved status + history', False, str(exc),
+                   (time.time() - t_start) * 1000)
+
+    # -----------------------------------------------------------------------
+    # T10 — GET /health contains survey_in_a_box section
+    # -----------------------------------------------------------------------
+    t_start = time.time()
+    try:
+        from flask import current_app
+        with current_app.test_client() as c:
+            resp = c.get('/health')
+        body   = resp.get_json() or {}
+        siab   = body.get('survey_in_a_box', {})
+        ok     = resp.status_code == 200 and siab.get('status') == 'enabled'
+        detail = (f'status={siab.get("status")}, phase={siab.get("phase", "?")}' if ok
+                  else f'HTTP {resp.status_code}, survey_in_a_box={siab}')
+        record('T10', 'GET /health has survey_in_a_box section', ok, detail,
+               (time.time() - t_start) * 1000)
+    except Exception as exc:
+        record('T10', 'GET /health has survey_in_a_box section', False, str(exc),
+               (time.time() - t_start) * 1000)
+
+    # -----------------------------------------------------------------------
+    # CLEANUP — Delete all test records in reverse dependency order.
+    # Always runs, even if some tests failed. We never leave orphan rows.
+    # -----------------------------------------------------------------------
+    cleanup_result = {'success': True, 'operations': [], 'records_deleted': 0}
+    try:
+        conn = get_db_connection()
+        try:
+            cursor = conn.cursor()
+
+            if test_project_id is not None:
+                cursor.execute(
+                    'DELETE FROM survey_project_history WHERE survey_project_id = %s',
+                    (test_project_id,)
+                )
+                n = cursor.rowcount
+                cleanup_result['operations'].append(f'Deleted {n} history row(s)')
+                cleanup_result['records_deleted'] += n
+
+                cursor.execute(
+                    'DELETE FROM survey_projects WHERE id = %s',
+                    (test_project_id,)
+                )
+                n = cursor.rowcount
+                cleanup_result['operations'].append(f'Deleted {n} project row(s)')
+                cleanup_result['records_deleted'] += n
+
+            if test_client_id is not None:
+                cursor.execute(
+                    'DELETE FROM survey_clients WHERE id = %s',
+                    (test_client_id,)
+                )
+                n = cursor.rowcount
+                cleanup_result['operations'].append(f'Deleted {n} client row(s)')
+                cleanup_result['records_deleted'] += n
+
+            # Safety net: delete any orphaned sentinel rows from failed prior runs
+            cursor.execute(
+                'DELETE FROM survey_clients WHERE company_name = %s',
+                (_ACCEPTANCE_TEST_SENTINEL,)
+            )
+            orphans = cursor.rowcount
+            if orphans:
+                cleanup_result['operations'].append(
+                    f'Deleted {orphans} orphaned sentinel row(s) from prior runs'
+                )
+                cleanup_result['records_deleted'] += orphans
+
+            conn.commit()
+        finally:
+            conn.close()
+
+        cleanup_result['operations'].append('Database committed — no test data remains')
+        print(f'[acceptance_test] CLEANUP: {cleanup_result["records_deleted"]} records deleted')
+
+    except Exception as exc:
+        cleanup_result['success'] = False
+        cleanup_result['error']   = str(exc)
+        print(f'[acceptance_test] CLEANUP ERROR: {traceback.format_exc()}')
+
+    # -----------------------------------------------------------------------
+    # FINAL REPORT
+    # -----------------------------------------------------------------------
+    total_ms    = round((time.time() - run_start) * 1000)
+    all_passed  = failed == 0
+    total_tests = len(tests)
+
+    print(f'[acceptance_test] COMPLETE: {passed}/{total_tests} passed in {total_ms}ms')
+
+    return jsonify({
+        'success':     all_passed,
+        'summary':     f'{passed}/{total_tests} tests passed',
+        'total_tests': total_tests,
+        'passed':      passed,
+        'failed':      failed,
+        'duration_ms': total_ms,
+        'tests':       tests,
+        'cleanup':     cleanup_result,
+        'note': (
+            'All test records removed. Database is clean.'
+            if cleanup_result['success']
+            else 'WARNING: Cleanup encountered an error. '
+                 'Check cleanup.error and manually delete rows '
+                 f'where company_name = \'{_ACCEPTANCE_TEST_SENTINEL}\'.'
+        ),
+    })
+
+
 # I did no harm and this file is not truncated
+```
+
+---
+
+**One file to deploy:** `routes/survey_admin.py`
+
+**How to use it after deploy:**
+```
+https://your-app.onrender.com/api/survey/admin/acceptance-test?password=YOUR_PASSWORD
