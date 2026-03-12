@@ -5,6 +5,14 @@ Shiftwork Solutions LLC
 =============================================================================
 CHANGE LOG:
 
+- March 12, 2026: ADDED BRIEFING MODE SUPPORT
+  * Added briefingModeBtn toggle in switchMode()
+  * Added briefingInfo panel show/hide in switchMode()
+  * Added checkBriefingStatus() call in switchMode() mode handler
+  * Added 'briefing' placeholder text in switchMode() placeholders object
+  * Added 'briefing' quick actions in updateQuickActions()
+  All five additions follow the exact same pattern as blogposts/casestudies mode.
+
 - March 1, 2026: FIXED COPY BUTTON "[object PointerEvent]" BUG
   * Root cause: copyToClipboard(event, msgId) used event.currentTarget inside
     a navigator.clipboard async callback, where currentTarget is null.
@@ -335,6 +343,7 @@ function clearConversationArea() {
         '<li><strong>🔔 Alerts Mode:</strong> Autonomous monitoring and notifications</li>' +
         '<li><strong>📊 Pipeline Mode:</strong> Lead scoring and sales pipeline management</li>' +
         '<li><strong>📝 Manuals Mode:</strong> Conversational implementation manual generation</li>' +
+        '<li><strong>🗓️ Briefing Mode:</strong> Daily briefings, tasks, and lead alerts</li>' +
         '</ul></div></div>';
     
     messageCounter = 0;
@@ -811,6 +820,10 @@ function switchMode(mode) {
     // ADDED February 23, 2026: Blog Post Generator button toggle
     var blogpostsBtn = document.getElementById('blogpostsModeBtn');
     if (blogpostsBtn) blogpostsBtn.classList.toggle('active', mode === 'blogposts');
+
+    // ADDED March 12, 2026: Briefing mode button toggle
+    var briefingBtn = document.getElementById('briefingModeBtn');
+    if (briefingBtn) briefingBtn.classList.toggle('active', mode === 'briefing');
     
     document.getElementById('projectInfo').style.display = mode === 'project' ? 'block' : 'none';
     document.getElementById('calculatorInfo').style.display = mode === 'calculator' ? 'block' : 'none';
@@ -836,6 +849,10 @@ function switchMode(mode) {
     // ADDED February 23, 2026: Blog Post Generator panel show/hide
     var blogpostsInfo = document.getElementById('blogpostsInfo');
     if (blogpostsInfo) blogpostsInfo.style.display = mode === 'blogposts' ? 'block' : 'none';
+
+    // ADDED March 12, 2026: Briefing panel show/hide
+    var briefingInfo = document.getElementById('briefingInfo');
+    if (briefingInfo) briefingInfo.style.display = mode === 'briefing' ? 'block' : 'none';
     
     if (mode === 'project') loadSavedProjects();
     else if (mode === 'survey') loadQuestionBank();
@@ -848,6 +865,8 @@ function switchMode(mode) {
     else if (mode === 'casestudies' && typeof checkCaseStudiesStatus === 'function') checkCaseStudiesStatus();
     // ADDED February 23, 2026: Blog Post Generator status check on mode switch
     else if (mode === 'blogposts' && typeof checkBlogPostsStatus === 'function') checkBlogPostsStatus();
+    // ADDED March 12, 2026: Briefing status check on mode switch
+    else if (mode === 'briefing' && typeof checkBriefingStatus === 'function') checkBriefingStatus();
     
     updateQuickActions();
     
@@ -865,7 +884,9 @@ function switchMode(mode) {
         'manuals': "Type your request... (e.g., 'Create implementation manual for Acme Manufacturing')",
         'casestudies': "Select industry, problem, and solution in the panel to generate a case study",
         // ADDED February 23, 2026: Blog Post Generator placeholder
-        'blogposts': "Select a topic in the panel to generate a blog post"
+        'blogposts': "Select a topic in the panel to generate a blog post",
+        // ADDED March 12, 2026: Briefing mode placeholder
+        'briefing': "Ask about your briefing, tasks, or leads... (e.g., 'What are my tasks today?')"
     };
     input.placeholder = placeholders[mode] || placeholders['quick'];
 }
@@ -902,6 +923,11 @@ function updateQuickActions() {
         // ADDED February 23, 2026: Blog Post Generator quick actions
         'blogposts': '<li onclick="if(typeof generateBlogPost===\'function\')generateBlogPost()">✍️ New Post</li>' +
             '<li onclick="if(typeof loadSavedBlogPosts===\'function\')loadSavedBlogPosts()">📚 Refresh Library</li>',
+        // ADDED March 12, 2026: Briefing mode quick actions
+        'briefing': '<li onclick="if(typeof refreshBriefing===\'function\')refreshBriefing()">🔄 Refresh Briefing</li>' +
+            '<li onclick="if(typeof viewAllTasksInChat===\'function\')viewAllTasksInChat()">📋 View All Tasks</li>' +
+            '<li onclick="if(typeof viewAllLeadsInChat===\'function\')viewAllLeadsInChat()">🎯 View New Leads</li>' +
+            '<li onclick="if(typeof addQuickTask===\'function\')addQuickTask()">➕ Add Task</li>',
         'default': '<li onclick="quickAction(\'data collection\')">📋 Data Collection Doc</li>' +
             '<li onclick="quickAction(\'proposal\')">📄 Create Proposal</li>' +
             '<li onclick="quickAction(\'analyze files\')">📊 Analyze Files</li>' +
@@ -2092,7 +2118,13 @@ function initializeApp() {
     
     setInterval(function() { loadStats(); loadDocuments(); }, 30000);
     
-    console.log('🚀 AI Swarm Interface initialized - Copy button fix applied - March 1, 2026');
+    // ADDED March 12, 2026: Trigger briefing status check on startup
+    // so the briefing panel is pre-loaded when user clicks the Briefing tab
+    setTimeout(function() {
+        if (typeof checkBriefingStatus === 'function') checkBriefingStatus();
+    }, 1200);
+    
+    console.log('🚀 AI Swarm Interface initialized - Briefing mode wired - March 12, 2026');
 }
 
 if (document.readyState === 'loading') {
