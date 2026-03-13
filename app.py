@@ -1104,6 +1104,23 @@ except Exception as e:
     print(f"Survey Respondent registration failed: {e}")
 
 # ----------------------------------------------------------------------------
+# Survey in a Box: Normative Database API (Phase 5, Step 5.1)
+# Provides GET /api/survey/norm/status (load verification),
+# POST /api/survey/norm/compare, POST /api/survey/norm/compare-categorical,
+# POST /api/survey/norm/batch, POST /api/survey/norm/significant,
+# GET /api/survey/norm/search endpoints.
+# Added: March 13, 2026
+# ----------------------------------------------------------------------------
+try:
+    from routes.survey_normative import survey_normative_bp
+    app.register_blueprint(survey_normative_bp)
+    print("Survey in a Box Normative Database API registered")
+except ImportError as e:
+    print(f"Survey Normative routes not found: {e}")
+except Exception as e:
+    print(f"Survey Normative registration failed: {e}")
+
+# ----------------------------------------------------------------------------
 # Phase 6: Proactive Agent API
 # Provides /api/briefing, /api/tasks, /api/leads, /api/monitor/services,
 # /api/proactive/status endpoints.
