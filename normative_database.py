@@ -1,447 +1,714 @@
 """
 NORMATIVE DATABASE MODULE
-Created: January 20, 2026
-Last Updated: January 20, 2026
+File: normative_database.py
+Repo: ai-swarm-orchestrator (root directory)
 
-CHANGES IN THIS VERSION:
-- January 20, 2026: Initial creation
-  * Loads 206-company benchmark data from Excel
-  * Provides normative comparison functions
-  * Calculates percentiles and deviations from norm
-  * Integrates with Project Mode for client comparisons
+CHANGELOG:
+- 2026-03-13: Complete rewrite by Claude Sonnet (Phase 5, Step 5.1)
+  * Correct data model: parses question->options->AVERAGE block structure
+  * Loads 201 questions (69 numeric/Likert + 132 categorical Yes/No/MC)
+  * Reads pre-calculated Averages column (col 204) for norm mean
+  * Reads per-company AVERAGE row values for real std_dev across facilities
+  * Correct company count (202 facilities, excludes Averages column)
+  * Render-safe file path resolution (relative to app root)
+  * Singleton with explicit load status and error reporting
+  * Exposes get_status() for /api/survey/norm/status health endpoint
+- 2026-01-20: Initial creation (original version — replaced)
 
 PURPOSE:
-Loads and manages the normative database of 206 companies with survey responses.
-Provides comparison functions to benchmark client data against industry norms.
+Loads and manages the normative database of ~200 facilities with survey
+response data. Provides comparison functions to benchmark client survey
+results against industry norms. This is the competitive moat of
+Survey in a Box — every client report shows how their workforce compares
+to the average shiftworker across hundreds of facilities.
 
-FEATURES:
-- Load benchmark data from Excel file
-- Compare client responses to normative averages
-- Calculate percentiles and standard deviations
-- Identify significant deviations
-- Generate comparative insights
+DATA FILE:
+  Repo path:   data/norms_overall.xlsx
+  Render path: /opt/render/project/src/data/norms_overall.xlsx
+  Sheet used:  'data'
+  Structure:
+    Row 1:       Company names in columns B..GW; column 'Averages' = pre-calc mean
+    Rows 2+:     Question blocks: question row -> option rows -> AVERAGE row
+    AVERAGE row: per-company mean scores across columns; Averages col = cross-company mean
+    Option rows: per-company % distributions; Averages col = cross-company % per option
 
-DATA STRUCTURE:
-- 206 companies across rows
-- Survey questions and responses across columns
-- Calculated averages for each question
-- Industry benchmarks by sector
+QUESTION TYPES:
+  Numeric/Likert (69 questions):
+    Have an AVERAGE row. norm_mean and norm_std_dev are available.
+    Client comparison: client mean vs norm mean, z-score, percentile.
+
+  Categorical (132 questions):
+    Yes/No, multiple-choice. No AVERAGE row.
+    norm data = % of respondents choosing each option (cross-company average).
+    Client comparison: client % per option vs norm %.
 
 AUTHOR: Jim @ Shiftwork Solutions LLC
 """
 
-import openpyxl
+import os
 import numpy as np
 from pathlib import Path
-import json
 from datetime import datetime
 
+try:
+    import openpyxl
+    OPENPYXL_AVAILABLE = True
+except ImportError:
+    OPENPYXL_AVAILABLE = False
+
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+# Known section header rows in the Excel sheet (row number -> section name)
+_SECTION_HEADER_ROWS = {
+    5:    'Demographic Information',
+    97:   'Health & Alertness',
+    279:  'Working Conditions',
+    400:  'Shift Schedule Features',
+    588:  'Overtime',
+    669:  'Day Care / Elder Care',
+    701:  'Demographic Information',
+    743:  'Working Conditions',
+    850:  'Shift Schedule Features',
+    1032: 'Overtime',
+    1074: 'Day Care / Elder Care',
+    1094: 'Schedule Feature Priorities',
+}
+
+# Response option values that are never treated as question rows
+_OPTION_VALUES = {
+    'yes', 'no', 'good', 'poor', 'average',
+    '1', '2', '3', '4', '5',
+}
+
+
+# ---------------------------------------------------------------------------
+# Helper
+# ---------------------------------------------------------------------------
+
+def _safe_float(value):
+    """Convert a cell value to float, returning None on failure or NaN."""
+    try:
+        f = float(value)
+        return f if f == f else None   # reject NaN
+    except (TypeError, ValueError):
+        return None
+
+
+def _resolve_excel_path():
+    """
+    Find the norms Excel file. Checks locations in priority order:
+      1. Relative to this file's directory (works on Render and local)
+      2. Environment variable override NORMS_EXCEL_PATH
+      3. Common fallback paths for local development
+    Returns a Path object or None if not found.
+    """
+    candidates = []
+
+    # 1. Relative to this module (repo root -> data/)
+    here = Path(__file__).parent
+    candidates.append(here / 'data' / 'norms_overall.xlsx')
+
+    # 2. Environment variable override
+    env_path = os.environ.get('NORMS_EXCEL_PATH')
+    if env_path:
+        candidates.append(Path(env_path))
+
+    # 3. Local dev fallbacks
+    candidates.extend([
+        Path('/mnt/user-data/uploads/Copy_of_Norms_-_Overall.xlsx'),
+        Path('./data/norms_overall.xlsx'),
+        Path('../data/norms_overall.xlsx'),
+    ])
+
+    for path in candidates:
+        if path.exists():
+            return path
+
+    return None
+
+
+def _is_question_row(text, avg_col_value, col_b_value):
+    """
+    Return True if this row looks like a question (not an option or section header).
+    Criteria:
+      - col B is empty (questions never have raw company data in col B)
+      - Averages column is empty (questions have no pre-calc average)
+      - Text is at least 15 characters
+      - Text is not a known option value
+      - Text does not start with a digit
+    """
+    if col_b_value is not None:
+        return False
+    if avg_col_value is not None:
+        return False
+    text_stripped = text.strip()
+    if len(text_stripped) < 15:
+        return False
+    if text_stripped.lower() in _OPTION_VALUES:
+        return False
+    if text_stripped[0].isdigit():
+        return False
+    return True
+
+
+def _build_question_record(section, question, q_row, options,
+                            avg_row, avg_col_val, per_company_vals):
+    """
+    Build the canonical question record dict from accumulated parsing state.
+
+    For numeric/Likert questions (have AVERAGE row):
+      norm_mean   = cross-company mean (from Averages column or computed)
+      norm_std_dev = std dev across facilities (from per-company AVERAGE row values)
+
+    For categorical questions (no AVERAGE row):
+      norm_mean and norm_std_dev are None
+      options list carries the % data
+    """
+    q_type = 'numeric' if avg_row is not None else 'categorical'
+
+    norm_mean = None
+    norm_std_dev = None
+    norm_min = None
+    norm_max = None
+    company_data_count = 0
+
+    if per_company_vals:
+        arr = np.array(per_company_vals, dtype=float)
+        norm_mean = float(np.mean(arr))
+        norm_std_dev = float(np.std(arr))
+        norm_min = float(np.min(arr))
+        norm_max = float(np.max(arr))
+        company_data_count = len(per_company_vals)
+    elif avg_col_val is not None:
+        # Fallback: only the pre-calc mean available, no std_dev
+        norm_mean = avg_col_val
+        company_data_count = 0
+
+    return {
+        'section':            section,
+        'question':           question,
+        'question_row':       q_row,
+        'type':               q_type,
+        'norm_mean':          round(norm_mean, 4) if norm_mean is not None else None,
+        'norm_std_dev':       round(norm_std_dev, 4) if norm_std_dev is not None else None,
+        'norm_min':           round(norm_min, 4) if norm_min is not None else None,
+        'norm_max':           round(norm_max, 4) if norm_max is not None else None,
+        'company_data_count': company_data_count,
+        'options':            list(options),
+    }
+
+
+# ---------------------------------------------------------------------------
+# NormativeDatabase class
+# ---------------------------------------------------------------------------
 
 class NormativeDatabase:
     """
-    Manages the 206-company normative database for benchmarking client survey results.
+    Manages the normative database of ~200 shiftwork facilities.
+
+    After instantiation, call load() before using any comparison methods.
+    The module-level get_normative_database() returns a pre-loaded singleton.
+
+    Attributes:
+        questions     (list):  All question records (201 total)
+        _index        (dict):  question text -> record (for fast lookup)
+        company_count (int):   Number of facilities in the database
+        loaded        (bool):  True after successful load()
+        load_error    (str):   Error message if load() failed, else None
+        excel_path    (Path):  Path used to load the file
     """
-    
+
     def __init__(self, excel_path=None):
-        """
-        Initialize the normative database.
-        
-        Args:
-            excel_path: Path to the normative database Excel file
-                       Defaults to /mnt/user-data/uploads/Copy_of_Norms_-_Overall.xlsx
-        """
-        if excel_path is None:
-            # Try multiple possible locations
-            possible_paths = [
-                Path("/mnt/user-data/uploads/Copy_of_Norms_-_Overall.xlsx"),
-                Path("/mnt/project/Copy_of_Norms_-_Overall.xlsx"),
-                Path("./Copy_of_Norms_-_Overall.xlsx")
-            ]
-            
-            for path in possible_paths:
-                if path.exists():
-                    excel_path = path
-                    break
-        
-        self.excel_path = excel_path
-        self.data = {}
+        self.excel_path = Path(excel_path) if excel_path else _resolve_excel_path()
         self.questions = []
-        self.companies = []
+        self._index = {}
+        self.company_count = 0
         self.loaded = False
-        
-    def load_database(self):
+        self.load_error = None
+        self._loaded_at = None
+
+    # ------------------------------------------------------------------
+    # Loading
+    # ------------------------------------------------------------------
+
+    def load(self):
         """
-        Load the normative database from Excel file.
-        Extracts questions, companies, and response data.
+        Parse the Excel file and build the internal question index.
+        Raises RuntimeError if the file cannot be found or parsed.
         """
-        if not self.excel_path or not Path(self.excel_path).exists():
-            raise FileNotFoundError(f"Normative database not found at {self.excel_path}")
-        
-        print(f"📊 Loading normative database from {self.excel_path}...")
-        
-        # Load workbook
-        wb = openpyxl.load_workbook(self.excel_path, data_only=True)
-        data_sheet = wb['data']
-        
-        # Extract company names from row 1 (columns B onwards)
-        company_row = list(data_sheet.iter_rows(min_row=1, max_row=1, values_only=True))[0]
-        self.companies = [str(c) for c in company_row[1:] if c]  # Skip column A
-        
-        print(f"  ✅ Found {len(self.companies)} companies")
-        
-        # Extract questions and data
-        current_section = None
-        
-        for i, row in enumerate(data_sheet.iter_rows(min_row=2, values_only=True)):
-            question_text = str(row[0]) if row[0] else ''
-            
-            if not question_text:
-                continue
-            
-            # Section headers (all caps, no data in row[1])
-            if question_text.isupper() and not row[1]:
-                current_section = question_text
-                continue
-            
-            # Skip AVERAGE rows - we'll calculate our own
-            if question_text == 'AVERAGE':
-                continue
-            
-            # Question or response option
-            # Store the question and all company responses
-            company_responses = []
-            for j in range(1, len(self.companies) + 1):
-                value = row[j] if j < len(row) else None
-                
-                # Convert to numeric if possible
-                try:
-                    company_responses.append(float(value) if value else None)
-                except (ValueError, TypeError):
-                    company_responses.append(None)
-            
-            # Calculate average across companies (ignoring None values)
-            valid_responses = [r for r in company_responses if r is not None]
-            avg_response = sum(valid_responses) / len(valid_responses) if valid_responses else None
-            
-            # Calculate standard deviation
-            std_dev = np.std(valid_responses) if len(valid_responses) > 1 else 0
-            
-            # Store question data
-            question_data = {
-                'row_number': i + 2,
-                'section': current_section,
-                'question': question_text,
-                'company_responses': company_responses,
-                'valid_response_count': len(valid_responses),
-                'average': avg_response,
-                'std_dev': std_dev,
-                'min': min(valid_responses) if valid_responses else None,
-                'max': max(valid_responses) if valid_responses else None
-            }
-            
-            self.questions.append(question_data)
-            self.data[question_text] = question_data
-        
-        self.loaded = True
-        print(f"  ✅ Loaded {len(self.questions)} questions with normative data")
-        print(f"  📈 Database ready for benchmarking")
-        
+        if not OPENPYXL_AVAILABLE:
+            self.load_error = 'openpyxl is not installed'
+            raise RuntimeError(self.load_error)
+
+        if not self.excel_path or not self.excel_path.exists():
+            self.load_error = (
+                f'Normative database file not found. '
+                f'Expected: data/norms_overall.xlsx in repo root. '
+                f'Searched: {self.excel_path}'
+            )
+            raise FileNotFoundError(self.load_error)
+
+        print(f'[NormDB] Loading from {self.excel_path}...')
+
+        try:
+            wb = openpyxl.load_workbook(str(self.excel_path), data_only=True)
+        except Exception as e:
+            self.load_error = f'Failed to open Excel file: {e}'
+            raise RuntimeError(self.load_error)
+
+        try:
+            ws = wb['data']
+        except KeyError:
+            self.load_error = "Sheet 'data' not found in Excel file"
+            wb.close()
+            raise RuntimeError(self.load_error)
+
+        # Find the Averages column
+        avg_col = None
+        for c in range(2, ws.max_column + 1):
+            if ws.cell(1, c).value == 'Averages':
+                avg_col = c
+                break
+
+        if avg_col is None:
+            self.load_error = "Could not find 'Averages' column in row 1"
+            wb.close()
+            raise RuntimeError(self.load_error)
+
+        # Company count = data columns between B and Averages (exclusive)
+        self.company_count = avg_col - 2   # cols 2..(avg_col-1)
+
+        # Parse question blocks
+        questions = self._parse_questions(ws, avg_col)
         wb.close()
-        
-    def compare_to_norm(self, question, client_value):
+
+        self.questions = questions
+        self._index = {q['question']: q for q in questions}
+        self.loaded = True
+        self.load_error = None
+        self._loaded_at = datetime.utcnow().isoformat()
+
+        numeric_count = sum(1 for q in questions if q['type'] == 'numeric')
+        cat_count = sum(1 for q in questions if q['type'] == 'categorical')
+
+        print(f'[NormDB] Loaded {len(questions)} questions '
+              f'({numeric_count} numeric, {cat_count} categorical) '
+              f'from {self.company_count} facilities.')
+
+    def _parse_questions(self, ws, avg_col):
         """
-        Compare a client's response to the normative average.
-        
-        Args:
-            question: Question text (exact match or partial match)
-            client_value: Client's response value (numeric)
-            
-        Returns:
-            dict with comparison results
+        Walk the worksheet row by row, accumulating question blocks.
+        Each block = question row + option rows + optional AVERAGE row.
+        Returns list of question records.
+        """
+        questions = []
+        current_section = 'General'
+        current_question = None
+        current_q_row = None
+        option_buffer = []
+
+        for r in range(2, ws.max_row + 1):
+
+            # Section header rows (hard-coded by row number)
+            if r in _SECTION_HEADER_ROWS:
+                current_section = _SECTION_HEADER_ROWS[r]
+                continue
+
+            raw = ws.cell(r, 1).value
+            if not raw:
+                continue
+            v_str = str(raw).strip()
+            if not v_str:
+                continue
+
+            avg_val = _safe_float(ws.cell(r, avg_col).value)
+            col_b   = ws.cell(r, 2).value
+
+            # ---- AVERAGE row: close the current question block ----
+            if v_str == 'AVERAGE':
+                if current_question is not None:
+                    # Read per-company values from this AVERAGE row
+                    per_company = []
+                    for c in range(2, avg_col):
+                        pv = _safe_float(ws.cell(r, c).value)
+                        if pv is not None:
+                            per_company.append(pv)
+
+                    rec = _build_question_record(
+                        current_section, current_question, current_q_row,
+                        option_buffer, r, avg_val, per_company
+                    )
+                    questions.append(rec)
+                    option_buffer = []
+                    current_question = None
+                    current_q_row = None
+                continue
+
+            # ---- New question row detected ----
+            if _is_question_row(v_str, avg_val, col_b):
+                # Flush any previous categorical block (no AVERAGE row)
+                if current_question is not None and option_buffer:
+                    rec = _build_question_record(
+                        current_section, current_question, current_q_row,
+                        option_buffer, None, None, []
+                    )
+                    questions.append(rec)
+                    option_buffer = []
+
+                current_question = v_str
+                current_q_row = r
+                option_buffer = []
+                continue
+
+            # ---- Option row with normative % data ----
+            if avg_val is not None and current_question is not None:
+                option_buffer.append({
+                    'option':   v_str,
+                    'avg_pct':  round(avg_val, 4),
+                })
+
+        # Flush final block if it had no AVERAGE row
+        if current_question is not None and option_buffer:
+            rec = _build_question_record(
+                current_section, current_question, current_q_row,
+                option_buffer, None, None, []
+            )
+            questions.append(rec)
+
+        return questions
+
+    # ------------------------------------------------------------------
+    # Lookup
+    # ------------------------------------------------------------------
+
+    def find_question(self, search_text):
+        """
+        Find a question record by exact match, then partial match.
+        Returns the record dict or None.
         """
         if not self.loaded:
-            self.load_database()
-        
-        # Find matching question
-        question_data = self._find_question(question)
-        
-        if not question_data:
-            return {
-                'success': False,
-                'error': f'Question not found: {question[:100]}'
-            }
-        
-        if question_data['average'] is None:
-            return {
-                'success': False,
-                'error': 'No normative data available for this question'
-            }
-        
-        # Calculate comparison metrics
-        norm_avg = question_data['average']
-        std_dev = question_data['std_dev']
-        
-        # Deviation from norm
-        deviation = client_value - norm_avg
-        deviation_percent = (deviation / norm_avg * 100) if norm_avg != 0 else 0
-        
-        # Standard deviations from mean
-        z_score = (deviation / std_dev) if std_dev > 0 else 0
-        
-        # Percentile (approximate)
-        percentile = self._calculate_percentile(client_value, question_data['company_responses'])
-        
-        # Interpretation
-        interpretation = self._interpret_deviation(deviation_percent, z_score)
-        
-        return {
-            'success': True,
-            'question': question_data['question'],
-            'section': question_data['section'],
-            'client_value': client_value,
-            'norm_average': round(norm_avg, 2),
-            'deviation': round(deviation, 2),
-            'deviation_percent': round(deviation_percent, 1),
-            'z_score': round(z_score, 2),
-            'percentile': round(percentile, 0),
-            'std_dev': round(std_dev, 2),
-            'interpretation': interpretation,
-            'companies_count': question_data['valid_response_count'],
-            'norm_range': {
-                'min': round(question_data['min'], 2) if question_data['min'] else None,
-                'max': round(question_data['max'], 2) if question_data['max'] else None
-            }
-        }
-    
-    def _find_question(self, search_text):
-        """Find question by exact or partial match."""
+            return None
+
+        # Exact match
+        if search_text in self._index:
+            return self._index[search_text]
+
+        # Partial match (case-insensitive)
         search_lower = search_text.lower()
-        
-        # Try exact match first
-        if search_text in self.data:
-            return self.data[search_text]
-        
-        # Try partial match
-        for question_text, question_data in self.data.items():
-            if search_lower in question_text.lower():
-                return question_data
-        
+        for q_text, record in self._index.items():
+            if search_lower in q_text.lower():
+                return record
+
         return None
-    
-    def _calculate_percentile(self, value, responses):
-        """Calculate approximate percentile of value among responses."""
-        valid_responses = [r for r in responses if r is not None]
-        
-        if not valid_responses:
-            return 50
-        
-        count_below = sum(1 for r in valid_responses if r < value)
-        percentile = (count_below / len(valid_responses)) * 100
-        
-        return percentile
-    
-    def _interpret_deviation(self, deviation_percent, z_score):
-        """Provide interpretation of deviation from norm."""
-        abs_dev = abs(deviation_percent)
-        abs_z = abs(z_score)
-        
-        if abs_z > 2:
-            magnitude = "HIGHLY SIGNIFICANT"
-        elif abs_z > 1:
-            magnitude = "Significant"
-        elif abs_dev > 10:
-            magnitude = "Moderate"
-        else:
-            magnitude = "Within normal range"
-        
-        direction = "higher than" if deviation_percent > 0 else "lower than"
-        
-        return f"{magnitude} deviation - client value is {abs(deviation_percent):.1f}% {direction} industry norm"
-    
-    def batch_compare(self, client_responses):
-        """
-        Compare multiple client responses to norms at once.
-        
-        Args:
-            client_responses: dict of {question: value, ...}
-            
-        Returns:
-            list of comparison results
-        """
-        results = []
-        
-        for question, value in client_responses.items():
-            comparison = self.compare_to_norm(question, value)
-            if comparison['success']:
-                results.append(comparison)
-        
-        return results
-    
-    def get_significant_deviations(self, client_responses, threshold_z=1.0):
-        """
-        Identify client responses that significantly deviate from norms.
-        
-        Args:
-            client_responses: dict of {question: value, ...}
-            threshold_z: Minimum z-score to consider significant (default 1.0)
-            
-        Returns:
-            list of significant deviations sorted by magnitude
-        """
-        comparisons = self.batch_compare(client_responses)
-        
-        significant = [
-            c for c in comparisons 
-            if abs(c['z_score']) >= threshold_z
-        ]
-        
-        # Sort by absolute z-score (most significant first)
-        significant.sort(key=lambda x: abs(x['z_score']), reverse=True)
-        
-        return significant
-    
-    def generate_comparison_report(self, client_responses, client_name="Client"):
-        """
-        Generate a formatted comparison report.
-        
-        Args:
-            client_responses: dict of {question: value, ...}
-            client_name: Name of client for report
-            
-        Returns:
-            Formatted text report
-        """
-        if not self.loaded:
-            self.load_database()
-        
-        # Get all comparisons
-        comparisons = self.batch_compare(client_responses)
-        
-        if not comparisons:
-            return f"No valid comparisons found for {client_name}"
-        
-        # Generate report
-        report = f"""
-NORMATIVE BENCHMARK COMPARISON REPORT
-Client: {client_name}
-Benchmark Database: {len(self.companies)} Companies
-Generated: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}
 
-{'='*80}
-
-EXECUTIVE SUMMARY
-{'='*80}
-
-Total Questions Compared: {len(comparisons)}
-Benchmark Companies: {len(self.companies)} facilities across multiple industries
-
-SIGNIFICANT FINDINGS
-{'-'*80}
-
-"""
-        # Add significant deviations
-        significant = [c for c in comparisons if abs(c['z_score']) >= 1.0]
-        
-        if significant:
-            for i, comp in enumerate(significant[:10], 1):  # Top 10
-                report += f"{i}. {comp['question'][:70]}...\n"
-                report += f"   Client: {comp['client_value']}% | Norm: {comp['norm_average']}%\n"
-                report += f"   {comp['interpretation']}\n"
-                report += f"   Percentile: {comp['percentile']}th among {comp['companies_count']} companies\n\n"
-        else:
-            report += "No significant deviations found. Client responses are within normal ranges.\n\n"
-        
-        report += f"\n{'='*80}\n"
-        report += "DETAILED COMPARISON DATA\n"
-        report += f"{'='*80}\n\n"
-        
-        # Group by section
-        sections = {}
-        for comp in comparisons:
-            section = comp['section'] or 'General'
-            if section not in sections:
-                sections[section] = []
-            sections[section].append(comp)
-        
-        for section, items in sections.items():
-            report += f"\n{section}\n"
-            report += f"{'-'*80}\n"
-            
-            for item in items:
-                report += f"\n{item['question']}\n"
-                report += f"  Client Response: {item['client_value']}%\n"
-                report += f"  Industry Norm:   {item['norm_average']}% (±{item['std_dev']}%)\n"
-                report += f"  Deviation:       {item['deviation']:+.1f}% ({item['deviation_percent']:+.1f}%)\n"
-                report += f"  Percentile:      {item['percentile']}th\n"
-                report += f"  Interpretation:  {item['interpretation']}\n"
-        
-        report += f"\n\n{'='*80}\n"
-        report += "End of Report\n"
-        
-        return report
-    
     def search_questions(self, search_term, limit=10):
         """
-        Search for questions containing a term.
-        
-        Args:
-            search_term: Text to search for
-            limit: Maximum results to return
-            
-        Returns:
-            list of matching questions
+        Return up to `limit` questions whose text contains `search_term`.
+        Returns list of dicts with question, section, type, norm_mean.
         """
         if not self.loaded:
-            self.load_database()
-        
+            return []
+
         search_lower = search_term.lower()
-        
-        matches = []
+        results = []
         for q in self.questions:
             if search_lower in q['question'].lower():
-                matches.append({
-                    'question': q['question'],
-                    'section': q['section'],
-                    'average': q['average'],
-                    'companies_count': q['valid_response_count']
+                results.append({
+                    'question':           q['question'],
+                    'section':            q['section'],
+                    'type':               q['type'],
+                    'norm_mean':          q['norm_mean'],
+                    'norm_std_dev':       q['norm_std_dev'],
+                    'company_data_count': q['company_data_count'],
+                    'options_count':      len(q['options']),
                 })
-            
-            if len(matches) >= limit:
-                break
-        
-        return matches
-    
-    def get_stats(self):
-        """Get database statistics."""
+                if len(results) >= limit:
+                    break
+        return results
+
+    # ------------------------------------------------------------------
+    # Comparison
+    # ------------------------------------------------------------------
+
+    def compare_numeric(self, search_text, client_value):
+        """
+        Compare a client's mean score to the normative mean for a
+        numeric/Likert question.
+
+        Args:
+            search_text  (str):   Partial or full question text
+            client_value (float): Client's mean score
+
+        Returns dict with:
+            success, question, section, client_value, norm_mean,
+            norm_std_dev, deviation, deviation_pct, z_score,
+            percentile, interpretation, company_data_count
+        """
         if not self.loaded:
-            self.load_database()
-        
-        return {
-            'companies_count': len(self.companies),
-            'questions_count': len(self.questions),
-            'sections': list(set(q['section'] for q in self.questions if q['section'])),
-            'data_coverage': {
-                'avg_responses_per_question': np.mean([q['valid_response_count'] for q in self.questions]),
-                'min_responses': min(q['valid_response_count'] for q in self.questions),
-                'max_responses': max(q['valid_response_count'] for q in self.questions)
+            return {'success': False, 'error': 'Database not loaded'}
+
+        record = self.find_question(search_text)
+        if record is None:
+            return {'success': False, 'error': f'Question not found: {search_text[:80]}'}
+
+        if record['type'] != 'numeric':
+            return {
+                'success': False,
+                'error': (
+                    f'Question is categorical (Yes/No or multiple choice). '
+                    f'Use compare_categorical() instead.'
+                )
             }
+
+        if record['norm_mean'] is None:
+            return {'success': False, 'error': 'No normative mean available for this question'}
+
+        norm_mean   = record['norm_mean']
+        norm_std    = record['norm_std_dev']
+        deviation   = client_value - norm_mean
+        dev_pct     = (deviation / norm_mean * 100) if norm_mean != 0 else 0
+        z_score     = (deviation / norm_std) if (norm_std and norm_std > 0) else None
+        percentile  = self._calc_percentile(record, client_value)
+        interp      = self._interpret(dev_pct, z_score)
+
+        return {
+            'success':            True,
+            'question':           record['question'],
+            'section':            record['section'],
+            'client_value':       round(client_value, 4),
+            'norm_mean':          norm_mean,
+            'norm_std_dev':       norm_std,
+            'norm_min':           record['norm_min'],
+            'norm_max':           record['norm_max'],
+            'deviation':          round(deviation, 4),
+            'deviation_pct':      round(dev_pct, 2),
+            'z_score':            round(z_score, 3) if z_score is not None else None,
+            'percentile':         percentile,
+            'interpretation':     interp,
+            'company_data_count': record['company_data_count'],
+        }
+
+    def compare_categorical(self, search_text, client_option_pcts):
+        """
+        Compare a client's option distribution to normative distribution
+        for a categorical (Yes/No or multiple choice) question.
+
+        Args:
+            search_text       (str):  Partial or full question text
+            client_option_pcts (dict): {option_label: client_pct, ...}
+                                       e.g. {'Yes': 72.5, 'No': 27.5}
+
+        Returns dict with per-option comparison and largest deviations.
+        """
+        if not self.loaded:
+            return {'success': False, 'error': 'Database not loaded'}
+
+        record = self.find_question(search_text)
+        if record is None:
+            return {'success': False, 'error': f'Question not found: {search_text[:80]}'}
+
+        norm_options = {opt['option']: opt['avg_pct'] for opt in record['options']}
+        comparisons  = []
+
+        for option, client_pct in client_option_pcts.items():
+            norm_pct = norm_options.get(option)
+            if norm_pct is not None:
+                diff = client_pct - norm_pct
+                comparisons.append({
+                    'option':     option,
+                    'client_pct': round(client_pct, 2),
+                    'norm_pct':   round(norm_pct, 2),
+                    'difference': round(diff, 2),
+                    'direction':  'above norm' if diff > 0 else 'below norm',
+                })
+            else:
+                comparisons.append({
+                    'option':     option,
+                    'client_pct': round(client_pct, 2),
+                    'norm_pct':   None,
+                    'difference': None,
+                    'direction':  'no norm data',
+                })
+
+        comparisons.sort(key=lambda x: abs(x['difference'] or 0), reverse=True)
+
+        return {
+            'success':     True,
+            'question':    record['question'],
+            'section':     record['section'],
+            'type':        'categorical',
+            'comparisons': comparisons,
+            'norm_options': [
+                {'option': o['option'], 'avg_pct': o['avg_pct']}
+                for o in record['options']
+            ],
+        }
+
+    def batch_compare_numeric(self, client_responses):
+        """
+        Compare multiple numeric client responses at once.
+
+        Args:
+            client_responses (dict): {question_search_text: client_mean_value}
+
+        Returns list of compare_numeric() results (successes only).
+        """
+        results = []
+        for search_text, client_value in client_responses.items():
+            result = self.compare_numeric(search_text, client_value)
+            if result['success']:
+                results.append(result)
+        return results
+
+    def get_significant_deviations(self, client_responses, threshold_z=1.0):
+        """
+        From a dict of {question: client_value}, return only the numeric
+        questions where |z_score| >= threshold_z, sorted by magnitude.
+
+        Args:
+            client_responses (dict): {question_search_text: client_mean_value}
+            threshold_z      (float): Minimum |z| to include (default 1.0)
+
+        Returns sorted list of compare_numeric() results.
+        """
+        all_comparisons = self.batch_compare_numeric(client_responses)
+        significant = [
+            c for c in all_comparisons
+            if c.get('z_score') is not None and abs(c['z_score']) >= threshold_z
+        ]
+        significant.sort(key=lambda x: abs(x['z_score']), reverse=True)
+        return significant
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _calc_percentile(self, record, client_value):
+        """
+        Approximate percentile of client_value relative to norm range.
+        Uses norm_min/norm_max and norm_mean to estimate position.
+        Returns 0-100 or None if insufficient data.
+        """
+        if record['norm_min'] is None or record['norm_max'] is None:
+            return None
+        norm_range = record['norm_max'] - record['norm_min']
+        if norm_range == 0:
+            return 50
+        position = (client_value - record['norm_min']) / norm_range
+        return round(max(0, min(100, position * 100)), 1)
+
+    def _interpret(self, deviation_pct, z_score):
+        """Plain-English interpretation of a numeric deviation."""
+        direction = 'above' if deviation_pct >= 0 else 'below'
+        abs_pct   = abs(deviation_pct)
+
+        if z_score is not None:
+            abs_z = abs(z_score)
+            if abs_z >= 2.0:
+                magnitude = 'Highly significant'
+            elif abs_z >= 1.0:
+                magnitude = 'Significant'
+            elif abs_pct >= 10:
+                magnitude = 'Moderate'
+            else:
+                magnitude = 'Within normal range'
+        else:
+            if abs_pct >= 20:
+                magnitude = 'Large'
+            elif abs_pct >= 10:
+                magnitude = 'Moderate'
+            else:
+                magnitude = 'Within normal range'
+
+        return f'{magnitude} — {abs_pct:.1f}% {direction} industry norm'
+
+    # ------------------------------------------------------------------
+    # Status / diagnostics
+    # ------------------------------------------------------------------
+
+    def get_status(self):
+        """
+        Return a status dict suitable for the /api/survey/norm/status endpoint.
+        """
+        if not self.loaded:
+            return {
+                'loaded':      False,
+                'error':       self.load_error or 'Not yet loaded',
+                'excel_path':  str(self.excel_path) if self.excel_path else None,
+            }
+
+        numeric_qs   = [q for q in self.questions if q['type'] == 'numeric']
+        cat_qs       = [q for q in self.questions if q['type'] == 'categorical']
+        sections     = sorted(set(q['section'] for q in self.questions))
+
+        # Sample comparisons for 3 known questions
+        samples = []
+        test_cases = [
+            ('Overall, this is a safe place to work', 4.1),
+            ('I like my current schedule',            3.2),
+            ('The pay here is good compared to',      2.8),
+        ]
+        for q_text, client_val in test_cases:
+            r = self.compare_numeric(q_text, client_val)
+            if r['success']:
+                samples.append({
+                    'question':      r['question'][:60],
+                    'client_value':  client_val,
+                    'norm_mean':     r['norm_mean'],
+                    'z_score':       r['z_score'],
+                    'interpretation': r['interpretation'],
+                })
+
+        return {
+            'loaded':            True,
+            'loaded_at':         self._loaded_at,
+            'excel_path':        str(self.excel_path),
+            'company_count':     self.company_count,
+            'question_count':    len(self.questions),
+            'numeric_questions': len(numeric_qs),
+            'categorical_questions': len(cat_qs),
+            'sections':          sections,
+            'sample_comparisons': samples,
         }
 
 
-# Singleton instance
+# ---------------------------------------------------------------------------
+# Singleton
+# ---------------------------------------------------------------------------
+
 _normative_db = None
 
+
 def get_normative_database():
-    """Get or create singleton normative database instance."""
+    """
+    Return the singleton NormativeDatabase instance, loading it on first call.
+    Returns None if the file cannot be found or fails to load.
+    Logs the error but does not raise — callers should check .loaded.
+    """
     global _normative_db
-    if _normative_db is None:
-        _normative_db = NormativeDatabase()
-        try:
-            _normative_db.load_database()
-        except Exception as e:
-            print(f"⚠️ Failed to load normative database: {e}")
-            _normative_db = None
+
+    if _normative_db is not None:
+        return _normative_db
+
+    db = NormativeDatabase()
+    try:
+        db.load()
+        _normative_db = db
+    except Exception as e:
+        print(f'[NormDB] ERROR: Failed to load normative database: {e}')
+        # Store the failed instance so status endpoint can report the error
+        _normative_db = db
+
     return _normative_db
+
+
+def reset_normative_database():
+    """Force a reload on the next call to get_normative_database(). For testing."""
+    global _normative_db
+    _normative_db = None
 
 
 # I did no harm and this file is not truncated
