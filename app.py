@@ -1162,6 +1162,16 @@ except ImportError as e:
 except Exception as e:
     print(f"Survey Admin registration failed: {e}")
 
+# Survey in a Box: Migration Diagnostics (temporary — remove after tables confirmed)
+try:
+    from routes.survey_diagnostics import survey_diagnostics_bp
+    app.register_blueprint(survey_diagnostics_bp)
+    print("Survey Diagnostics registered")
+except ImportError as e:
+    print(f"Survey Diagnostics not found: {e}")
+except Exception as e:
+    print(f"Survey Diagnostics registration failed: {e}")
+
 # ----------------------------------------------------------------------------
 # Phase 6: Proactive Agent API
 # Provides /api/briefing, /api/tasks, /api/leads, /api/monitor/services,
