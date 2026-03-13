@@ -2,7 +2,7 @@
 AI SWARM ORCHESTRATOR - Lead Scanner
 File: proactive/lead_scanner.py
 Created: March 12, 2026
-Last Updated: March 12, 2026 — Phase 6 Deliverable 3: Initial implementation
+Last Updated: March 13, 2026 — BUG FIX: remove raise from _ensure_table()
 
 PURPOSE:
     Automatically scans the web for potential business leads — new manufacturing
@@ -26,6 +26,15 @@ SEARCH STRATEGY:
     Group 4: "shift schedule change manufacturing {year}"
 
 CHANGELOG:
+- March 13, 2026: BUG FIX — remove raise from _ensure_table()
+  * _ensure_table() ran at module level and called raise on DB failure.
+  * If the DB was temporarily unavailable at startup, Python marked the
+    module as a failed import. All subsequent imports raised ImportError.
+  * routes/proactive.py catches ImportError and returns 503.
+  * Fix: log the error but do NOT re-raise. The module loads successfully
+    and table creation is retried on the next DB operation.
+  * Only the except block in _ensure_table() changed — nothing else touched.
+
 - March 12, 2026: Phase 6 Deliverable 3 — Initial implementation
   * Created lead_alerts table (idempotent migration on import)
   * scan_for_leads() — rotates queries, scores with Sonnet, stores results
@@ -123,6 +132,11 @@ def _ensure_table():
     Create lead_alerts table if it does not already exist.
     Called once at module import. Fully idempotent.
     The UNIQUE constraint on source_url is the deduplication mechanism.
+
+    NOTE: Does NOT re-raise on failure. A DB hiccup at startup must not
+    poison the module import — routes/proactive.py catches ImportError and
+    returns 503, so a transient DB error here would permanently break the
+    endpoint until the next deploy. Log and continue instead.
     """
     from db_engine import get_db_connection
 
@@ -147,8 +161,8 @@ def _ensure_table():
         print("✅ proactive/lead_scanner: lead_alerts table ready")
     except Exception as e:
         logger.error(f"Failed to create lead_alerts table: {e}")
-        print(f"❌ proactive/lead_scanner: table creation failed: {e}")
-        raise
+        print(f"❌ proactive/lead_scanner: table creation failed (non-fatal): {e}")
+        # Do NOT re-raise — a transient DB error must not poison this module's import
 
 
 _ensure_table()
