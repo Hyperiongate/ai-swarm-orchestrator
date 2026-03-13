@@ -1,9 +1,34 @@
 """
 SURVEY BUILDER MODULE FOR AI SWARM ORCHESTRATOR
+File: survey_builder.py
 Created: January 28, 2026
-Last Updated: February 28, 2026
+Last Updated: March 12, 2026
 
 CHANGELOG:
+
+- March 12, 2026: PHASE 2 — Enhanced export_to_word() for branded client-ready output.
+  WHAT CHANGED (export_to_word only):
+    - Added Shiftwork Solutions letterhead / brand header on every page via header
+    - Added professional cover page: company name, survey title, date, confidentiality note
+    - Added survey instructions page (standalone page before questions)
+    - Added page breaks between major sections (schedule concepts, each question category)
+    - Added Remark-compatible filled bubble circles (U+25CF) for paper administration;
+      open circles (U+25CB) for online/unsure — controlled by administration_mode param
+    - Added sequential question numbering across all categories (continuous 1..N)
+    - Added "Thank You for Participating" closing page
+    - Added footer with page number and Shiftwork Solutions contact info
+    - Added helper methods: _add_page_break, _add_horizontal_rule,
+      _add_cover_page, _add_instructions_page, _add_thank_you_page,
+      _add_doc_header_footer, _bubble_char
+  WHAT DID NOT CHANGE:
+    - Question bank (_load_question_bank) — zero changes
+    - Schedule library (_load_schedule_library) — zero changes
+    - create_survey() — zero changes
+    - get_categories() — zero changes
+    - get_questions_by_category() — zero changes
+    - _get_standard_instructions() — zero changes
+    - All public method signatures unchanged; export_to_word() gains one
+      optional keyword argument: administration_mode (str, default 'online')
 
 - February 28, 2026: ADDED 39 NEW QUESTIONS FROM MASTER SURVEY DOCUMENT
   SOURCE: Master_Survey_for_Survey_Business.doc (Dan Capshaw / Shiftwork Solutions)
@@ -38,7 +63,7 @@ NOT client-facing - this is for creating surveys that will be administered to cl
 FEATURES:
 - Master question bank (103 standardized questions)
 - Schedule rating questions (customizable per survey)
-- Export to Word (.docx)
+- Export to Word (.docx) — branded, client-ready, Remark-compatible
 - Normative database integration (future)
 - Custom question creation
 
@@ -52,12 +77,29 @@ WORKFLOW:
 AUTHOR: Jim @ Shiftwork Solutions LLC
 """
 
-import json
-from datetime import datetime
-from docx import Document
-from docx.shared import Inches, Pt, RGBColor
-from docx.enum.text import WD_ALIGN_PARAGRAPH
 import io
+from datetime import datetime
+
+from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.shared import Inches, Pt, RGBColor
+
+
+# ============================================================================
+# BRAND CONSTANTS
+# ============================================================================
+
+_BRAND_BLUE  = RGBColor(0x1F, 0x5C, 0x99)   # #1F5C99 — Shiftwork Solutions blue
+_BRAND_DARK  = RGBColor(0x1A, 0x1A, 0x2E)   # near-black for body text
+_BRAND_GRAY  = RGBColor(0x66, 0x66, 0x66)   # mid gray for secondary text
+_BRAND_LIGHT = RGBColor(0xF0, 0xF5, 0xFA)   # very light blue for shading
+
+# Unicode bubble characters
+_BUBBLE_FILLED = '\u25CF'   # ● filled circle  — used for paper (Remark-compatible)
+_BUBBLE_OPEN   = '\u25CB'   # ○ open circle    — used for online / unsure
+_BUBBLE_CHECK  = '\u25A1'   # □ open square    — used for checkbox questions
 
 
 class SurveyBuilder:
@@ -69,6 +111,10 @@ class SurveyBuilder:
         """Initialize with master question bank"""
         self.question_bank = self._load_question_bank()
         self.schedule_library = self._load_schedule_library()
+
+    # ========================================================================
+    # QUESTION BANK  (unchanged from February 28, 2026)
+    # ========================================================================
 
     def _load_question_bank(self):
         """
@@ -991,6 +1037,10 @@ class SurveyBuilder:
 
         }
 
+    # ========================================================================
+    # SCHEDULE LIBRARY  (unchanged from January 28, 2026)
+    # ========================================================================
+
     def _load_schedule_library(self):
         """
         Standard schedule library that can be shown to employees.
@@ -1063,6 +1113,10 @@ class SurveyBuilder:
             },
         }
 
+    # ========================================================================
+    # CREATE SURVEY  (unchanged from January 28, 2026)
+    # ========================================================================
+
     def create_survey(self, project_name, company_name, selected_questions,
                       schedules_to_rate, custom_questions=None):
         """
@@ -1114,6 +1168,10 @@ class SurveyBuilder:
 
         return survey
 
+    # ========================================================================
+    # STANDARD INSTRUCTIONS  (unchanged from January 28, 2026)
+    # ========================================================================
+
     def _get_standard_instructions(self):
         """Standard survey instructions"""
         return {
@@ -1126,133 +1184,633 @@ class SurveyBuilder:
             ]
         }
 
-    def export_to_word(self, survey):
+    # ========================================================================
+    # PHASE 2 — DOCUMENT FORMATTING HELPERS  (new March 12, 2026)
+    # ========================================================================
+
+    def _bubble_char(self, administration_mode):
         """
-        Export survey to Word document (.docx).
+        Return the appropriate answer-option marker based on administration mode.
+
+        For paper administration, return a filled circle (Remark-compatible bubble).
+        For online or unsure, return an open circle for visual clarity.
 
         Args:
-            survey: Survey dict from create_survey()
+            administration_mode: 'paper' | 'online' | 'unsure' | anything else
+
+        Returns:
+            Single unicode character string
+        """
+        if administration_mode == 'paper':
+            return _BUBBLE_FILLED   # ● Remark-compatible filled bubble
+        return _BUBBLE_OPEN         # ○ open circle for online/unsure
+
+    def _checkbox_char(self):
+        """Return the checkbox character for checkbox-type questions."""
+        return _BUBBLE_CHECK        # □ open square for multi-select
+
+    def _add_page_break(self, doc):
+        """
+        Insert a hard page break as a Word run break element.
+        Must be inside a Paragraph > Run for valid OOXML.
+        """
+        p = doc.add_paragraph()
+        run = p.add_run()
+        br = OxmlElement('w:br')
+        br.set(qn('w:type'), 'page')
+        run._r.append(br)
+        return p
+
+    def _add_horizontal_rule(self, doc, color='1F5C99', size=6):
+        """
+        Add a thin horizontal rule as a paragraph bottom border.
+        Used as a visual divider below section headers and the cover page header.
+        """
+        p = doc.add_paragraph()
+        pPr = p._p.get_or_add_pPr()
+        pBdr = OxmlElement('w:pBdr')
+        bottom = OxmlElement('w:bottom')
+        bottom.set(qn('w:val'), 'single')
+        bottom.set(qn('w:sz'), str(size))
+        bottom.set(qn('w:space'), '1')
+        bottom.set(qn('w:color'), color)
+        pBdr.append(bottom)
+        pPr.append(pBdr)
+        return p
+
+    def _add_doc_header_footer(self, doc, company_name):
+        """
+        Add a branded header and footer to every page of the document.
+
+        Header: "Shiftwork Solutions LLC" left, company name right — separated by rule.
+        Footer: "CONFIDENTIAL — Do Not Distribute" center, page placeholder right.
+        Uses the default section so it applies to all pages.
+        """
+        section = doc.sections[0]
+
+        # ---- HEADER --------------------------------------------------------
+        header = section.header
+        header.is_linked_to_previous = False
+
+        # Clear default empty paragraph
+        for p in header.paragraphs:
+            p.clear()
+
+        h_para = header.paragraphs[0]
+        h_para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+
+        # Left side: brand name
+        run_left = h_para.add_run('Shiftwork Solutions LLC')
+        run_left.bold = True
+        run_left.font.size = Pt(9)
+        run_left.font.color.rgb = _BRAND_BLUE
+
+        # Tab stop to push company name to the right
+        run_tab = h_para.add_run('\t')
+        run_tab.font.size = Pt(9)
+
+        # Right side: client company name
+        run_right = h_para.add_run(company_name)
+        run_right.font.size = Pt(9)
+        run_right.font.color.rgb = _BRAND_GRAY
+        run_right.italic = True
+
+        # Set a right-aligned tab stop at 6 inches
+        pPr = h_para._p.get_or_add_pPr()
+        tabs = OxmlElement('w:tabs')
+        tab = OxmlElement('w:tab')
+        tab.set(qn('w:val'), 'right')
+        tab.set(qn('w:pos'), '8640')   # 6 inches in twips (6 * 1440)
+        tabs.append(tab)
+        pPr.append(tabs)
+
+        # Bottom border rule under header
+        pBdr = OxmlElement('w:pBdr')
+        bottom = OxmlElement('w:bottom')
+        bottom.set(qn('w:val'), 'single')
+        bottom.set(qn('w:sz'), '4')
+        bottom.set(qn('w:space'), '1')
+        bottom.set(qn('w:color'), '1F5C99')
+        pBdr.append(bottom)
+        pPr.append(pBdr)
+
+        # ---- FOOTER --------------------------------------------------------
+        footer = section.footer
+        footer.is_linked_to_previous = False
+
+        for p in footer.paragraphs:
+            p.clear()
+
+        f_para = footer.paragraphs[0]
+        f_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        run_conf = f_para.add_run('CONFIDENTIAL — For Internal Use Only  |  Shiftwork Solutions LLC  |  (415) 763-5005  |  www.shift-work.com')
+        run_conf.font.size = Pt(8)
+        run_conf.font.color.rgb = _BRAND_GRAY
+
+        # Top border rule above footer
+        f_pPr = f_para._p.get_or_add_pPr()
+        f_pBdr = OxmlElement('w:pBdr')
+        f_top = OxmlElement('w:top')
+        f_top.set(qn('w:val'), 'single')
+        f_top.set(qn('w:sz'), '4')
+        f_top.set(qn('w:space'), '1')
+        f_top.set(qn('w:color'), '1F5C99')
+        f_pBdr.append(f_top)
+        f_pPr.append(f_pBdr)
+
+    def _add_cover_page(self, doc, survey):
+        """
+        Build the cover page:
+          - SHIFTWORK SOLUTIONS LLC (branded header text)
+          - Horizontal rule
+          - Survey title (large)
+          - Prepared for: <Company Name>
+          - Date
+          - Confidentiality note
+          - Page break at end
+        """
+        metadata = survey['metadata']
+        company_name = metadata['company_name']
+        created_date = metadata['created_date']
+
+        # Spacer at top
+        doc.add_paragraph()
+        doc.add_paragraph()
+
+        # Company branding
+        p_brand = doc.add_paragraph()
+        p_brand.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run_brand = p_brand.add_run('SHIFTWORK SOLUTIONS LLC')
+        run_brand.bold = True
+        run_brand.font.size = Pt(16)
+        run_brand.font.color.rgb = _BRAND_BLUE
+
+        # Horizontal rule
+        self._add_horizontal_rule(doc, color='1F5C99', size=8)
+
+        doc.add_paragraph()
+
+        # Survey title
+        p_title = doc.add_paragraph()
+        p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run_title = p_title.add_run('Shift Schedule Lifestyle Survey')
+        run_title.bold = True
+        run_title.font.size = Pt(28)
+        run_title.font.color.rgb = _BRAND_DARK
+
+        doc.add_paragraph()
+
+        # Prepared for
+        p_for = doc.add_paragraph()
+        p_for.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run_for_label = p_for.add_run('Prepared for:  ')
+        run_for_label.font.size = Pt(14)
+        run_for_label.font.color.rgb = _BRAND_GRAY
+        run_for_company = p_for.add_run(company_name)
+        run_for_company.bold = True
+        run_for_company.font.size = Pt(14)
+        run_for_company.font.color.rgb = _BRAND_DARK
+
+        doc.add_paragraph()
+
+        # Date
+        p_date = doc.add_paragraph()
+        p_date.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run_date = p_date.add_run(created_date)
+        run_date.font.size = Pt(12)
+        run_date.font.color.rgb = _BRAND_GRAY
+
+        doc.add_paragraph()
+        doc.add_paragraph()
+
+        # Horizontal rule
+        self._add_horizontal_rule(doc, color='CCCCCC', size=4)
+
+        # Confidentiality note
+        p_conf = doc.add_paragraph()
+        p_conf.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run_conf = p_conf.add_run(
+            'CONFIDENTIAL — This survey is the proprietary property of Shiftwork Solutions LLC. '
+            'Results are for internal use only and will be summarized before distribution.'
+        )
+        run_conf.font.size = Pt(9)
+        run_conf.font.color.rgb = _BRAND_GRAY
+        run_conf.italic = True
+
+        # Page break
+        self._add_page_break(doc)
+
+    def _add_instructions_page(self, doc, survey, administration_mode):
+        """
+        Build the survey instructions page:
+          - Section header
+          - Numbered directions
+          - Note about paper bubbles if administration_mode == 'paper'
+          - Page break at end
+        """
+        instructions = survey['instructions']
+        bubble = self._bubble_char(administration_mode)
+
+        # Section heading
+        p_head = doc.add_paragraph()
+        run_head = p_head.add_run('SURVEY INSTRUCTIONS')
+        run_head.bold = True
+        run_head.font.size = Pt(16)
+        run_head.font.color.rgb = _BRAND_BLUE
+
+        self._add_horizontal_rule(doc, color='1F5C99', size=6)
+        doc.add_paragraph()
+
+        # Directions
+        for i, direction in enumerate(instructions['directions'], 1):
+            p_dir = doc.add_paragraph()
+            p_dir.paragraph_format.left_indent = Inches(0.25)
+            p_dir.paragraph_format.space_after = Pt(6)
+            run_num = p_dir.add_run(f'{i}.  ')
+            run_num.bold = True
+            run_num.font.size = Pt(11)
+            run_num.font.color.rgb = _BRAND_BLUE
+            run_text = p_dir.add_run(direction)
+            run_text.font.size = Pt(11)
+
+        doc.add_paragraph()
+
+        # Paper administration note
+        if administration_mode == 'paper':
+            p_note = doc.add_paragraph()
+            p_note.paragraph_format.left_indent = Inches(0.25)
+            run_note_label = p_note.add_run('PAPER SURVEY NOTE:  ')
+            run_note_label.bold = True
+            run_note_label.font.size = Pt(10)
+            run_note_label.font.color.rgb = _BRAND_BLUE
+            run_note = p_note.add_run(
+                f'Completely fill in the {bubble} bubble next to your answer. '
+                'Use a dark pen or pencil. Do not use checkmarks or X marks — '
+                'bubbles must be completely filled for accurate scanning.'
+            )
+            run_note.font.size = Pt(10)
+
+            doc.add_paragraph()
+
+            # Example bubble row
+            p_ex = doc.add_paragraph()
+            p_ex.paragraph_format.left_indent = Inches(0.5)
+            run_ex_label = p_ex.add_run('Example:  ')
+            run_ex_label.font.size = Pt(10)
+            run_ex_label.bold = True
+            for ex_opt in ['Strongly Agree', 'Agree', 'Neutral', 'Disagree', 'Strongly Disagree']:
+                run_ex = p_ex.add_run(f'  {bubble}  {ex_opt}   ')
+                run_ex.font.size = Pt(10)
+
+        doc.add_paragraph()
+
+        # Page break
+        self._add_page_break(doc)
+
+    def _add_thank_you_page(self, doc, company_name):
+        """
+        Build the closing page:
+          - Thank You heading
+          - Short thank-you message
+          - Shiftwork Solutions contact block
+        """
+        self._add_page_break(doc)
+
+        # Spacer
+        doc.add_paragraph()
+        doc.add_paragraph()
+        doc.add_paragraph()
+
+        # Thank you heading
+        p_ty = doc.add_paragraph()
+        p_ty.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run_ty = p_ty.add_run('Thank You for Participating!')
+        run_ty.bold = True
+        run_ty.font.size = Pt(24)
+        run_ty.font.color.rgb = _BRAND_BLUE
+
+        self._add_horizontal_rule(doc, color='1F5C99', size=6)
+        doc.add_paragraph()
+
+        # Thank you body
+        p_body = doc.add_paragraph()
+        p_body.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run_body = p_body.add_run(
+            f'Your input is valuable and will help {company_name} and Shiftwork Solutions LLC '
+            'design the best possible schedule for your workplace.\n\n'
+            'Please return your completed survey to the collection box or follow '
+            'the instructions provided by your supervisor.'
+        )
+        run_body.font.size = Pt(12)
+
+        doc.add_paragraph()
+        doc.add_paragraph()
+
+        # Horizontal rule
+        self._add_horizontal_rule(doc, color='CCCCCC', size=4)
+        doc.add_paragraph()
+
+        # Contact block
+        p_contact = doc.add_paragraph()
+        p_contact.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run_contact_brand = p_contact.add_run('Shiftwork Solutions LLC')
+        run_contact_brand.bold = True
+        run_contact_brand.font.size = Pt(12)
+        run_contact_brand.font.color.rgb = _BRAND_BLUE
+
+        p_contact2 = doc.add_paragraph()
+        p_contact2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run_contact2 = p_contact2.add_run(
+            'Phone: (415) 763-5005  |  www.shift-work.com  |  30+ Years of Schedule Expertise'
+        )
+        run_contact2.font.size = Pt(10)
+        run_contact2.font.color.rgb = _BRAND_GRAY
+
+    def _add_section_heading(self, doc, label):
+        """
+        Add a styled section heading with a brand-colored bottom border.
+        Used at the start of each question category block.
+        """
+        p = doc.add_paragraph()
+        run = p.add_run(label.upper())
+        run.bold = True
+        run.font.size = Pt(13)
+        run.font.color.rgb = _BRAND_BLUE
+
+        # Bottom border under heading
+        pPr = p._p.get_or_add_pPr()
+        pBdr = OxmlElement('w:pBdr')
+        bottom = OxmlElement('w:bottom')
+        bottom.set(qn('w:val'), 'single')
+        bottom.set(qn('w:sz'), '4')
+        bottom.set(qn('w:space'), '1')
+        bottom.set(qn('w:color'), '1F5C99')
+        pBdr.append(bottom)
+        pPr.append(pBdr)
+
+        doc.add_paragraph()
+        return p
+
+    # ========================================================================
+    # EXPORT TO WORD  (enhanced March 12, 2026)
+    # ========================================================================
+
+    def export_to_word(self, survey, administration_mode='online'):
+        """
+        Export survey to a professionally branded Word document (.docx).
+
+        Phase 2 enhancements (March 12, 2026):
+        - Shiftwork Solutions branded header on every page
+        - Cover page with company name, date, confidentiality note
+        - Instructions page (standalone, before questions)
+        - Page breaks between major sections
+        - Remark-compatible filled bubbles for paper; open circles for online/unsure
+        - Sequential question numbering (continuous 1..N across all sections)
+        - "Thank You" closing page with contact information
+        - Footer with contact details on every page
+
+        Args:
+            survey:              Survey dict from create_survey()
+            administration_mode: 'paper' | 'online' | 'unsure'
+                                 Controls bubble style. Default: 'online'.
+                                 Pass 'paper' to get Remark-compatible filled bubbles.
 
         Returns:
             BytesIO object containing the Word document
         """
         doc = Document()
 
-        # Title
-        title = doc.add_heading('Shift Schedule Lifestyle Survey', 0)
-        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        # ---- Page setup: US Letter, 1-inch margins --------------------------
+        section = doc.sections[0]
+        section.page_width  = 12240    # 8.5 inches in twips
+        section.page_height = 15840    # 11 inches in twips
+        section.left_margin   = 1440   # 1 inch
+        section.right_margin  = 1440   # 1 inch
+        section.top_margin    = 1008   # 0.7 inch (room for header)
+        section.bottom_margin = 1008   # 0.7 inch (room for footer)
 
-        # Metadata
-        doc.add_paragraph(f"Prepared for: {survey['metadata']['company_name']}")
-        doc.add_paragraph(f"Project: {survey['metadata']['project_name']}")
-        doc.add_paragraph(f"Date: {survey['metadata']['created_date']}")
-        doc.add_paragraph()
+        bubble   = self._bubble_char(administration_mode)
+        checkbox = self._checkbox_char()
 
-        # Instructions
-        doc.add_heading('Directions:', level=1)
-        for instruction in survey['instructions']['directions']:
-            doc.add_paragraph(instruction, style='List Bullet')
-        doc.add_paragraph()
+        # ---- Branded header & footer on every page -------------------------
+        self._add_doc_header_footer(doc, survey['metadata']['company_name'])
 
-        # Schedule Concepts Section
+        # ---- Cover page ----------------------------------------------------
+        self._add_cover_page(doc, survey)
+
+        # ---- Instructions page ---------------------------------------------
+        self._add_instructions_page(doc, survey, administration_mode)
+
+        # ---- Schedule Concepts section -------------------------------------
         if survey['schedule_concepts']:
-            doc.add_heading('Schedule Concepts', level=1)
-            doc.add_paragraph('Please rate the following schedule options:')
+            self._add_section_heading(doc, 'Schedule Concepts')
+
+            p_intro = doc.add_paragraph()
+            run_intro = p_intro.add_run(
+                'The following schedule concepts have been selected for your review. '
+                'Please read the description of each schedule and then rate it using the scale provided.'
+            )
+            run_intro.font.size = Pt(11)
             doc.add_paragraph()
 
             for i, concept in enumerate(survey['schedule_concepts'], 1):
                 schedule = concept['schedule']
-                doc.add_heading(f"Concept #{i}: {schedule['name']}", level=2)
-                doc.add_paragraph(schedule['description'])
-                doc.add_paragraph(f"Shift Length: {schedule['shift_length']}")
+
+                # Concept sub-header
+                p_concept = doc.add_paragraph()
+                run_concept = p_concept.add_run(
+                    f'Concept #{i}:  {schedule["name"]}'
+                )
+                run_concept.bold = True
+                run_concept.font.size = Pt(12)
+                run_concept.font.color.rgb = _BRAND_DARK
+
+                # Description
+                p_desc = doc.add_paragraph()
+                p_desc.paragraph_format.left_indent = Inches(0.25)
+                run_desc = p_desc.add_run(schedule['description'])
+                run_desc.font.size = Pt(11)
+
+                # Shift length
+                p_len = doc.add_paragraph()
+                p_len.paragraph_format.left_indent = Inches(0.25)
+                run_len_label = p_len.add_run('Shift Length:  ')
+                run_len_label.bold = True
+                run_len_label.font.size = Pt(10)
+                run_len = p_len.add_run(schedule['shift_length'])
+                run_len.font.size = Pt(10)
+
                 doc.add_paragraph()
 
-                doc.add_paragraph(concept['question'], style='Heading 3')
+                # Rating question
+                p_q = doc.add_paragraph()
+                p_q.paragraph_format.left_indent = Inches(0.25)
+                run_q = p_q.add_run(concept['question'])
+                run_q.bold = True
+                run_q.font.size = Pt(11)
+
+                # Rating options with bubbles
                 for option in concept['rating_options']:
-                    doc.add_paragraph(f"○ {option}", style='List Bullet')
+                    p_opt = doc.add_paragraph()
+                    p_opt.paragraph_format.left_indent = Inches(0.5)
+                    p_opt.paragraph_format.space_after = Pt(2)
+                    run_opt = p_opt.add_run(f'{bubble}   {option}')
+                    run_opt.font.size = Pt(11)
+
                 doc.add_paragraph()
 
-        # Main Questions Section
+                # Page break between schedule concepts (except after the last one)
+                if i < len(survey['schedule_concepts']):
+                    self._add_page_break(doc)
+
+            # Page break before main questions
+            self._add_page_break(doc)
+
+        # ---- Main Questions section -----------------------------------------
         if survey['questions']:
-            doc.add_heading('Survey Questions', level=1)
-
-            current_category = None
-            question_number = 1
-
             # Human-friendly category labels
             CATEGORY_LABELS = {
                 'demographics':      'Section 1: Demographics',
                 'sleep_alertness':   'Section 2: Sleep & Alertness',
-                'working_conditions':'Section 3: Working Conditions',
+                'working_conditions': 'Section 3: Working Conditions',
                 'schedule_features': 'Section 4: Shift Schedule Features',
                 'overtime':          'Section 5: Overtime',
                 'daycare_eldercare': 'Section 6: Day Care / Elder Care',
                 'open_ended':        'Section 7: Open-Ended Questions',
             }
 
+            current_category = None
+            question_number  = 1
+
             for question in survey['questions']:
-                # Category header when it changes
+                # New category: add heading + page break (except first)
                 if question['category'] != current_category:
+                    if current_category is not None:
+                        self._add_page_break(doc)
                     current_category = question['category']
                     label = CATEGORY_LABELS.get(
                         current_category,
                         current_category.replace('_', ' ').title()
                     )
-                    doc.add_heading(label, level=2)
+                    self._add_section_heading(doc, label)
 
                 # Question text
-                doc.add_paragraph(
-                    f"{question_number}. {question['text']}",
-                    style='Heading 3'
-                )
+                p_q = doc.add_paragraph()
+                p_q.paragraph_format.space_after = Pt(4)
+                run_q_num = p_q.add_run(f'{question_number}.  ')
+                run_q_num.bold = True
+                run_q_num.font.size = Pt(11)
+                run_q_num.font.color.rgb = _BRAND_BLUE
+                run_q_text = p_q.add_run(question['text'])
+                run_q_text.bold = True
+                run_q_text.font.size = Pt(11)
 
-                # Answer options
+                # Answer options based on question type
                 q_type = question['type']
+
                 if q_type == 'multiple_choice':
                     for option in question['options']:
-                        doc.add_paragraph(f"○ {option}", style='List Bullet')
+                        p_opt = doc.add_paragraph()
+                        p_opt.paragraph_format.left_indent = Inches(0.4)
+                        p_opt.paragraph_format.space_after = Pt(2)
+                        run_opt = p_opt.add_run(f'{bubble}   {option}')
+                        run_opt.font.size = Pt(11)
+
                 elif q_type == 'likert':
-                    doc.add_paragraph(f"Scale: {question['scale']}")
-                    for i in range(1, 6):
-                        doc.add_paragraph(f"○ {i}", style='List Bullet')
+                    # Scale label
+                    p_scale = doc.add_paragraph()
+                    p_scale.paragraph_format.left_indent = Inches(0.4)
+                    run_scale = p_scale.add_run(f'Scale: {question["scale"]}')
+                    run_scale.font.size = Pt(10)
+                    run_scale.italic = True
+                    run_scale.font.color.rgb = _BRAND_GRAY
+
+                    # 5-point scale options on a single line for compactness
+                    p_likert = doc.add_paragraph()
+                    p_likert.paragraph_format.left_indent = Inches(0.4)
+                    scale_labels = [
+                        '1 — Strongly Disagree',
+                        '2 — Disagree',
+                        '3 — Neutral',
+                        '4 — Agree',
+                        '5 — Strongly Agree'
+                    ]
+                    for val in scale_labels:
+                        p_val = doc.add_paragraph()
+                        p_val.paragraph_format.left_indent = Inches(0.4)
+                        p_val.paragraph_format.space_after = Pt(2)
+                        run_val = p_val.add_run(f'{bubble}   {val}')
+                        run_val.font.size = Pt(11)
+
                 elif q_type == 'checkbox':
                     for option in question['options']:
-                        doc.add_paragraph(f"☐ {option}", style='List Bullet')
+                        p_opt = doc.add_paragraph()
+                        p_opt.paragraph_format.left_indent = Inches(0.4)
+                        p_opt.paragraph_format.space_after = Pt(2)
+                        run_opt = p_opt.add_run(f'{checkbox}   {option}')
+                        run_opt.font.size = Pt(11)
+
                 elif q_type == 'text':
-                    doc.add_paragraph('_' * 80)
-                    doc.add_paragraph('_' * 80)
-                    doc.add_paragraph('_' * 80)
+                    # Three write-in lines
+                    for _ in range(3):
+                        p_line = doc.add_paragraph()
+                        p_line.paragraph_format.left_indent = Inches(0.25)
+                        p_line.paragraph_format.space_after = Pt(2)
+                        run_line = p_line.add_run('_' * 85)
+                        run_line.font.size = Pt(10)
+                        run_line.font.color.rgb = _BRAND_GRAY
 
                 doc.add_paragraph()
                 question_number += 1
 
-        # Custom Questions Section
+        # ---- Custom Questions section --------------------------------------
         if survey['custom_questions']:
-            doc.add_heading('Additional Questions', level=1)
+            self._add_page_break(doc)
+            self._add_section_heading(doc, 'Additional Questions')
+
             for custom_q in survey['custom_questions']:
-                doc.add_paragraph(
-                    f"{question_number}. {custom_q['text']}",
-                    style='Heading 3'
-                )
+                p_q = doc.add_paragraph()
+                p_q.paragraph_format.space_after = Pt(4)
+                run_q_num = p_q.add_run(f'{question_number}.  ')
+                run_q_num.bold = True
+                run_q_num.font.size = Pt(11)
+                run_q_num.font.color.rgb = _BRAND_BLUE
+                run_q_text = p_q.add_run(custom_q['text'])
+                run_q_text.bold = True
+                run_q_text.font.size = Pt(11)
+
                 if 'options' in custom_q:
                     for option in custom_q['options']:
-                        doc.add_paragraph(f"○ {option}", style='List Bullet')
+                        p_opt = doc.add_paragraph()
+                        p_opt.paragraph_format.left_indent = Inches(0.4)
+                        p_opt.paragraph_format.space_after = Pt(2)
+                        run_opt = p_opt.add_run(f'{bubble}   {option}')
+                        run_opt.font.size = Pt(11)
+                else:
+                    for _ in range(3):
+                        p_line = doc.add_paragraph()
+                        p_line.paragraph_format.left_indent = Inches(0.25)
+                        p_line.paragraph_format.space_after = Pt(2)
+                        run_line = p_line.add_run('_' * 85)
+                        run_line.font.size = Pt(10)
+                        run_line.font.color.rgb = _BRAND_GRAY
+
                 doc.add_paragraph()
                 question_number += 1
 
-        # Footer
-        doc.add_paragraph()
-        doc.add_paragraph('_' * 80)
-        footer = doc.add_paragraph('Shiftwork Solutions LLC')
-        footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        contact = doc.add_paragraph('Phone: (415) 763-5005 | www.shift-work.com')
-        contact.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        # ---- Thank You page -------------------------------------------------
+        self._add_thank_you_page(doc, survey['metadata']['company_name'])
 
-        # Save to BytesIO
+        # ---- Save to BytesIO ------------------------------------------------
         buffer = io.BytesIO()
         doc.save(buffer)
         buffer.seek(0)
         return buffer
+
+    # ========================================================================
+    # UTILITY METHODS  (unchanged from January 28, 2026)
+    # ========================================================================
 
     def get_categories(self):
         """Get all question categories"""
