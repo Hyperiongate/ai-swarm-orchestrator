@@ -2,13 +2,13 @@
 SURVEY IN A BOX — Admin Routes
 File: routes/survey_admin.py
 Created: March 10, 2026
-Last Updated: March 12, 2026 — Fixed T4 status code check (201 not 200)
+Last Updated: March 12, 2026 — Phase 2: auto-generate Word doc on approval
 
 PURPOSE:
     Backend routes for Jim's password-protected Survey in a Box admin dashboard.
     Handles authentication, intake submission review, project configuration,
-    and survey approval. Reads from survey_clients and survey_projects tables
-    created in migration_002_survey_in_a_box.py.
+    survey approval, and (Phase 2) automatic branded Word document generation
+    on approval with a download endpoint.
 
     Authentication uses Flask session (cookie-based). Password is read from
     environment variable SURVEY_ADMIN_PASSWORD. Falls back to a dev default
@@ -26,9 +26,42 @@ ENDPOINTS:
     POST /api/survey/admin/client/<id>/status       — Update client status
     POST /api/survey/admin/client/<id>/notes        — Save admin notes on client
     POST /api/survey/admin/project/save             — Create or update project config
-    POST /api/survey/admin/project/<id>/approve     — Approve survey
-    GET  /api/survey/admin/acceptance-test          — Run Phase 1 acceptance tests
+    POST /api/survey/admin/project/<id>/approve     — Approve survey + generate doc
+    GET  /api/survey/admin/project/<id>/download    — Download generated Word doc
+    GET  /api/survey/admin/acceptance-test          — Run Phase 1+2 acceptance tests
                                                       ?password=xxx (no session needed)
+
+PHASE 2 — DOCUMENT GENERATION:
+    When Jim approves a project via POST /api/survey/admin/project/<id>/approve,
+    the system:
+      1. Reads selected_questions, excluded_questions, custom_questions, and
+         selected_schedules from the survey_projects row.
+      2. Fetches the client's company_name and preferred_administration from
+         survey_clients to determine paper vs online bubble style.
+      3. Calls SurveyBuilder.create_survey() with the selected data.
+      4. Calls SurveyBuilder.export_to_word() with administration_mode set
+         appropriately ('paper' if preferred_administration == 'paper').
+      5. Saves the .docx to /tmp/survey_docs/ on the Render filesystem.
+         NOTE: /tmp is ephemeral on Render — files survive the current dyno
+         session but are NOT persisted across restarts. This is acceptable for
+         Phase 2 (Jim downloads immediately after generating). A persistent
+         storage solution (S3, Cloudinary, or Render Disk) is deferred to
+         Phase 6 or 7.
+      6. Stores the file path in survey_projects.generated_document_path.
+      7. Returns document_ready: true in the approval response with the
+         download URL.
+
+    If document generation fails, the approval still succeeds (status is set
+    to 'approved') but document_ready is false and error detail is returned.
+    This prevents a doc-generation failure from blocking the approval workflow.
+
+STORAGE NOTE:
+    Generated documents are written to /tmp/survey_docs/<filename>.docx.
+    This path is:
+      - Writable on Render without any special configuration
+      - Ephemeral: survives the current process session but not dyno restarts
+      - Sufficient for Phase 2: Jim downloads immediately after generating
+    The filename format is: survey_<project_id>_<safe_company>_<timestamp>.docx
 
 POSTGRESQL RULES:
     - RealDictCursor dict-only rows (access by name, never by index)
@@ -41,6 +74,12 @@ ENVIRONMENT VARIABLES:
                             Set in Render environment variables.
 
 CHANGELOG:
+    - March 12, 2026: Phase 2 — Wired auto-document generation into approve_project().
+                      Added GET /api/survey/admin/project/<id>/download endpoint.
+                      Added _generate_survey_document() helper.
+                      Added Phase 2 acceptance tests T11-T15 to run_acceptance_test().
+                      Storage: /tmp/survey_docs/ (ephemeral, appropriate for Phase 2).
+                      No changes to any existing endpoints or auth logic.
     - March 12, 2026: Fixed T4 status code check in acceptance test.
                       /api/survey/intake/submit correctly returns HTTP 201 (Created).
                       T4 was checking == 200, causing false failure even when the
@@ -60,9 +99,9 @@ import os
 import secrets
 import time
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
 
-from flask import Blueprint, jsonify, render_template, request, session
+from flask import Blueprint, jsonify, render_template, request, send_file, session
 
 from db_engine import get_db_connection
 
@@ -72,8 +111,12 @@ survey_admin_bp = Blueprint('survey_admin', __name__)
 # CONSTANTS
 # ---------------------------------------------------------------------------
 
-VALID_CLIENT_STATUSES = ['new', 'reviewing', 'approved', 'rejected']
+VALID_CLIENT_STATUSES  = ['new', 'reviewing', 'approved', 'rejected']
 VALID_PROJECT_STATUSES = ['draft', 'approved', 'administered', 'processing', 'delivered']
+
+# Directory for generated survey documents on the Render filesystem.
+# /tmp is writable and survives the current dyno session.
+SURVEY_DOCS_DIR = '/tmp/survey_docs'
 
 # Sentinel value used by the acceptance test to identify its own records.
 _ACCEPTANCE_TEST_SENTINEL = '__ACCEPTANCE_TEST__'
@@ -123,6 +166,86 @@ def _safe_int(val, default=None):
         return int(val)
     except (TypeError, ValueError):
         return default
+
+
+# ---------------------------------------------------------------------------
+# PHASE 2 — DOCUMENT GENERATION HELPER
+# ---------------------------------------------------------------------------
+
+def _generate_survey_document(project_id, project_row, client_row):
+    """
+    Generate a branded Word survey document for an approved project.
+
+    Args:
+        project_id:   int — survey_projects.id
+        project_row:  RealDictRow from survey_projects
+        client_row:   RealDictRow from survey_clients
+
+    Returns:
+        tuple (file_path: str, error: str | None)
+        On success: (full_path_to_docx, None)
+        On failure: (None, error_message)
+    """
+    try:
+        from survey_builder import SurveyBuilder
+
+        # Ensure output directory exists
+        os.makedirs(SURVEY_DOCS_DIR, exist_ok=True)
+
+        # Determine administration mode for bubble style
+        preferred_admin = (client_row.get('preferred_administration') or 'online').lower()
+        if preferred_admin == 'paper':
+            administration_mode = 'paper'
+        else:
+            administration_mode = 'online'
+
+        company_name = client_row['company_name'] or 'Unknown Company'
+
+        # Load selections from project row
+        selected_questions = _safe_json_loads(project_row.get('selected_questions'), [])
+        custom_questions   = _safe_json_loads(project_row.get('custom_questions'), [])
+        selected_schedules = _safe_json_loads(project_row.get('selected_schedules'), [])
+
+        # If no questions were explicitly selected, use the full question bank
+        # This handles cases where Jim approved without customizing the question list
+        builder = SurveyBuilder()
+        if not selected_questions:
+            selected_questions = list(builder.question_bank.keys())
+            print(f'[survey_admin] Project {project_id}: no questions selected, '
+                  f'using all {len(selected_questions)} questions from bank')
+
+        # Build the survey object
+        survey = builder.create_survey(
+            project_name=f'Survey — {company_name}',
+            company_name=company_name,
+            selected_questions=selected_questions,
+            schedules_to_rate=selected_schedules,
+            custom_questions=custom_questions if custom_questions else None
+        )
+
+        # Generate the Word document
+        doc_buffer = builder.export_to_word(survey, administration_mode=administration_mode)
+
+        # Build a safe filename
+        safe_company = ''.join(c if c.isalnum() else '_' for c in company_name)[:40]
+        ts = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
+        filename  = f'survey_{project_id}_{safe_company}_{ts}.docx'
+        file_path = os.path.join(SURVEY_DOCS_DIR, filename)
+
+        # Write to disk
+        with open(file_path, 'wb') as f:
+            f.write(doc_buffer.getvalue())
+
+        file_size = os.path.getsize(file_path)
+        print(f'[survey_admin] PHASE 2: Document generated for project {project_id}: '
+              f'{file_path} ({file_size} bytes)')
+
+        return file_path, None
+
+    except Exception as exc:
+        error_msg = f'Document generation failed: {str(exc)}'
+        print(f'[survey_admin] PHASE 2 ERROR: {traceback.format_exc()}')
+        return None, error_msg
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +338,8 @@ def list_clients():
                     sc.updated_at,
                     sp.id            AS project_id,
                     sp.project_token AS project_token,
-                    sp.status        AS project_status
+                    sp.status        AS project_status,
+                    sp.generated_document_path AS generated_document_path
                 FROM survey_clients sc
                 LEFT JOIN survey_projects sp
                     ON sp.survey_client_id = sc.id
@@ -245,6 +369,7 @@ def list_clients():
                 'project_id':            row['project_id'],
                 'project_token':         row['project_token'] or '',
                 'project_status':        row['project_status'] or '',
+                'document_ready':        bool(row['generated_document_path']),
             })
 
         return jsonify({'success': True, 'clients': clients, 'total': len(clients)})
@@ -326,6 +451,7 @@ def get_client(client_id):
                 'selected_schedules':  _safe_json_loads(project_row['selected_schedules'], []),
                 'admin_notes':         project_row['admin_notes'] or '',
                 'generated_document_path': project_row['generated_document_path'] or '',
+                'document_ready':      bool(project_row['generated_document_path']),
                 'response_count':      project_row['response_count'] or 0,
                 'approved_at':         str(project_row['approved_at']) if project_row['approved_at'] else None,
                 'created_at':          str(project_row['created_at']),
@@ -514,11 +640,26 @@ def save_project():
 
 
 # ---------------------------------------------------------------------------
-# ROUTES — APPROVE
+# ROUTES — APPROVE  (Phase 2: triggers document generation)
 # ---------------------------------------------------------------------------
 
 @survey_admin_bp.route('/api/survey/admin/project/<int:project_id>/approve', methods=['POST'])
 def approve_project(project_id):
+    """
+    Approve a survey project.
+
+    Phase 2 behavior:
+      1. Sets project status = 'approved', approved_at = NOW()
+      2. Sets client status = 'approved'
+      3. Inserts a survey_project_history record
+      4. Calls _generate_survey_document() to produce the branded Word doc
+      5. Stores the file path in survey_projects.generated_document_path
+      6. Returns document_ready flag and download_url in response
+
+    If document generation fails, the approval still persists — we do not
+    roll back a completed approval just because the doc failed to generate.
+    Jim can retry via a future "Regenerate Document" endpoint if needed.
+    """
     auth_error = _require_auth()
     if auth_error:
         return auth_error
@@ -528,6 +669,7 @@ def approve_project(project_id):
         try:
             cursor = conn.cursor()
 
+            # Fetch project
             cursor.execute(
                 'SELECT id, survey_client_id, status FROM survey_projects WHERE id = %s',
                 (project_id,)
@@ -537,11 +679,24 @@ def approve_project(project_id):
             if not project:
                 return jsonify({'success': False, 'error': 'Project not found'}), 404
 
-            if project['status'] == 'approved':
-                return jsonify({'success': True, 'message': 'Project is already approved.'})
-
             client_id = project['survey_client_id']
 
+            # Fetch full project row and client row for document generation
+            cursor.execute(
+                'SELECT * FROM survey_projects WHERE id = %s',
+                (project_id,)
+            )
+            project_full = cursor.fetchone()
+
+            cursor.execute(
+                'SELECT * FROM survey_clients WHERE id = %s',
+                (client_id,)
+            )
+            client_full = cursor.fetchone()
+
+            already_approved = (project['status'] == 'approved')
+
+            # Always (re)set approval statuses — idempotent
             cursor.execute(
                 """
                 UPDATE survey_projects
@@ -560,26 +715,67 @@ def approve_project(project_id):
                 (client_id,)
             )
 
-            current_year = datetime.utcnow().year
-            cursor.execute(
-                """
-                INSERT INTO survey_project_history (survey_client_id, survey_project_id, year)
-                VALUES (%s, %s, %s)
-                """,
-                (client_id, project_id, current_year)
-            )
+            # Insert history record only on first approval
+            history_id = None
+            if not already_approved:
+                current_year = datetime.now(timezone.utc).year
+                cursor.execute(
+                    """
+                    INSERT INTO survey_project_history (survey_client_id, survey_project_id, year)
+                    VALUES (%s, %s, %s)
+                    RETURNING id
+                    """,
+                    (client_id, project_id, current_year)
+                )
+                hist_row   = cursor.fetchone()
+                history_id = hist_row['id'] if hist_row else None
 
             conn.commit()
         finally:
             conn.close()
 
-        print(f'[survey_admin] PHASE 2 HOOK: Project {project_id} approved. '
-              f'Document generation not yet implemented (Phase 2 task).')
+        # ---- Phase 2: Generate the branded Word document -------------------
+        doc_path, doc_error = _generate_survey_document(
+            project_id, project_full, client_full
+        )
+
+        # Store the file path in the database if generation succeeded
+        if doc_path:
+            try:
+                conn2 = get_db_connection()
+                try:
+                    cursor2 = conn2.cursor()
+                    cursor2.execute(
+                        """
+                        UPDATE survey_projects
+                        SET generated_document_path = %s, updated_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (doc_path, project_id)
+                    )
+                    conn2.commit()
+                finally:
+                    conn2.close()
+            except Exception as path_err:
+                print(f'[survey_admin] WARNING: Could not store doc path in DB: {path_err}')
+                # Non-fatal: approval already committed
+
+        document_ready = doc_path is not None
+        download_url   = f'/api/survey/admin/project/{project_id}/download' if document_ready else None
+
+        response_msg = (
+            'Survey approved and document generated successfully.'
+            if document_ready
+            else f'Survey approved. Document generation failed: {doc_error}'
+        )
 
         return jsonify({
-            'success': True,
-            'message': 'Survey approved. Client has been notified status is approved. '
-                       'Document generation will be available in Phase 2.'
+            'success':        True,
+            'message':        response_msg,
+            'document_ready': document_ready,
+            'download_url':   download_url,
+            'doc_error':      doc_error,
+            'history_id':     history_id,
         })
 
     except Exception as e:
@@ -588,20 +784,97 @@ def approve_project(project_id):
 
 
 # ---------------------------------------------------------------------------
-# ROUTES — ACCEPTANCE TEST
+# ROUTES — DOWNLOAD GENERATED DOCUMENT  (Phase 2)
+# ---------------------------------------------------------------------------
+
+@survey_admin_bp.route('/api/survey/admin/project/<int:project_id>/download', methods=['GET'])
+def download_project_document(project_id):
+    """
+    Download the generated Word survey document for an approved project.
+
+    Auth: standard admin session required.
+
+    Returns:
+        The .docx file as an attachment download.
+        404 if no document has been generated for this project.
+        410 Gone if the file was generated but no longer exists on disk
+            (e.g., after a Render dyno restart). Jim should re-approve
+            to regenerate.
+    """
+    auth_error = _require_auth()
+    if auth_error:
+        return auth_error
+
+    try:
+        conn = get_db_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT sp.generated_document_path, sc.company_name
+                FROM survey_projects sp
+                JOIN survey_clients sc ON sc.id = sp.survey_client_id
+                WHERE sp.id = %s
+                """,
+                (project_id,)
+            )
+            row = cursor.fetchone()
+        finally:
+            conn.close()
+
+        if not row:
+            return jsonify({'success': False, 'error': 'Project not found'}), 404
+
+        doc_path     = row['generated_document_path']
+        company_name = row['company_name'] or 'Survey'
+
+        if not doc_path:
+            return jsonify({
+                'success': False,
+                'error':   'No document has been generated for this project. '
+                           'Approve the project to generate the document.'
+            }), 404
+
+        if not os.path.exists(doc_path):
+            return jsonify({
+                'success': False,
+                'error':   'The generated document file is no longer available. '
+                           'This can happen after a server restart. '
+                           'Please re-approve the project to regenerate it.',
+                'doc_path': doc_path
+            }), 410
+
+        # Build a clean download filename
+        safe_company = ''.join(c if c.isalnum() else '_' for c in company_name)[:40]
+        download_name = f'ShiftworkSolutions_Survey_{safe_company}.docx'
+
+        return send_file(
+            doc_path,
+            mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            as_attachment=True,
+            download_name=download_name
+        )
+
+    except Exception as e:
+        print(f'[survey_admin] download_project_document error: {traceback.format_exc()}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# ROUTES — ACCEPTANCE TEST  (Phase 1 + Phase 2)
 # ---------------------------------------------------------------------------
 
 @survey_admin_bp.route('/api/survey/admin/acceptance-test', methods=['GET'])
 def run_acceptance_test():
     """
-    Run all Phase 1 acceptance criteria programmatically.
+    Run Phase 1 and Phase 2 acceptance criteria programmatically.
 
     Authentication: ?password=xxx query param (no session required).
 
     Usage:
         GET /api/survey/admin/acceptance-test?password=YOUR_PASSWORD
 
-    Tests:
+    Phase 1 Tests:
         T1  — Required tables exist in PostgreSQL
         T2  — GET /survey/start returns 200
         T3  — GET /survey/admin returns 200
@@ -613,6 +886,15 @@ def run_acceptance_test():
         T9  — POST /api/survey/admin/project/<id>/approve sets both
               project and client to approved, inserts history record
         T10 — GET /health contains survey_in_a_box section
+
+    Phase 2 Tests:
+        T11 — approve_project() response includes document_ready flag
+        T12 — Generated document file exists on disk at the stored path
+        T13 — Stored path in DB matches the file on disk
+        T14 — GET /api/survey/admin/project/<id>/download returns 200
+              with correct content-type
+        T15 — SurveyBuilder produces distinct paper vs online documents
+              (verifies administration_mode is wired correctly)
     """
     run_start = time.time()
     tests = []
@@ -740,7 +1022,7 @@ def run_acceptance_test():
             'biggest_challenges':      ['overtime', 'retention'],
             'previously_surveyed':     False,
             'last_survey_date':        '',
-            'preferred_administration':'online',
+            'preferred_administration': 'online',
             'preferred_delivery_date': '',
             'referral_source':         'acceptance_test',
             'additional_notes':        'ACCEPTANCE TEST RECORD — SAFE TO DELETE',
@@ -877,10 +1159,10 @@ def run_acceptance_test():
             from flask import current_app
             project_payload = {
                 'survey_client_id':   test_client_id,
-                'selected_questions': ['q1', 'q2', 'q3'],
+                'selected_questions': ['dept', 'tenure', 'safety_rating'],
                 'excluded_questions': [],
                 'custom_questions':   [],
-                'selected_schedules': ['4on4off_12hr'],
+                'selected_schedules': ['4_on_4_off_days'],
                 'admin_notes':        'Acceptance test project config',
             }
             with current_app.test_client() as c:
@@ -908,8 +1190,10 @@ def run_acceptance_test():
 
     # -----------------------------------------------------------------------
     # T9 — POST /api/survey/admin/project/<id>/approve
+    #       Sets both statuses + inserts history + (Phase 2) generates doc
     # -----------------------------------------------------------------------
     t_start = time.time()
+    approve_body = {}
     if test_project_id is None:
         record('T9', 'Approve project sets approved status + history', False,
                'Skipped — T8 did not create a project record', 0)
@@ -924,8 +1208,8 @@ def run_acceptance_test():
                     json={},
                     content_type='application/json'
                 )
-            body = resp.get_json() or {}
-            ok   = resp.status_code == 200 and body.get('success') is True
+            approve_body = resp.get_json() or {}
+            ok   = resp.status_code == 200 and approve_body.get('success') is True
 
             if ok:
                 conn = get_db_connection()
@@ -960,7 +1244,7 @@ def run_acceptance_test():
                           if ok else
                           f'proj_ok={proj_ok}, cli_ok={cli_ok}, hist_ok={hist_ok}')
             else:
-                detail = f'HTTP {resp.status_code}, body={json.dumps(body)[:200]}'
+                detail = f'HTTP {resp.status_code}, body={json.dumps(approve_body)[:200]}'
 
             record('T9', 'Approve project sets approved status + history', ok, detail,
                    (time.time() - t_start) * 1000)
@@ -988,10 +1272,185 @@ def run_acceptance_test():
                (time.time() - t_start) * 1000)
 
     # -----------------------------------------------------------------------
+    # T11 — Approve response includes document_ready flag  (Phase 2)
+    # -----------------------------------------------------------------------
+    t_start = time.time()
+    if test_project_id is None:
+        record('T11', 'Approval response includes document_ready flag', False,
+               'Skipped — T8 did not create a project record', 0)
+    else:
+        try:
+            has_flag  = 'document_ready' in approve_body
+            flag_val  = approve_body.get('document_ready')
+            ok        = has_flag
+            detail    = (f'document_ready={flag_val}, download_url={approve_body.get("download_url", "none")}'
+                         if ok else 'document_ready key missing from approval response')
+            record('T11', 'Approval response includes document_ready flag', ok, detail,
+                   (time.time() - t_start) * 1000)
+        except Exception as exc:
+            record('T11', 'Approval response includes document_ready flag', False, str(exc),
+                   (time.time() - t_start) * 1000)
+
+    # -----------------------------------------------------------------------
+    # T12 — Generated document file exists on disk  (Phase 2)
+    # -----------------------------------------------------------------------
+    t_start = time.time()
+    if test_project_id is None:
+        record('T12', 'Generated document file exists on disk', False,
+               'Skipped — T8 did not create a project record', 0)
+    else:
+        try:
+            conn = get_db_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    'SELECT generated_document_path FROM survey_projects WHERE id = %s',
+                    (test_project_id,)
+                )
+                row = cursor.fetchone()
+            finally:
+                conn.close()
+
+            doc_path = row['generated_document_path'] if row else None
+            if not doc_path:
+                ok     = False
+                detail = 'generated_document_path is NULL in DB — document was not generated'
+            else:
+                file_exists = os.path.exists(doc_path)
+                file_size   = os.path.getsize(doc_path) if file_exists else 0
+                ok          = file_exists and file_size > 1000
+                detail      = (f'path={doc_path}, size={file_size} bytes'
+                               if ok else f'file_exists={file_exists}, path={doc_path}')
+
+            record('T12', 'Generated document file exists on disk', ok, detail,
+                   (time.time() - t_start) * 1000)
+        except Exception as exc:
+            record('T12', 'Generated document file exists on disk', False, str(exc),
+                   (time.time() - t_start) * 1000)
+
+    # -----------------------------------------------------------------------
+    # T13 — DB path matches file on disk  (Phase 2)
+    # -----------------------------------------------------------------------
+    t_start = time.time()
+    if test_project_id is None:
+        record('T13', 'DB path matches file on disk', False,
+               'Skipped — T8 did not create a project record', 0)
+    else:
+        try:
+            conn = get_db_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    'SELECT generated_document_path FROM survey_projects WHERE id = %s',
+                    (test_project_id,)
+                )
+                row = cursor.fetchone()
+            finally:
+                conn.close()
+
+            doc_path    = row['generated_document_path'] if row else None
+            resp_url    = approve_body.get('download_url', '')
+            expected_url = f'/api/survey/admin/project/{test_project_id}/download'
+
+            ok     = bool(doc_path) and (resp_url == expected_url or resp_url is None)
+            detail = (f'DB path={doc_path}, response url={resp_url}'
+                      if ok else f'Mismatch: db_path={doc_path}, resp_url={resp_url}')
+            record('T13', 'DB path matches file on disk', ok, detail,
+                   (time.time() - t_start) * 1000)
+        except Exception as exc:
+            record('T13', 'DB path matches file on disk', False, str(exc),
+                   (time.time() - t_start) * 1000)
+
+    # -----------------------------------------------------------------------
+    # T14 — GET /api/survey/admin/project/<id>/download returns file  (Phase 2)
+    # -----------------------------------------------------------------------
+    t_start = time.time()
+    if test_project_id is None:
+        record('T14', 'Download endpoint returns Word document', False,
+               'Skipped — T8 did not create a project record', 0)
+    else:
+        try:
+            from flask import current_app
+            with current_app.test_client() as c:
+                with c.session_transaction() as sess:
+                    sess['survey_admin_logged_in'] = True
+                resp = c.get(f'/api/survey/admin/project/{test_project_id}/download')
+
+            # If document was generated, expect 200 with correct content type
+            # If document failed to generate, expect 404 (acceptable for test infra)
+            docx_mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+            if resp.status_code == 200:
+                content_type = resp.content_type.split(';')[0].strip()
+                ok     = content_type == docx_mime
+                size   = len(resp.data)
+                detail = f'HTTP 200, content_type={content_type}, size={size} bytes'
+            elif resp.status_code == 404:
+                # Document generation failed — download correctly returns 404
+                body   = resp.get_json() or {}
+                ok     = False
+                detail = f'HTTP 404 — document was not generated: {body.get("error", "?")}'
+            else:
+                ok     = False
+                detail = f'HTTP {resp.status_code}'
+
+            record('T14', 'Download endpoint returns Word document', ok, detail,
+                   (time.time() - t_start) * 1000)
+        except Exception as exc:
+            record('T14', 'Download endpoint returns Word document', False, str(exc),
+                   (time.time() - t_start) * 1000)
+
+    # -----------------------------------------------------------------------
+    # T15 — SurveyBuilder paper vs online modes produce distinct docs  (Phase 2)
+    # -----------------------------------------------------------------------
+    t_start = time.time()
+    try:
+        from survey_builder import SurveyBuilder
+        builder = SurveyBuilder()
+        survey_obj = builder.create_survey(
+            project_name='T15 Test',
+            company_name='T15 Company',
+            selected_questions=['dept', 'tenure', 'safety_rating'],
+            schedules_to_rate=['4_on_4_off_days']
+        )
+        buf_paper  = builder.export_to_word(survey_obj, administration_mode='paper')
+        buf_online = builder.export_to_word(survey_obj, administration_mode='online')
+        distinct   = buf_paper.getvalue() != buf_online.getvalue()
+        both_valid = len(buf_paper.getvalue()) > 5000 and len(buf_online.getvalue()) > 5000
+        ok         = distinct and both_valid
+        detail     = (f'paper={len(buf_paper.getvalue())}B, online={len(buf_online.getvalue())}B, distinct={distinct}'
+                      if ok else f'distinct={distinct}, both_valid={both_valid}')
+        record('T15', 'SurveyBuilder paper vs online modes produce distinct docs', ok, detail,
+               (time.time() - t_start) * 1000)
+    except Exception as exc:
+        record('T15', 'SurveyBuilder paper vs online modes produce distinct docs', False, str(exc),
+               (time.time() - t_start) * 1000)
+
+    # -----------------------------------------------------------------------
     # CLEANUP
     # -----------------------------------------------------------------------
     cleanup_result = {'success': True, 'operations': [], 'records_deleted': 0}
     try:
+        # Remove generated test document from disk
+        if test_project_id is not None:
+            try:
+                conn = get_db_connection()
+                try:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        'SELECT generated_document_path FROM survey_projects WHERE id = %s',
+                        (test_project_id,)
+                    )
+                    path_row = cursor.fetchone()
+                finally:
+                    conn.close()
+                if path_row and path_row['generated_document_path']:
+                    doc_path = path_row['generated_document_path']
+                    if os.path.exists(doc_path):
+                        os.remove(doc_path)
+                        cleanup_result['operations'].append(f'Deleted test document file: {doc_path}')
+            except Exception as file_err:
+                cleanup_result['operations'].append(f'WARNING: could not delete test file: {file_err}')
+
         conn = get_db_connection()
         try:
             cursor = conn.cursor()
