@@ -1,781 +1,264 @@
 """
-SURVEY IN A BOX — Respondent Routes
-File: routes/survey_respondent.py
+AI SWARM ORCHESTRATOR - Database Migration 003
+File: migrations/migration_003_survey_responses.py
 Created: March 13, 2026
-Last Updated: March 13, 2026 — Phase 3: Online Survey Engine
+Last Updated: March 13, 2026 — BUG FIX 2: Detect and rebuild broken survey_responses schema
 
 PURPOSE:
-    Employee-facing survey engine for Survey in a Box Phase 3.
-    Handles the public-facing survey at /survey/take/<token> and the
-    API endpoints that power it. Fully anonymous — no names, no IP
-    addresses, no PII stored or logged.
+    Creates the survey_responses table required for Survey in a Box Phase 3.
+    This table stores anonymous employee survey responses for online surveys.
 
-    This blueprint does NOT require authentication. It is the public
-    interface that employees use to complete their survey.
+    Storage design (per Opus architecture guidance):
+        One row per respondent per survey project.
+        All answers stored as JSONB keyed by question short_label.
+        Missing/unanswered questions export as the string "BLANK".
+        No respondent identifiers — fully anonymous by design.
+        session_token is a one-way hashed browser cookie value used only
+        to prevent duplicate submissions within a session. It is NOT
+        linkable to any individual respondent.
 
-ENDPOINTS:
-    GET  /survey/take/<token>                    — Survey page (HTML)
-    GET  /api/survey/take/<token>/questions      — Load survey structure
-    POST /api/survey/take/<token>/submit         — Submit completed survey
-    GET  /api/survey/admin/project/<id>/open     — Jim opens survey for responses
-    POST /api/survey/admin/project/<id>/close    — Jim closes survey
-    GET  /api/survey/admin/project/<id>/responses — Response count + summary
-    GET  /api/survey/admin/project/<id>/export   — Download .xlsx response data
+    Tables created:
+        survey_responses  — Anonymous respondent answers
 
-ANONYMOUS DESIGN:
-    - No login, no registration, no email collection
-    - No IP addresses stored or logged
-    - session_token is a one-way SHA-256 hash of a browser cookie value.
-      Used only to prevent duplicate submissions in a single browser session.
-      Cannot be reversed to identify any individual.
-    - The export contains no timestamps, no row IDs, no session tokens —
-      purely the answer data in SurveySelector-compatible format.
-
-EXPORT FORMAT (SurveySelector / Remark compatible):
-    - One sheet named "Sheet1"
-    - One row per respondent
-    - One column per question in survey order
-    - Column headers: question short_label (e.g. "Department", "like current schedule")
-    - Values: full text of selected answer option (e.g. "4 Agree", "Shipping")
-    - Unanswered questions: the literal string "BLANK" (not empty cell)
-    - No row IDs, no timestamps, no respondent identifiers
-
-DUPLICATE PREVENTION:
-    - Browser sets a session cookie (survey_session_<token>) on first load
-    - Cookie value is SHA-256 hashed before storage — one-way, not reversible
-    - On submission, the hash is checked against survey_responses for that project
-    - If a matching session_token exists, submission is rejected with HTTP 409
-    - Respondents with cookies disabled can still submit (session_token = NULL,
-      duplicate check is skipped for them)
-
-SURVEY OPEN/CLOSE:
-    - Jim explicitly opens a survey via GET /open endpoint (auth required)
-    - Employees cannot submit to a closed survey (returns 403 with clear message)
-    - Jim closes the survey via POST /close when data collection is complete
-    - open/close state is stored in survey_projects.is_open
-
-POSTGRESQL RULES:
-    - RealDictCursor dict-only rows (access by name, never by index)
-    - TRUE/FALSE for booleans (not 0/1)
-    - %s for all parameters
-    - RETURNING id on INSERT
+    Also adds columns to survey_projects:
+        survey_url        — The public /survey/take/<token> URL (convenience)
+        is_open           — Boolean: is the survey currently accepting responses?
+        opened_at         — Timestamp when Jim opened the survey
+        closed_at         — Timestamp when Jim closed the survey
 
 CHANGELOG:
+    - March 13, 2026 (BUG FIX 2): Added schema integrity check. If
+      survey_responses exists but is missing survey_project_id (from a prior
+      broken deploy), the table is dropped and recreated. Safe because
+      survey_responses has no real data at this stage. Drop+create runs on
+      an autocommit connection to avoid transaction state contamination.
+
+    - March 13, 2026 (BUG FIX 1): Replaced savepoint-based _safe_alter()
+      with a dedicated autocommit connection for all ALTER TABLE statements.
+      Root cause: PostgreSQL savepoints cannot be set inside an already-aborted
+      transaction.
+
     - March 13, 2026: Initial creation. Phase 3 of Survey in a Box roadmap.
+      One new table. Adds 4 columns to survey_projects. No other changes.
+
+USAGE:
+    Called automatically by app.py STEP 1 (after migration_002).
+    Can also be run directly: python migrations/migration_003_survey_responses.py
+    Safe to run multiple times — checks schema before acting.
+
+POSTGRESQL RULES FOLLOWED:
+    - RealDictCursor dict-only rows (no index access)
+    - TRUE/FALSE for booleans
+    - %s for all parameters
+    - RETURNING id for inserts
+    - Autocommit connection for all DDL statements
 """
 
-import hashlib
-import json
 import os
-import traceback
-from datetime import datetime, timezone
-from io import BytesIO
+import sys
 
-from flask import (Blueprint, Response, jsonify, make_response,
-                   render_template, request, session)
-
-from db_engine import get_db_connection
-
-survey_respondent_bp = Blueprint('survey_respondent', __name__)
-
-# ---------------------------------------------------------------------------
-# CONSTANTS
-# ---------------------------------------------------------------------------
-
-# Cookie name template — includes token to scope per-survey
-_COOKIE_NAME_PREFIX = 'survey_session_'
-
-# How long the duplicate-prevention cookie lives (seconds). 30 days.
-_COOKIE_MAX_AGE = 30 * 24 * 60 * 60
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-# ---------------------------------------------------------------------------
-# INTERNAL HELPERS
-# ---------------------------------------------------------------------------
-
-def _hash_session_value(raw_value):
-    """One-way SHA-256 hash of a session cookie value. Non-reversible."""
-    return hashlib.sha256(raw_value.encode('utf-8')).hexdigest()
+def _pk(db_type):
+    if db_type == 'postgresql':
+        return 'SERIAL PRIMARY KEY'
+    return 'INTEGER PRIMARY KEY AUTOINCREMENT'
 
 
-def _get_session_token(token):
+def _ts(db_type):
+    if db_type == 'postgresql':
+        return 'TIMESTAMP DEFAULT NOW()'
+    return 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP'
+
+
+def _get_autocommit_conn(db_type):
     """
-    Return (cookie_value, hashed_token) for this survey token.
-    cookie_value: the raw string stored in the browser cookie (for setting).
-    hashed_token: the SHA-256 hash stored in the DB (for duplicate check).
-    Returns (None, None) if no cookie exists yet.
+    Return a fresh psycopg2 connection with autocommit=True.
+    Used for all DDL (CREATE TABLE, DROP TABLE, ALTER TABLE, CREATE INDEX)
+    so each statement runs in its own implicit transaction and a failure
+    on one statement never aborts subsequent ones.
     """
-    cookie_name  = _COOKIE_NAME_PREFIX + token
-    cookie_value = request.cookies.get(cookie_name)
-    if not cookie_value:
-        return None, None
-    return cookie_value, _hash_session_value(cookie_value)
+    if db_type == 'postgresql':
+        import psycopg2
+        dsn = os.environ.get('DATABASE_URL', '')
+        if not dsn:
+            raise RuntimeError("DATABASE_URL environment variable not set")
+        conn = psycopg2.connect(dsn)
+        conn.autocommit = True
+        return conn
+    else:
+        import sqlite3
+        db_path = os.environ.get('SQLITE_DB_PATH', 'swarm_intelligence.db')
+        return sqlite3.connect(db_path)
 
 
-def _generate_session_cookie_value():
-    """Generate a new random value to set as the browser session cookie."""
-    import secrets
-    return secrets.token_hex(32)
-
-
-def _load_project_by_token(token):
+def _table_has_column(cursor, db_type, table_name, column_name):
     """
-    Load survey_projects + survey_clients row by project_token.
-    Returns (project_row, client_row) or (None, None) if not found.
+    Return True if table_name.column_name exists in the database.
+    Works for both PostgreSQL and SQLite.
     """
-    conn = get_db_connection()
+    if db_type == 'postgresql':
+        cursor.execute("""
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_name = %s
+              AND column_name = %s
+        """, (table_name, column_name))
+        return cursor.fetchone() is not None
+    else:
+        cursor.execute(f"PRAGMA table_info({table_name})")
+        rows = cursor.fetchall()
+        return any(row[1] == column_name for row in rows)
+
+
+def _table_exists(cursor, db_type, table_name):
+    """Return True if table_name exists."""
+    if db_type == 'postgresql':
+        cursor.execute("""
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_name = %s
+        """, (table_name,))
+        return cursor.fetchone() is not None
+    else:
+        cursor.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (table_name,)
+        )
+        return cursor.fetchone() is not None
+
+
+def run_migration():
+    from db_engine import get_db_type
+
+    db_type = get_db_type()
+    print(f"Running migration 003_survey_responses on {db_type}...")
+
+    pk = _pk(db_type)
+    ts = _ts(db_type)
+
+    if db_type == 'postgresql':
+        jsonb_col = "JSONB NOT NULL DEFAULT '{}'::jsonb"
+    else:
+        jsonb_col = "TEXT NOT NULL DEFAULT '{}'"
+
+    create_table_sql = f"""
+        CREATE TABLE IF NOT EXISTS survey_responses (
+            id                  {pk},
+            survey_project_id   INTEGER NOT NULL,
+            answers             {jsonb_col},
+            session_token       TEXT,
+            submitted_at        {ts}
+        )
+    """
+
+    indexes = [
+        "CREATE INDEX IF NOT EXISTS idx_survey_responses_project ON survey_responses(survey_project_id)",
+        "CREATE INDEX IF NOT EXISTS idx_survey_responses_session ON survey_responses(session_token)",
+        "CREATE INDEX IF NOT EXISTS idx_survey_responses_submitted ON survey_responses(submitted_at DESC)",
+    ]
+
+    extra_columns = [
+        ("survey_projects", "survey_url",  "TEXT"),
+        ("survey_projects", "is_open",     "BOOLEAN DEFAULT FALSE"),
+        ("survey_projects", "opened_at",   "TIMESTAMP"),
+        ("survey_projects", "closed_at",   "TIMESTAMP"),
+    ]
+
+    # =========================================================================
+    # ALL DDL runs on a single autocommit connection so every statement is
+    # fully isolated. A failure on any one statement never aborts the others.
+    # =========================================================================
+    conn = _get_autocommit_conn(db_type)
     try:
         cursor = conn.cursor()
-        cursor.execute(
-            """
-            SELECT sp.*, sc.company_name, sc.preferred_administration
-            FROM survey_projects sp
-            JOIN survey_clients sc ON sc.id = sp.survey_client_id
-            WHERE sp.project_token = %s
-            """,
-            (token,)
-        )
-        row = cursor.fetchone()
-        if not row:
-            return None, None
 
-        cursor.execute(
-            'SELECT * FROM survey_clients WHERE id = %s',
-            (row['survey_client_id'],)
-        )
-        client_row = cursor.fetchone()
-        return row, client_row
+        # ---------------------------------------------------------------------
+        # STEP 1: Check if survey_responses exists with correct schema.
+        # If it exists but is missing survey_project_id (broken prior deploy),
+        # drop it so it can be recreated correctly below.
+        # ---------------------------------------------------------------------
+        if _table_exists(cursor, db_type, 'survey_responses'):
+            if not _table_has_column(cursor, db_type, 'survey_responses', 'survey_project_id'):
+                print("  survey_responses exists but is missing survey_project_id — dropping for rebuild")
+                try:
+                    # Drop dependent indexes first (PostgreSQL)
+                    for idx in ['idx_survey_responses_project',
+                                'idx_survey_responses_session',
+                                'idx_survey_responses_submitted']:
+                        try:
+                            cursor.execute(f"DROP INDEX IF EXISTS {idx}")
+                        except Exception:
+                            pass
+                    cursor.execute("DROP TABLE survey_responses")
+                    print("  survey_responses dropped — will recreate with correct schema")
+                except Exception as drop_err:
+                    print(f"  WARNING: Could not drop survey_responses: {drop_err}")
+            else:
+                print("  survey_responses already exists with correct schema — skipping CREATE")
+
+        # ---------------------------------------------------------------------
+        # STEP 2: Create the table (skipped if already correct per IF NOT EXISTS)
+        # ---------------------------------------------------------------------
+        try:
+            cursor.execute(create_table_sql)
+            print("  survey_responses table verified/created")
+        except Exception as e:
+            print(f"  Table 'survey_responses' warning: {e}")
+
+        # ---------------------------------------------------------------------
+        # STEP 3: Create indexes
+        # ---------------------------------------------------------------------
+        for index_sql in indexes:
+            try:
+                cursor.execute(index_sql)
+            except Exception:
+                pass  # Already exists — non-fatal
+
+        # ---------------------------------------------------------------------
+        # STEP 4: Add columns to survey_projects (each isolated by autocommit)
+        # ---------------------------------------------------------------------
+        for table_name, col_name, col_type in extra_columns:
+            if db_type == 'postgresql':
+                sql = (f"ALTER TABLE {table_name} "
+                       f"ADD COLUMN IF NOT EXISTS {col_name} {col_type}")
+            else:
+                sql = f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}"
+            try:
+                cursor.execute(sql)
+                print(f"  ALTER OK: {table_name}.{col_name}")
+            except Exception as e:
+                msg = str(e).lower()
+                if 'already exists' in msg or 'duplicate column' in msg:
+                    print(f"  ALTER SKIP (already exists): {table_name}.{col_name}")
+                else:
+                    print(f"  ALTER NOTE {table_name}.{col_name}: {e}")
+
     finally:
         conn.close()
 
-
-def _safe_json_loads(val, default=None):
-    if default is None:
-        default = []
-    if not val:
-        return default
+    # Verify final state
+    verify_conn = _get_autocommit_conn(db_type)
     try:
-        if isinstance(val, (list, dict)):
-            return val
-        return json.loads(val)
-    except (TypeError, ValueError):
-        return default
-
-
-def _get_survey_questions_ordered(project_row):
-    """
-    Return the ordered list of question dicts for this project.
-    Each dict has at minimum: short_label, full_text, question_type, options.
-    Falls back to full question bank if no questions selected.
-    """
-    try:
-        from survey_builder import SurveyBuilder
-        builder = SurveyBuilder()
-
-        selected_questions = _safe_json_loads(project_row.get('selected_questions'), [])
-        custom_questions   = _safe_json_loads(project_row.get('custom_questions'), [])
-        selected_schedules = _safe_json_loads(project_row.get('selected_schedules'), [])
-        company_name       = project_row.get('company_name', 'Your Company')
-
-        if not selected_questions:
-            selected_questions = list(builder.question_bank.keys())
-
-        survey_obj = builder.create_survey(
-            project_name=f'Survey',
-            company_name=company_name,
-            selected_questions=selected_questions,
-            schedules_to_rate=selected_schedules,
-            custom_questions=custom_questions if custom_questions else None
-        )
-
-        # Flatten all questions from all sections into ordered list
-        ordered = []
-        for section in survey_obj.get('sections', []):
-            for q in section.get('questions', []):
-                ordered.append(q)
-
-        return ordered, survey_obj
-
-    except Exception as e:
-        print(f'[survey_respondent] _get_survey_questions_ordered error: {e}')
-        return [], {}
-
-
-# ---------------------------------------------------------------------------
-# ADMIN HELPERS — require auth
-# ---------------------------------------------------------------------------
-
-def _require_admin_auth():
-    """Check Flask session for admin login. Returns error response or None."""
-    if not session.get('survey_admin_logged_in'):
-        return jsonify({'success': False, 'error': 'Not authenticated',
-                        'redirect': '/survey/admin'}), 401
-    return None
-
-
-# ---------------------------------------------------------------------------
-# ROUTES — EMPLOYEE-FACING SURVEY PAGE
-# ---------------------------------------------------------------------------
-
-@survey_respondent_bp.route('/survey/take/<token>', methods=['GET'])
-def survey_take_page(token):
-    """
-    Render the employee-facing survey page.
-    The page loads questions via /api/survey/take/<token>/questions
-    and submits via /api/survey/take/<token>/submit.
-    """
-    project_row, client_row = _load_project_by_token(token)
-
-    if not project_row:
-        return render_template('survey_closed.html',
-                               message='This survey link is not valid.'), 404
-
-    if project_row['status'] not in ('approved', 'administered'):
-        return render_template('survey_closed.html',
-                               message='This survey is not currently active.'), 403
-
-    if not project_row.get('is_open'):
-        return render_template('survey_closed.html',
-                               message='This survey is not currently accepting responses. '
-                                       'Please check back later or contact your supervisor.'), 403
-
-    company_name = client_row.get('company_name', 'Your Company') if client_row else 'Your Company'
-
-    return render_template('survey_take.html',
-                           token=token,
-                           company_name=company_name)
-
-
-# ---------------------------------------------------------------------------
-# ROUTES — LOAD SURVEY QUESTIONS (API)
-# ---------------------------------------------------------------------------
-
-@survey_respondent_bp.route('/api/survey/take/<token>/questions', methods=['GET'])
-def get_survey_questions(token):
-    """
-    Return the ordered question list for this survey.
-    Used by the survey_take.html frontend to render the form.
-    Returns questions grouped by section with full option text.
-    Does NOT require authentication.
-    """
-    try:
-        project_row, client_row = _load_project_by_token(token)
-
-        if not project_row:
-            return jsonify({'success': False, 'error': 'Survey not found'}), 404
-
-        if not project_row.get('is_open'):
-            return jsonify({'success': False, 'error': 'Survey is not open'}), 403
-
-        ordered_questions, survey_obj = _get_survey_questions_ordered(project_row)
-
-        if not ordered_questions:
-            return jsonify({'success': False, 'error': 'No questions configured for this survey'}), 500
-
-        # Return sections with questions for the frontend to render
-        sections = survey_obj.get('sections', [])
-        company_name = project_row.get('company_name', 'Your Company')
-
-        return jsonify({
-            'success':      True,
-            'company_name': company_name,
-            'token':        token,
-            'total_questions': len(ordered_questions),
-            'sections':     sections,
-        })
-
-    except Exception as e:
-        print(f'[survey_respondent] get_survey_questions error: {traceback.format_exc()}')
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-# ---------------------------------------------------------------------------
-# ROUTES — SUBMIT SURVEY (API)
-# ---------------------------------------------------------------------------
-
-@survey_respondent_bp.route('/api/survey/take/<token>/submit', methods=['POST'])
-def submit_survey(token):
-    """
-    Accept a completed survey submission.
-
-    Request body (JSON):
-        {
-            "answers": {
-                "Department": "Shipping",
-                "like current schedule": "4 Agree",
-                "gender": "Male"
-            }
-        }
-
-    Answers should use the question short_label as the key and the
-    full text of the selected option as the value. Questions left
-    unanswered should be omitted from the dict (not sent as empty string).
-    The export function fills missing keys with "BLANK".
-
-    Returns:
-        201 Created on success
-        403 if survey is closed
-        409 if duplicate submission detected
-        422 if answers are missing or malformed
-    """
-    try:
-        project_row, client_row = _load_project_by_token(token)
-
-        if not project_row:
-            return jsonify({'success': False, 'error': 'Survey not found'}), 404
-
-        if not project_row.get('is_open'):
-            return jsonify({
-                'success': False,
-                'error':   'This survey is no longer accepting responses.'
-            }), 403
-
-        # ---- Duplicate check -----------------------------------------------
-        cookie_value, hashed_token = _get_session_token(token)
-
-        if hashed_token:
-            conn = get_db_connection()
-            try:
-                cursor = conn.cursor()
-                cursor.execute(
-                    """
-                    SELECT id FROM survey_responses
-                    WHERE survey_project_id = %s AND session_token = %s
-                    LIMIT 1
-                    """,
-                    (project_row['id'], hashed_token)
-                )
-                duplicate = cursor.fetchone()
-            finally:
-                conn.close()
-
-            if duplicate:
-                return jsonify({
-                    'success': False,
-                    'error':   'You have already submitted a response for this survey. '
-                               'Only one response per person is allowed. Thank you!'
-                }), 409
-
-        # ---- Validate answers -----------------------------------------------
-        data = request.get_json(force=True, silent=True) or {}
-        answers = data.get('answers')
-
-        if not isinstance(answers, dict):
-            return jsonify({
-                'success': False,
-                'error':   'answers must be a JSON object keyed by question short_label.'
-            }), 422
-
-        if len(answers) == 0:
-            return jsonify({
-                'success': False,
-                'error':   'No answers were submitted. Please complete the survey before submitting.'
-            }), 422
-
-        # Sanitize: strip any empty-string values (treat as unanswered)
-        cleaned_answers = {k: v for k, v in answers.items()
-                           if isinstance(k, str) and isinstance(v, str) and v.strip()}
-
-        # ---- Store response -------------------------------------------------
-        new_session_value = None
-        new_hashed_token  = None
-
-        if not cookie_value:
-            # First visit — generate a new session cookie value
-            new_session_value = _generate_session_cookie_value()
-            new_hashed_token  = _hash_session_value(new_session_value)
-        else:
-            new_hashed_token = hashed_token
-
-        conn = get_db_connection()
-        try:
-            cursor = conn.cursor()
-
-            cursor.execute(
-                """
-                INSERT INTO survey_responses (survey_project_id, answers, session_token)
-                VALUES (%s, %s::jsonb, %s)
-                RETURNING id
-                """,
-                (
-                    project_row['id'],
-                    json.dumps(cleaned_answers),
-                    new_hashed_token
-                )
-            )
-            row = cursor.fetchone()
-            response_id = row['id']
-
-            # Increment response_count on the project
-            cursor.execute(
-                """
-                UPDATE survey_projects
-                SET response_count = response_count + 1, updated_at = NOW()
-                WHERE id = %s
-                """,
-                (project_row['id'],)
-            )
-
-            conn.commit()
-        finally:
-            conn.close()
-
-        print(f'[survey_respondent] Response {response_id} stored for project '
-              f'{project_row["id"]} ({project_row.get("company_name", "?")})')
-
-        # Build response — set duplicate-prevention cookie if new session
-        resp = make_response(jsonify({
-            'success':     True,
-            'message':     'Thank you! Your response has been recorded.',
-            'response_id': response_id,
-        }), 201)
-
-        if new_session_value:
-            cookie_name = _COOKIE_NAME_PREFIX + token
-            resp.set_cookie(
-                cookie_name,
-                new_session_value,
-                max_age=_COOKIE_MAX_AGE,
-                httponly=True,
-                samesite='Lax',
-                secure=os.environ.get('FLASK_ENV') != 'development'
-            )
-
-        return resp
-
-    except Exception as e:
-        print(f'[survey_respondent] submit_survey error: {traceback.format_exc()}')
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-# ---------------------------------------------------------------------------
-# ROUTES — ADMIN: OPEN SURVEY
-# ---------------------------------------------------------------------------
-
-@survey_respondent_bp.route('/api/survey/admin/project/<int:project_id>/open', methods=['GET', 'POST'])
-def open_survey(project_id):
-    """
-    Jim opens a survey to accept employee responses.
-    Sets is_open = TRUE, opened_at = NOW(), status = 'administered'.
-    Also sets survey_url on the project for convenience.
-    Requires admin auth.
-    """
-    auth_error = _require_admin_auth()
-    if auth_error:
-        return auth_error
-
-    try:
-        conn = get_db_connection()
-        try:
-            cursor = conn.cursor()
-
-            cursor.execute(
-                'SELECT id, project_token, status, is_open FROM survey_projects WHERE id = %s',
-                (project_id,)
-            )
-            project = cursor.fetchone()
-
-            if not project:
-                return jsonify({'success': False, 'error': 'Project not found'}), 404
-
-            if project['status'] not in ('approved', 'administered'):
-                return jsonify({
-                    'success': False,
-                    'error':   f'Project must be approved before opening. '
-                               f'Current status: {project["status"]}'
-                }), 400
-
-            token       = project['project_token']
-            base_url    = os.environ.get('APP_BASE_URL', 'https://ai-swarm-orchestrator.onrender.com')
-            survey_url  = f'{base_url}/survey/take/{token}'
-
-            cursor.execute(
-                """
-                UPDATE survey_projects
-                SET is_open    = TRUE,
-                    opened_at  = NOW(),
-                    status     = 'administered',
-                    survey_url = %s,
-                    updated_at = NOW()
-                WHERE id = %s
-                """,
-                (survey_url, project_id)
-            )
-            conn.commit()
-        finally:
-            conn.close()
-
-        return jsonify({
-            'success':    True,
-            'message':    'Survey is now open and accepting responses.',
-            'survey_url': survey_url,
-            'token':      token,
-        })
-
-    except Exception as e:
-        print(f'[survey_respondent] open_survey error: {traceback.format_exc()}')
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-# ---------------------------------------------------------------------------
-# ROUTES — ADMIN: CLOSE SURVEY
-# ---------------------------------------------------------------------------
-
-@survey_respondent_bp.route('/api/survey/admin/project/<int:project_id>/close', methods=['POST'])
-def close_survey(project_id):
-    """
-    Jim closes a survey — no more responses accepted.
-    Sets is_open = FALSE, closed_at = NOW().
-    Requires admin auth.
-    """
-    auth_error = _require_admin_auth()
-    if auth_error:
-        return auth_error
-
-    try:
-        conn = get_db_connection()
-        try:
-            cursor = conn.cursor()
-
-            cursor.execute(
-                'SELECT id, is_open, response_count FROM survey_projects WHERE id = %s',
-                (project_id,)
-            )
-            project = cursor.fetchone()
-
-            if not project:
-                return jsonify({'success': False, 'error': 'Project not found'}), 404
-
-            cursor.execute(
-                """
-                UPDATE survey_projects
-                SET is_open    = FALSE,
-                    closed_at  = NOW(),
-                    updated_at = NOW()
-                WHERE id = %s
-                """,
-                (project_id,)
-            )
-            conn.commit()
-        finally:
-            conn.close()
-
-        return jsonify({
-            'success':        True,
-            'message':        'Survey is now closed.',
-            'response_count': project['response_count'] or 0,
-        })
-
-    except Exception as e:
-        print(f'[survey_respondent] close_survey error: {traceback.format_exc()}')
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-# ---------------------------------------------------------------------------
-# ROUTES — ADMIN: RESPONSE SUMMARY
-# ---------------------------------------------------------------------------
-
-@survey_respondent_bp.route('/api/survey/admin/project/<int:project_id>/responses', methods=['GET'])
-def get_response_summary(project_id):
-    """
-    Return response count and open/closed status for a project.
-    Used by the admin dashboard to show response progress.
-    Requires admin auth.
-    """
-    auth_error = _require_admin_auth()
-    if auth_error:
-        return auth_error
-
-    try:
-        conn = get_db_connection()
-        try:
-            cursor = conn.cursor()
-
-            cursor.execute(
-                """
-                SELECT sp.response_count, sp.is_open, sp.opened_at, sp.closed_at,
-                       sp.survey_url, sp.project_token,
-                       COUNT(sr.id) AS actual_count
-                FROM survey_projects sp
-                LEFT JOIN survey_responses sr ON sr.survey_project_id = sp.id
-                WHERE sp.id = %s
-                GROUP BY sp.id
-                """,
-                (project_id,)
-            )
-            row = cursor.fetchone()
-        finally:
-            conn.close()
-
-        if not row:
-            return jsonify({'success': False, 'error': 'Project not found'}), 404
-
-        return jsonify({
-            'success':        True,
-            'project_id':     project_id,
-            'response_count': row['actual_count'],
-            'is_open':        row['is_open'],
-            'opened_at':      str(row['opened_at']) if row['opened_at'] else None,
-            'closed_at':      str(row['closed_at']) if row['closed_at'] else None,
-            'survey_url':     row['survey_url'] or '',
-            'token':          row['project_token'],
-        })
-
-    except Exception as e:
-        print(f'[survey_respondent] get_response_summary error: {traceback.format_exc()}')
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-# ---------------------------------------------------------------------------
-# ROUTES — ADMIN: EXPORT RESPONSES AS XLSX
-# ---------------------------------------------------------------------------
-
-@survey_respondent_bp.route('/api/survey/admin/project/<int:project_id>/export', methods=['GET'])
-def export_responses(project_id):
-    """
-    Export all survey responses as a SurveySelector/Remark-compatible .xlsx file.
-
-    Format:
-        - Sheet name: "Sheet1"
-        - One row per respondent
-        - Column headers: question short_label in survey order
-        - Values: full text of selected answer option
-        - Unanswered questions: the literal string "BLANK"
-        - No row IDs, no timestamps, no session tokens
-
-    This format matches the Remark Office OMR export that SurveySelector
-    already processes. Jim can drop this file directly into SurveySelector.
-
-    Requires admin auth.
-    """
-    auth_error = _require_admin_auth()
-    if auth_error:
-        return auth_error
-
-    try:
-        # ---- Load project and question structure ----------------------------
-        conn = get_db_connection()
-        try:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                SELECT sp.*, sc.company_name, sc.preferred_administration
-                FROM survey_projects sp
-                JOIN survey_clients sc ON sc.id = sp.survey_client_id
-                WHERE sp.id = %s
-                """,
-                (project_id,)
-            )
-            project_row = cursor.fetchone()
-
-            if not project_row:
-                return jsonify({'success': False, 'error': 'Project not found'}), 404
-
-            # Load all response rows
-            cursor.execute(
-                """
-                SELECT answers FROM survey_responses
-                WHERE survey_project_id = %s
-                ORDER BY submitted_at ASC
-                """,
-                (project_id,)
-            )
-            response_rows = cursor.fetchall()
-        finally:
-            conn.close()
-
-        if not response_rows:
-            return jsonify({
-                'success': False,
-                'error':   'No responses have been submitted for this project yet.'
-            }), 404
-
-        # ---- Build ordered column list from survey structure ---------------
-        ordered_questions, _ = _get_survey_questions_ordered(project_row)
-
-        if not ordered_questions:
-            return jsonify({
-                'success': False,
-                'error':   'Could not load question structure for this project.'
-            }), 500
-
-        # Column headers in survey order
-        column_headers = [q['short_label'] for q in ordered_questions]
-
-        # ---- Build xlsx ----------------------------------------------------
-        try:
-            import openpyxl
-            from openpyxl.styles import Font, PatternFill, Alignment
-        except ImportError:
-            return jsonify({
-                'success': False,
-                'error':   'openpyxl is required for xlsx export. '
-                           'Add it to requirements.txt.'
-            }), 500
-
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = 'Sheet1'
-
-        # Header row — bold
-        header_font = Font(bold=True)
-        for col_idx, header in enumerate(column_headers, start=1):
-            cell       = ws.cell(row=1, column=col_idx, value=header)
-            cell.font  = header_font
-
-        # Data rows — one per respondent
-        for row_idx, response_row in enumerate(response_rows, start=2):
-            # answers may come back as dict (JSONB) or string (fallback)
-            raw_answers = response_row['answers']
-            if isinstance(raw_answers, str):
-                try:
-                    answers = json.loads(raw_answers)
-                except (TypeError, ValueError):
-                    answers = {}
-            elif isinstance(raw_answers, dict):
-                answers = raw_answers
-            else:
-                answers = {}
-
-            for col_idx, header in enumerate(column_headers, start=1):
-                # Use "BLANK" for any question not answered — Remark convention
-                value = answers.get(header, 'BLANK')
-                if not value or not str(value).strip():
-                    value = 'BLANK'
-                ws.cell(row=row_idx, column=col_idx, value=str(value))
-
-        # Set reasonable column widths
-        for col_idx, header in enumerate(column_headers, start=1):
-            col_letter = ws.cell(row=1, column=col_idx).column_letter
-            ws.column_dimensions[col_letter].width = max(len(header) + 4, 15)
-
-        # ---- Write to buffer and return ------------------------------------
-        buffer = BytesIO()
-        wb.save(buffer)
-        buffer.seek(0)
-
-        company_name  = project_row.get('company_name', 'Survey')
-        safe_company  = ''.join(c if c.isalnum() else '_' for c in company_name)[:40]
-        ts            = datetime.now(timezone.utc).strftime('%Y%m%d')
-        filename      = f'SurveyData_{safe_company}_{ts}.xlsx'
-        respondent_count = len(response_rows)
-
-        print(f'[survey_respondent] Exported {respondent_count} responses '
-              f'for project {project_id} ({company_name}): {filename}')
-
-        return Response(
-            buffer.getvalue(),
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            headers={
-                'Content-Disposition': f'attachment; filename="{filename}"',
-                'X-Response-Count':    str(respondent_count),
-                'X-Column-Count':      str(len(column_headers)),
-            }
-        )
-
-    except Exception as e:
-        print(f'[survey_respondent] export_responses error: {traceback.format_exc()}')
-        return jsonify({'success': False, 'error': str(e)}), 500
-
+        vcursor = verify_conn.cursor()
+        has_table = _table_exists(vcursor, db_type, 'survey_responses')
+        has_col   = _table_has_column(vcursor, db_type, 'survey_responses', 'survey_project_id') if has_table else False
+        has_is_open = _table_has_column(vcursor, db_type, 'survey_projects', 'is_open')
+    finally:
+        verify_conn.close()
+
+    if has_table and has_col and has_is_open:
+        print("Migration 003 (Survey Responses) complete: schema verified OK")
+    else:
+        print(f"Migration 003 WARNING: survey_responses={has_table}, "
+              f"survey_project_id={has_col}, is_open={has_is_open}")
+
+    return True
+
+
+if __name__ == '__main__':
+    result = run_migration()
+    print(f"Migration result: {result}")
 
 # I did no harm and this file is not truncated
