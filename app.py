@@ -1,136 +1,47 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: March 12, 2026 — Phase 6 Deliverable 7: Scheduler + Swarm self-registration
+Last Updated: March 13, 2026 — Survey in a Box Phase 3: Online Survey Engine
 
 CHANGELOG:
-- March 12, 2026: Phase 6 Deliverable 7 — FOUR CHANGES ONLY:
-  1. CHANGELOG: Updated header to reflect D7.
-  2. SCHEDULER: After all blueprints are registered, calls init_scheduler(app)
-     from proactive.scheduler. Uses a PostgreSQL advisory lock so only one
-     Gunicorn worker starts the scheduler — the second worker silently skips.
-     Wrapped in try/except — startup continues if scheduler fails.
-     Starts 6 background jobs:
-       06:00 AM Pacific  — lead_scanner.scan_for_leads()
-       06:15 AM Pacific  — task_manager.auto_generate_tasks_from_memory()
-       06:30 AM Pacific  — daily_briefing.generate_daily_briefing()
-       Every 30 min      — app_monitor.check_all_services()
-       Every 10 min      — self-ping keep-alive (6 AM–8 PM Pacific)
-       Monday 06:00 AM   — intelligence.weekly_review (Phase 5, skipped if absent)
-  3. SWARM SELF-REGISTRATION: After scheduler init, calls auto_register_swarm()
-     from proactive.app_monitor. Registers the Swarm's own /health endpoint
-     as a monitored service (UPSERT — safe to call on every startup).
-     Wrapped in try/except — startup continues if registration fails.
-  4. HEALTH ENDPOINT: Updated proactive_agent.phase string from
-     'Deliverables 1-2 active' to 'Deliverables 1-7 active'.
+- March 13, 2026: Survey in a Box Phase 3 — THREE CHANGES ONLY:
+  1. MIGRATION: Added migration_003_survey_responses.py call in STEP 1,
+     immediately after migration_002_survey_in_a_box.py. Creates the
+     survey_responses table (JSONB one-row-per-respondent) and adds
+     4 columns to survey_projects: survey_url, is_open, opened_at, closed_at.
+     Fully idempotent — safe to run on every startup.
+  2. BLUEPRINT: Registered survey_respondent_bp from routes/survey_respondent.py.
+     Adds employee-facing /survey/take/<token> page and all
+     /api/survey/take/* and /api/survey/admin/project/*/open,close,
+     responses, export endpoints.
+     Placed immediately after the survey_admin_bp registration block.
+     Follows the identical try/except pattern used by all other blueprints.
+  3. CLEANUP: Removed the survey_diagnostics blueprint registration block.
+     That file (routes/survey_diagnostics.py) was a temporary diagnostic
+     created during Phase 1 debugging. It has served its purpose.
+  4. HEALTH CHECK: Updated survey_in_a_box phase string from
+     '1 - Client Onboarding' to '3 - Online Survey Engine'.
   NO OTHER CHANGES. All existing routes, blueprints, features, and startup
   sequence are completely unchanged.
 
-- March 12, 2026: Phase 6 Proactive Agent — ONE CHANGE ONLY:
-  1. BLUEPRINT: Registered proactive_bp from routes/proactive.py.
-     Inserted immediately after the survey_admin_bp block, before
-     background_jobs_bp. Follows the identical try/except pattern used
-     by all other blueprints. If routes/proactive.py is missing, startup
-     continues normally.
-     Adds endpoints:
-       GET  /api/briefing
-       GET  /api/briefing/generate
-       GET  /api/briefing/history
-       GET  /api/tasks
-       POST /api/tasks
-       PUT  /api/tasks/<id>
-       PUT  /api/tasks/<id>/complete
-       PUT  /api/tasks/<id>/defer
-       GET  /api/leads             (active after Deliverable 3)
-       PUT  /api/leads/<id>/review (active after Deliverable 3)
-       GET  /api/monitor/services  (active after Deliverable 4)
-       POST /api/monitor/services  (active after Deliverable 4)
-       GET  /api/proactive/status
-  NO OTHER CHANGES. All existing routes, blueprints, features, and startup
-  sequence are completely unchanged.
+- March 12, 2026: Phase 6 Deliverable 7 — Scheduler + Swarm self-registration
+  (see prior entries for full detail)
+
+- March 12, 2026: Phase 6 Proactive Agent — Registered proactive_bp
 
 - March 10, 2026: Survey in a Box Phase 1 — THREE CHANGES ONLY:
-  1. MIGRATION: Added migration_002_survey_in_a_box.py call in STEP 1,
-     immediately after migration_001_initial_schema.py. Creates three new
-     tables: survey_clients, survey_projects, survey_project_history.
-     Fully idempotent — safe to run on every startup.
+  1. MIGRATION: Added migration_002_survey_in_a_box.py call in STEP 1.
   2. BLUEPRINT: Registered survey_intake_bp from routes/survey_intake.py.
-     Adds GET /survey/start and POST /api/survey/intake/submit endpoints.
   3. BLUEPRINT: Registered survey_admin_bp from routes/survey_admin.py.
-     Adds GET /survey/admin and all /api/survey/admin/* endpoints.
-  Both registrations follow the identical try/except pattern used by all
-  other blueprints. If the files are missing, startup continues normally.
-  NO OTHER CHANGES. All existing routes, blueprints, features, and startup
-  sequence are completely unchanged.
+  NO OTHER CHANGES.
 
 - March 08, 2026: Phase 3 Self-Awareness — CAPABILITIES MANIFEST WIRED IN
-  THREE CHANGES ONLY — all other code is completely unchanged:
-  1. BLUEPRINT: Registered capabilities_bp from routes/capabilities.py.
-     Adds GET /api/capabilities, GET /api/capabilities/summary,
-     POST /api/capabilities/refresh endpoints.
-     Placed after the memory_bp registration block, before background_jobs_bp.
-  2. STARTUP: After knowledge base initialization, calls
-     generate_capabilities_manifest() once to warm the cache and logs
-     the summary to startup output so Jim can verify detection is working.
-     Wrapped in try/except — never blocks startup if it fails.
-  3. HEALTH CHECK: Added 'capabilities_manifest' section to the /health
-     response. Shows status, summary, manifest_length, cached flag,
-     and URLs for the full manifest and refresh endpoints.
-  NO OTHER CHANGES. All routes, blueprints, features, and startup sequence
-  are completely unchanged.
-
 - March 05, 2026: Phase 2A Memory Schema Fix
-  * Added /api/admin/fix-memory-schema endpoint.
-  * ROOT CAUSE: The memory_store table was created in Phase 1 with columns
-    memory_key (NOT NULL) and memory_value (NOT NULL). Phase 2A added the
-    correct columns (category, content, source_task_id, updated_at) via
-    fix-memory-store, but did NOT remove the old NOT NULL columns.
-    Every INSERT from memory_store.py failed with:
-    "null value in column 'memory_key' violates not-null constraint"
-  * FIX: New endpoint drops the 5 orphaned Phase 1 columns from memory_store:
-    memory_key, memory_value, expires_at, access_count, last_accessed.
-    Uses DROP COLUMN IF EXISTS — safe to run multiple times.
-  * No other changes. All existing routes, blueprints, features unchanged.
-
 - March 05, 2026: Phase 2A - Registered memory blueprint (routes/memory.py)
 - March 05, 2026: Phase 1 Log Cleanup (Opus direction pre-Phase 2)
-  * Removed 8 legacy SQLite-era migration try/except blocks from STEP 3.
-    These scripts (migrate_projects_table, upgrade_database_sprint2,
-    add_resource_searches_table, add_improvement_reports_table,
-    add_conversation_context_table, add_user_profiles_table,
-    add_workflow_tables, add_integration_logs_table) all used SQLite
-    syntax (PRAGMA, AUTOINCREMENT) incompatible with PostgreSQL and
-    printed errors on every startup. The real schema is fully managed
-    by migrations/001_initial_schema.py (56 tables verified at startup).
-    These legacy scripts are no longer needed.
-  * Kept: add_blog_posts_table, add_missing_columns, fix_broken_tables
-    - these three still perform real work on the PostgreSQL schema.
-  * self_optimization_engine.py replaced with a Phase 4 stub so that
-    routes/optimization.py registers cleanly without ImportError warning.
-  * No functional changes to any routes, blueprints, or features.
-
 - March 03, 2026: Phase 9b - FIX BROKEN TABLE SCHEMAS
-  * Added fix_broken_tables() call in STEP 3 (after add_missing_columns)
-  * Drops and recreates tables that have wrong column structures from
-    the old migration (generated_documents, user_feedback,
-    introspection_insights, conversations, tasks, etc.)
-  * Safe to run every startup - checks before dropping
-
 - March 03, 2026: SCHEMA MIGRATION
-  * Added add_missing_columns() call in STEP 3 (legacy migrations)
-  * Fixes three UndefinedColumn errors from deployment logs:
-      - case_studies: problem_summary, solution_summary
-      - blog_posts:   topic_display, url_slug, meta_description (+ 4 more)
-      - projects:     project_id
-  * No other changes - all routes, blueprints, and features unchanged
-
 - March 02, 2026: POSTGRESQL MIGRATION
-  * Added migration runner at the very top of startup sequence
-  * migrations/001_initial_schema.py now runs BEFORE init_db() and ProjectManager
-  * This ensures all tables exist before any blueprint or module tries to use them
-  * Added database type reporting to health check
-  * No other changes - all routes, blueprints, and features unchanged
-
 - February 27, 2026: ADDED /api/admin/restore-knowledge ENDPOINT
 - February 26, 2026: ADDED /api/admin/clear-knowledge-db ENDPOINT
 - February 25, 2026: ADDED /api/admin/kb-diagnose ENDPOINT
@@ -203,6 +114,28 @@ except Exception as e:
     import traceback
     traceback.print_exc()
 
+# ----------------------------------------------------------------------------
+# MIGRATION 003: Survey Responses table
+# Added: March 13, 2026
+# Creates survey_responses (JSONB one-row-per-respondent).
+# Adds survey_url, is_open, opened_at, closed_at to survey_projects.
+# Fully idempotent — safe to run on every startup.
+# ----------------------------------------------------------------------------
+try:
+    import importlib.util as _ilu3
+    import os as _os3
+    _m003_path = _os3.path.join(_os3.path.dirname(_os3.path.abspath(__file__)),
+                                'migrations', 'migration_003_survey_responses.py')
+    _spec003 = _ilu3.spec_from_file_location("migration_003_survey_responses", _m003_path)
+    _mod003 = _ilu3.module_from_spec(_spec003)
+    _spec003.loader.exec_module(_mod003)
+    _mod003.run_migration()
+    print("Survey Responses migration (003) complete")
+except Exception as e:
+    print(f"Survey Responses migration (003) failed: {e}")
+    import traceback
+    traceback.print_exc()
+
 print("=" * 60)
 
 # ============================================================================
@@ -222,12 +155,6 @@ except Exception as e:
 # ============================================================================
 # STEP 3: RUN REMAINING LEGACY DATABASE MIGRATIONS
 # Only migrations that still perform real work on the PostgreSQL schema.
-# The 8 SQLite-era scripts (migrate_projects_table, upgrade_database_sprint2,
-# add_resource_searches_table, add_improvement_reports_table,
-# add_conversation_context_table, add_user_profiles_table,
-# add_workflow_tables, add_integration_logs_table) have been removed.
-# They used SQLite syntax (PRAGMA, AUTOINCREMENT) and printed errors on
-# every startup. The real schema is managed by 001_initial_schema.py.
 # ============================================================================
 print("Running legacy database migrations...")
 
@@ -842,7 +769,7 @@ def health():
 
     return jsonify({
         'status': 'healthy',
-        'version': 'Phase 6 Proactive Agent Mar12 + Survey in a Box Phase 1 Mar10 + Phase 3 Capabilities Manifest Mar08 + Phase 2A Memory Schema Fix Mar05 + Phase 2A Memory Mar05 + Phase 1 Log Cleanup Mar05 + Phase 9b Schema Fix Mar03 + PostgreSQL Migration Mar02 + Sprint 3 + Research + Alerts + Intelligence + Marketing + Avatars + Evaluation + Pattern Schedules + Manual Generator + LinkedIn Poster + Bulletproof Projects + 100MB Upload + Background KB',
+        'version': 'Survey in a Box Phase 3 Mar13 + Phase 6 Proactive Agent Mar12 + Phase 2 Survey Assembly Mar12 + Phase 1 Onboarding Mar10 + Phase 3 Capabilities Manifest Mar08 + Phase 2A Memory Mar05 + PostgreSQL Migration Mar02',
         'database': {
             'type': get_db_type(),
             'backend': 'PostgreSQL (persistent)' if get_db_type() == 'postgresql' else 'SQLite (local dev)'
@@ -907,7 +834,7 @@ def health():
             'status': 'enabled',
             'intake_form': '/survey/start',
             'admin_dashboard': '/survey/admin',
-            'phase': '1 - Client Onboarding'
+            'phase': '3 - Online Survey Engine'
         },
         'proactive_agent': {
             'status': 'enabled',
@@ -1106,8 +1033,7 @@ except Exception as e:
 # ----------------------------------------------------------------------------
 # Phase 2A: Memory System API
 # Provides /api/memory/health, /api/memory/stats, /api/memory/recent,
-# /api/memory/search endpoints. Safe to deploy before memory package exists
-# - if routes/memory.py is missing, this block silently skips.
+# /api/memory/search endpoints.
 # Added: March 05, 2026
 # ----------------------------------------------------------------------------
 try:
@@ -1162,15 +1088,20 @@ except ImportError as e:
 except Exception as e:
     print(f"Survey Admin registration failed: {e}")
 
-# Survey in a Box: Migration Diagnostics (temporary — remove after tables confirmed)
+# ----------------------------------------------------------------------------
+# Survey in a Box: Respondent API (Phase 3)
+# Provides /survey/take/<token>, /api/survey/take/* endpoints,
+# and /api/survey/admin/project/*/open,close,responses,export.
+# Added: March 13, 2026
+# ----------------------------------------------------------------------------
 try:
-    from routes.survey_diagnostics import survey_diagnostics_bp
-    app.register_blueprint(survey_diagnostics_bp)
-    print("Survey Diagnostics registered")
+    from routes.survey_respondent import survey_respondent_bp
+    app.register_blueprint(survey_respondent_bp)
+    print("Survey in a Box Respondent API registered")
 except ImportError as e:
-    print(f"Survey Diagnostics not found: {e}")
+    print(f"Survey Respondent routes not found: {e}")
 except Exception as e:
-    print(f"Survey Diagnostics registration failed: {e}")
+    print(f"Survey Respondent registration failed: {e}")
 
 # ----------------------------------------------------------------------------
 # Phase 6: Proactive Agent API
