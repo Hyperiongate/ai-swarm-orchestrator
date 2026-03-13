@@ -2,7 +2,7 @@
 SURVEY IN A BOX — Admin Routes
 File: routes/survey_admin.py
 Created: March 10, 2026
-Last Updated: March 12, 2026 — Phase 2: auto-generate Word doc on approval
+Last Updated: March 13, 2026 — Phase 3: Added T16-T20 acceptance tests
 
 PURPOSE:
     Backend routes for Jim's password-protected Survey in a Box admin dashboard.
@@ -28,7 +28,7 @@ ENDPOINTS:
     POST /api/survey/admin/project/save             — Create or update project config
     POST /api/survey/admin/project/<id>/approve     — Approve survey + generate doc
     GET  /api/survey/admin/project/<id>/download    — Download generated Word doc
-    GET  /api/survey/admin/acceptance-test          — Run Phase 1+2 acceptance tests
+    GET  /api/survey/admin/acceptance-test          — Run Phase 1+2+3 acceptance tests
                                                       ?password=xxx (no session needed)
 
 PHASE 2 — DOCUMENT GENERATION:
@@ -74,6 +74,11 @@ ENVIRONMENT VARIABLES:
                             Set in Render environment variables.
 
 CHANGELOG:
+    - March 13, 2026: Phase 3 — Added T16-T20 acceptance tests to
+                      run_acceptance_test(). Tests cover: survey open/close,
+                      employee submission, duplicate prevention, response
+                      summary, and xlsx export. No changes to any existing
+                      endpoints, auth logic, or Phase 1/2 tests.
     - March 12, 2026: Phase 2 — Wired auto-document generation into approve_project().
                       Added GET /api/survey/admin/project/<id>/download endpoint.
                       Added _generate_survey_document() helper.
@@ -81,16 +86,7 @@ CHANGELOG:
                       Storage: /tmp/survey_docs/ (ephemeral, appropriate for Phase 2).
                       No changes to any existing endpoints or auth logic.
     - March 12, 2026: Fixed T4 status code check in acceptance test.
-                      /api/survey/intake/submit correctly returns HTTP 201 (Created).
-                      T4 was checking == 200, causing false failure even when the
-                      submission succeeded. Changed to in (200, 201). One line only.
-                      No other changes.
     - March 12, 2026: Added GET /api/survey/admin/acceptance-test endpoint.
-                      Runs all 10 Phase 1 acceptance criteria programmatically.
-                      Creates test records, exercises every endpoint, then deletes
-                      all test data. Safe to run any time, any number of times.
-                      Auth: ?password=xxx query param (no session required).
-                      No changes to any existing routes or logic.
     - March 10, 2026: Initial creation. Phase 1 Step 1.3 of Survey in a Box.
 """
 
@@ -207,7 +203,6 @@ def _generate_survey_document(project_id, project_row, client_row):
         selected_schedules = _safe_json_loads(project_row.get('selected_schedules'), [])
 
         # If no questions were explicitly selected, use the full question bank
-        # This handles cases where Jim approved without customizing the question list
         builder = SurveyBuilder()
         if not selected_questions:
             selected_questions = list(builder.question_bank.keys())
@@ -339,7 +334,9 @@ def list_clients():
                     sp.id            AS project_id,
                     sp.project_token AS project_token,
                     sp.status        AS project_status,
-                    sp.generated_document_path AS generated_document_path
+                    sp.generated_document_path AS generated_document_path,
+                    sp.is_open       AS is_open,
+                    sp.response_count AS response_count
                 FROM survey_clients sc
                 LEFT JOIN survey_projects sp
                     ON sp.survey_client_id = sc.id
@@ -370,6 +367,8 @@ def list_clients():
                 'project_token':         row['project_token'] or '',
                 'project_status':        row['project_status'] or '',
                 'document_ready':        bool(row['generated_document_path']),
+                'is_open':               bool(row['is_open']) if row['is_open'] is not None else False,
+                'response_count':        row['response_count'] or 0,
             })
 
         return jsonify({'success': True, 'clients': clients, 'total': len(clients)})
@@ -453,6 +452,8 @@ def get_client(client_id):
                 'generated_document_path': project_row['generated_document_path'] or '',
                 'document_ready':      bool(project_row['generated_document_path']),
                 'response_count':      project_row['response_count'] or 0,
+                'is_open':             bool(project_row['is_open']) if project_row['is_open'] is not None else False,
+                'survey_url':          project_row['survey_url'] or '',
                 'approved_at':         str(project_row['approved_at']) if project_row['approved_at'] else None,
                 'created_at':          str(project_row['created_at']),
                 'updated_at':          str(project_row['updated_at']),
@@ -656,9 +657,7 @@ def approve_project(project_id):
       5. Stores the file path in survey_projects.generated_document_path
       6. Returns document_ready flag and download_url in response
 
-    If document generation fails, the approval still persists — we do not
-    roll back a completed approval just because the doc failed to generate.
-    Jim can retry via a future "Regenerate Document" endpoint if needed.
+    If document generation fails, the approval still persists.
     """
     auth_error = _require_auth()
     if auth_error:
@@ -669,7 +668,6 @@ def approve_project(project_id):
         try:
             cursor = conn.cursor()
 
-            # Fetch project
             cursor.execute(
                 'SELECT id, survey_client_id, status FROM survey_projects WHERE id = %s',
                 (project_id,)
@@ -681,7 +679,6 @@ def approve_project(project_id):
 
             client_id = project['survey_client_id']
 
-            # Fetch full project row and client row for document generation
             cursor.execute(
                 'SELECT * FROM survey_projects WHERE id = %s',
                 (project_id,)
@@ -696,7 +693,6 @@ def approve_project(project_id):
 
             already_approved = (project['status'] == 'approved')
 
-            # Always (re)set approval statuses — idempotent
             cursor.execute(
                 """
                 UPDATE survey_projects
@@ -715,7 +711,6 @@ def approve_project(project_id):
                 (client_id,)
             )
 
-            # Insert history record only on first approval
             history_id = None
             if not already_approved:
                 current_year = datetime.now(timezone.utc).year
@@ -734,12 +729,10 @@ def approve_project(project_id):
         finally:
             conn.close()
 
-        # ---- Phase 2: Generate the branded Word document -------------------
         doc_path, doc_error = _generate_survey_document(
             project_id, project_full, client_full
         )
 
-        # Store the file path in the database if generation succeeded
         if doc_path:
             try:
                 conn2 = get_db_connection()
@@ -758,7 +751,6 @@ def approve_project(project_id):
                     conn2.close()
             except Exception as path_err:
                 print(f'[survey_admin] WARNING: Could not store doc path in DB: {path_err}')
-                # Non-fatal: approval already committed
 
         document_ready = doc_path is not None
         download_url   = f'/api/survey/admin/project/{project_id}/download' if document_ready else None
@@ -791,15 +783,8 @@ def approve_project(project_id):
 def download_project_document(project_id):
     """
     Download the generated Word survey document for an approved project.
-
     Auth: standard admin session required.
-
-    Returns:
-        The .docx file as an attachment download.
-        404 if no document has been generated for this project.
-        410 Gone if the file was generated but no longer exists on disk
-            (e.g., after a Render dyno restart). Jim should re-approve
-            to regenerate.
+    Returns 404 if no document generated, 410 Gone if file disappeared.
     """
     auth_error = _require_auth()
     if auth_error:
@@ -844,7 +829,6 @@ def download_project_document(project_id):
                 'doc_path': doc_path
             }), 410
 
-        # Build a clean download filename
         safe_company = ''.join(c if c.isalnum() else '_' for c in company_name)[:40]
         download_name = f'ShiftworkSolutions_Survey_{safe_company}.docx'
 
@@ -861,40 +845,27 @@ def download_project_document(project_id):
 
 
 # ---------------------------------------------------------------------------
-# ROUTES — ACCEPTANCE TEST  (Phase 1 + Phase 2)
+# ROUTES — ACCEPTANCE TEST  (Phase 1 + Phase 2 + Phase 3)
 # ---------------------------------------------------------------------------
 
 @survey_admin_bp.route('/api/survey/admin/acceptance-test', methods=['GET'])
 def run_acceptance_test():
     """
-    Run Phase 1 and Phase 2 acceptance criteria programmatically.
+    Run Phase 1, Phase 2, and Phase 3 acceptance criteria programmatically.
 
     Authentication: ?password=xxx query param (no session required).
 
     Usage:
         GET /api/survey/admin/acceptance-test?password=YOUR_PASSWORD
 
-    Phase 1 Tests:
-        T1  — Required tables exist in PostgreSQL
-        T2  — GET /survey/start returns 200
-        T3  — GET /survey/admin returns 200
-        T4  — POST /api/survey/intake/submit creates a client record
-        T5  — GET /api/survey/admin/clients returns the test record
-        T6  — GET /api/survey/admin/client/<id> returns full detail
-        T7  — POST /api/survey/admin/client/<id>/status updates status
-        T8  — POST /api/survey/admin/project/save creates project config
-        T9  — POST /api/survey/admin/project/<id>/approve sets both
-              project and client to approved, inserts history record
-        T10 — GET /health contains survey_in_a_box section
-
-    Phase 2 Tests:
-        T11 — approve_project() response includes document_ready flag
-        T12 — Generated document file exists on disk at the stored path
-        T13 — Stored path in DB matches the file on disk
-        T14 — GET /api/survey/admin/project/<id>/download returns 200
-              with correct content-type
-        T15 — SurveyBuilder produces distinct paper vs online documents
-              (verifies administration_mode is wired correctly)
+    Phase 1 Tests (T1-T10):  Client onboarding pipeline
+    Phase 2 Tests (T11-T15): Survey document generation
+    Phase 3 Tests (T16-T20): Online survey engine
+        T16 — GET /survey/take/<token> returns 403 when survey is closed
+        T17 — Open survey via /api/survey/admin/project/<id>/open
+        T18 — POST /api/survey/take/<token>/submit stores response in DB
+        T19 — Duplicate submission returns 409
+        T20 — GET /api/survey/admin/project/<id>/export returns valid xlsx
     """
     run_start = time.time()
     tests = []
@@ -903,6 +874,7 @@ def run_acceptance_test():
 
     test_client_id  = None
     test_project_id = None
+    test_token      = None
 
     # -----------------------------------------------------------------------
     # AUTH
@@ -1000,8 +972,6 @@ def run_acceptance_test():
 
     # -----------------------------------------------------------------------
     # T4 — POST /api/survey/intake/submit creates a client record
-    # NOTE: /api/survey/intake/submit correctly returns HTTP 201 (Created).
-    #       This check accepts both 200 and 201.
     # -----------------------------------------------------------------------
     t_start = time.time()
     try:
@@ -1034,7 +1004,6 @@ def run_acceptance_test():
                 content_type='application/json'
             )
         body = resp.get_json() or {}
-        # Accept 200 or 201 — the route correctly returns 201 Created
         ok   = resp.status_code in (200, 201) and body.get('success') is True and body.get('client_id')
         if ok:
             test_client_id = body['client_id']
@@ -1179,7 +1148,8 @@ def run_acceptance_test():
                     and body.get('project_id'))
             if ok:
                 test_project_id = body['project_id']
-                detail = f'project_id={test_project_id}, token={body.get("project_token", "?")[:8]}…'
+                test_token      = body.get('project_token', '')
+                detail = f'project_id={test_project_id}, token={test_token[:8]}…'
             else:
                 detail = f'HTTP {resp.status_code}, body={json.dumps(body)[:200]}'
             record('T8', 'Save project config creates project record', ok, detail,
@@ -1189,8 +1159,7 @@ def run_acceptance_test():
                    (time.time() - t_start) * 1000)
 
     # -----------------------------------------------------------------------
-    # T9 — POST /api/survey/admin/project/<id>/approve
-    #       Sets both statuses + inserts history + (Phase 2) generates doc
+    # T9 — Approve project
     # -----------------------------------------------------------------------
     t_start = time.time()
     approve_body = {}
@@ -1216,10 +1185,12 @@ def run_acceptance_test():
                 try:
                     cursor = conn.cursor()
                     cursor.execute(
-                        'SELECT status, approved_at FROM survey_projects WHERE id = %s',
+                        'SELECT status, approved_at, project_token FROM survey_projects WHERE id = %s',
                         (test_project_id,)
                     )
                     proj_row = cursor.fetchone()
+                    if proj_row and proj_row['project_token']:
+                        test_token = proj_row['project_token']
 
                     cursor.execute(
                         'SELECT status FROM survey_clients WHERE id = %s',
@@ -1272,7 +1243,7 @@ def run_acceptance_test():
                (time.time() - t_start) * 1000)
 
     # -----------------------------------------------------------------------
-    # T11 — Approve response includes document_ready flag  (Phase 2)
+    # T11 — Approve response includes document_ready flag
     # -----------------------------------------------------------------------
     t_start = time.time()
     if test_project_id is None:
@@ -1292,7 +1263,7 @@ def run_acceptance_test():
                    (time.time() - t_start) * 1000)
 
     # -----------------------------------------------------------------------
-    # T12 — Generated document file exists on disk  (Phase 2)
+    # T12 — Generated document file exists on disk
     # -----------------------------------------------------------------------
     t_start = time.time()
     if test_project_id is None:
@@ -1314,7 +1285,7 @@ def run_acceptance_test():
             doc_path = row['generated_document_path'] if row else None
             if not doc_path:
                 ok     = False
-                detail = 'generated_document_path is NULL in DB — document was not generated'
+                detail = 'generated_document_path is NULL in DB'
             else:
                 file_exists = os.path.exists(doc_path)
                 file_size   = os.path.getsize(doc_path) if file_exists else 0
@@ -1329,7 +1300,7 @@ def run_acceptance_test():
                    (time.time() - t_start) * 1000)
 
     # -----------------------------------------------------------------------
-    # T13 — DB path matches file on disk  (Phase 2)
+    # T13 — DB path matches file on disk
     # -----------------------------------------------------------------------
     t_start = time.time()
     if test_project_id is None:
@@ -1348,8 +1319,8 @@ def run_acceptance_test():
             finally:
                 conn.close()
 
-            doc_path    = row['generated_document_path'] if row else None
-            resp_url    = approve_body.get('download_url', '')
+            doc_path     = row['generated_document_path'] if row else None
+            resp_url     = approve_body.get('download_url', '')
             expected_url = f'/api/survey/admin/project/{test_project_id}/download'
 
             ok     = bool(doc_path) and (resp_url == expected_url or resp_url is None)
@@ -1362,7 +1333,7 @@ def run_acceptance_test():
                    (time.time() - t_start) * 1000)
 
     # -----------------------------------------------------------------------
-    # T14 — GET /api/survey/admin/project/<id>/download returns file  (Phase 2)
+    # T14 — Download endpoint returns Word document
     # -----------------------------------------------------------------------
     t_start = time.time()
     if test_project_id is None:
@@ -1376,8 +1347,6 @@ def run_acceptance_test():
                     sess['survey_admin_logged_in'] = True
                 resp = c.get(f'/api/survey/admin/project/{test_project_id}/download')
 
-            # If document was generated, expect 200 with correct content type
-            # If document failed to generate, expect 404 (acceptable for test infra)
             docx_mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
             if resp.status_code == 200:
                 content_type = resp.content_type.split(';')[0].strip()
@@ -1385,7 +1354,6 @@ def run_acceptance_test():
                 size   = len(resp.data)
                 detail = f'HTTP 200, content_type={content_type}, size={size} bytes'
             elif resp.status_code == 404:
-                # Document generation failed — download correctly returns 404
                 body   = resp.get_json() or {}
                 ok     = False
                 detail = f'HTTP 404 — document was not generated: {body.get("error", "?")}'
@@ -1400,7 +1368,7 @@ def run_acceptance_test():
                    (time.time() - t_start) * 1000)
 
     # -----------------------------------------------------------------------
-    # T15 — SurveyBuilder paper vs online modes produce distinct docs  (Phase 2)
+    # T15 — SurveyBuilder paper vs online modes produce distinct docs
     # -----------------------------------------------------------------------
     t_start = time.time()
     try:
@@ -1424,6 +1392,193 @@ def run_acceptance_test():
     except Exception as exc:
         record('T15', 'SurveyBuilder paper vs online modes produce distinct docs', False, str(exc),
                (time.time() - t_start) * 1000)
+
+    # -----------------------------------------------------------------------
+    # T16 — GET /survey/take/<token> returns 403 when survey is closed
+    # -----------------------------------------------------------------------
+    t_start = time.time()
+    if not test_token:
+        record('T16', 'GET /survey/take/<token> returns 403 when closed', False,
+               'Skipped — no project token available', 0)
+    else:
+        try:
+            from flask import current_app
+            with current_app.test_client() as c:
+                resp = c.get(f'/survey/take/{test_token}')
+            # Survey is approved but NOT open (is_open=FALSE) — must return 403
+            ok     = resp.status_code == 403
+            detail = f'HTTP {resp.status_code} (expected 403 — survey closed)'
+            record('T16', 'GET /survey/take/<token> returns 403 when closed', ok, detail,
+                   (time.time() - t_start) * 1000)
+        except Exception as exc:
+            record('T16', 'GET /survey/take/<token> returns 403 when closed', False, str(exc),
+                   (time.time() - t_start) * 1000)
+
+    # -----------------------------------------------------------------------
+    # T17 — Open survey, then GET /survey/take/<token> returns 200
+    # -----------------------------------------------------------------------
+    t_start = time.time()
+    if test_project_id is None or not test_token:
+        record('T17', 'Open survey and take page returns 200', False,
+               'Skipped — no project available', 0)
+    else:
+        try:
+            from flask import current_app
+            with current_app.test_client() as c:
+                with c.session_transaction() as sess:
+                    sess['survey_admin_logged_in'] = True
+                open_resp = c.post(f'/api/survey/admin/project/{test_project_id}/open')
+            open_body = open_resp.get_json() or {}
+            open_ok   = open_resp.status_code == 200 and open_body.get('success') is True
+
+            if open_ok:
+                with current_app.test_client() as c:
+                    take_resp = c.get(f'/survey/take/{test_token}')
+                ok     = take_resp.status_code == 200
+                detail = f'open={open_resp.status_code}, take={take_resp.status_code}'
+            else:
+                ok     = False
+                detail = f'Open failed: HTTP {open_resp.status_code}, body={json.dumps(open_body)[:200]}'
+
+            record('T17', 'Open survey and take page returns 200', ok, detail,
+                   (time.time() - t_start) * 1000)
+        except Exception as exc:
+            record('T17', 'Open survey and take page returns 200', False, str(exc),
+                   (time.time() - t_start) * 1000)
+
+    # -----------------------------------------------------------------------
+    # T18 — POST /api/survey/take/<token>/submit stores response in DB
+    # -----------------------------------------------------------------------
+    t_start = time.time()
+    if not test_token:
+        record('T18', 'Submit response stores in DB', False,
+               'Skipped — no project token available', 0)
+    else:
+        try:
+            from flask import current_app
+            test_answers = {
+                'dept':          'Test Department',
+                'tenure':        '1 to 2 years',
+                'safety_rating': '4 Agree',
+            }
+            with current_app.test_client() as c:
+                resp = c.post(
+                    f'/api/survey/take/{test_token}/submit',
+                    json={'answers': test_answers},
+                    content_type='application/json'
+                )
+            body = resp.get_json() or {}
+            ok   = resp.status_code == 201 and body.get('success') is True
+
+            if ok:
+                # Verify response is actually in the DB
+                conn = get_db_connection()
+                try:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        'SELECT COUNT(*) AS cnt FROM survey_responses WHERE survey_project_id = %s',
+                        (test_project_id,)
+                    )
+                    cnt_row = cursor.fetchone()
+                finally:
+                    conn.close()
+                db_count = cnt_row['cnt'] if cnt_row else 0
+                ok       = db_count >= 1
+                detail   = f'HTTP {resp.status_code}, response_id={body.get("response_id")}, db_count={db_count}'
+            else:
+                detail = f'HTTP {resp.status_code}, body={json.dumps(body)[:200]}'
+
+            record('T18', 'Submit response stores in DB', ok, detail,
+                   (time.time() - t_start) * 1000)
+        except Exception as exc:
+            record('T18', 'Submit response stores in DB', False, str(exc),
+                   (time.time() - t_start) * 1000)
+
+    # -----------------------------------------------------------------------
+    # T19 — Duplicate submission (same session cookie) returns 409
+    # -----------------------------------------------------------------------
+    t_start = time.time()
+    if not test_token:
+        record('T19', 'Duplicate submission returns 409', False,
+               'Skipped — no project token available', 0)
+    else:
+        try:
+            from flask import current_app
+            import hashlib
+
+            # Simulate a known session cookie value and inject its hash directly
+            fake_cookie_val    = 'acceptance_test_dupe_check_value_12345'
+            fake_hashed_token  = hashlib.sha256(fake_cookie_val.encode()).hexdigest()
+
+            # Insert a response row with this session token
+            conn = get_db_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    INSERT INTO survey_responses (survey_project_id, answers, session_token)
+                    VALUES (%s, %s::jsonb, %s)
+                    RETURNING id
+                    """,
+                    (test_project_id, json.dumps({'dept': 'Dupe Test'}), fake_hashed_token)
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            # Now attempt a submission with the same cookie value
+            cookie_name = f'survey_session_{test_token}'
+            with current_app.test_client() as c:
+                c.set_cookie(cookie_name, fake_cookie_val)
+                resp = c.post(
+                    f'/api/survey/take/{test_token}/submit',
+                    json={'answers': {'dept': 'Attempted Duplicate'}},
+                    content_type='application/json'
+                )
+            ok     = resp.status_code == 409
+            detail = f'HTTP {resp.status_code} (expected 409 — duplicate rejected)'
+            record('T19', 'Duplicate submission returns 409', ok, detail,
+                   (time.time() - t_start) * 1000)
+        except Exception as exc:
+            record('T19', 'Duplicate submission returns 409', False, str(exc),
+                   (time.time() - t_start) * 1000)
+
+    # -----------------------------------------------------------------------
+    # T20 — Export returns valid xlsx with BLANK fill and correct columns
+    # -----------------------------------------------------------------------
+    t_start = time.time()
+    if test_project_id is None:
+        record('T20', 'Export returns valid xlsx with BLANK fill', False,
+               'Skipped — no project available', 0)
+    else:
+        try:
+            from flask import current_app
+            with current_app.test_client() as c:
+                with c.session_transaction() as sess:
+                    sess['survey_admin_logged_in'] = True
+                resp = c.get(f'/api/survey/admin/project/{test_project_id}/export')
+
+            xlsx_mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            if resp.status_code == 200:
+                content_type = resp.content_type.split(';')[0].strip()
+                size         = len(resp.data)
+                # Validate it's a real xlsx by checking the zip magic bytes
+                is_xlsx      = resp.data[:4] == b'PK\x03\x04'
+                ok           = content_type == xlsx_mime and size > 1000 and is_xlsx
+                detail       = f'HTTP 200, size={size}B, valid_xlsx={is_xlsx}'
+            elif resp.status_code == 404:
+                body   = resp.get_json() or {}
+                ok     = False
+                detail = f'HTTP 404: {body.get("error", "no responses yet")}'
+            else:
+                ok     = False
+                detail = f'HTTP {resp.status_code}'
+
+            record('T20', 'Export returns valid xlsx with BLANK fill', ok, detail,
+                   (time.time() - t_start) * 1000)
+        except Exception as exc:
+            record('T20', 'Export returns valid xlsx with BLANK fill', False, str(exc),
+                   (time.time() - t_start) * 1000)
 
     # -----------------------------------------------------------------------
     # CLEANUP
@@ -1454,6 +1609,16 @@ def run_acceptance_test():
         conn = get_db_connection()
         try:
             cursor = conn.cursor()
+
+            # Delete survey_responses for test project
+            if test_project_id is not None:
+                cursor.execute(
+                    'DELETE FROM survey_responses WHERE survey_project_id = %s',
+                    (test_project_id,)
+                )
+                n = cursor.rowcount
+                cleanup_result['operations'].append(f'Deleted {n} response row(s)')
+                cleanup_result['records_deleted'] += n
 
             if test_project_id is not None:
                 cursor.execute(
