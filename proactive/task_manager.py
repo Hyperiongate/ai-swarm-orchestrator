@@ -2,7 +2,7 @@
 AI SWARM ORCHESTRATOR - Proactive Task Manager
 File: proactive/task_manager.py
 Created: March 12, 2026
-Last Updated: March 12, 2026 — Phase 6 Deliverable 1: Initial implementation
+Last Updated: March 13, 2026 — BUG FIX: remove raise from _ensure_table()
 
 PURPOSE:
     Persistent to-do list that the Swarm maintains, prioritizes, and surfaces.
@@ -13,6 +13,15 @@ PURPOSE:
     This is the first module of Phase 6: The Proactive Agent.
 
 CHANGELOG:
+- March 13, 2026: BUG FIX — remove raise from _ensure_table()
+  * _ensure_table() ran at module level and called raise on DB failure.
+  * If the DB was temporarily unavailable at startup, Python marked the
+    module as a failed import. All subsequent imports raised ImportError.
+  * routes/proactive.py catches ImportError and returns 503.
+  * Fix: log the error but do NOT re-raise. The module loads successfully
+    and table creation is retried on the next DB operation.
+  * Only the except block in _ensure_table() changed — nothing else touched.
+
 - March 12, 2026: Phase 6 Deliverable 1 — Initial implementation
   * Created swarm_tasks table (idempotent migration runs on import)
   * add_task(), get_pending_tasks(), complete_task(), defer_task(), update_task()
@@ -74,6 +83,11 @@ def _ensure_table():
     Create swarm_tasks table if it does not already exist.
     Called once at module import. Uses CREATE TABLE IF NOT EXISTS so it is
     fully idempotent — safe to run on every startup.
+
+    NOTE: Does NOT re-raise on failure. A DB hiccup at startup must not
+    poison the module import — routes/proactive.py catches ImportError and
+    returns 503, so a transient DB error here would permanently break the
+    endpoint until the next deploy. Log and continue instead.
     """
     from db_engine import get_db_connection
 
@@ -100,8 +114,8 @@ def _ensure_table():
         print("✅ proactive/task_manager: swarm_tasks table ready")
     except Exception as e:
         logger.error(f"Failed to create swarm_tasks table: {e}")
-        print(f"❌ proactive/task_manager: table creation failed: {e}")
-        raise
+        print(f"❌ proactive/task_manager: table creation failed (non-fatal): {e}")
+        # Do NOT re-raise — a transient DB error must not poison this module's import
 
 
 # Run migration at import time — mirrors the pattern in other Swarm modules
