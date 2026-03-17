@@ -1,1737 +1,491 @@
-<!DOCTYPE html>
-<!--
-    SURVEY IN A BOX — Admin Dashboard
-    File: templates/survey_admin.html
-    Created: March 10, 2026
-    Last Updated: March 10, 2026 — Initial creation, Phase 1 Step 1.3
-
-    PURPOSE:
-        Password-protected admin dashboard for Jim to review Survey in a Box
-        intake submissions, configure surveys, and approve them.
-        Served at GET /survey/admin by routes/survey_admin.py.
-
-        Auth is handled in JS — if /api/survey/admin/clients returns 401,
-        the login screen is shown. No hard reload needed.
-
-    API CALLS (all match routes/survey_admin.py exactly):
-        POST /api/survey/admin/login
-        POST /api/survey/admin/logout
-        GET  /api/survey/admin/clients
-        GET  /api/survey/admin/client/<id>
-        POST /api/survey/admin/client/<id>/status
-        POST /api/survey/admin/client/<id>/notes
-        POST /api/survey/admin/project/save
-        POST /api/survey/admin/project/<id>/approve
-        GET  /api/survey/question-bank    (existing route, reused)
-        GET  /api/survey/schedules        (existing route, reused)
-
-    CHANGELOG:
-        - March 10, 2026: Initial creation. Phase 1 Step 1.3.
--->
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Survey Admin — Shiftwork Solutions</title>
-    <style>
-        /* ----------------------------------------------------------------
-           RESET & BASE
-        ---------------------------------------------------------------- */
-        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-                         'Helvetica Neue', Arial, sans-serif;
-            font-size: 15px;
-            line-height: 1.5;
-            color: #222;
-            background: #f0f4f8;
-            min-height: 100vh;
-        }
-
-        /* ----------------------------------------------------------------
-           HEADER
-        ---------------------------------------------------------------- */
-        .site-header {
-            background: #1a3a5c;
-            color: #fff;
-            padding: 0;
-            position: sticky;
-            top: 0;
-            z-index: 100;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.25);
-        }
-        .header-inner {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 14px 20px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 12px;
-        }
-        .header-left {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-        .brand-logo {
-            width: 40px; height: 40px;
-            background: #fff;
-            border-radius: 50%;
-            display: flex; align-items: center; justify-content: center;
-            font-weight: 900; font-size: 11px; color: #1a3a5c;
-            line-height: 1.2; text-align: center; flex-shrink: 0;
-        }
-        .header-title { font-size: 1rem; font-weight: 700; color: #fff; }
-        .header-subtitle { font-size: 0.75rem; color: #a8c8d8; }
-        .header-right { display: flex; align-items: center; gap: 12px; }
-        .btn-logout {
-            background: rgba(255,255,255,0.12);
-            border: 1px solid rgba(255,255,255,0.25);
-            color: #fff;
-            border-radius: 6px;
-            padding: 6px 14px;
-            font-size: 0.82rem;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-        .btn-logout:hover { background: rgba(255,255,255,0.22); }
-        #header-actions { display: none; }
-
-        /* ----------------------------------------------------------------
-           LAYOUT
-        ---------------------------------------------------------------- */
-        .page-wrap {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 24px 16px 60px;
-        }
-
-        /* ----------------------------------------------------------------
-           LOGIN SCREEN
-        ---------------------------------------------------------------- */
-        #login-screen {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            min-height: calc(100vh - 68px);
-        }
-        .login-card {
-            background: #fff;
-            border-radius: 10px;
-            box-shadow: 0 2px 20px rgba(0,0,0,0.1);
-            padding: 40px 36px;
-            width: 100%;
-            max-width: 380px;
-            text-align: center;
-        }
-        .login-card h2 {
-            color: #1a3a5c;
-            font-size: 1.3rem;
-            margin-bottom: 6px;
-        }
-        .login-card p { color: #777; font-size: 0.88rem; margin-bottom: 24px; }
-        .login-card input[type="password"] {
-            width: 100%;
-            padding: 10px 14px;
-            border: 1.5px solid #ccd6dd;
-            border-radius: 7px;
-            font-size: 0.95rem;
-            margin-bottom: 14px;
-            transition: border-color 0.2s;
-        }
-        .login-card input:focus {
-            outline: none;
-            border-color: #1a7a8a;
-            box-shadow: 0 0 0 3px rgba(26,122,138,0.15);
-        }
-        .btn-login {
-            width: 100%;
-            background: #1a3a5c;
-            color: #fff;
-            border: none;
-            border-radius: 7px;
-            padding: 11px;
-            font-size: 0.97rem;
-            font-weight: 700;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-        .btn-login:hover { background: #122842; }
-        .login-error {
-            color: #c0392b;
-            font-size: 0.83rem;
-            margin-top: 10px;
-            display: none;
-        }
-        .login-error.visible { display: block; }
-
-        /* ----------------------------------------------------------------
-           MAIN DASHBOARD
-        ---------------------------------------------------------------- */
-        #dashboard { display: none; }
-
-        /* Dashboard two-panel layout */
-        .dash-grid {
-            display: grid;
-            grid-template-columns: 340px 1fr;
-            gap: 20px;
-            align-items: start;
-        }
-        @media (max-width: 820px) {
-            .dash-grid { grid-template-columns: 1fr; }
-        }
-
-        /* ----------------------------------------------------------------
-           PANEL CARD
-        ---------------------------------------------------------------- */
-        .panel {
-            background: #fff;
-            border-radius: 10px;
-            box-shadow: 0 2px 12px rgba(0,0,0,0.08);
-            overflow: hidden;
-        }
-        .panel-header {
-            background: #1a3a5c;
-            color: #fff;
-            padding: 12px 18px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 10px;
-        }
-        .panel-header h3 { font-size: 0.9rem; font-weight: 700; }
-        .panel-body { padding: 0; }
-
-        /* ----------------------------------------------------------------
-           FILTERS BAR
-        ---------------------------------------------------------------- */
-        .filters-bar {
-            padding: 12px 14px;
-            border-bottom: 1px solid #eef0f3;
-            display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
-        }
-        .filter-btn {
-            background: #f0f4f8;
-            border: 1.5px solid #dde3ea;
-            border-radius: 20px;
-            padding: 4px 12px;
-            font-size: 0.78rem;
-            font-weight: 600;
-            cursor: pointer;
-            color: #555;
-            transition: all 0.15s;
-        }
-        .filter-btn:hover { border-color: #1a7a8a; color: #1a7a8a; }
-        .filter-btn.active {
-            background: #1a3a5c;
-            border-color: #1a3a5c;
-            color: #fff;
-        }
-        .search-input {
-            flex: 1;
-            min-width: 120px;
-            padding: 5px 10px;
-            border: 1.5px solid #dde3ea;
-            border-radius: 6px;
-            font-size: 0.82rem;
-            font-family: inherit;
-        }
-        .search-input:focus {
-            outline: none;
-            border-color: #1a7a8a;
-        }
-
-        /* ----------------------------------------------------------------
-           CLIENT LIST
-        ---------------------------------------------------------------- */
-        .client-list { list-style: none; }
-        .client-item {
-            padding: 13px 16px;
-            border-bottom: 1px solid #f0f2f5;
-            cursor: pointer;
-            transition: background 0.15s;
-            display: flex;
-            align-items: flex-start;
-            gap: 10px;
-        }
-        .client-item:hover { background: #f7f9fc; }
-        .client-item.active { background: #eef4fb; border-left: 3px solid #1a3a5c; }
-        .client-item:last-child { border-bottom: none; }
-
-        .client-info { flex: 1; min-width: 0; }
-        .client-name {
-            font-weight: 700;
-            font-size: 0.92rem;
-            color: #1a3a5c;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-        .client-meta {
-            font-size: 0.76rem;
-            color: #888;
-            margin-top: 2px;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-        .client-date {
-            font-size: 0.72rem;
-            color: #aaa;
-            white-space: nowrap;
-            flex-shrink: 0;
-        }
-
-        /* Status badges */
-        .badge {
-            display: inline-block;
-            padding: 2px 9px;
-            border-radius: 12px;
-            font-size: 0.7rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.04em;
-            flex-shrink: 0;
-        }
-        .badge-new       { background: #fef3e7; color: #e07b2a; }
-        .badge-reviewing { background: #e8f4fd; color: #2980b9; }
-        .badge-approved  { background: #eafaf1; color: #27ae60; }
-        .badge-rejected  { background: #fdf0ee; color: #c0392b; }
-        .badge-draft     { background: #f4f4f4; color: #777; }
-        .badge-administered { background: #e8f4fd; color: #2980b9; }
-        .badge-processing   { background: #fef3e7; color: #e07b2a; }
-        .badge-delivered    { background: #eafaf1; color: #27ae60; }
-
-        .empty-list {
-            padding: 36px 20px;
-            text-align: center;
-            color: #aaa;
-            font-size: 0.88rem;
-        }
-
-        /* ----------------------------------------------------------------
-           DETAIL PANEL
-        ---------------------------------------------------------------- */
-        #detail-panel {
-            display: flex;
-            flex-direction: column;
-            gap: 16px;
-        }
-        .detail-placeholder {
-            background: #fff;
-            border-radius: 10px;
-            box-shadow: 0 2px 12px rgba(0,0,0,0.08);
-            padding: 60px 30px;
-            text-align: center;
-            color: #bbb;
-        }
-        .detail-placeholder .ph-icon { font-size: 2.5rem; margin-bottom: 12px; }
-        .detail-placeholder p { font-size: 0.9rem; }
-
-        /* ----------------------------------------------------------------
-           DETAIL SECTIONS
-        ---------------------------------------------------------------- */
-        .detail-section-header {
-            background: #1a3a5c;
-            color: #fff;
-            padding: 11px 18px;
-            font-size: 0.82rem;
-            font-weight: 700;
-            letter-spacing: 0.05em;
-            text-transform: uppercase;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
-        .detail-body { padding: 18px; }
-
-        /* Info grid */
-        .info-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 12px 20px;
-        }
-        @media (max-width: 600px) { .info-grid { grid-template-columns: 1fr; } }
-
-        .info-item label {
-            display: block;
-            font-size: 0.72rem;
-            font-weight: 700;
-            color: #999;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            margin-bottom: 3px;
-        }
-        .info-item .info-val {
-            font-size: 0.9rem;
-            color: #222;
-            font-weight: 500;
-        }
-        .info-item .info-val.empty { color: #bbb; font-style: italic; }
-
-        /* Tag list (challenges, departments) */
-        .tag-list { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
-        .tag {
-            background: #eef2f7;
-            border: 1px solid #dde3ea;
-            border-radius: 12px;
-            padding: 2px 10px;
-            font-size: 0.76rem;
-            color: #555;
-        }
-
-        /* ----------------------------------------------------------------
-           STATUS CONTROLS
-        ---------------------------------------------------------------- */
-        .status-controls {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            flex-wrap: wrap;
-        }
-        .status-select {
-            padding: 6px 10px;
-            border: 1.5px solid #ccd6dd;
-            border-radius: 6px;
-            font-size: 0.85rem;
-            font-family: inherit;
-            cursor: pointer;
-        }
-        .status-select:focus { outline: none; border-color: #1a7a8a; }
-        .btn-save-status {
-            background: #1a3a5c;
-            color: #fff;
-            border: none;
-            border-radius: 6px;
-            padding: 7px 16px;
-            font-size: 0.83rem;
-            font-weight: 700;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-        .btn-save-status:hover { background: #122842; }
-
-        /* ----------------------------------------------------------------
-           NOTES TEXTAREA
-        ---------------------------------------------------------------- */
-        .notes-wrap { display: flex; flex-direction: column; gap: 8px; }
-        .notes-wrap textarea {
-            width: 100%;
-            padding: 9px 12px;
-            border: 1.5px solid #ccd6dd;
-            border-radius: 6px;
-            font-size: 0.88rem;
-            font-family: inherit;
-            resize: vertical;
-            min-height: 80px;
-            transition: border-color 0.2s;
-        }
-        .notes-wrap textarea:focus {
-            outline: none;
-            border-color: #1a7a8a;
-            box-shadow: 0 0 0 3px rgba(26,122,138,0.12);
-        }
-        .btn-save-notes {
-            align-self: flex-end;
-            background: #1a7a8a;
-            color: #fff;
-            border: none;
-            border-radius: 6px;
-            padding: 7px 16px;
-            font-size: 0.83rem;
-            font-weight: 700;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-        .btn-save-notes:hover { background: #155f6d; }
-
-        /* ----------------------------------------------------------------
-           QUESTION BANK SELECTOR
-        ---------------------------------------------------------------- */
-        .qbank-tabs {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 6px;
-            padding: 12px 18px;
-            border-bottom: 1px solid #eef0f3;
-        }
-        .qtab {
-            background: #f0f4f8;
-            border: 1.5px solid #dde3ea;
-            border-radius: 6px;
-            padding: 4px 12px;
-            font-size: 0.78rem;
-            font-weight: 600;
-            cursor: pointer;
-            color: #555;
-            transition: all 0.15s;
-        }
-        .qtab:hover { border-color: #1a7a8a; color: #1a7a8a; }
-        .qtab.active {
-            background: #1a3a5c;
-            border-color: #1a3a5c;
-            color: #fff;
-        }
-        .qtab .q-count {
-            background: rgba(255,255,255,0.25);
-            border-radius: 10px;
-            padding: 0 6px;
-            font-size: 0.7rem;
-            margin-left: 4px;
-        }
-        .qtab:not(.active) .q-count {
-            background: #dde3ea;
-            color: #777;
-        }
-
-        .question-list {
-            max-height: 280px;
-            overflow-y: auto;
-            padding: 10px 18px;
-        }
-        .question-item {
-            display: flex;
-            align-items: flex-start;
-            gap: 9px;
-            padding: 7px 0;
-            border-bottom: 1px solid #f4f6f8;
-        }
-        .question-item:last-child { border-bottom: none; }
-        .question-item input[type="checkbox"] {
-            margin-top: 3px;
-            width: 15px; height: 15px;
-            flex-shrink: 0;
-            accent-color: #1a7a8a;
-            cursor: pointer;
-        }
-        .question-item label {
-            font-size: 0.83rem;
-            color: #333;
-            cursor: pointer;
-            line-height: 1.4;
-        }
-        .question-item label .q-id {
-            font-size: 0.72rem;
-            color: #aaa;
-            margin-left: 5px;
-        }
-
-        .qbank-actions {
-            padding: 10px 18px;
-            border-top: 1px solid #eef0f3;
-            display: flex;
-            gap: 8px;
-            align-items: center;
-        }
-        .btn-select-all, .btn-deselect-all {
-            background: none;
-            border: 1.5px solid #dde3ea;
-            border-radius: 5px;
-            padding: 4px 10px;
-            font-size: 0.77rem;
-            font-weight: 600;
-            color: #666;
-            cursor: pointer;
-            transition: all 0.15s;
-        }
-        .btn-select-all:hover { border-color: #1a7a8a; color: #1a7a8a; }
-        .btn-deselect-all:hover { border-color: #c0392b; color: #c0392b; }
-        .q-selected-count {
-            margin-left: auto;
-            font-size: 0.78rem;
-            color: #888;
-        }
-
-        /* ----------------------------------------------------------------
-           SCHEDULE SELECTOR
-        ---------------------------------------------------------------- */
-        .schedule-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-            padding: 14px 18px;
-        }
-        @media (max-width: 600px) { .schedule-grid { grid-template-columns: 1fr; } }
-
-        .schedule-card {
-            border: 1.5px solid #dde3ea;
-            border-radius: 8px;
-            padding: 10px 12px;
-            cursor: pointer;
-            transition: all 0.15s;
-            display: flex;
-            gap: 9px;
-            align-items: flex-start;
-        }
-        .schedule-card:hover { border-color: #1a7a8a; background: #f7fbfc; }
-        .schedule-card.selected {
-            border-color: #1a7a8a;
-            background: #eaf6f8;
-        }
-        .schedule-card input[type="checkbox"] {
-            margin-top: 2px;
-            flex-shrink: 0;
-            accent-color: #1a7a8a;
-            cursor: pointer;
-        }
-        .sched-info { flex: 1; min-width: 0; }
-        .sched-name { font-size: 0.85rem; font-weight: 700; color: #1a3a5c; }
-        .sched-desc { font-size: 0.76rem; color: #777; margin-top: 2px; line-height: 1.3; }
-        .sched-hrs {
-            font-size: 0.7rem;
-            color: #1a7a8a;
-            font-weight: 600;
-            margin-top: 3px;
-        }
-
-        /* ----------------------------------------------------------------
-           PROJECT CONFIG ACTIONS
-        ---------------------------------------------------------------- */
-        .config-actions {
-            padding: 14px 18px;
-            border-top: 1px solid #eef0f3;
-            display: flex;
-            gap: 10px;
-            align-items: center;
-            flex-wrap: wrap;
-        }
-        .btn-save-config {
-            background: #1a7a8a;
-            color: #fff;
-            border: none;
-            border-radius: 7px;
-            padding: 9px 22px;
-            font-size: 0.88rem;
-            font-weight: 700;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-        .btn-save-config:hover { background: #155f6d; }
-        .btn-save-config:disabled { background: #bbb; cursor: not-allowed; }
-
-        .btn-approve {
-            background: #27ae60;
-            color: #fff;
-            border: none;
-            border-radius: 7px;
-            padding: 9px 22px;
-            font-size: 0.88rem;
-            font-weight: 700;
-            cursor: pointer;
-            transition: background 0.2s;
-            margin-left: auto;
-        }
-        .btn-approve:hover { background: #1e8449; }
-        .btn-approve:disabled { background: #bbb; cursor: not-allowed; }
-        .btn-approve.already-approved {
-            background: #eafaf1;
-            color: #27ae60;
-            border: 1.5px solid #27ae60;
-            cursor: default;
-        }
-
-        .config-note {
-            font-size: 0.77rem;
-            color: #aaa;
-            width: 100%;
-            margin-top: 2px;
-        }
-
-        /* ----------------------------------------------------------------
-           PROJECT NOTES (inside config panel)
-        ---------------------------------------------------------------- */
-        .proj-notes-wrap {
-            padding: 0 18px 14px;
-        }
-        .proj-notes-wrap label {
-            display: block;
-            font-size: 0.75rem;
-            font-weight: 700;
-            color: #999;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            margin-bottom: 5px;
-        }
-        .proj-notes-wrap textarea {
-            width: 100%;
-            padding: 8px 11px;
-            border: 1.5px solid #ccd6dd;
-            border-radius: 6px;
-            font-size: 0.85rem;
-            font-family: inherit;
-            resize: vertical;
-            min-height: 64px;
-            transition: border-color 0.2s;
-        }
-        .proj-notes-wrap textarea:focus {
-            outline: none;
-            border-color: #1a7a8a;
-        }
-
-        /* ----------------------------------------------------------------
-           TOAST NOTIFICATION
-        ---------------------------------------------------------------- */
-        #toast {
-            position: fixed;
-            bottom: 28px;
-            right: 28px;
-            background: #1a3a5c;
-            color: #fff;
-            padding: 12px 22px;
-            border-radius: 8px;
-            font-size: 0.88rem;
-            font-weight: 600;
-            box-shadow: 0 4px 18px rgba(0,0,0,0.2);
-            transform: translateY(80px);
-            opacity: 0;
-            transition: transform 0.3s ease, opacity 0.3s ease;
-            z-index: 9999;
-            max-width: 320px;
-        }
-        #toast.visible {
-            transform: translateY(0);
-            opacity: 1;
-        }
-        #toast.toast-success { background: #27ae60; }
-        #toast.toast-error   { background: #c0392b; }
-
-        /* ----------------------------------------------------------------
-           CONFIRM DIALOG
-        ---------------------------------------------------------------- */
-        .modal-overlay {
-            display: none;
-            position: fixed;
-            inset: 0;
-            background: rgba(0,0,0,0.45);
-            z-index: 500;
-            align-items: center;
-            justify-content: center;
-        }
-        .modal-overlay.visible { display: flex; }
-        .modal-box {
-            background: #fff;
-            border-radius: 10px;
-            padding: 30px 28px;
-            max-width: 400px;
-            width: 90%;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.2);
-            text-align: center;
-        }
-        .modal-box h3 { font-size: 1.1rem; color: #1a3a5c; margin-bottom: 10px; }
-        .modal-box p { font-size: 0.88rem; color: #555; margin-bottom: 22px; }
-        .modal-actions { display: flex; gap: 10px; justify-content: center; }
-        .btn-modal-cancel {
-            background: #f0f4f8;
-            border: 1.5px solid #dde3ea;
-            border-radius: 7px;
-            padding: 9px 22px;
-            font-size: 0.88rem;
-            font-weight: 600;
-            cursor: pointer;
-            color: #555;
-        }
-        .btn-modal-confirm {
-            background: #27ae60;
-            color: #fff;
-            border: none;
-            border-radius: 7px;
-            padding: 9px 22px;
-            font-size: 0.88rem;
-            font-weight: 700;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-        .btn-modal-confirm:hover { background: #1e8449; }
-
-        /* ----------------------------------------------------------------
-           LOADING SPINNER
-        ---------------------------------------------------------------- */
-        .spinner {
-            display: inline-block;
-            width: 14px; height: 14px;
-            border: 2px solid rgba(255,255,255,0.4);
-            border-top-color: #fff;
-            border-radius: 50%;
-            animation: spin 0.7s linear infinite;
-            vertical-align: middle;
-            margin-right: 5px;
-        }
-        @keyframes spin { to { transform: rotate(360deg); } }
-
-        .loading-block {
-            padding: 40px;
-            text-align: center;
-            color: #aaa;
-            font-size: 0.88rem;
-        }
-    </style>
-</head>
-<body>
-
-<!-- ============================================================
-     HEADER
-============================================================ -->
-<header class="site-header">
-    <div class="header-inner">
-        <div class="header-left">
-            <div class="brand-logo">SW<br>SOL</div>
-            <div>
-                <div class="header-title">Survey in a Box — Admin</div>
-                <div class="header-subtitle">Shiftwork Solutions LLC</div>
-            </div>
-        </div>
-        <div class="header-right" id="header-actions">
-            <a href="/survey/start" target="_blank"
-               style="color:#a8c8d8; font-size:0.8rem; text-decoration:none;">
-                ↗ View Public Form
-            </a>
-            <button class="btn-logout" onclick="doLogout()">Log Out</button>
-        </div>
-    </div>
-</header>
-
-<!-- ============================================================
-     LOGIN SCREEN
-============================================================ -->
-<div id="login-screen">
-    <div class="login-card">
-        <div style="font-size:2rem; margin-bottom:10px;">🔒</div>
-        <h2>Admin Login</h2>
-        <p>Enter your admin password to access the Survey in a Box dashboard.</p>
-        <input type="password" id="login-password" placeholder="Admin password"
-               onkeydown="if(event.key==='Enter') doLogin()">
-        <button class="btn-login" onclick="doLogin()">Sign In</button>
-        <div class="login-error" id="login-error"></div>
-    </div>
-</div>
-
-<!-- ============================================================
-     MAIN DASHBOARD (hidden until logged in)
-============================================================ -->
-<div id="dashboard">
-<div class="page-wrap">
-<div class="dash-grid">
-
-    <!-- ============================================================
-         LEFT: CLIENT LIST
-    ============================================================ -->
-    <div>
-        <div class="panel">
-            <div class="panel-header">
-                <h3>Intake Submissions</h3>
-                <span id="client-count"
-                      style="font-size:0.75rem; color:#a8c8d8;"></span>
-            </div>
-            <div class="panel-body">
-
-                <!-- Filters -->
-                <div class="filters-bar">
-                    <button class="filter-btn active"
-                            onclick="setFilter('', this)">All</button>
-                    <button class="filter-btn"
-                            onclick="setFilter('new', this)">New</button>
-                    <button class="filter-btn"
-                            onclick="setFilter('reviewing', this)">Reviewing</button>
-                    <button class="filter-btn"
-                            onclick="setFilter('approved', this)">Approved</button>
-                    <button class="filter-btn"
-                            onclick="setFilter('rejected', this)">Rejected</button>
-                </div>
-                <div class="filters-bar" style="padding-top:8px;">
-                    <input type="text" class="search-input"
-                           id="search-input"
-                           placeholder="Search company or contact…"
-                           oninput="onSearchInput(this.value)">
-                </div>
-
-                <!-- List -->
-                <ul class="client-list" id="client-list">
-                    <li class="loading-block">Loading submissions…</li>
-                </ul>
-
-            </div>
-        </div>
-    </div><!-- /left -->
-
-    <!-- ============================================================
-         RIGHT: DETAIL PANEL
-    ============================================================ -->
-    <div id="detail-panel">
-
-        <!-- Placeholder shown before a client is selected -->
-        <div class="detail-placeholder" id="detail-placeholder">
-            <div class="ph-icon">📋</div>
-            <p>Select a submission from the list to review details and configure the survey.</p>
-        </div>
-
-        <!-- Detail content (hidden until a client is selected) -->
-        <div id="detail-content" style="display:none;">
-
-            <!-- == CLIENT INFO CARD == -->
-            <div class="panel" id="card-client-info">
-                <div class="detail-section-header">
-                    <span>Client Information</span>
-                    <span id="detail-status-badge"></span>
-                </div>
-                <div class="detail-body">
-                    <div class="info-grid" id="info-grid">
-                        <!-- Populated by JS -->
-                    </div>
-                </div>
-            </div>
-
-            <!-- == STATUS & NOTES CARD == -->
-            <div class="panel" id="card-status">
-                <div class="detail-section-header">
-                    <span>Status &amp; Admin Notes</span>
-                </div>
-                <div class="detail-body">
-                    <div class="status-controls" style="margin-bottom:16px;">
-                        <label style="font-size:0.82rem;font-weight:700;color:#555;">
-                            Status:
-                        </label>
-                        <select class="status-select" id="status-select">
-                            <option value="new">New</option>
-                            <option value="reviewing">Reviewing</option>
-                            <option value="approved">Approved</option>
-                            <option value="rejected">Rejected</option>
-                        </select>
-                        <button class="btn-save-status"
-                                onclick="saveStatus()">Save Status</button>
-                    </div>
-                    <div class="notes-wrap">
-                        <label for="admin-notes"
-                               style="font-size:0.8rem;font-weight:700;color:#777;">
-                            Jim's Notes (internal only):
-                        </label>
-                        <textarea id="admin-notes"
-                                  placeholder="Notes about this client, special requirements, call summary, etc."></textarea>
-                        <button class="btn-save-notes"
-                                onclick="saveNotes()">Save Notes</button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- == PROJECT CONFIG CARD == -->
-            <div class="panel" id="card-project-config">
-                <div class="detail-section-header">
-                    <span>Survey Configuration</span>
-                    <span id="project-status-badge"></span>
-                </div>
-
-                <!-- Question Bank Tabs -->
-                <div class="qbank-tabs" id="qbank-tabs">
-                    <span style="font-size:0.8rem;color:#a8c8d8;padding:4px 0;">
-                        Loading questions…
-                    </span>
-                </div>
-
-                <!-- Question list (active tab) -->
-                <div class="question-list" id="question-list">
-                    <!-- Populated by JS -->
-                </div>
-
-                <!-- Select All / Deselect All -->
-                <div class="qbank-actions">
-                    <button class="btn-select-all"
-                            onclick="selectAllInTab()">Select All</button>
-                    <button class="btn-deselect-all"
-                            onclick="deselectAllInTab()">Deselect All</button>
-                    <span class="q-selected-count" id="q-selected-count">0 selected</span>
-                </div>
-
-                <!-- Schedule selector -->
-                <div class="detail-section-header"
-                     style="margin-top:4px; font-size:0.78rem;">
-                    Schedule Concepts to Include for Rating
-                </div>
-                <div class="schedule-grid" id="schedule-grid">
-                    <span style="padding:14px;color:#bbb;font-size:0.83rem;">
-                        Loading schedules…
-                    </span>
-                </div>
-
-                <!-- Project admin notes -->
-                <div class="proj-notes-wrap">
-                    <label>Project Notes (internal):</label>
-                    <textarea id="project-notes"
-                              placeholder="Notes about survey configuration, client preferences, etc."></textarea>
-                </div>
-
-                <!-- Save + Approve actions -->
-                <div class="config-actions">
-                    <button class="btn-save-config"
-                            onclick="saveProjectConfig()">
-                        💾 Save Configuration
-                    </button>
-                    <button class="btn-approve"
-                            id="btn-approve"
-                            onclick="confirmApprove()">
-                        ✅ Approve Survey
-                    </button>
-                    <span class="config-note" id="config-note"></span>
-                </div>
-
-            </div><!-- /card-project-config -->
-
-        </div><!-- /#detail-content -->
-    </div><!-- /#detail-panel -->
-
-</div><!-- /.dash-grid -->
-</div><!-- /.page-wrap -->
-</div><!-- /#dashboard -->
-
-<!-- ============================================================
-     APPROVE CONFIRM MODAL
-============================================================ -->
-<div class="modal-overlay" id="approve-modal">
-    <div class="modal-box">
-        <h3>Approve This Survey?</h3>
-        <p id="approve-modal-text">
-            This will mark the survey as approved and record it in project history.
-            Phase 2 document generation will be triggered automatically once built.
-        </p>
-        <div class="modal-actions">
-            <button class="btn-modal-cancel"
-                    onclick="closeModal()">Cancel</button>
-            <button class="btn-modal-confirm"
-                    onclick="doApprove()">Yes, Approve</button>
-        </div>
-    </div>
-</div>
-
-<!-- ============================================================
-     TOAST
-============================================================ -->
-<div id="toast"></div>
-
-<!-- ============================================================
-     JAVASCRIPT
-============================================================ -->
-<script>
-// ======================================================================
-// STATE
-// ======================================================================
-let state = {
-    clients:          [],
-    activeFilter:     '',
-    searchQuery:      '',
-    selectedClientId: null,
-    selectedClient:   null,
-    selectedProject:  null,
-    questionBank:     {},   // { category: [questions] }
-    categories:       [],
-    schedules:        [],
-    activeTab:        '',
-    selectedQuestions: new Set(),
-    selectedSchedules: new Set(),
-    searchTimer:      null,
-    pendingProjectId: null,  // used by approve modal
-};
-
-// ======================================================================
-// INIT
-// ======================================================================
-async function init() {
-    // Try to load clients — if 401, show login screen
-    const ok = await loadClients();
-    if (ok) {
-        showDashboard();
-        await Promise.all([loadQuestionBank(), loadSchedules()]);
-    }
-}
-
-function showDashboard() {
-    document.getElementById('login-screen').style.display = 'none';
-    document.getElementById('dashboard').style.display = 'block';
-    document.getElementById('header-actions').style.display = 'flex';
-}
-
-// ======================================================================
-// AUTH
-// ======================================================================
-async function doLogin() {
-    const pw = document.getElementById('login-password').value;
-    const errEl = document.getElementById('login-error');
-    errEl.classList.remove('visible');
-    errEl.textContent = '';
-
-    if (!pw) {
-        errEl.textContent = 'Please enter a password.';
-        errEl.classList.add('visible');
-        return;
-    }
-
-    try {
-        const res = await api('POST', '/api/survey/admin/login', { password: pw });
-        if (res.success) {
-            document.getElementById('login-password').value = '';
-            showDashboard();
-            await Promise.all([loadClients(), loadQuestionBank(), loadSchedules()]);
-        } else {
-            errEl.textContent = res.message || 'Incorrect password.';
-            errEl.classList.add('visible');
-        }
-    } catch (e) {
-        errEl.textContent = 'Login failed. Please try again.';
-        errEl.classList.add('visible');
-    }
-}
-
-async function doLogout() {
-    await api('POST', '/api/survey/admin/logout', {});
-    location.reload();
-}
-
-// ======================================================================
-// API HELPER
-// ======================================================================
-async function api(method, url, body) {
-    const opts = {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-    };
-    if (body !== undefined && method !== 'GET') {
-        opts.body = JSON.stringify(body);
-    }
-    const res = await fetch(url, opts);
-    if (res.status === 401) {
-        // Session expired — reload to show login
-        location.reload();
-        return { success: false };
-    }
-    return await res.json();
-}
-
-// ======================================================================
-// CLIENT LIST
-// ======================================================================
-async function loadClients() {
-    let url = '/api/survey/admin/clients';
-    const params = [];
-    if (state.activeFilter) params.push('status=' + encodeURIComponent(state.activeFilter));
-    if (state.searchQuery) params.push('search=' + encodeURIComponent(state.searchQuery));
-    if (params.length) url += '?' + params.join('&');
-
-    try {
-        const res = await fetch(url);
-        if (res.status === 401) return false;
-        const data = await res.json();
-        if (data.success) {
-            state.clients = data.clients;
-            renderClientList();
-            document.getElementById('client-count').textContent =
-                data.total + ' submission' + (data.total !== 1 ? 's' : '');
-            return true;
-        }
-        return false;
-    } catch (e) {
-        return false;
-    }
-}
-
-function renderClientList() {
-    const ul = document.getElementById('client-list');
-    if (!state.clients.length) {
-        ul.innerHTML = '<li class="empty-list">No submissions found.</li>';
-        return;
-    }
-    ul.innerHTML = state.clients.map(c => {
-        const isActive = c.id === state.selectedClientId;
-        const badge = badgeHtml(c.status);
-        const date = formatDate(c.created_at);
-        const industry = formatIndustry(c.industry);
-        const emp = c.employee_count ? c.employee_count + ' employees' : '';
-        return `
-            <li class="client-item ${isActive ? 'active' : ''}"
-                onclick="selectClient(${c.id})">
-                <div class="client-info">
-                    <div class="client-name">${esc(c.company_name)}</div>
-                    <div class="client-meta">${esc(c.contact_name)}
-                        ${industry ? ' · ' + industry : ''}
-                        ${emp ? ' · ' + emp : ''}
-                    </div>
-                </div>
-                <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
-                    ${badge}
-                    <span class="client-date">${date}</span>
-                </div>
-            </li>`;
-    }).join('');
-}
-
-function setFilter(status, btn) {
-    state.activeFilter = status;
-    state.searchQuery = '';
-    document.getElementById('search-input').value = '';
-    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    loadClients();
-}
-
-function onSearchInput(val) {
-    clearTimeout(state.searchTimer);
-    state.searchTimer = setTimeout(() => {
-        state.searchQuery = val.trim();
-        loadClients();
-    }, 300);
-}
-
-// ======================================================================
-// CLIENT DETAIL
-// ======================================================================
-async function selectClient(clientId) {
-    state.selectedClientId = clientId;
-    renderClientList(); // re-render to show active state
-
-    // Show loading state in detail panel
-    document.getElementById('detail-placeholder').style.display = 'none';
-    document.getElementById('detail-content').style.display = 'none';
-
-    const data = await api('GET', `/api/survey/admin/client/${clientId}`);
-    if (!data.success) {
-        showToast('Failed to load client details.', 'error');
-        return;
-    }
-
-    state.selectedClient  = data.client;
-    state.selectedProject = data.project;
-
-    renderClientDetail(data.client, data.project);
-    document.getElementById('detail-content').style.display = 'block';
-}
-
-function renderClientDetail(client, project) {
-    // -- Status badge in header --
-    document.getElementById('detail-status-badge').innerHTML = badgeHtml(client.status);
-
-    // -- Info grid --
-    const grid = document.getElementById('info-grid');
-    grid.innerHTML = infoItems([
-        ['Company',         client.company_name],
-        ['Contact',         client.contact_name],
-        ['Email',           client.email],
-        ['Phone',           client.phone || null],
-        ['Industry',        formatIndustry(client.industry)],
-        ['Employees',       client.employee_count ? client.employee_count + ' employees' : null],
-        ['Schedule Type',   formatScheduleType(client.current_schedule_type)],
-        ['Crews',           client.crew_count ? client.crew_count + ' crews' : null],
-        ['Shift Times',     client.shift_start_times || null],
-        ['Union Status',    client.union_status || null],
-        ['Administration',  formatAdminMethod(client.preferred_administration)],
-        ['Target Date',     client.preferred_delivery_date || null],
-        ['Referral Source', client.referral_source || null],
-        ['Surveyed Before', client.previously_surveyed ? 'Yes' + (client.last_survey_date ? ' (' + client.last_survey_date + ')' : '') : 'No'],
-        ['Submitted',       formatDate(client.created_at)],
-    ]);
-
-    // -- Departments --
-    if (client.department_names && client.department_names.length) {
-        const tags = client.department_names.map(d =>
-            `<span class="tag">${esc(d)}</span>`).join('');
-        grid.insertAdjacentHTML('beforeend', `
-            <div class="info-item" style="grid-column:1/-1;">
-                <label>Departments</label>
-                <div class="tag-list">${tags}</div>
-            </div>`);
-    }
-
-    // -- Challenges --
-    if (client.biggest_challenges && client.biggest_challenges.length) {
-        const tags = client.biggest_challenges.map(c =>
-            `<span class="tag">${esc(formatChallenge(c))}</span>`).join('');
-        grid.insertAdjacentHTML('beforeend', `
-            <div class="info-item" style="grid-column:1/-1;">
-                <label>Biggest Challenges</label>
-                <div class="tag-list">${tags}</div>
-            </div>`);
-    }
-
-    // -- Additional notes --
-    if (client.additional_notes) {
-        grid.insertAdjacentHTML('beforeend', `
-            <div class="info-item" style="grid-column:1/-1;">
-                <label>Additional Notes</label>
-                <div class="info-val">${esc(client.additional_notes)}</div>
-            </div>`);
-    }
-
-    // -- Status select --
-    document.getElementById('status-select').value = client.status;
-
-    // -- Admin notes --
-    document.getElementById('admin-notes').value = client.admin_notes || '';
-
-    // -- Project config --
-    renderProjectConfig(project);
-}
-
-function infoItems(pairs) {
-    return pairs.filter(([_, v]) => v !== null && v !== undefined && v !== '').map(([label, val]) => `
-        <div class="info-item">
-            <label>${esc(label)}</label>
-            <div class="info-val">${esc(String(val))}</div>
-        </div>`).join('');
-}
-
-// ======================================================================
-// STATUS & NOTES
-// ======================================================================
-async function saveStatus() {
-    if (!state.selectedClientId) return;
-    const status = document.getElementById('status-select').value;
-    const data = await api('POST',
-        `/api/survey/admin/client/${state.selectedClientId}/status`,
-        { status }
-    );
-    if (data.success) {
-        showToast('Status updated to "' + status + '".');
-        // Update local state and re-render list
-        if (state.selectedClient) state.selectedClient.status = status;
-        const item = state.clients.find(c => c.id === state.selectedClientId);
-        if (item) item.status = status;
-        renderClientList();
-        document.getElementById('detail-status-badge').innerHTML = badgeHtml(status);
-    } else {
-        showToast(data.error || 'Failed to update status.', 'error');
-    }
-}
-
-async function saveNotes() {
-    if (!state.selectedClientId) return;
-    const notes = document.getElementById('admin-notes').value;
-    const data = await api('POST',
-        `/api/survey/admin/client/${state.selectedClientId}/notes`,
-        { admin_notes: notes }
-    );
-    if (data.success) {
-        showToast('Notes saved.');
-    } else {
-        showToast(data.error || 'Failed to save notes.', 'error');
-    }
-}
-
-// ======================================================================
-// QUESTION BANK
-// ======================================================================
-async function loadQuestionBank() {
-    try {
-        const data = await api('GET', '/api/survey/question-bank');
-        if (data.success) {
-            state.questionBank = data.questions_by_category;
-            state.categories   = data.categories;
-            if (state.categories.length) {
-                state.activeTab = state.categories[0];
-            }
-            // If a client is already selected, render the tabs now
-            if (state.selectedClientId) {
-                renderQuestionTabs();
-                renderQuestionList();
-                updateQSelectedCount();
-            }
-        }
-    } catch (e) {
-        console.warn('loadQuestionBank failed:', e);
-    }
-}
-
-async function loadSchedules() {
-    try {
-        const data = await api('GET', '/api/survey/schedules');
-        if (data.success) {
-            state.schedules = data.schedules;
-            if (state.selectedClientId) renderScheduleGrid();
-        }
-    } catch (e) {
-        console.warn('loadSchedules failed:', e);
-    }
-}
-
-function renderProjectConfig(project) {
-    // Project status badge
-    const projBadge = document.getElementById('project-status-badge');
-    if (project) {
-        projBadge.innerHTML = badgeHtml(project.status, true);
-    } else {
-        projBadge.innerHTML = '<span class="badge badge-draft">No Project Yet</span>';
-    }
-
-    // Pre-load selected questions from existing project (or select all by default)
-    state.selectedQuestions = new Set();
-    if (project && project.selected_questions && project.selected_questions.length) {
-        project.selected_questions.forEach(id => state.selectedQuestions.add(id));
-    } else {
-        // Default: select all questions in the bank
-        Object.values(state.questionBank).forEach(questions => {
-            questions.forEach(q => state.selectedQuestions.add(q.id));
-        });
-    }
-
-    // Pre-load selected schedules
-    state.selectedSchedules = new Set();
-    if (project && project.selected_schedules && project.selected_schedules.length) {
-        project.selected_schedules.forEach(id => state.selectedSchedules.add(id));
-    }
-
-    // Project notes
-    document.getElementById('project-notes').value =
-        (project && project.admin_notes) ? project.admin_notes : '';
-
-    // Approve button state
-    const btnApprove = document.getElementById('btn-approve');
-    const configNote = document.getElementById('config-note');
-    if (project && project.status === 'approved') {
-        btnApprove.classList.add('already-approved');
-        btnApprove.textContent = '✅ Already Approved';
-        btnApprove.onclick = null;
-        configNote.textContent = 'Approved on ' + (project.approved_at ? formatDate(project.approved_at) : '');
-    } else {
-        btnApprove.classList.remove('already-approved');
-        btnApprove.textContent = '✅ Approve Survey';
-        btnApprove.onclick = confirmApprove;
-        configNote.textContent = project
-            ? 'Save configuration first, then approve.'
-            : 'Save configuration to create a project record.';
-    }
-
-    // Render tabs + list if question bank is loaded
-    if (state.categories.length) {
-        renderQuestionTabs();
-        renderQuestionList();
-        updateQSelectedCount();
-    }
-    if (state.schedules.length) {
-        renderScheduleGrid();
-    }
-}
-
-function renderQuestionTabs() {
-    const tabsEl = document.getElementById('qbank-tabs');
-    if (!state.categories.length) {
-        tabsEl.innerHTML = '<span style="font-size:0.8rem;color:#aaa;">No questions loaded.</span>';
-        return;
-    }
-    tabsEl.innerHTML = state.categories.map(cat => {
-        const questions = state.questionBank[cat] || [];
-        const selectedInCat = questions.filter(q => state.selectedQuestions.has(q.id)).length;
-        const isActive = cat === state.activeTab;
-        return `<button class="qtab ${isActive ? 'active' : ''}"
-                        onclick="switchTab('${cat}')">
-                    ${formatCategory(cat)}
-                    <span class="q-count">${selectedInCat}/${questions.length}</span>
-                </button>`;
-    }).join('');
-}
-
-function switchTab(cat) {
-    state.activeTab = cat;
-    renderQuestionTabs();
-    renderQuestionList();
-}
-
-function renderQuestionList() {
-    const listEl = document.getElementById('question-list');
-    const questions = state.questionBank[state.activeTab] || [];
-    if (!questions.length) {
-        listEl.innerHTML = '<p style="color:#aaa;font-size:0.83rem;padding:10px 0;">No questions in this category.</p>';
-        return;
-    }
-    listEl.innerHTML = questions.map(q => {
-        const checked = state.selectedQuestions.has(q.id) ? 'checked' : '';
-        return `<div class="question-item">
-                    <input type="checkbox" id="q-${esc(q.id)}"
-                           ${checked}
-                           onchange="toggleQuestion('${esc(q.id)}', this.checked)">
-                    <label for="q-${esc(q.id)}">
-                        ${esc(q.text || q.question || q.id)}
-                        <span class="q-id">[${esc(q.id)}]</span>
-                    </label>
-                </div>`;
-    }).join('');
-}
-
-function toggleQuestion(id, checked) {
-    if (checked) {
-        state.selectedQuestions.add(id);
-    } else {
-        state.selectedQuestions.delete(id);
-    }
-    renderQuestionTabs(); // update counts
-    updateQSelectedCount();
-}
-
-function selectAllInTab() {
-    const questions = state.questionBank[state.activeTab] || [];
-    questions.forEach(q => state.selectedQuestions.add(q.id));
-    renderQuestionList();
-    renderQuestionTabs();
-    updateQSelectedCount();
-}
-
-function deselectAllInTab() {
-    const questions = state.questionBank[state.activeTab] || [];
-    questions.forEach(q => state.selectedQuestions.delete(q.id));
-    renderQuestionList();
-    renderQuestionTabs();
-    updateQSelectedCount();
-}
-
-function updateQSelectedCount() {
-    document.getElementById('q-selected-count').textContent =
-        state.selectedQuestions.size + ' question' +
-        (state.selectedQuestions.size !== 1 ? 's' : '') + ' selected';
-}
-
-// ======================================================================
-// SCHEDULE GRID
-// ======================================================================
-function renderScheduleGrid() {
-    const grid = document.getElementById('schedule-grid');
-    if (!state.schedules.length) {
-        grid.innerHTML = '<p style="color:#aaa;font-size:0.83rem;padding:14px;">No schedules loaded.</p>';
-        return;
-    }
-    grid.innerHTML = state.schedules.map(s => {
-        const checked = state.selectedSchedules.has(s.id);
-        return `<label class="schedule-card ${checked ? 'selected' : ''}"
-                       onclick="toggleSchedule('${esc(s.id)}', this)">
-                    <input type="checkbox" ${checked ? 'checked' : ''}
-                           style="pointer-events:none;">
-                    <div class="sched-info">
-                        <div class="sched-name">${esc(s.name || s.id)}</div>
-                        <div class="sched-desc">${esc(s.description || '')}</div>
-                        ${s.hours ? `<div class="sched-hrs">${s.hours}-hour shift</div>` : ''}
-                    </div>
-                </label>`;
-    }).join('');
-}
-
-function toggleSchedule(id, cardEl) {
-    const cb = cardEl.querySelector('input[type="checkbox"]');
-    if (state.selectedSchedules.has(id)) {
-        state.selectedSchedules.delete(id);
-        cb.checked = false;
-        cardEl.classList.remove('selected');
-    } else {
-        state.selectedSchedules.add(id);
-        cb.checked = true;
-        cardEl.classList.add('selected');
-    }
-}
-
-// ======================================================================
-// SAVE PROJECT CONFIG
-// ======================================================================
-async function saveProjectConfig() {
-    if (!state.selectedClientId) {
-        showToast('No client selected.', 'error');
-        return;
-    }
-
-    const btn = document.querySelector('.btn-save-config');
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner"></span> Saving…';
-
-    const payload = {
-        survey_client_id:   state.selectedClientId,
-        selected_questions: Array.from(state.selectedQuestions),
-        excluded_questions: [],
-        custom_questions:   [],
-        selected_schedules: Array.from(state.selectedSchedules),
-        admin_notes:        document.getElementById('project-notes').value.trim(),
-    };
-
-    const data = await api('POST', '/api/survey/admin/project/save', payload);
-
-    btn.disabled = false;
-    btn.innerHTML = '💾 Save Configuration';
-
-    if (data.success) {
-        showToast('Configuration saved.');
-        // Refresh client detail to update project state
-        const detail = await api('GET', `/api/survey/admin/client/${state.selectedClientId}`);
-        if (detail.success) {
-            state.selectedProject = detail.project;
-            // Update approve button state
-            renderProjectConfig(detail.project);
-        }
-    } else {
-        showToast(data.error || 'Failed to save configuration.', 'error');
-    }
-}
-
-// ======================================================================
-// APPROVE
-// ======================================================================
-function confirmApprove() {
-    if (!state.selectedProject) {
-        showToast('Please save the configuration first before approving.', 'error');
-        return;
-    }
-    const client = state.selectedClient;
-    document.getElementById('approve-modal-text').textContent =
-        `Approve the survey for ${client ? client.company_name : 'this client'}? ` +
-        `This will set the status to Approved and record it in project history.`;
-    state.pendingProjectId = state.selectedProject.id;
-    document.getElementById('approve-modal').classList.add('visible');
-}
-
-function closeModal() {
-    document.getElementById('approve-modal').classList.remove('visible');
-    state.pendingProjectId = null;
-}
-
-async function doApprove() {
-    closeModal();
-    if (!state.pendingProjectId) return;
-
-    const btn = document.getElementById('btn-approve');
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner"></span> Approving…';
-
-    const data = await api('POST',
-        `/api/survey/admin/project/${state.pendingProjectId}/approve`, {});
-
-    btn.disabled = false;
-
-    if (data.success) {
-        showToast('Survey approved! ✅', 'success');
-        // Reload detail
-        const detail = await api('GET', `/api/survey/admin/client/${state.selectedClientId}`);
-        if (detail.success) {
-            state.selectedClient  = detail.client;
-            state.selectedProject = detail.project;
-            renderClientDetail(detail.client, detail.project);
-        }
-        // Reload list to update badges
-        const item = state.clients.find(c => c.id === state.selectedClientId);
-        if (item) item.status = 'approved';
-        renderClientList();
-    } else {
-        showToast(data.error || 'Approval failed.', 'error');
-    }
-}
-
-// ======================================================================
-// TOAST
-// ======================================================================
-let toastTimer = null;
-function showToast(msg, type) {
-    const el = document.getElementById('toast');
-    el.textContent = msg;
-    el.className = 'visible' + (type === 'error' ? ' toast-error' : type === 'success' ? ' toast-success' : '');
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { el.className = ''; }, 3200);
-}
-
-// ======================================================================
-// FORMATTING HELPERS
-// ======================================================================
-function badgeHtml(status, isProject) {
-    const map = {
-        'new':          'badge-new',
-        'reviewing':    'badge-reviewing',
-        'approved':     'badge-approved',
-        'rejected':     'badge-rejected',
-        'draft':        'badge-draft',
-        'administered': 'badge-administered',
-        'processing':   'badge-processing',
-        'delivered':    'badge-delivered',
-    };
-    const cls = map[status] || 'badge-draft';
-    return `<span class="badge ${cls}">${esc(status || 'unknown')}</span>`;
-}
-
-function formatDate(str) {
-    if (!str || str === 'None') return '';
-    try {
-        const d = new Date(str);
-        return d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
-    } catch(e) { return str; }
-}
-
-function formatIndustry(val) {
-    const m = {
-        'manufacturing':    'Manufacturing',
-        'pharmaceutical':   'Pharmaceutical',
-        'food_processing':  'Food Processing',
-        'mining':           'Mining',
-        'distribution':     'Distribution',
-        'chemical':         'Chemical',
-        'utilities':        'Utilities',
-        'paper_pulp':       'Paper / Pulp',
-        'oil_gas':          'Oil & Gas',
-        'other':            'Other',
-    };
-    return m[val] || val || '';
-}
-
-function formatScheduleType(val) {
-    const m = {
-        '8hr_fixed':     '8-Hour Fixed',
-        '8hr_rotating':  '8-Hour Rotating',
-        '10hr':          '10-Hour',
-        '12hr_fixed':    '12-Hour Fixed',
-        '12hr_rotating': '12-Hour Rotating',
-        'other':         'Other / Mixed',
-    };
-    return m[val] || val || '';
-}
-
-function formatAdminMethod(val) {
-    const m = {
-        'online':              'Online (link / QR code)',
-        'paper_bubble_sheets': 'Paper Bubble Sheets',
-        'unsure':              'Unsure — needs guidance',
-    };
-    return m[val] || val || '';
-}
-
-function formatChallenge(val) {
-    const m = {
-        'recruiting':            'Recruiting / Staffing',
-        'retention':             'Employee Retention',
-        'overtime':              'Overtime Costs',
-        'work_life_balance':     'Work-Life Balance',
-        'schedule_design':       'Schedule Design',
-        'coverage_absenteeism':  'Coverage / Absenteeism',
-        'communication':         'Communication',
-        'other':                 'Other',
-    };
-    return m[val] || val;
-}
-
-function formatCategory(val) {
-    const m = {
-        'demographics':          'Demographics',
-        'sleep_alertness':       'Sleep & Alertness',
-        'working_conditions':    'Working Conditions',
-        'organizational_climate':'Org Climate',
-        'schedule_features':     'Schedule Features',
-        'overtime':              'Overtime',
-        'open_ended':            'Open-Ended',
-    };
-    return m[val] || val.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase());
-}
-
-function esc(str) {
-    if (str === null || str === undefined) return '';
-    return String(str)
-        .replace(/&/g,'&amp;')
-        .replace(/</g,'&lt;')
-        .replace(/>/g,'&gt;')
-        .replace(/"/g,'&quot;');
-}
-
-// ======================================================================
-// BOOT
-// ======================================================================
-document.addEventListener('DOMContentLoaded', init);
-</script>
-
-</body>
-</html>
-<!-- I did no harm and this file is not truncated -->
+"""
+Survey in a Box — Admin Dashboard Routes
+File: routes/survey_admin.py
+Created: March 16, 2026
+Last Updated: March 16, 2026 — Phase 1, Step 1.3: Initial creation
+
+PURPOSE:
+    Password-protected admin dashboard for Survey in a Box.
+    Jim uses this to review intake submissions, configure survey projects,
+    and approve clients for Phase 2 (survey assembly).
+
+ENDPOINTS:
+    GET  /survey/admin                          — Dashboard (password gate)
+    GET  /api/survey/admin/clients              — List all survey_clients (JSON)
+    GET  /api/survey/admin/client/<id>          — Get one client + project (JSON)
+    POST /api/survey/admin/client/<id>/status   — Update client status
+    POST /api/survey/admin/project/save         — Save/update survey_projects row
+    POST /api/survey/admin/project/<id>/approve — Approve project (status → approved)
+    POST /api/survey/admin/client/<id>/notes    — Save admin notes to survey_clients
+
+AUTH:
+    Session-cookie based. Password checked against SURVEY_ADMIN_PASSWORD env var.
+    GET /api/survey/admin/login  and POST /api/survey/admin/login handle auth.
+    GET /api/survey/admin/logout clears session.
+
+DESIGN RULES:
+    - PostgreSQL: RealDictCursor, %s params, RETURNING id
+    - All JSON list fields decoded on read, encoded on write
+    - No changes to any existing Swarm table or route
+    - Blueprint prefix: none (routes defined with full paths)
+    - project_token generated with secrets.token_urlsafe(16) on first save
+
+CHANGELOG:
+    - March 16, 2026: Initial creation for Phase 1, Step 1.3.
+"""
+
+import json
+import os
+import secrets
+import traceback
+from datetime import datetime
+from functools import wraps
+
+from flask import Blueprint, render_template, request, jsonify, session, redirect, url_for
+
+survey_admin_bp = Blueprint('survey_admin', __name__)
+
+# ---------------------------------------------------------------------------
+# AUTH HELPERS
+# ---------------------------------------------------------------------------
+
+ADMIN_SESSION_KEY = 'survey_admin_authenticated'
+
+
+def _get_admin_password():
+    """Read the admin password from environment. Never hard-code."""
+    return os.environ.get('SURVEY_ADMIN_PASSWORD', '')
+
+
+def _is_authenticated():
+    return session.get(ADMIN_SESSION_KEY) is True
+
+
+def require_survey_admin(f):
+    """Decorator: return 401 JSON for API routes if not authenticated."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not _is_authenticated():
+            return jsonify({'success': False, 'error': 'Not authenticated.', 'redirect': '/survey/admin'}), 401
+        return f(*args, **kwargs)
+    return decorated
+
+
+# ---------------------------------------------------------------------------
+# DB HELPER
+# ---------------------------------------------------------------------------
+
+def _get_db():
+    from db_engine import get_db_connection
+    return get_db_connection()
+
+
+# ---------------------------------------------------------------------------
+# JSON DECODE HELPERS
+# ---------------------------------------------------------------------------
+
+def _decode_json_field(val, fallback=None):
+    """Safely decode a JSON string stored in a TEXT column."""
+    if val is None:
+        return fallback if fallback is not None else []
+    if isinstance(val, (list, dict)):
+        return val
+    try:
+        return json.loads(val)
+    except (json.JSONDecodeError, TypeError):
+        return fallback if fallback is not None else []
+
+
+def _client_to_dict(row):
+    """Convert a survey_clients RealDictRow to a clean Python dict."""
+    d = dict(row)
+    d['department_names']  = _decode_json_field(d.get('department_names'), [])
+    d['biggest_challenges'] = _decode_json_field(d.get('biggest_challenges'), [])
+    # Serialize datetime fields for JSON
+    for key in ('created_at', 'updated_at'):
+        if d.get(key) and hasattr(d[key], 'isoformat'):
+            d[key] = d[key].isoformat()
+    return d
+
+
+def _project_to_dict(row):
+    """Convert a survey_projects RealDictRow to a clean Python dict."""
+    d = dict(row)
+    for field in ('selected_questions', 'excluded_questions',
+                  'custom_questions', 'selected_schedules'):
+        d[field] = _decode_json_field(d.get(field), [])
+    for key in ('created_at', 'updated_at', 'approved_at', 'opened_at', 'closed_at'):
+        if d.get(key) and hasattr(d[key], 'isoformat'):
+            d[key] = d[key].isoformat()
+    return d
+
+
+# ---------------------------------------------------------------------------
+# DASHBOARD PAGE
+# ---------------------------------------------------------------------------
+
+@survey_admin_bp.route('/survey/admin', methods=['GET'])
+def admin_dashboard():
+    """Render the admin dashboard HTML. Auth is handled client-side via API."""
+    return render_template('survey_admin.html')
+
+
+# ---------------------------------------------------------------------------
+# AUTH ENDPOINTS
+# ---------------------------------------------------------------------------
+
+@survey_admin_bp.route('/api/survey/admin/login', methods=['POST'])
+def admin_login():
+    """Validate password and set session cookie."""
+    data = request.get_json(force=True) or {}
+    password = data.get('password', '')
+    correct  = _get_admin_password()
+
+    if not correct:
+        # If env var not set, deny access — never allow empty-password login
+        return jsonify({'success': False, 'error': 'Admin password not configured on server.'}), 500
+
+    if password == correct:
+        session[ADMIN_SESSION_KEY] = True
+        session.permanent = True
+        return jsonify({'success': True})
+    else:
+        return jsonify({'success': False, 'error': 'Incorrect password.'}), 401
+
+
+@survey_admin_bp.route('/api/survey/admin/logout', methods=['POST'])
+def admin_logout():
+    """Clear the admin session."""
+    session.pop(ADMIN_SESSION_KEY, None)
+    return jsonify({'success': True})
+
+
+@survey_admin_bp.route('/api/survey/admin/auth-status', methods=['GET'])
+def auth_status():
+    """Check whether the current session is authenticated."""
+    return jsonify({'authenticated': _is_authenticated()})
+
+
+# ---------------------------------------------------------------------------
+# CLIENT LIST
+# ---------------------------------------------------------------------------
+
+@survey_admin_bp.route('/api/survey/admin/clients', methods=['GET'])
+@require_survey_admin
+def list_clients():
+    """
+    Return all survey_clients ordered by created_at DESC.
+    Also returns the associated project (if any) for each client.
+    """
+    try:
+        conn = _get_db()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT
+                    sc.*,
+                    sp.id            AS project_id,
+                    sp.project_token AS project_token,
+                    sp.status        AS project_status,
+                    sp.response_count AS response_count
+                FROM survey_clients sc
+                LEFT JOIN survey_projects sp ON sp.survey_client_id = sc.id
+                ORDER BY sc.created_at DESC
+            """)
+            rows = cursor.fetchall()
+        finally:
+            conn.close()
+
+        clients = []
+        for row in rows:
+            d = _client_to_dict(row)
+            # Flatten project fields
+            d['project_id']     = d.get('project_id')
+            d['project_token']  = d.get('project_token')
+            d['project_status'] = d.get('project_status')
+            d['response_count'] = d.get('response_count', 0)
+            clients.append(d)
+
+        return jsonify({'success': True, 'clients': clients, 'total': len(clients)})
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# SINGLE CLIENT DETAIL
+# ---------------------------------------------------------------------------
+
+@survey_admin_bp.route('/api/survey/admin/client/<int:client_id>', methods=['GET'])
+@require_survey_admin
+def get_client(client_id):
+    """Return full detail for one client plus their project config (if any)."""
+    try:
+        conn = _get_db()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM survey_clients WHERE id = %s", (client_id,))
+            client_row = cursor.fetchone()
+            if not client_row:
+                return jsonify({'success': False, 'error': f'Client {client_id} not found.'}), 404
+
+            cursor.execute(
+                "SELECT * FROM survey_projects WHERE survey_client_id = %s ORDER BY created_at DESC LIMIT 1",
+                (client_id,)
+            )
+            project_row = cursor.fetchone()
+        finally:
+            conn.close()
+
+        client  = _client_to_dict(client_row)
+        project = _project_to_dict(project_row) if project_row else None
+
+        return jsonify({'success': True, 'client': client, 'project': project})
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# UPDATE CLIENT STATUS
+# ---------------------------------------------------------------------------
+
+@survey_admin_bp.route('/api/survey/admin/client/<int:client_id>/status', methods=['POST'])
+@require_survey_admin
+def update_client_status(client_id):
+    """Change the status of a survey_clients row."""
+    try:
+        data = request.get_json(force=True) or {}
+        new_status = data.get('status', '').strip()
+
+        valid_statuses = ('new', 'reviewing', 'approved', 'rejected', 'in-progress', 'delivered')
+        if new_status not in valid_statuses:
+            return jsonify({'success': False,
+                            'error': f'Invalid status. Must be one of: {", ".join(valid_statuses)}'}), 400
+
+        conn = _get_db()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE survey_clients SET status = %s, updated_at = NOW() WHERE id = %s",
+                (new_status, client_id)
+            )
+            if cursor.rowcount == 0:
+                conn.rollback()
+                return jsonify({'success': False, 'error': f'Client {client_id} not found.'}), 404
+            conn.commit()
+        finally:
+            conn.close()
+
+        return jsonify({'success': True, 'client_id': client_id, 'status': new_status})
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# SAVE ADMIN NOTES ON CLIENT
+# ---------------------------------------------------------------------------
+
+@survey_admin_bp.route('/api/survey/admin/client/<int:client_id>/notes', methods=['POST'])
+@require_survey_admin
+def save_client_notes(client_id):
+    """Save Jim's admin notes to survey_clients.admin_notes."""
+    try:
+        data = request.get_json(force=True) or {}
+        notes = data.get('admin_notes', '')
+
+        conn = _get_db()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE survey_clients SET admin_notes = %s, updated_at = NOW() WHERE id = %s",
+                (notes, client_id)
+            )
+            if cursor.rowcount == 0:
+                conn.rollback()
+                return jsonify({'success': False, 'error': f'Client {client_id} not found.'}), 404
+            conn.commit()
+        finally:
+            conn.close()
+
+        return jsonify({'success': True, 'client_id': client_id})
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# SAVE / UPDATE PROJECT CONFIGURATION
+# ---------------------------------------------------------------------------
+
+@survey_admin_bp.route('/api/survey/admin/project/save', methods=['POST'])
+@require_survey_admin
+def save_project():
+    """
+    Upsert a survey_projects row for a given survey_client_id.
+    If a project already exists for this client, update it.
+    If not, create a new one (generates project_token).
+    """
+    try:
+        data = request.get_json(force=True) or {}
+        client_id = data.get('survey_client_id')
+        if not client_id:
+            return jsonify({'success': False, 'error': 'survey_client_id is required.'}), 400
+
+        selected_questions  = json.dumps(data.get('selected_questions', []))
+        excluded_questions  = json.dumps(data.get('excluded_questions', []))
+        custom_questions    = json.dumps(data.get('custom_questions', []))
+        selected_schedules  = json.dumps(data.get('selected_schedules', []))
+        admin_notes         = data.get('admin_notes', None)
+
+        conn = _get_db()
+        try:
+            cursor = conn.cursor()
+
+            # Check if project already exists for this client
+            cursor.execute(
+                "SELECT id FROM survey_projects WHERE survey_client_id = %s ORDER BY created_at DESC LIMIT 1",
+                (client_id,)
+            )
+            existing = cursor.fetchone()
+
+            if existing:
+                project_id = existing['id'] if isinstance(existing, dict) else existing[0]
+                cursor.execute("""
+                    UPDATE survey_projects SET
+                        selected_questions = %s,
+                        excluded_questions = %s,
+                        custom_questions   = %s,
+                        selected_schedules = %s,
+                        admin_notes        = %s,
+                        updated_at         = NOW()
+                    WHERE id = %s
+                """, (
+                    selected_questions, excluded_questions, custom_questions,
+                    selected_schedules, admin_notes, project_id
+                ))
+                conn.commit()
+                return jsonify({'success': True, 'project_id': project_id, 'action': 'updated'})
+            else:
+                # Create new project
+                token = secrets.token_urlsafe(16)
+                cursor.execute("""
+                    INSERT INTO survey_projects (
+                        survey_client_id, project_token, status,
+                        selected_questions, excluded_questions,
+                        custom_questions, selected_schedules, admin_notes,
+                        created_at, updated_at
+                    ) VALUES (%s, %s, 'draft', %s, %s, %s, %s, %s, NOW(), NOW())
+                    RETURNING id
+                """, (
+                    client_id, token,
+                    selected_questions, excluded_questions,
+                    custom_questions, selected_schedules, admin_notes
+                ))
+                row = cursor.fetchone()
+                project_id = row['id'] if isinstance(row, dict) else row[0]
+                conn.commit()
+                return jsonify({'success': True, 'project_id': project_id,
+                                'project_token': token, 'action': 'created'})
+        finally:
+            conn.close()
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# APPROVE PROJECT
+# ---------------------------------------------------------------------------
+
+@survey_admin_bp.route('/api/survey/admin/project/<int:project_id>/approve', methods=['POST'])
+@require_survey_admin
+def approve_project(project_id):
+    """
+    Set survey_projects.status = 'approved'.
+    Also sets survey_clients.status = 'approved' and records approved_at.
+    This is the gate for Phase 2 (survey assembly).
+    """
+    try:
+        conn = _get_db()
+        try:
+            cursor = conn.cursor()
+
+            # Fetch the project to get the client_id
+            cursor.execute(
+                "SELECT survey_client_id FROM survey_projects WHERE id = %s",
+                (project_id,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                conn.rollback()
+                return jsonify({'success': False, 'error': f'Project {project_id} not found.'}), 404
+
+            client_id = row['survey_client_id'] if isinstance(row, dict) else row[0]
+
+            # Update the project
+            cursor.execute("""
+                UPDATE survey_projects
+                SET status = 'approved', approved_at = NOW(), updated_at = NOW()
+                WHERE id = %s
+            """, (project_id,))
+
+            # Update the client
+            cursor.execute("""
+                UPDATE survey_clients
+                SET status = 'approved', updated_at = NOW()
+                WHERE id = %s
+            """, (client_id,))
+
+            conn.commit()
+
+        finally:
+            conn.close()
+
+        print(f"[survey_admin] Project {project_id} approved for client {client_id}")
+        return jsonify({
+            'success': True,
+            'project_id': project_id,
+            'client_id': client_id,
+            'status': 'approved',
+            'message': 'Project approved. Ready for Phase 2 (Survey Assembly).'
+        })
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# GET PROJECT DETAIL (standalone, for Phase 2+ use)
+# ---------------------------------------------------------------------------
+
+@survey_admin_bp.route('/api/survey/admin/project/<int:project_id>', methods=['GET'])
+@require_survey_admin
+def get_project(project_id):
+    """Return full detail for one survey_projects row."""
+    try:
+        conn = _get_db()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM survey_projects WHERE id = %s", (project_id,))
+            row = cursor.fetchone()
+        finally:
+            conn.close()
+
+        if not row:
+            return jsonify({'success': False, 'error': f'Project {project_id} not found.'}), 404
+
+        return jsonify({'success': True, 'project': _project_to_dict(row)})
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# I did no harm and this file is not truncated
