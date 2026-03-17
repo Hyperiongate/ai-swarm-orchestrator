@@ -1,491 +1,1204 @@
-"""
-Survey in a Box — Admin Dashboard Routes
-File: routes/survey_admin.py
-Created: March 16, 2026
-Last Updated: March 16, 2026 — Phase 1, Step 1.3: Initial creation
-
-PURPOSE:
-    Password-protected admin dashboard for Survey in a Box.
-    Jim uses this to review intake submissions, configure survey projects,
-    and approve clients for Phase 2 (survey assembly).
-
-ENDPOINTS:
-    GET  /survey/admin                          — Dashboard (password gate)
-    GET  /api/survey/admin/clients              — List all survey_clients (JSON)
-    GET  /api/survey/admin/client/<id>          — Get one client + project (JSON)
-    POST /api/survey/admin/client/<id>/status   — Update client status
-    POST /api/survey/admin/project/save         — Save/update survey_projects row
-    POST /api/survey/admin/project/<id>/approve — Approve project (status → approved)
-    POST /api/survey/admin/client/<id>/notes    — Save admin notes to survey_clients
-
-AUTH:
-    Session-cookie based. Password checked against SURVEY_ADMIN_PASSWORD env var.
-    GET /api/survey/admin/login  and POST /api/survey/admin/login handle auth.
-    GET /api/survey/admin/logout clears session.
-
-DESIGN RULES:
-    - PostgreSQL: RealDictCursor, %s params, RETURNING id
-    - All JSON list fields decoded on read, encoded on write
-    - No changes to any existing Swarm table or route
-    - Blueprint prefix: none (routes defined with full paths)
-    - project_token generated with secrets.token_urlsafe(16) on first save
-
-CHANGELOG:
-    - March 16, 2026: Initial creation for Phase 1, Step 1.3.
-"""
-
-import json
-import os
-import secrets
-import traceback
-from datetime import datetime
-from functools import wraps
-
-from flask import Blueprint, render_template, request, jsonify, session, redirect, url_for
-
-survey_admin_bp = Blueprint('survey_admin', __name__)
-
-# ---------------------------------------------------------------------------
-# AUTH HELPERS
-# ---------------------------------------------------------------------------
-
-ADMIN_SESSION_KEY = 'survey_admin_authenticated'
-
-
-def _get_admin_password():
-    """Read the admin password from environment. Never hard-code."""
-    return os.environ.get('SURVEY_ADMIN_PASSWORD', '')
-
-
-def _is_authenticated():
-    return session.get(ADMIN_SESSION_KEY) is True
-
-
-def require_survey_admin(f):
-    """Decorator: return 401 JSON for API routes if not authenticated."""
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if not _is_authenticated():
-            return jsonify({'success': False, 'error': 'Not authenticated.', 'redirect': '/survey/admin'}), 401
-        return f(*args, **kwargs)
-    return decorated
-
-
-# ---------------------------------------------------------------------------
-# DB HELPER
-# ---------------------------------------------------------------------------
-
-def _get_db():
-    from db_engine import get_db_connection
-    return get_db_connection()
-
-
-# ---------------------------------------------------------------------------
-# JSON DECODE HELPERS
-# ---------------------------------------------------------------------------
-
-def _decode_json_field(val, fallback=None):
-    """Safely decode a JSON string stored in a TEXT column."""
-    if val is None:
-        return fallback if fallback is not None else []
-    if isinstance(val, (list, dict)):
-        return val
-    try:
-        return json.loads(val)
-    except (json.JSONDecodeError, TypeError):
-        return fallback if fallback is not None else []
-
-
-def _client_to_dict(row):
-    """Convert a survey_clients RealDictRow to a clean Python dict."""
-    d = dict(row)
-    d['department_names']  = _decode_json_field(d.get('department_names'), [])
-    d['biggest_challenges'] = _decode_json_field(d.get('biggest_challenges'), [])
-    # Serialize datetime fields for JSON
-    for key in ('created_at', 'updated_at'):
-        if d.get(key) and hasattr(d[key], 'isoformat'):
-            d[key] = d[key].isoformat()
-    return d
-
-
-def _project_to_dict(row):
-    """Convert a survey_projects RealDictRow to a clean Python dict."""
-    d = dict(row)
-    for field in ('selected_questions', 'excluded_questions',
-                  'custom_questions', 'selected_schedules'):
-        d[field] = _decode_json_field(d.get(field), [])
-    for key in ('created_at', 'updated_at', 'approved_at', 'opened_at', 'closed_at'):
-        if d.get(key) and hasattr(d[key], 'isoformat'):
-            d[key] = d[key].isoformat()
-    return d
-
-
-# ---------------------------------------------------------------------------
-# DASHBOARD PAGE
-# ---------------------------------------------------------------------------
-
-@survey_admin_bp.route('/survey/admin', methods=['GET'])
-def admin_dashboard():
-    """Render the admin dashboard HTML. Auth is handled client-side via API."""
-    return render_template('survey_admin.html')
-
-
-# ---------------------------------------------------------------------------
-# AUTH ENDPOINTS
-# ---------------------------------------------------------------------------
-
-@survey_admin_bp.route('/api/survey/admin/login', methods=['POST'])
-def admin_login():
-    """Validate password and set session cookie."""
-    data = request.get_json(force=True) or {}
-    password = data.get('password', '')
-    correct  = _get_admin_password()
-
-    if not correct:
-        # If env var not set, deny access — never allow empty-password login
-        return jsonify({'success': False, 'error': 'Admin password not configured on server.'}), 500
-
-    if password == correct:
-        session[ADMIN_SESSION_KEY] = True
-        session.permanent = True
-        return jsonify({'success': True})
-    else:
-        return jsonify({'success': False, 'error': 'Incorrect password.'}), 401
-
-
-@survey_admin_bp.route('/api/survey/admin/logout', methods=['POST'])
-def admin_logout():
-    """Clear the admin session."""
-    session.pop(ADMIN_SESSION_KEY, None)
-    return jsonify({'success': True})
-
-
-@survey_admin_bp.route('/api/survey/admin/auth-status', methods=['GET'])
-def auth_status():
-    """Check whether the current session is authenticated."""
-    return jsonify({'authenticated': _is_authenticated()})
-
-
-# ---------------------------------------------------------------------------
-# CLIENT LIST
-# ---------------------------------------------------------------------------
-
-@survey_admin_bp.route('/api/survey/admin/clients', methods=['GET'])
-@require_survey_admin
-def list_clients():
-    """
-    Return all survey_clients ordered by created_at DESC.
-    Also returns the associated project (if any) for each client.
-    """
-    try:
-        conn = _get_db()
-        try:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT
-                    sc.*,
-                    sp.id            AS project_id,
-                    sp.project_token AS project_token,
-                    sp.status        AS project_status,
-                    sp.response_count AS response_count
-                FROM survey_clients sc
-                LEFT JOIN survey_projects sp ON sp.survey_client_id = sc.id
-                ORDER BY sc.created_at DESC
-            """)
-            rows = cursor.fetchall()
-        finally:
-            conn.close()
-
-        clients = []
-        for row in rows:
-            d = _client_to_dict(row)
-            # Flatten project fields
-            d['project_id']     = d.get('project_id')
-            d['project_token']  = d.get('project_token')
-            d['project_status'] = d.get('project_status')
-            d['response_count'] = d.get('response_count', 0)
-            clients.append(d)
-
-        return jsonify({'success': True, 'clients': clients, 'total': len(clients)})
-
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-# ---------------------------------------------------------------------------
-# SINGLE CLIENT DETAIL
-# ---------------------------------------------------------------------------
-
-@survey_admin_bp.route('/api/survey/admin/client/<int:client_id>', methods=['GET'])
-@require_survey_admin
-def get_client(client_id):
-    """Return full detail for one client plus their project config (if any)."""
-    try:
-        conn = _get_db()
-        try:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM survey_clients WHERE id = %s", (client_id,))
-            client_row = cursor.fetchone()
-            if not client_row:
-                return jsonify({'success': False, 'error': f'Client {client_id} not found.'}), 404
-
-            cursor.execute(
-                "SELECT * FROM survey_projects WHERE survey_client_id = %s ORDER BY created_at DESC LIMIT 1",
-                (client_id,)
-            )
-            project_row = cursor.fetchone()
-        finally:
-            conn.close()
-
-        client  = _client_to_dict(client_row)
-        project = _project_to_dict(project_row) if project_row else None
-
-        return jsonify({'success': True, 'client': client, 'project': project})
-
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-# ---------------------------------------------------------------------------
-# UPDATE CLIENT STATUS
-# ---------------------------------------------------------------------------
-
-@survey_admin_bp.route('/api/survey/admin/client/<int:client_id>/status', methods=['POST'])
-@require_survey_admin
-def update_client_status(client_id):
-    """Change the status of a survey_clients row."""
-    try:
-        data = request.get_json(force=True) or {}
-        new_status = data.get('status', '').strip()
-
-        valid_statuses = ('new', 'reviewing', 'approved', 'rejected', 'in-progress', 'delivered')
-        if new_status not in valid_statuses:
-            return jsonify({'success': False,
-                            'error': f'Invalid status. Must be one of: {", ".join(valid_statuses)}'}), 400
-
-        conn = _get_db()
-        try:
-            cursor = conn.cursor()
-            cursor.execute(
-                "UPDATE survey_clients SET status = %s, updated_at = NOW() WHERE id = %s",
-                (new_status, client_id)
-            )
-            if cursor.rowcount == 0:
-                conn.rollback()
-                return jsonify({'success': False, 'error': f'Client {client_id} not found.'}), 404
-            conn.commit()
-        finally:
-            conn.close()
-
-        return jsonify({'success': True, 'client_id': client_id, 'status': new_status})
-
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-# ---------------------------------------------------------------------------
-# SAVE ADMIN NOTES ON CLIENT
-# ---------------------------------------------------------------------------
-
-@survey_admin_bp.route('/api/survey/admin/client/<int:client_id>/notes', methods=['POST'])
-@require_survey_admin
-def save_client_notes(client_id):
-    """Save Jim's admin notes to survey_clients.admin_notes."""
-    try:
-        data = request.get_json(force=True) or {}
-        notes = data.get('admin_notes', '')
-
-        conn = _get_db()
-        try:
-            cursor = conn.cursor()
-            cursor.execute(
-                "UPDATE survey_clients SET admin_notes = %s, updated_at = NOW() WHERE id = %s",
-                (notes, client_id)
-            )
-            if cursor.rowcount == 0:
-                conn.rollback()
-                return jsonify({'success': False, 'error': f'Client {client_id} not found.'}), 404
-            conn.commit()
-        finally:
-            conn.close()
-
-        return jsonify({'success': True, 'client_id': client_id})
-
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-# ---------------------------------------------------------------------------
-# SAVE / UPDATE PROJECT CONFIGURATION
-# ---------------------------------------------------------------------------
-
-@survey_admin_bp.route('/api/survey/admin/project/save', methods=['POST'])
-@require_survey_admin
-def save_project():
-    """
-    Upsert a survey_projects row for a given survey_client_id.
-    If a project already exists for this client, update it.
-    If not, create a new one (generates project_token).
-    """
-    try:
-        data = request.get_json(force=True) or {}
-        client_id = data.get('survey_client_id')
-        if not client_id:
-            return jsonify({'success': False, 'error': 'survey_client_id is required.'}), 400
-
-        selected_questions  = json.dumps(data.get('selected_questions', []))
-        excluded_questions  = json.dumps(data.get('excluded_questions', []))
-        custom_questions    = json.dumps(data.get('custom_questions', []))
-        selected_schedules  = json.dumps(data.get('selected_schedules', []))
-        admin_notes         = data.get('admin_notes', None)
-
-        conn = _get_db()
-        try:
-            cursor = conn.cursor()
-
-            # Check if project already exists for this client
-            cursor.execute(
-                "SELECT id FROM survey_projects WHERE survey_client_id = %s ORDER BY created_at DESC LIMIT 1",
-                (client_id,)
-            )
-            existing = cursor.fetchone()
-
-            if existing:
-                project_id = existing['id'] if isinstance(existing, dict) else existing[0]
-                cursor.execute("""
-                    UPDATE survey_projects SET
-                        selected_questions = %s,
-                        excluded_questions = %s,
-                        custom_questions   = %s,
-                        selected_schedules = %s,
-                        admin_notes        = %s,
-                        updated_at         = NOW()
-                    WHERE id = %s
-                """, (
-                    selected_questions, excluded_questions, custom_questions,
-                    selected_schedules, admin_notes, project_id
-                ))
-                conn.commit()
-                return jsonify({'success': True, 'project_id': project_id, 'action': 'updated'})
-            else:
-                # Create new project
-                token = secrets.token_urlsafe(16)
-                cursor.execute("""
-                    INSERT INTO survey_projects (
-                        survey_client_id, project_token, status,
-                        selected_questions, excluded_questions,
-                        custom_questions, selected_schedules, admin_notes,
-                        created_at, updated_at
-                    ) VALUES (%s, %s, 'draft', %s, %s, %s, %s, %s, NOW(), NOW())
-                    RETURNING id
-                """, (
-                    client_id, token,
-                    selected_questions, excluded_questions,
-                    custom_questions, selected_schedules, admin_notes
-                ))
-                row = cursor.fetchone()
-                project_id = row['id'] if isinstance(row, dict) else row[0]
-                conn.commit()
-                return jsonify({'success': True, 'project_id': project_id,
-                                'project_token': token, 'action': 'created'})
-        finally:
-            conn.close()
-
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-# ---------------------------------------------------------------------------
-# APPROVE PROJECT
-# ---------------------------------------------------------------------------
-
-@survey_admin_bp.route('/api/survey/admin/project/<int:project_id>/approve', methods=['POST'])
-@require_survey_admin
-def approve_project(project_id):
-    """
-    Set survey_projects.status = 'approved'.
-    Also sets survey_clients.status = 'approved' and records approved_at.
-    This is the gate for Phase 2 (survey assembly).
-    """
-    try:
-        conn = _get_db()
-        try:
-            cursor = conn.cursor()
-
-            # Fetch the project to get the client_id
-            cursor.execute(
-                "SELECT survey_client_id FROM survey_projects WHERE id = %s",
-                (project_id,)
-            )
-            row = cursor.fetchone()
-            if not row:
-                conn.rollback()
-                return jsonify({'success': False, 'error': f'Project {project_id} not found.'}), 404
-
-            client_id = row['survey_client_id'] if isinstance(row, dict) else row[0]
-
-            # Update the project
-            cursor.execute("""
-                UPDATE survey_projects
-                SET status = 'approved', approved_at = NOW(), updated_at = NOW()
-                WHERE id = %s
-            """, (project_id,))
-
-            # Update the client
-            cursor.execute("""
-                UPDATE survey_clients
-                SET status = 'approved', updated_at = NOW()
-                WHERE id = %s
-            """, (client_id,))
-
-            conn.commit()
-
-        finally:
-            conn.close()
-
-        print(f"[survey_admin] Project {project_id} approved for client {client_id}")
-        return jsonify({
-            'success': True,
-            'project_id': project_id,
-            'client_id': client_id,
-            'status': 'approved',
-            'message': 'Project approved. Ready for Phase 2 (Survey Assembly).'
-        })
-
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-# ---------------------------------------------------------------------------
-# GET PROJECT DETAIL (standalone, for Phase 2+ use)
-# ---------------------------------------------------------------------------
-
-@survey_admin_bp.route('/api/survey/admin/project/<int:project_id>', methods=['GET'])
-@require_survey_admin
-def get_project(project_id):
-    """Return full detail for one survey_projects row."""
-    try:
-        conn = _get_db()
-        try:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM survey_projects WHERE id = %s", (project_id,))
-            row = cursor.fetchone()
-        finally:
-            conn.close()
-
-        if not row:
-            return jsonify({'success': False, 'error': f'Project {project_id} not found.'}), 404
-
-        return jsonify({'success': True, 'project': _project_to_dict(row)})
-
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-# I did no harm and this file is not truncated
+<!DOCTYPE html>
+<!--
+  Survey in a Box — Admin Dashboard
+  File: templates/survey_admin.html
+  Created: March 16, 2026
+  Last Updated: March 16, 2026 — Phase 1, Step 1.3: Initial creation
+
+  PURPOSE:
+      Password-protected admin dashboard for Jim at /survey/admin.
+      Single-page application using fetch() — no page reloads.
+
+  SCREENS:
+      1. Login screen (password prompt)
+      2. Client list (all submissions with status badges)
+      3. Client detail (full intake data + project config + approve button)
+
+  ACTIONS AVAILABLE:
+      - Change client status (new / reviewing / approved / rejected / in-progress / delivered)
+      - Select questions (categories checkboxes — Phase 2 full list; Phase 1 shows placeholders)
+      - Select schedule concepts (text list — Phase 2 wires full library)
+      - Add custom questions (dynamic add/remove)
+      - Add admin notes (auto-saved)
+      - Save project config (POST /api/survey/admin/project/save)
+      - Approve (POST /api/survey/admin/project/<id>/approve)
+
+  CHANGELOG:
+      - March 16, 2026: Initial creation for Phase 1, Step 1.3.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Survey Admin — Shiftwork Solutions</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --brand-dark:   #1a3a5c;
+      --brand-mid:    #2563a8;
+      --brand-light:  #e8f0fb;
+      --brand-accent: #f0a500;
+      --green:        #276749;
+      --green-light:  #f0fff4;
+      --green-border: #9ae6b4;
+      --red:          #c53030;
+      --red-light:    #fff5f5;
+      --red-border:   #feb2b2;
+      --yellow:       #744210;
+      --yellow-light: #fffbeb;
+      --yellow-border:#f6e05e;
+      --gray-light:   #f7fafc;
+      --border:       #e2e8f0;
+      --text-dark:    #1e2d3d;
+      --text-mid:     #4a5568;
+      --text-light:   #718096;
+      --white:        #ffffff;
+      --radius:       6px;
+      --shadow:       0 2px 12px rgba(0,0,0,0.10);
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background: #f0f4f8;
+      color: var(--text-dark);
+      min-height: 100vh;
+    }
+
+    /* ===== HEADER ===== */
+    .admin-header {
+      background: var(--brand-dark);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      height: 54px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+    .admin-header .brand {
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+    }
+    .admin-header .brand span {
+      font-size: 0.72rem;
+      font-weight: 400;
+      color: #aac4e6;
+      margin-left: 8px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .btn-link {
+      background: none;
+      border: none;
+      color: #aac4e6;
+      font-size: 0.82rem;
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 4px;
+      transition: color 0.12s;
+    }
+    .btn-link:hover { color: #fff; }
+
+    /* ===== SCREENS ===== */
+    .screen { display: none; }
+    .screen.active { display: block; }
+
+    /* ===== LOGIN SCREEN ===== */
+    #screen-login {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: calc(100vh - 54px);
+    }
+    .login-card {
+      background: var(--white);
+      border-radius: 10px;
+      box-shadow: var(--shadow);
+      padding: 40px 36px;
+      width: 100%;
+      max-width: 360px;
+      text-align: center;
+    }
+    .login-card h2 {
+      font-size: 1.25rem;
+      color: var(--brand-dark);
+      margin-bottom: 6px;
+    }
+    .login-card p {
+      font-size: 0.85rem;
+      color: var(--text-light);
+      margin-bottom: 24px;
+    }
+    .login-card input[type="password"] {
+      width: 100%;
+      padding: 10px 14px;
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 0.95rem;
+      margin-bottom: 14px;
+    }
+    .login-card input:focus {
+      outline: none;
+      border-color: var(--brand-mid);
+      box-shadow: 0 0 0 3px rgba(37,99,168,0.15);
+    }
+    .btn-primary {
+      background: var(--brand-mid);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius);
+      padding: 10px 24px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      width: 100%;
+      transition: background 0.15s;
+    }
+    .btn-primary:hover { background: #1a4e8a; }
+    .btn-primary:disabled { background: #a0aec0; cursor: not-allowed; }
+    .login-error {
+      background: var(--red-light);
+      border: 1px solid var(--red-border);
+      color: var(--red);
+      border-radius: var(--radius);
+      padding: 8px 12px;
+      font-size: 0.83rem;
+      margin-top: 10px;
+      display: none;
+    }
+    .login-error.visible { display: block; }
+
+    /* ===== CLIENT LIST SCREEN ===== */
+    #screen-list {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 28px 16px 60px;
+    }
+    .list-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .list-header h1 {
+      font-size: 1.4rem;
+      color: var(--brand-dark);
+    }
+    .list-meta {
+      font-size: 0.83rem;
+      color: var(--text-light);
+    }
+
+    /* Filter bar */
+    .filter-bar {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+    .filter-btn {
+      background: var(--white);
+      border: 1.5px solid var(--border);
+      border-radius: 20px;
+      padding: 5px 14px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text-mid);
+      cursor: pointer;
+      transition: all 0.12s;
+    }
+    .filter-btn.active {
+      background: var(--brand-mid);
+      border-color: var(--brand-mid);
+      color: #fff;
+    }
+
+    /* Client cards */
+    .client-list { display: flex; flex-direction: column; gap: 12px; }
+    .client-card {
+      background: var(--white);
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      cursor: pointer;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .client-card:hover {
+      border-color: var(--brand-mid);
+      box-shadow: 0 2px 8px rgba(37,99,168,0.12);
+    }
+    .client-card-body { flex: 1; min-width: 0; }
+    .client-card-name {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--brand-dark);
+      margin-bottom: 2px;
+    }
+    .client-card-meta {
+      font-size: 0.82rem;
+      color: var(--text-light);
+    }
+    .client-card-chevron {
+      color: var(--border);
+      font-size: 1.1rem;
+      flex-shrink: 0;
+    }
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--text-light);
+    }
+    .empty-state .icon { font-size: 2.5rem; margin-bottom: 12px; }
+
+    /* ===== STATUS BADGES ===== */
+    .badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: 0.73rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      flex-shrink: 0;
+    }
+    .badge-new       { background: #ebf8ff; color: #2b6cb0; }
+    .badge-reviewing { background: var(--yellow-light); color: var(--yellow); }
+    .badge-approved  { background: var(--green-light); color: var(--green); }
+    .badge-rejected  { background: var(--red-light); color: var(--red); }
+    .badge-in-progress { background: #faf5ff; color: #553c9a; }
+    .badge-delivered { background: #f0fff4; color: #276749; }
+
+    /* ===== DETAIL SCREEN ===== */
+    #screen-detail {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 24px 16px 60px;
+    }
+    .detail-nav {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    .btn-back {
+      background: var(--white);
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      padding: 7px 14px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      color: var(--brand-mid);
+      transition: background 0.12s;
+    }
+    .btn-back:hover { background: var(--brand-light); }
+    .detail-title { font-size: 1.3rem; font-weight: 700; color: var(--brand-dark); }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: 1fr 380px;
+      gap: 20px;
+    }
+    @media (max-width: 800px) {
+      .detail-grid { grid-template-columns: 1fr; }
+    }
+
+    .detail-card {
+      background: var(--white);
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .detail-card-header {
+      background: var(--brand-dark);
+      color: #fff;
+      padding: 12px 18px;
+      font-size: 0.85rem;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+    .detail-card-body { padding: 18px; }
+
+    /* Intake data table */
+    .info-table { width: 100%; border-collapse: collapse; }
+    .info-table tr { border-bottom: 1px solid var(--border); }
+    .info-table tr:last-child { border-bottom: none; }
+    .info-table td {
+      padding: 8px 4px;
+      font-size: 0.87rem;
+      vertical-align: top;
+    }
+    .info-table td:first-child {
+      font-weight: 600;
+      color: var(--text-mid);
+      white-space: nowrap;
+      width: 180px;
+      padding-right: 12px;
+    }
+    .info-table td:last-child { color: var(--text-dark); }
+
+    /* Tags (challenges, departments) */
+    .tag-list { display: flex; flex-wrap: wrap; gap: 5px; }
+    .tag {
+      background: var(--brand-light);
+      color: var(--brand-dark);
+      border-radius: 12px;
+      padding: 2px 10px;
+      font-size: 0.77rem;
+      font-weight: 600;
+    }
+
+    /* ===== STATUS CONTROL ===== */
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 18px;
+      flex-wrap: wrap;
+    }
+    .status-row label { font-size: 0.83rem; font-weight: 600; color: var(--text-mid); }
+    .status-row select {
+      padding: 6px 10px;
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 0.87rem;
+    }
+    .btn-status-save {
+      background: var(--brand-mid);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius);
+      padding: 7px 14px;
+      font-size: 0.83rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.12s;
+    }
+    .btn-status-save:hover { background: #1a4e8a; }
+
+    /* ===== PROJECT CONFIG ===== */
+    .config-section { margin-bottom: 18px; }
+    .config-section label {
+      display: block;
+      font-size: 0.83rem;
+      font-weight: 700;
+      color: var(--brand-dark);
+      margin-bottom: 8px;
+    }
+
+    .question-cats { display: flex; flex-direction: column; gap: 6px; }
+    .q-cat {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.85rem;
+      color: var(--text-mid);
+      cursor: pointer;
+    }
+    .q-cat input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--brand-mid);
+      cursor: pointer;
+    }
+
+    /* Custom questions */
+    .custom-q-list { display: flex; flex-direction: column; gap: 6px; }
+    .custom-q-row { display: flex; gap: 8px; align-items: center; }
+    .custom-q-row input {
+      flex: 1;
+      padding: 7px 10px;
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 0.85rem;
+    }
+    .custom-q-row input:focus {
+      outline: none;
+      border-color: var(--brand-mid);
+    }
+    .btn-remove-q {
+      background: none;
+      border: 1.5px solid var(--red-border);
+      border-radius: var(--radius);
+      color: var(--red);
+      width: 28px;
+      height: 30px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: background 0.12s;
+    }
+    .btn-remove-q:hover { background: var(--red-light); }
+    .btn-add-q {
+      margin-top: 6px;
+      background: none;
+      border: 1.5px dashed var(--border);
+      border-radius: var(--radius);
+      color: var(--brand-mid);
+      font-size: 0.82rem;
+      font-weight: 600;
+      padding: 6px 12px;
+      cursor: pointer;
+      transition: background 0.12s;
+    }
+    .btn-add-q:hover { background: var(--brand-light); border-color: var(--brand-mid); }
+
+    /* Admin notes */
+    .admin-notes-area {
+      width: 100%;
+      min-height: 80px;
+      padding: 8px 10px;
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 0.87rem;
+      resize: vertical;
+    }
+    .admin-notes-area:focus {
+      outline: none;
+      border-color: var(--brand-mid);
+    }
+
+    /* Action buttons */
+    .action-row {
+      display: flex;
+      gap: 10px;
+      flex-direction: column;
+      margin-top: 12px;
+    }
+    .btn-save {
+      background: var(--brand-mid);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius);
+      padding: 10px 16px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.12s;
+    }
+    .btn-save:hover { background: #1a4e8a; }
+    .btn-approve {
+      background: var(--green);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius);
+      padding: 12px 16px;
+      font-size: 0.95rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.12s;
+      letter-spacing: 0.2px;
+    }
+    .btn-approve:hover { background: #1e5c3a; }
+    .btn-approve:disabled { background: #a0aec0; cursor: not-allowed; }
+
+    /* Status messages */
+    .status-msg {
+      font-size: 0.82rem;
+      padding: 6px 10px;
+      border-radius: var(--radius);
+      margin-top: 8px;
+      display: none;
+    }
+    .status-msg.success { background: var(--green-light); color: var(--green); border: 1px solid var(--green-border); display: block; }
+    .status-msg.error   { background: var(--red-light);   color: var(--red);   border: 1px solid var(--red-border);   display: block; }
+    .status-msg.info    { background: var(--brand-light);  color: var(--brand-dark); border: 1px solid #bee3f8; display: block; }
+
+    /* ===== LOADING SPINNER ===== */
+    .spinner {
+      display: inline-block;
+      width: 18px;
+      height: 18px;
+      border: 2px solid #cbd5e0;
+      border-top-color: var(--brand-mid);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ===== MISC ===== */
+    textarea { font-family: inherit; }
+    .mt-8 { margin-top: 8px; }
+    .text-muted { color: var(--text-light); font-size: 0.82rem; }
+  </style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header class="admin-header">
+  <div class="brand">
+    Shiftwork Solutions
+    <span>Survey in a Box · Admin</span>
+  </div>
+  <div class="header-actions" id="header-actions" style="display:none">
+    <span class="text-muted" style="color:#aac4e6">Welcome, Jim</span>
+    <button class="btn-link" onclick="logout()">Log Out</button>
+  </div>
+</header>
+
+<!-- ================================================================
+     SCREEN 1: LOGIN
+================================================================ -->
+<div id="screen-login" class="screen active">
+  <div class="login-card">
+    <h2>🔒 Admin Access</h2>
+    <p>Enter your admin password to access the Survey in a Box dashboard.</p>
+    <input type="password" id="login-password" placeholder="Admin password"
+           onkeydown="if(event.key==='Enter') doLogin()" autofocus />
+    <button class="btn-primary" onclick="doLogin()" id="login-btn">Sign In</button>
+    <div class="login-error" id="login-error">Incorrect password. Please try again.</div>
+  </div>
+</div>
+
+<!-- ================================================================
+     SCREEN 2: CLIENT LIST
+================================================================ -->
+<div id="screen-list" class="screen">
+  <div class="list-header">
+    <div>
+      <h1>Survey Intake Submissions</h1>
+      <div class="list-meta" id="list-meta">Loading…</div>
+    </div>
+    <button class="btn-primary" style="width:auto;padding:9px 20px;font-size:0.87rem"
+            onclick="loadClients()">↻ Refresh</button>
+  </div>
+
+  <!-- Status filters -->
+  <div class="filter-bar" id="filter-bar">
+    <button class="filter-btn active" data-filter="all" onclick="setFilter(this, 'all')">All</button>
+    <button class="filter-btn" data-filter="new" onclick="setFilter(this, 'new')">New</button>
+    <button class="filter-btn" data-filter="reviewing" onclick="setFilter(this, 'reviewing')">Reviewing</button>
+    <button class="filter-btn" data-filter="approved" onclick="setFilter(this, 'approved')">Approved</button>
+    <button class="filter-btn" data-filter="in-progress" onclick="setFilter(this, 'in-progress')">In Progress</button>
+    <button class="filter-btn" data-filter="delivered" onclick="setFilter(this, 'delivered')">Delivered</button>
+    <button class="filter-btn" data-filter="rejected" onclick="setFilter(this, 'rejected')">Rejected</button>
+  </div>
+
+  <div class="client-list" id="client-list">
+    <div class="empty-state"><div class="spinner"></div><br>Loading…</div>
+  </div>
+</div>
+
+<!-- ================================================================
+     SCREEN 3: CLIENT DETAIL
+================================================================ -->
+<div id="screen-detail" class="screen">
+  <div class="detail-nav">
+    <button class="btn-back" onclick="showList()">← Back to List</button>
+    <span class="detail-title" id="detail-title">Client Detail</span>
+  </div>
+
+  <!-- Status changer -->
+  <div class="status-row" style="margin-bottom:16px">
+    <label>Status:</label>
+    <select id="detail-status">
+      <option value="new">New</option>
+      <option value="reviewing">Reviewing</option>
+      <option value="approved">Approved</option>
+      <option value="in-progress">In Progress</option>
+      <option value="delivered">Delivered</option>
+      <option value="rejected">Rejected</option>
+    </select>
+    <button class="btn-status-save" onclick="saveStatus()">Save Status</button>
+    <div class="status-msg" id="status-msg"></div>
+  </div>
+
+  <div class="detail-grid">
+
+    <!-- LEFT: Intake data -->
+    <div>
+      <div class="detail-card" style="margin-bottom:16px">
+        <div class="detail-card-header">📋 Intake Information</div>
+        <div class="detail-card-body">
+          <table class="info-table" id="intake-table">
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="detail-card">
+        <div class="detail-card-header">📝 Admin Notes (Internal)</div>
+        <div class="detail-card-body">
+          <textarea class="admin-notes-area" id="admin-notes-field"
+                    placeholder="Notes about this client, decisions made, special considerations…"></textarea>
+          <button class="btn-save mt-8" onclick="saveAdminNotes()" style="width:auto;padding:7px 16px;font-size:0.84rem">
+            Save Notes
+          </button>
+          <div class="status-msg" id="notes-msg"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: Project config -->
+    <div>
+      <div class="detail-card">
+        <div class="detail-card-header">⚙️ Survey Configuration</div>
+        <div class="detail-card-body">
+
+          <!-- Question categories -->
+          <div class="config-section">
+            <label>Question Categories to Include</label>
+            <div class="question-cats" id="question-cats">
+              <!-- Populated by JS — placeholder categories for Phase 1 -->
+            </div>
+            <div class="text-muted mt-8">
+              Phase 2 will wire the full 103-question bank here. 
+              All categories are selected by default.
+            </div>
+          </div>
+
+          <!-- Schedule concepts -->
+          <div class="config-section">
+            <label>Schedule Concepts to Include</label>
+            <div id="schedule-concepts-container">
+              <textarea id="selected-schedules-field" class="admin-notes-area"
+                        placeholder="Enter schedule pattern names or IDs to include (one per line). Phase 2 will add a searchable picker."
+                        style="min-height:70px"></textarea>
+            </div>
+            <div class="text-muted mt-8">
+              Full schedule library picker coming in Phase 2.
+            </div>
+          </div>
+
+          <!-- Custom questions -->
+          <div class="config-section">
+            <label>Custom Questions (Facility-Specific)</label>
+            <div class="custom-q-list" id="custom-q-list"></div>
+            <button type="button" class="btn-add-q" onclick="addCustomQ()">+ Add Question</button>
+          </div>
+
+          <!-- Save + Approve -->
+          <div class="action-row">
+            <button class="btn-save" onclick="saveProjectConfig()">
+              💾 Save Configuration
+            </button>
+            <div class="status-msg" id="project-msg"></div>
+            <button class="btn-approve" id="approve-btn" onclick="approveProject()">
+              ✅ Approve — Ready for Survey Assembly
+            </button>
+            <div class="status-msg" id="approve-msg"></div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /.detail-grid -->
+</div><!-- /#screen-detail -->
+
+<!-- ================================================================
+     JAVASCRIPT
+================================================================ -->
+<script>
+/* ------------------------------------------------------------------
+   STATE
+------------------------------------------------------------------ */
+let currentClientId  = null;
+let currentProjectId = null;
+let activeFilter     = 'all';
+let allClients       = [];
+
+/* ------------------------------------------------------------------
+   SCREEN MANAGEMENT
+------------------------------------------------------------------ */
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  const el = document.getElementById(id);
+  if (el) {
+    el.classList.add('active');
+    window.scrollTo(0, 0);
+  }
+}
+
+function showList() {
+  showScreen('screen-list');
+  currentClientId  = null;
+  currentProjectId = null;
+}
+
+/* ------------------------------------------------------------------
+   AUTH
+------------------------------------------------------------------ */
+async function checkAuth() {
+  try {
+    const resp = await fetch('/api/survey/admin/auth-status');
+    const data = await resp.json();
+    if (data.authenticated) {
+      onAuthSuccess();
+    } else {
+      showScreen('screen-login');
+    }
+  } catch (e) {
+    showScreen('screen-login');
+  }
+}
+
+async function doLogin() {
+  const pw  = document.getElementById('login-password').value;
+  const btn = document.getElementById('login-btn');
+  const err = document.getElementById('login-error');
+  err.classList.remove('visible');
+  btn.disabled = true;
+  btn.textContent = 'Signing in…';
+  try {
+    const resp = await fetch('/api/survey/admin/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pw }),
+    });
+    const data = await resp.json();
+    if (data.success) {
+      onAuthSuccess();
+    } else {
+      err.textContent = data.error || 'Incorrect password.';
+      err.classList.add('visible');
+      btn.disabled = false;
+      btn.textContent = 'Sign In';
+    }
+  } catch (e) {
+    err.textContent = 'Network error. Please try again.';
+    err.classList.add('visible');
+    btn.disabled = false;
+    btn.textContent = 'Sign In';
+  }
+}
+
+function onAuthSuccess() {
+  document.getElementById('header-actions').style.display = 'flex';
+  showScreen('screen-list');
+  loadClients();
+}
+
+async function logout() {
+  await fetch('/api/survey/admin/logout', { method: 'POST' });
+  document.getElementById('header-actions').style.display = 'none';
+  document.getElementById('login-password').value = '';
+  showScreen('screen-login');
+}
+
+/* ------------------------------------------------------------------
+   CLIENT LIST
+------------------------------------------------------------------ */
+async function loadClients() {
+  document.getElementById('client-list').innerHTML =
+    '<div class="empty-state"><div class="spinner"></div></div>';
+  document.getElementById('list-meta').textContent = 'Loading…';
+  try {
+    const resp = await fetch('/api/survey/admin/clients');
+    if (resp.status === 401) { checkAuth(); return; }
+    const data = await resp.json();
+    if (!data.success) throw new Error(data.error || 'Failed to load clients.');
+    allClients = data.clients || [];
+    renderClientList();
+  } catch (e) {
+    document.getElementById('client-list').innerHTML =
+      `<div class="empty-state" style="color:var(--red)">Error: ${e.message}</div>`;
+  }
+}
+
+function setFilter(btn, filter) {
+  activeFilter = filter;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderClientList();
+}
+
+function renderClientList() {
+  const filtered = activeFilter === 'all'
+    ? allClients
+    : allClients.filter(c => c.status === activeFilter);
+
+  const total = allClients.length;
+  const showing = filtered.length;
+  document.getElementById('list-meta').textContent =
+    `${total} submission${total !== 1 ? 's' : ''} total — showing ${showing}`;
+
+  const listEl = document.getElementById('client-list');
+  if (filtered.length === 0) {
+    listEl.innerHTML = `<div class="empty-state">
+      <div class="icon">📭</div>
+      <div>No submissions${activeFilter !== 'all' ? ' with status "' + activeFilter + '"' : ''} yet.</div>
+    </div>`;
+    return;
+  }
+
+  listEl.innerHTML = filtered.map(c => `
+    <div class="client-card" onclick="openClient(${c.id})">
+      <div class="client-card-body">
+        <div class="client-card-name">${escHtml(c.company_name)}</div>
+        <div class="client-card-meta">
+          ${escHtml(c.contact_name)} · ${escHtml(c.email)}
+          ${c.industry ? ' · ' + formatIndustry(c.industry) : ''}
+          ${c.employee_count ? ' · ' + c.employee_count + ' employees' : ''}
+          · Submitted ${formatDate(c.created_at)}
+        </div>
+      </div>
+      <span class="badge ${badgeClass(c.status)}">${c.status}</span>
+      <span class="client-card-chevron">›</span>
+    </div>
+  `).join('');
+}
+
+/* ------------------------------------------------------------------
+   CLIENT DETAIL
+------------------------------------------------------------------ */
+async function openClient(clientId) {
+  currentClientId = clientId;
+  currentProjectId = null;
+  showScreen('screen-detail');
+
+  document.getElementById('intake-table').querySelector('tbody').innerHTML =
+    '<tr><td colspan="2"><div class="spinner"></div> Loading…</td></tr>';
+  document.getElementById('detail-title').textContent = 'Loading…';
+
+  try {
+    const resp = await fetch(`/api/survey/admin/client/${clientId}`);
+    if (resp.status === 401) { showScreen('screen-login'); return; }
+    const data = await resp.json();
+    if (!data.success) throw new Error(data.error || 'Failed to load client.');
+
+    renderClientDetail(data.client, data.project);
+  } catch (e) {
+    document.getElementById('detail-title').textContent = `Error: ${e.message}`;
+  }
+}
+
+function renderClientDetail(client, project) {
+  document.getElementById('detail-title').textContent = client.company_name;
+  document.getElementById('detail-status').value = client.status || 'new';
+
+  // Intake data table
+  const challenges = Array.isArray(client.biggest_challenges)
+    ? client.biggest_challenges : [];
+  const deptNames  = Array.isArray(client.department_names)
+    ? client.department_names.filter(Boolean) : [];
+
+  const rows = [
+    ['Contact',           escHtml(client.contact_name)],
+    ['Email',             `<a href="mailto:${escHtml(client.email)}">${escHtml(client.email)}</a>`],
+    ['Phone',             escHtml(client.phone || '—')],
+    ['Industry',          formatIndustry(client.industry || '—')],
+    ['Employees',         client.employee_count ? client.employee_count.toLocaleString() : '—'],
+    ['Departments',       client.department_count || '—'],
+    ['Dept. Names',       deptNames.length ? tagList(deptNames) : '—'],
+    ['Schedule Type',     formatSchedule(client.current_schedule_type || '—')],
+    ['Crews',             client.crew_count || '—'],
+    ['Shift Times',       escHtml(client.shift_start_times || '—')],
+    ['Union Status',      formatUnion(client.union_status)],
+    ['Challenges',        challenges.length ? tagList(challenges) : '—'],
+    ['Prior Survey',      client.previously_surveyed ? '✅ Yes' : '❌ No'],
+    ['Last Survey',       escHtml(client.last_survey_date || '—')],
+    ['Admin Preference',  formatAdminPref(client.preferred_administration)],
+    ['Preferred Delivery',escHtml(client.preferred_delivery_date || '—')],
+    ['Referral Source',   escHtml(client.referral_source || '—')],
+    ['Notes',             escHtml(client.additional_notes || '—')],
+    ['Submitted',         formatDate(client.created_at)],
+  ];
+
+  document.getElementById('intake-table').querySelector('tbody').innerHTML =
+    rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+
+  // Admin notes
+  document.getElementById('admin-notes-field').value = client.admin_notes || '';
+
+  // Project config
+  if (project) {
+    currentProjectId = project.id;
+    renderProjectConfig(project);
+    document.getElementById('approve-btn').disabled = project.status === 'approved';
+    if (project.status === 'approved') {
+      showMsg('approve-msg', 'success', '✅ Project already approved — ready for Survey Assembly.');
+    }
+  } else {
+    renderProjectConfig(null);
+    document.getElementById('approve-btn').disabled = false;
+  }
+
+  // Clear status messages
+  ['status-msg','notes-msg','project-msg','approve-msg'].forEach(id => {
+    const el = document.getElementById(id);
+    el.className = 'status-msg';
+    el.textContent = '';
+  });
+}
+
+/* ------------------------------------------------------------------
+   PROJECT CONFIG
+------------------------------------------------------------------ */
+const QUESTION_CATEGORIES = [
+  { id: 'work_life_balance',    label: 'Work-Life Balance & Time Off' },
+  { id: 'schedule_preference',  label: 'Schedule Preference & Satisfaction' },
+  { id: 'overtime',             label: 'Overtime & Extra Shifts' },
+  { id: 'fatigue_safety',       label: 'Fatigue & Safety' },
+  { id: 'communication',        label: 'Communication & Management' },
+  { id: 'compensation',         label: 'Compensation & Benefits' },
+  { id: 'commute',              label: 'Commute & Transportation' },
+  { id: 'childcare',            label: 'Family & Childcare' },
+  { id: 'demographics',         label: 'Demographics (Age, Tenure, Dept.)' },
+  { id: 'open_ended',           label: 'Open-Ended / Write-In Questions' },
+];
+
+function renderProjectConfig(project) {
+  // Question categories
+  const selected = project ? (project.selected_questions || []) : QUESTION_CATEGORIES.map(c => c.id);
+  const catsEl = document.getElementById('question-cats');
+  catsEl.innerHTML = QUESTION_CATEGORIES.map(cat => `
+    <label class="q-cat">
+      <input type="checkbox" value="${cat.id}"
+             ${selected.includes(cat.id) || selected.length === 0 ? 'checked' : ''}
+             data-q-cat />
+      ${escHtml(cat.label)}
+    </label>
+  `).join('');
+
+  // Schedule concepts
+  const schedules = project ? (project.selected_schedules || []) : [];
+  document.getElementById('selected-schedules-field').value =
+    Array.isArray(schedules) ? schedules.join('\n') : schedules;
+
+  // Custom questions
+  const customQs = project ? (project.custom_questions || []) : [];
+  const listEl = document.getElementById('custom-q-list');
+  listEl.innerHTML = '';
+  customQs.forEach(q => addCustomQ(q));
+  if (customQs.length === 0) addCustomQ(''); // start with one empty row
+}
+
+function addCustomQ(value) {
+  const listEl = document.getElementById('custom-q-list');
+  const row = document.createElement('div');
+  row.className = 'custom-q-row';
+  row.innerHTML = `
+    <input type="text" placeholder="e.g. Would you prefer a 4-day workweek?" value="${escHtml(value || '')}" data-custom-q />
+    <button type="button" class="btn-remove-q" onclick="this.closest('.custom-q-row').remove()" title="Remove">✕</button>
+  `;
+  listEl.appendChild(row);
+}
+
+async function saveProjectConfig() {
+  const selectedCats = Array.from(document.querySelectorAll('[data-q-cat]:checked')).map(el => el.value);
+  const customQs     = Array.from(document.querySelectorAll('[data-custom-q]'))
+    .map(el => el.value.trim()).filter(Boolean);
+  const schedulesRaw = document.getElementById('selected-schedules-field').value;
+  const schedules    = schedulesRaw.split('\n').map(s => s.trim()).filter(Boolean);
+  const adminNotes   = document.getElementById('admin-notes-field').value;
+
+  const payload = {
+    survey_client_id:   currentClientId,
+    selected_questions: selectedCats,
+    excluded_questions: [],
+    custom_questions:   customQs,
+    selected_schedules: schedules,
+    admin_notes:        adminNotes,
+  };
+
+  showMsg('project-msg', 'info', 'Saving…');
+  try {
+    const resp = await fetch('/api/survey/admin/project/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (resp.status === 401) { checkAuth(); return; }
+    const data = await resp.json();
+    if (!data.success) throw new Error(data.error || 'Save failed.');
+    if (!currentProjectId && data.project_id) {
+      currentProjectId = data.project_id;
+    }
+    showMsg('project-msg', 'success', `Configuration saved (${data.action}).`);
+    document.getElementById('approve-btn').disabled = false;
+  } catch (e) {
+    showMsg('project-msg', 'error', `Error: ${e.message}`);
+  }
+}
+
+async function approveProject() {
+  if (!currentProjectId) {
+    // Save first to get a project_id
+    await saveProjectConfig();
+    if (!currentProjectId) {
+      showMsg('approve-msg', 'error', 'Please save the configuration before approving.');
+      return;
+    }
+  }
+  document.getElementById('approve-btn').disabled = true;
+  showMsg('approve-msg', 'info', 'Approving…');
+  try {
+    const resp = await fetch(`/api/survey/admin/project/${currentProjectId}/approve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    if (resp.status === 401) { checkAuth(); return; }
+    const data = await resp.json();
+    if (!data.success) throw new Error(data.error || 'Approval failed.');
+    showMsg('approve-msg', 'success', '✅ ' + data.message);
+    // Update status dropdown
+    document.getElementById('detail-status').value = 'approved';
+  } catch (e) {
+    showMsg('approve-msg', 'error', `Error: ${e.message}`);
+    document.getElementById('approve-btn').disabled = false;
+  }
+}
+
+/* ------------------------------------------------------------------
+   STATUS & NOTES
+------------------------------------------------------------------ */
+async function saveStatus() {
+  const newStatus = document.getElementById('detail-status').value;
+  showMsg('status-msg', 'info', 'Saving…');
+  try {
+    const resp = await fetch(`/api/survey/admin/client/${currentClientId}/status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: newStatus }),
+    });
+    if (resp.status === 401) { checkAuth(); return; }
+    const data = await resp.json();
+    if (!data.success) throw new Error(data.error || 'Status save failed.');
+    showMsg('status-msg', 'success', `Status set to "${newStatus}".`);
+    // Update in local list
+    const c = allClients.find(c => c.id === currentClientId);
+    if (c) c.status = newStatus;
+  } catch (e) {
+    showMsg('status-msg', 'error', `Error: ${e.message}`);
+  }
+}
+
+async function saveAdminNotes() {
+  const notes = document.getElementById('admin-notes-field').value;
+  showMsg('notes-msg', 'info', 'Saving…');
+  try {
+    const resp = await fetch(`/api/survey/admin/client/${currentClientId}/notes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ admin_notes: notes }),
+    });
+    if (resp.status === 401) { checkAuth(); return; }
+    const data = await resp.json();
+    if (!data.success) throw new Error(data.error || 'Notes save failed.');
+    showMsg('notes-msg', 'success', 'Notes saved.');
+  } catch (e) {
+    showMsg('notes-msg', 'error', `Error: ${e.message}`);
+  }
+}
+
+/* ------------------------------------------------------------------
+   HELPERS
+------------------------------------------------------------------ */
+function showMsg(id, type, text) {
+  const el = document.getElementById(id);
+  el.className = 'status-msg ' + type;
+  el.textContent = text;
+}
+
+function escHtml(str) {
+  if (!str && str !== 0) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function tagList(arr) {
+  return `<div class="tag-list">${arr.map(t => `<span class="tag">${escHtml(t)}</span>`).join('')}</div>`;
+}
+
+function formatDate(iso) {
+  if (!iso) return '—';
+  try {
+    return new Date(iso).toLocaleDateString('en-US', {
+      year: 'numeric', month: 'short', day: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+    });
+  } catch { return iso; }
+}
+
+function badgeClass(status) {
+  return ({
+    new:         'badge-new',
+    reviewing:   'badge-reviewing',
+    approved:    'badge-approved',
+    rejected:    'badge-rejected',
+    'in-progress': 'badge-in-progress',
+    delivered:   'badge-delivered',
+  })[status] || 'badge-new';
+}
+
+function formatIndustry(v) {
+  return ({
+    manufacturing: 'Manufacturing',
+    pharmaceutical: 'Pharmaceutical',
+    food_processing: 'Food Processing',
+    mining: 'Mining',
+    distribution: 'Distribution / Warehouse',
+    chemical: 'Chemical',
+    utilities: 'Utilities / Power',
+    paper_pulp: 'Paper / Pulp',
+    oil_gas: 'Oil & Gas',
+    healthcare: 'Healthcare',
+    transportation: 'Transportation',
+    other: 'Other',
+  })[v] || v;
+}
+
+function formatSchedule(v) {
+  return ({
+    '8-hour-fixed':     '8-Hour Fixed',
+    '8-hour-rotating':  '8-Hour Rotating',
+    '10-hour':          '10-Hour Shifts',
+    '12-hour-fixed':    '12-Hour Fixed',
+    '12-hour-rotating': '12-Hour Rotating',
+    mixed:              'Mixed / Multiple',
+    other:              'Other',
+  })[v] || v;
+}
+
+function formatUnion(v) {
+  return ({
+    'non-union': 'Non-Union',
+    union:       'Union',
+    mixed:       'Mixed',
+    unknown:     'Unknown',
+  })[v] || v;
+}
+
+function formatAdminPref(v) {
+  return ({
+    online: 'Online (link to employees)',
+    paper:  'Paper Bubble Sheets',
+    unsure: 'Unsure — needs guidance',
+  })[v] || v;
+}
+
+/* ------------------------------------------------------------------
+   INIT
+------------------------------------------------------------------ */
+document.addEventListener('DOMContentLoaded', () => {
+  checkAuth();
+});
+</script>
+
+</body>
+</html>
+<!-- I did no harm and this file is not truncated -->
