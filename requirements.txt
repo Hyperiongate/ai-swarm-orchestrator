@@ -1,7 +1,11 @@
 # AI SWARM ORCHESTRATOR - Requirements
-# Last Updated: March 12, 2026
+# Last Updated: March 18, 2026
 #
 # CHANGES:
+# - March 18, 2026: ADDED flask-cors
+#   * ModuleNotFoundError: No module named 'flask_cors' on startup
+#   * app.py line 93 imports flask_cors — was never in requirements
+#   * Fix: added Flask-Cors>=4.0.0 under CORE FRAMEWORK
 # - March 12, 2026: PHASE 6 PROACTIVE AGENT
 #   * Added apscheduler>=3.10 (background job scheduler for daily briefing,
 #     lead scan, task generation, and service health checks)
@@ -20,6 +24,7 @@
 # CORE FRAMEWORK
 # ==========================================
 Flask==3.0.0
+Flask-Cors>=4.0.0           # Cross-origin support — added March 18, 2026
 gunicorn>=20.1.0
 # ==========================================
 # WEBSOCKET SUPPORT FOR VOICE (Added January 27, 2026)
@@ -73,4 +78,5 @@ apscheduler>=3.10           # Background job scheduler — Phase 6 Proactive Age
 Pillow>=10.2.0
 matplotlib>=3.8.2
 plotly>=5.18.0
+
 # I did no harm and this file is not truncated
