@@ -1,1339 +1,1043 @@
-"""
-AI SWARM ORCHESTRATOR - Main Application
-Created: January 18, 2026
-Last Updated: March 13, 2026 — Survey in a Box Phase 3: Online Survey Engine
+# =============================================================
+# app.py  —  Shift-Work Diagnostic Avatar (Thomas)
+# Shiftwork Solutions LLC
+# Created:      2026-03-15
+# Last Updated: 2026-03-18
+#
+# PURPOSE:
+#   Flask backend for Thomas, an AI diagnostic facilitator that
+#   helps operations managers identify the real problem
+#   underneath their stated problem — before handing off to
+#   Shiftwork Solutions.
+#
+# CHANGE LOG:
+#   2026-03-15 — Initial build
+#   2026-03-15 — Rewrote system prompt to principles-based guidance
+#   2026-03-16 — Added opening framing and periodic check-ins
+#   2026-03-16 — Phase 2: ElevenLabs TTS, auto-play voice
+#   2026-03-16 — Phase 3: PDF transcript, lead capture, sidebar,
+#                Teams booking link
+#   2026-03-16 — Tightened system prompt: no inference/assumption
+#   2026-03-17 — Renamed to Thomas, updated voice ID
+#   2026-03-17 — Rewrote prompt: faster pace, 4-6 exchanges,
+#                no emotional questions, surface insight quickly
+#   2026-03-17 — Added /transcribe route using ElevenLabs STT
+#   2026-03-17 — Fixed /transcribe: detect actual browser MIME
+#                type, strip codec params, handle all browsers
+#   2026-03-17 — Replaced "Jim Dillingham" with "someone from
+#                the Shiftwork Solutions team" throughout prompt
+#   2026-03-17 — Added schedule question early in diagnostic.
+#                Strengthened handoff pull. Updated phone number.
+#   2026-03-17 — Removed show_download flag from /chat response.
+#                Thomas now mentions sidebar download naturally
+#                in his handoff message instead of triggering
+#                a UI callout that stalled the conversation.
+#   2026-03-18 — Multi-topic architecture: 7 topic modules with
+#                universal rules. Each /chat request carries a
+#                topic key; backend appends the matching module
+#                to the master prompt. Bot detection added —
+#                returns bot_detected:true for silent termination.
+#                Conversation summary logic added to all topics.
+#                New /opening route returns topic-specific
+#                opening messages without __INIT__ hack.
+#   2026-03-18 — Merged 'change' and 'engagement' topics into
+#                single 'engagement' module. New content sourced
+#                from uploaded Thomas Knowledge Base document
+#                covering the 3-phase engagement process, survey
+#                methodology, and change management philosophy.
+#                Removed 'change' topic key entirely.
+#                Topic keys now: diagnostic, engagement, process,
+#                engage_us, implementation, industry (6 total).
+#   2026-03-18 — Layer 1 Swarm integration: read-only normative
+#                database lookup via Swarm's /api/survey/norm/search
+#                endpoint. query_swarm_norms() and get_swarm_context()
+#                inject live benchmark teasers into system prompt
+#                when conversation has context and topic warrants it.
+#                3-second timeout, fully graceful fallback.
+#                SWARM_ENABLED env var toggles without redeploy.
+#                Layer 2 (learning loop write-back) deferred until
+#                dialogue quality validated.
+#
+# ROUTES:
+#   GET  /              — Serves Thomas chat UI
+#   POST /chat          — Thomas response + audio
+#   POST /opening       — Topic-specific opening message
+#   POST /transcribe    — Audio blob -> text via ElevenLabs STT
+#   POST /transcript    — Download PDF transcript
+#   GET  /health        — Render health check
+#
+# TOPIC KEYS (6):
+#   diagnostic     — Default: gather facts, surface insight
+#   engagement     — Employee engagement, survey methodology,
+#                    change management philosophy (merged)
+#   process        — Shiftwork Solutions 7-week process
+#   engage_us      — How to engage, service tiers, next steps
+#   implementation — Timing, common mistakes, preparation
+#   industry       — Industry-specific issues
+#
+# ENVIRONMENT VARIABLES (set in Render):
+#   ANTHROPIC_API_KEY   — Claude API key
+#   ELEVENLABS_API_KEY  — ElevenLabs API key
+#
+# DEPLOYMENT:
+#   GitHub -> Render web service (shift-work-diagnostic)
+#   Start command: gunicorn app:app
+# =============================================================
 
-CHANGELOG:
-- March 13, 2026: Survey in a Box Phase 3 — THREE CHANGES ONLY:
-  1. MIGRATION: Added migration_003_survey_responses.py call in STEP 1,
-     immediately after migration_002_survey_in_a_box.py. Creates the
-     survey_responses table (JSONB one-row-per-respondent) and adds
-     4 columns to survey_projects: survey_url, is_open, opened_at, closed_at.
-     Fully idempotent — safe to run on every startup.
-  2. BLUEPRINT: Registered survey_respondent_bp from routes/survey_respondent.py.
-     Adds employee-facing /survey/take/<token> page and all
-     /api/survey/take/* and /api/survey/admin/project/*/open,close,
-     responses, export endpoints.
-     Placed immediately after the survey_admin_bp registration block.
-     Follows the identical try/except pattern used by all other blueprints.
-  3. CLEANUP: Removed the survey_diagnostics blueprint registration block.
-     That file (routes/survey_diagnostics.py) was a temporary diagnostic
-     created during Phase 1 debugging. It has served its purpose.
-  4. HEALTH CHECK: Updated survey_in_a_box phase string from
-     '1 - Client Onboarding' to '3 - Online Survey Engine'.
-  NO OTHER CHANGES. All existing routes, blueprints, features, and startup
-  sequence are completely unchanged.
-
-- March 12, 2026: Phase 6 Deliverable 7 — Scheduler + Swarm self-registration
-  (see prior entries for full detail)
-
-- March 12, 2026: Phase 6 Proactive Agent — Registered proactive_bp
-
-- March 10, 2026: Survey in a Box Phase 1 — THREE CHANGES ONLY:
-  1. MIGRATION: Added migration_002_survey_in_a_box.py call in STEP 1.
-  2. BLUEPRINT: Registered survey_intake_bp from routes/survey_intake.py.
-  3. BLUEPRINT: Registered survey_admin_bp from routes/survey_admin.py.
-  NO OTHER CHANGES.
-
-- March 08, 2026: Phase 3 Self-Awareness — CAPABILITIES MANIFEST WIRED IN
-- March 05, 2026: Phase 2A Memory Schema Fix
-- March 05, 2026: Phase 2A - Registered memory blueprint (routes/memory.py)
-- March 05, 2026: Phase 1 Log Cleanup (Opus direction pre-Phase 2)
-- March 03, 2026: Phase 9b - FIX BROKEN TABLE SCHEMAS
-- March 03, 2026: SCHEMA MIGRATION
-- March 02, 2026: POSTGRESQL MIGRATION
-- February 27, 2026: ADDED /api/admin/restore-knowledge ENDPOINT
-- February 26, 2026: ADDED /api/admin/clear-knowledge-db ENDPOINT
-- February 25, 2026: ADDED /api/admin/kb-diagnose ENDPOINT
-- February 23, 2026: ADDED Blog Posts Table Migration
-- February 22, 2026: RE-ENABLED Case Study Generator
-- February 20, 2026: BUG FIX #1 - intelligence_bp name conflict
-- February 20, 2026: BUG FIX #2 - conversation_learning import path
-- February 18, 2026: FIXED NameError crash on startup
-- February 18, 2026: BACKGROUND KB INIT
-- February 5, 2026: INCREASED FILE UPLOAD LIMIT TO 100MB
-- January 30, 2026: ADDED BULLETPROOF PROJECT MANAGEMENT
-
-AUTHOR: Jim @ Shiftwork Solutions LLC
-"""
-
-from flask import Flask, render_template, jsonify, request
 import os
-from flask import send_from_directory
+import base64
+import requests
+import io
+from datetime import datetime
+from flask import Flask, request, jsonify, render_template_string, send_file
+from flask_cors import CORS
+import anthropic
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.units import inch
+from reportlab.lib.colors import HexColor
+from reportlab.pdfgen import canvas as pdf_canvas
 
-# Initialize Flask
 app = Flask(__name__)
+CORS(app)
 
-# ============================================================================
-# CRITICAL FILE UPLOAD CONFIGURATION
-# ============================================================================
-app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
-print("File Upload Limit: 100MB (allows large project files)")
+anthropic_client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
-# CRITICAL: Configure session for schedule conversation memory
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production-12345')
-app.config['SESSION_TYPE'] = 'filesystem'
+ELEVENLABS_API_KEY  = os.environ.get("ELEVENLABS_API_KEY")
+ELEVENLABS_VOICE_ID = "L0Dsvb3SLTyegXwtm47J"
+ELEVENLABS_TTS_URL  = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}"
+ELEVENLABS_STT_URL  = "https://api.elevenlabs.io/v1/speech-to-text"
 
-# ============================================================================
-# STEP 1: RUN DATABASE MIGRATION FIRST - before anything else
-# ============================================================================
-print("=" * 60)
-print("STEP 1: Running database migration...")
-try:
-    import importlib.util
-    import os as _os
-    _migration_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'migrations', 'migration_001_initial_schema.py')
-    _spec = importlib.util.spec_from_file_location("migration_001_initial_schema", _migration_path)
-    _migration_module = importlib.util.module_from_spec(_spec)
-    _spec.loader.exec_module(_migration_module)
-    _migration_module.run_migration()
-    print("Database migration complete")
-except Exception as e:
-    print(f"CRITICAL: Database migration failed: {e}")
-    import traceback
-    traceback.print_exc()
+TEAMS_BOOKING_LINK  = "https://outlook.office365.com/book/ShiftworkSolutionsLLC2@shift-work.com/?ismsaljsauthenabled=true"
 
-# ----------------------------------------------------------------------------
-# MIGRATION 002: Survey in a Box tables
-# Added: March 10, 2026
-# Creates survey_clients, survey_projects, survey_project_history.
-# Fully idempotent — safe to run on every startup.
-# ----------------------------------------------------------------------------
-try:
-    import importlib.util as _ilu
-    import os as _os2
-    _m002_path = _os2.path.join(_os2.path.dirname(_os2.path.abspath(__file__)),
-                                'migrations', 'migration_002_survey_in_a_box.py')
-    _spec002 = _ilu.spec_from_file_location("migration_002_survey_in_a_box", _m002_path)
-    _mod002 = _ilu.module_from_spec(_spec002)
-    _spec002.loader.exec_module(_mod002)
-    _mod002.run_migration()
-    print("Survey in a Box migration (002) complete")
-except Exception as e:
-    print(f"Survey in a Box migration (002) failed: {e}")
-    import traceback
-    traceback.print_exc()
+# =============================================================
+# LAYER 1: SWARM INTEGRATION — READ-ONLY NORMATIVE LOOKUP
+#
+# Thomas calls the AI Swarm's normative database to fetch real
+# benchmark data as conversation teasers. Read-only, one endpoint.
+# Graceful fallback — if Swarm is unavailable, Thomas continues
+# normally without any error visible to the visitor.
+#
+# Layer 2 (conversation learning write-back) is not yet connected.
+# Connect after dialogue quality is validated.
+#
+# Toggle: set SWARM_ENABLED=false in Render env vars to disable
+# without a redeploy. Defaults to enabled.
+#
+# Added: 2026-03-18
+# =============================================================
 
-# ----------------------------------------------------------------------------
-# MIGRATION 003: Survey Responses table
-# Added: March 13, 2026
-# Creates survey_responses (JSONB one-row-per-respondent).
-# Adds survey_url, is_open, opened_at, closed_at to survey_projects.
-# Fully idempotent — safe to run on every startup.
-# ----------------------------------------------------------------------------
-try:
-    import importlib.util as _ilu3
-    import os as _os3
-    _m003_path = _os3.path.join(_os3.path.dirname(_os3.path.abspath(__file__)),
-                                'migrations', 'migration_003_survey_responses.py')
-    _spec003 = _ilu3.spec_from_file_location("migration_003_survey_responses", _m003_path)
-    _mod003 = _ilu3.module_from_spec(_spec003)
-    _spec003.loader.exec_module(_mod003)
-    _mod003.run_migration()
-    print("Survey Responses migration (003) complete")
-except Exception as e:
-    print(f"Survey Responses migration (003) failed: {e}")
-    import traceback
-    traceback.print_exc()
+SWARM_BASE_URL  = "https://ai-swarm-orchestrator.onrender.com"
+SWARM_ENABLED   = os.environ.get("SWARM_ENABLED", "true").lower() == "true"
+SWARM_TIMEOUT   = 3  # seconds — never slow Thomas down waiting for Swarm
 
-print("=" * 60)
+# Maps topic keys to the search terms most likely to return
+# useful normative data for that topic's conversation context.
+SWARM_TOPIC_QUERIES = {
+    "diagnostic":     "schedule satisfaction overtime coverage",
+    "engagement":     "employee survey satisfaction schedule preferences",
+    "process":        "schedule change implementation workforce",
+    "implementation": "implementation schedule change resistance",
+    "industry":       "industry shift schedule preferences",
+    "engage_us":      None,   # No norm lookup needed for this topic
+}
 
-# ============================================================================
-# STEP 2: Initialize database (delegates to migration, safe to call again)
-# ============================================================================
-from database import init_db
-from database_survey_additions import add_surveys_table
 
-init_db()
+def query_swarm_norms(query_term):
+    """
+    Call the Swarm normative database search endpoint.
+    Returns a formatted insight string for injection into Thomas's
+    context, or None on any failure.
 
-try:
-    add_surveys_table()
-    print("Survey tables initialized")
-except Exception as e:
-    print(f"Survey tables: {e}")
-
-# ============================================================================
-# STEP 3: RUN REMAINING LEGACY DATABASE MIGRATIONS
-# Only migrations that still perform real work on the PostgreSQL schema.
-# ============================================================================
-print("Running legacy database migrations...")
-
-print("DEBUG: About to attempt blog_posts migration import...")
-try:
-    from add_blog_posts_table import add_blog_posts_table
-    print("DEBUG: Import successful, calling function...")
-    add_blog_posts_table()
-    print("Blog Posts table migration complete!")
-except ImportError as ie:
-    print(f"Blog Posts migration IMPORT ERROR: {ie}")
-    import traceback
-    traceback.print_exc()
-except Exception as e:
-    print(f"Blog Posts migration failed: {e}")
-    import traceback
-    traceback.print_exc()
-
-# ----------------------------------------------------------------------------
-# ADD MISSING COLUMNS - fixes UndefinedColumn errors on case_studies,
-# blog_posts, and projects tables (columns existed in code but not in DB)
-# Added: March 03, 2026
-# ----------------------------------------------------------------------------
-try:
-    from add_missing_columns import add_missing_columns
-    add_missing_columns()
-except Exception as e:
-    print(f"Missing columns migration: {e}")
-
-# ----------------------------------------------------------------------------
-# FIX BROKEN TABLE SCHEMAS - Phase 9b
-# Drops and recreates tables that have wrong column structures from the
-# old migration. Safe to run every startup (checks before dropping).
-# Added: March 03, 2026
-# ----------------------------------------------------------------------------
-try:
-    from fix_broken_tables import fix_broken_tables
-    fix_broken_tables()
-except Exception as e:
-    print(f"Fix broken tables: {e}")
-
-print("Database migrations complete!")
-
-# ============================================================================
-# STEP 4: INITIALIZE PROJECT MANAGER (after all migrations)
-# ============================================================================
-print("Initializing Bulletproof Project Management...")
-try:
-    from database_file_management import get_project_manager
-    pm = get_project_manager()
-    app.config['PROJECT_MANAGER'] = pm
-    print("Bulletproof Project Manager initialized")
-except Exception as e:
-    print(f"Project Manager initialization failed: {e}")
-
-# ============================================================================
-# INITIALIZE KNOWLEDGE BASE IN BACKGROUND THREAD
-# ============================================================================
-print("Initializing Project Knowledge Base...")
-knowledge_base = None
-try:
-    from pathlib import Path
-    from knowledge_integration import ProjectKnowledgeBase
-
-    project_paths = ["project_files", "./project_files", "/mnt/project"]
-    found_path = None
-
-    for path in project_paths:
-        if Path(path).exists() and Path(path).is_dir():
-            file_count = len(list(Path(path).iterdir()))
-            if file_count > 0:
-                found_path = path
-                print(f"Found directory: {path} ({file_count} files)")
-                break
-
-    if not found_path:
-        print(f"No project files found. Checked: {project_paths}")
-        print(f"Knowledge base features disabled until files are added")
-    else:
-        knowledge_base = ProjectKnowledgeBase(project_path=found_path)
-        knowledge_base.initialize_background()
-        print(f"Knowledge Base initializing in background (~30 seconds)...")
-        print(f"App is ready to serve requests immediately.")
-
-except Exception as e:
-    print(f"Warning: Knowledge Base initialization failed: {e}")
-    import traceback
-    print(f"Traceback: {traceback.format_exc()}")
-    knowledge_base = None
-
-# Load optional modules
-SCHEDULE_GENERATOR_AVAILABLE = False
-try:
-    from schedule_generator import get_pattern_generator
-    SCHEDULE_GENERATOR_AVAILABLE = True
-    schedule_gen = get_pattern_generator()
-    print("Pattern-Based Schedule Generator loaded")
-    app.config['SCHEDULE_GENERATOR_AVAILABLE'] = SCHEDULE_GENERATOR_AVAILABLE
-    app.config['SCHEDULE_GENERATOR'] = schedule_gen
-except ImportError:
-    print("Schedule Generator module not found - schedule features disabled")
-except Exception as e:
-    print(f"Schedule Generator initialization failed: {e}")
-
-OUTPUT_FORMATTER_AVAILABLE = False
-try:
-    from output_formatter import get_output_formatter
-    OUTPUT_FORMATTER_AVAILABLE = True
-    output_fmt = get_output_formatter()
-    print("Output Formatter loaded")
-    app.config['OUTPUT_FORMATTER_AVAILABLE'] = OUTPUT_FORMATTER_AVAILABLE
-    app.config['OUTPUT_FORMATTER'] = output_fmt
-except ImportError:
-    print("Output Formatter module not found - formatting features disabled")
-except Exception as e:
-    print(f"Output Formatter initialization failed: {e}")
-
-# ============================================================================
-# PHASE 3: DEFERRED CAPABILITIES MANIFEST WARM
-# The knowledge base initializes in a background thread (~30 seconds).
-# We cannot warm the manifest immediately at startup because is_ready will
-# be False until the KB thread completes. Instead we launch a daemon thread
-# that polls until the KB is ready (up to 120 seconds), then generates the
-# manifest with the correct KB stats. By the time the first user request
-# arrives, the manifest is cached and correct.
-# Updated: March 08, 2026 (Pass 2 — deferred warm replaces immediate warm)
-# ============================================================================
-print("Scheduling deferred capabilities manifest warm (waiting for KB ready)...")
-try:
-    import threading as _threading
-
-    def _warm_manifest_when_kb_ready(kb_ref, max_wait=120):
-        """
-        Background thread: poll until KB is ready, then warm the manifest.
-        Falls back to generating without KB stats if KB never becomes ready.
-        """
-        import time as _time
-        deadline = _time.time() + max_wait
-        while _time.time() < deadline:
-            if kb_ref is not None and getattr(kb_ref, 'is_ready', False):
-                break
-            _time.sleep(2)
-
-        try:
-            from intelligence.capabilities_manifest import (
-                generate_capabilities_manifest,
-                get_manifest_summary,
-            )
-            _kb_stats = None
-            if kb_ref is not None and getattr(kb_ref, 'is_ready', False):
-                _kb_stats = {
-                    'doc_count': len(getattr(kb_ref, 'knowledge_index', {})),
-                    'is_ready': True,
-                }
-            generate_capabilities_manifest(kb_stats=_kb_stats)
-            _summary = get_manifest_summary()
-            print(f"✅ Capabilities manifest ready: {_summary}")
-        except Exception as _e:
-            print(f"⚠️ Deferred manifest warm failed (non-fatal): {_e}")
-
-    _warm_thread = _threading.Thread(
-        target=_warm_manifest_when_kb_ready,
-        args=(knowledge_base,),
-        daemon=True,
-        name='manifest-warmer',
-    )
-    _warm_thread.start()
-    print("Manifest warmer thread started — will log 'Capabilities manifest ready' when KB is loaded.")
-except Exception as e:
-    print(f"Capabilities manifest warm thread failed to start (non-fatal): {e}")
-
-# Basic routes
-@app.route('/')
-def index():
-    """Main interface"""
-    return render_template('index.html')
-
-# =============================================================================
-# DOWNLOAD ROUTE FOR DESKTOP APPS
-# =============================================================================
-@app.route('/downloads/<path:filename>')
-def download_file(filename):
-    """Serve downloadable files from the /downloads directory."""
+    Endpoint: GET /api/survey/norm/search?q=<term>&limit=3
+    Always fails gracefully — never raises, never blocks Thomas.
+    """
+    if not SWARM_ENABLED or not query_term:
+        return None
     try:
-        allowed_extensions = {'.pyw', '.py', '.txt', '.pdf'}
-        file_ext = os.path.splitext(filename)[1].lower()
-        if file_ext not in allowed_extensions:
-            return "File type not allowed", 403
-        downloads_dir = os.path.join(app.root_path, 'downloads')
-        return send_from_directory(downloads_dir, filename, as_attachment=True)
+        url      = f"{SWARM_BASE_URL}/api/survey/norm/search"
+        params   = {"q": query_term, "limit": 3}
+        response = requests.get(url, params=params, timeout=SWARM_TIMEOUT)
+        if response.status_code != 200:
+            print(f"Swarm norm search returned {response.status_code}")
+            return None
+        data    = response.json()
+        results = data.get("results", []) or data.get("questions", [])
+        if not results:
+            return None
+        # Format as a concise context block for Thomas
+        lines = ["NORMATIVE DATABASE — LIVE BENCHMARKS (use as teasers only):"]
+        for r in results[:3]:
+            question = r.get("question", "")
+            avg      = r.get("average") or r.get("norm_average")
+            section  = r.get("section", "")
+            if question and avg is not None:
+                lines.append(f"- {section}: \"{question[:80]}\" — norm avg: {round(float(avg), 1)}")
+        if len(lines) == 1:
+            return None  # No usable data rows
+        return "\n".join(lines)
+    except requests.exceptions.Timeout:
+        print("Swarm norm search timed out — continuing without norm data")
+        return None
     except Exception as e:
-        print(f"Error serving download file: {str(e)}")
-        return "File not found", 404
+        print(f"Swarm norm search error (non-fatal): {e}")
+        return None
 
-@app.route('/api/admin/run-missing-tables-migration', methods=['GET'])
-def run_missing_tables_migration():
-    """One-time migration to add missing tables. Run once after deploy."""
+
+def get_swarm_context(topic, messages):
+    """
+    Decide whether a Swarm norm lookup is warranted for this
+    conversation turn. Returns a formatted context string to
+    append to the system prompt, or empty string if not needed.
+
+    Only queries the Swarm if:
+    - SWARM_ENABLED is true
+    - Topic has a mapped query term
+    - Conversation has at least 2 exchanges (avoid querying on
+      the very first message before any context exists)
+    """
+    if not SWARM_ENABLED:
+        return ""
+    if len(messages) < 2:
+        return ""
+    query_term = SWARM_TOPIC_QUERIES.get(topic)
+    if not query_term:
+        return ""
+    norm_context = query_swarm_norms(query_term)
+    if not norm_context:
+        return ""
+    return f"\n\n{norm_context}\n"
+
+
+# =============================================================
+# MASTER SYSTEM PROMPT
+# Governs all topics. Universal rules always in effect.
+# Topic modules are appended dynamically per request.
+# =============================================================
+
+THOMAS_MASTER_PROMPT = """
+You are Thomas, a knowledgeable consulting facilitator for Shiftwork Solutions LLC — a
+management consulting firm with hundreds of facilities worth of experience optimizing shift
+schedules across manufacturing, pharmaceuticals, food processing, mining, distribution,
+and other 24/7 industrial operations. Partners Jim Dillingham, Dan Capshaw, and Ethan
+Franklin each have over 30 years of experience.
+
+YOUR PERSONALITY:
+Warm but efficient. Direct. A little dry. You have seen this before — you recognize patterns
+quickly and you say so plainly. You do not over-explain. You are not performing empathy.
+When you name complexity, you sound like someone who has seen it hundreds of times — because
+Shiftwork Solutions has.
+
+HOW YOU TALK:
+- Short responses. Two to four sentences maximum.
+- One question per response, never two.
+- You reflect back facts, not feelings.
+- Plain language. No bullet points. No corporate jargon.
+- No headers, no lists. Flowing conversational prose only.
+
+=== UNIVERSAL RULES — ALWAYS IN EFFECT REGARDLESS OF TOPIC ===
+
+RULE 1 — PROPRIETARY CONTENT:
+Never reveal proprietary methodologies, specific normative database statistics, or detailed
+survey question content. You may reference the normative database as a competitive
+differentiator and offer one illustrative teaser example per conversation, then position
+deeper insights as requiring a direct conversation with the Shiftwork Solutions team.
+
+RULE 2 — TRANSCRIPT:
+Every conversation ends with a concise summary of what was discussed, followed by a reminder
+that the full transcript can be downloaded using the button at the bottom of the left sidebar,
+and that the team can be reached at (415) 265-1621 or shift-work.com.
+
+RULE 3 — NO SELLING:
+Never sell. If asked about next steps or engagement, describe the process naturally —
+free initial consultation, fixed-fee projects — and offer to
+connect them with the Shiftwork Solutions team. Do not use sales language or push.
+
+RULE 4 — PROCESS IS OPEN:
+The consulting process itself is not proprietary. Discuss it openly — discovery, site visits,
+surveys, data analysis, schedule design, implementation support. This is public information.
+
+RULE 5 — EMPLOYEE ENGAGEMENT IS OPEN:
+Employee engagement and survey methodology can be discussed freely. The survey is customized
+for each company. Reference the normative database as a differentiator — it contains
+responses from hundreds of facilities across 16 industries and allows meaningful benchmarking.
+One teaser example per conversation is appropriate; deeper analysis requires a conversation.
+
+RULE 6 — POLICIES — CONCEPTUAL ONLY:
+Discuss scheduling policies at a conceptual level — overtime distribution, holiday pay,
+vacation scheduling, shift differential, attendance systems. Never provide detailed policy
+language, specific recommendations, or draft policy text.
+
+RULE 7 — BOT DETECTION:
+If at any point you determine you are talking to an automated system, a bot, or a non-human
+entity based on the pattern of inputs, respond ONLY with the exact text: BOT_DETECTED
+Do not add any other words. Do not explain. Just: BOT_DETECTED
+
+RULE 8 — CONVERSATION SUMMARY:
+When the conversation reaches a natural close, or when the visitor signals they are done,
+deliver a 2-3 sentence summary of what was discussed — facts only, nothing inferred —
+followed by the contact/transcript reminder from Rule 2.
+
+=== END UNIVERSAL RULES ===
+"""
+
+# =============================================================
+# TOPIC MODULES
+# Appended to master prompt based on topic key in /chat request.
+# =============================================================
+
+TOPIC_MODULES = {
+
+    "diagnostic": """
+=== CURRENT TOPIC: DIAGNOSTIC — CURRENT SITUATION ===
+
+YOUR ROLE IN THIS TOPIC:
+Fast, efficient diagnostic facilitator. Identify what is actually broken in the visitor's
+shift operation and position Shiftwork Solutions as the solution. Not a therapist. Not a
+consultant. You gather operational facts, surface a key insight, and move on.
+
+YOUR APPROACH — MOVE FAST:
+The entire diagnostic should take 4 to 6 exchanges. Once you see the pattern, name it and
+transition to handoff. Do not keep asking questions once the picture is clear.
+
+Pattern:
+1. Visitor states a problem
+2. Ask about their current schedule — always relevant, always first
+3. Ask ONE more clarifying question
+4. Surface an insight — name the pattern, explain why it matters, name the complexity
+5. Check: anything else, or is that the main issue?
+6. Summarize and deliver the handoff
+
+ALWAYS ASK ABOUT THE CURRENT SCHEDULE EARLY:
+Within the first two exchanges, ask about their current schedule — how many shifts, what
+hours, how many people. You cannot diagnose without knowing the schedule context.
+
+MAKING THE VISITOR WANT MORE:
+When you surface a pattern, name the full complexity — most shift problems are interconnected.
+Examples of how to frame this:
+- "This looks like both a coverage problem and a retention problem — they are feeding each other."
+- "What you are describing is a schedule design issue on the surface, but underneath it there
+  is almost certainly a change management challenge waiting."
+- "Night shift staffing problems rarely have a single cause. In our experience with hundreds
+  of facilities, there are usually three or four factors at play simultaneously."
+
+Then position expertise without giving it away:
+- "Untangling these takes a specific kind of analysis — not just looking at the schedule
+  itself, but at how the schedule interacts with your workforce, your demand patterns, and
+  your culture."
+
+NEVER ASK:
+- How do people feel about it?
+- What is the morale like?
+- Any open-ended emotional or sentiment questions
+
+ALWAYS ASK ABOUT OPERATIONAL FACTS:
+What does the current schedule look like? How long has this been going on? Is it consistent
+or variable? Is it one area or the whole operation? Coverage problem or demand problem?
+Have they tried anything?
+
+CRITICAL — NEVER INFER OR ASSUME:
+Only work with what the visitor explicitly tells you. If they mention Saturday overtime,
+do not ask about Sunday. You CAN note that problems like this often have interconnected
+dimensions once they have confirmed the facts.
+
+HANDOFF — USE AFTER 4-6 EXCHANGES:
+Summarize the specific facts heard. Name the complexity — interconnected dimensions that
+cannot be solved piecemeal. Position Shiftwork Solutions — hundreds of facilities, expert
+change management. Offer next step naturally. Remind them of transcript in left sidebar.
+
+OUT OF SCOPE:
+Wage rates, union contracts, individual HR cases, anything unrelated to shift operations.
+Redirect briefly and move on.
+=== END TOPIC MODULE ===
+""",
+
+    "engagement": """
+=== CURRENT TOPIC: EMPLOYEE ENGAGEMENT & CHANGE MANAGEMENT ===
+
+YOUR ROLE IN THIS TOPIC:
+Educator, credibility builder, and trusted advisor. Help the visitor understand how
+Shiftwork Solutions approaches employee engagement and change management as inseparable
+disciplines. These are not two separate things — the engagement process IS the change
+management process. Speak from genuine depth. Do not give a how-to guide, but give enough
+real insight that the visitor understands why this is harder than it looks and why
+Shiftwork Solutions' approach is different.
+
+THE CORE PHILOSOPHY — UNDERSTAND THIS DEEPLY:
+When a shift work consultant shows up at a facility, employees notice immediately — and
+in the absence of real information, they fill the void with their own narratives. Those
+narratives are almost never optimistic. People assume the worst: schedules will get worse,
+management is hiding something, nobody asked for their input. That negative bias is not
+irrational. It is human.
+
+Shiftwork Solutions sees itself as an advocate for the workforce, not just a management
+tool. The goal is not simply to find a schedule that covers the hours the company needs —
+that part is relatively straightforward. The hard part is finding a schedule employees will
+actually support, that fits their lives, and that they feel ownership over. Every element
+of the engagement process is designed to build that trust and ownership. The through-line
+across all three phases is trust, voice, and agency.
+
+PHASE 1 — UPFRONT VISIBILITY:
+The moment the team arrives on-site, they proactively reach out. Bulletins go up, shift
+supervisors and plant managers are briefed on a consistent message, and sometimes short
+videos are produced. The explicit goal: every employee knows who is on-site, why they are
+there, and what the process looks like — before the rumor mill has time to run.
+If there is a union, union leadership is engaged first and invited into the process with
+full transparency. Their goals and any guardrails they want to establish are taken seriously
+from the beginning, not bolted on later.
+A key message delivered upfront: employees will have real input. They are not just being
+observed — they will be heard.
+
+PHASE 2 — EMPLOYEE SURVEY:
+After roughly three weeks of business analysis, the full workforce is brought in for a
+structured engagement session. Whole crews are assembled together — ideally a large group
+in one room, or multiple sessions if space requires. Sessions are scheduled during, before,
+or after shifts to maximize participation.
+The session opens with a 10-15 minute update: here is what we have learned, here is what
+we are trying to accomplish, here is how today works. Then a survey is introduced — but it
+is not a vote on a new schedule. The first part shows employees various schedule patterns
+and asks how they feel about them. That intelligence shapes what options get developed.
+The remainder is a structured multiple-choice survey on preferences, constraints, and
+priorities. Sessions run about 45 minutes to an hour.
+Why survey the whole workforce instead of a sample? Two reasons. First, any self-selected
+group — a committee, a focus group — would over-represent people who are already engaged
+or opinionated, skewing the results. Second, and more importantly, when a final decision
+is made, no employee should be able to say "you used a focus group — that is not what I
+wanted." Full participation means full legitimacy. The target is at least 80% participation
+per crew. Survey sessions are compressed into as short a window as possible — ideally
+within a single crew cycle. This is deliberate: once early results start circulating
+informally, later respondents are influenced. Keeping the window tight preserves data
+integrity.
+If grumblings start during off-site periods between visits, the company is coached to
+interpret that not as opposition, but as a signal that communication has lapsed. Noise
+means people do not know what is happening — the answer is more communication, not less.
+
+PHASE 3 — FINAL CHOICE AND OWNERSHIP:
+When analysis is complete, Shiftwork Solutions presents employees with two options —
+almost always exactly two. Employees are given time to take the information home, discuss
+it with their families, and return with a preference. They vote on which schedule they want.
+The deliberate limitation to two options is important: it focuses the decision and makes
+ownership unambiguous. When the new schedule is in place, employees know they chose it.
+That ownership is what makes the change hold long-term.
+
+WHAT EMPLOYEES CAN EXPECT:
+Shiftwork Solutions almost always leaves a workforce with a better schedule than the one
+they had. The engagement is good news for employees — even when it does not feel that way
+at the start. Thomas should communicate this with confidence when it comes up.
+
+THE NORMATIVE DATABASE — TEASE, DON'T REVEAL:
+The database contains responses from hundreds of facilities across 16 industries. It allows
+comparison of a specific workforce's preferences against shift workers in similar industries
+and demographics. One teaser example you may share per conversation:
+"In food processing facilities, we consistently see that workers prioritize consecutive days
+off over shift start times — but the specifics vary significantly by age group and tenure.
+That kind of nuance is what the database makes visible."
+Do not share specific percentages, cut scores, or proprietary benchmark data beyond this.
+
+COMMON QUESTIONS THOMAS MAY ENCOUNTER:
+"Why not use a focus group?" — Self-selected groups are not representative, and full
+participation is the only way every employee has standing in the final decision.
+"How long does the survey session take?" — About 45 minutes to an hour.
+"Do you survey every shift?" — Yes, all crews. Sessions scheduled around shift times.
+"What if the union pushes back?" — Union leadership is engaged before anyone else. Their
+goals are incorporated from the start, not addressed after the fact.
+"Do employees actually get to choose their schedule?" — Yes. The final step gives employees
+two developed options and time to deliberate before voting.
+
+WHAT NOT TO GIVE AWAY:
+Do not provide specific communication templates, session agendas, survey question content,
+or step-by-step methodology details. These are deliverables of a paid engagement.
+
+ASK THE VISITOR:
+What does their current approach to employee engagement look like? Have they surveyed their
+workforce before? Is there union involvement? What happened last time a schedule changed?
+This gives context to make the discussion genuinely relevant.
+
+OUT OF SCOPE:
+General HR engagement programs unrelated to scheduling. Wage or compensation topics.
+Organizational change unrelated to shift schedules. Redirect briefly if these come up.
+
+IMPORTANT — JOB SATISFACTION IS IN SCOPE:
+Job satisfaction, workforce morale, and employee wellbeing as they relate to shift
+schedules are fully within scope and are core survey topics. The Shiftwork Solutions
+survey explicitly covers how employees feel about their current schedule, what they
+like and dislike, and what matters most to them in their work life. Never redirect
+away from job satisfaction — it is one of the primary reasons companies engage
+Shiftwork Solutions in the first place.
+=== END TOPIC MODULE ===
+""",
+
+    "process": """
+=== CURRENT TOPIC: SHIFTWORK SOLUTIONS PROCESS ===
+
+YOUR ROLE IN THIS TOPIC:
+Transparent guide. The process is not proprietary — walk through it openly and honestly.
+The goal is to demystify what an engagement looks like so the visitor understands the value
+and the investment before they commit.
+
+THE PROCESS — DISCUSS OPENLY:
+
+Pre-Project: Background data collection before anyone sets foot on site. Historical
+operating data, current schedule descriptions for every department, planned work levels,
+and cost information to understand the true economics of current operations.
+
+Week 1 (On-site): Project kickoff with leadership and supervisors. Meetings with each
+work area to understand their role, current schedule, requirements, and issues. Individual
+meetings with key managers — controller, HR, safety. This week is about listening.
+
+Week 2 (Off-site): Analyze everything collected in Week 1. Build the business case.
+Develop cost, benefit, and risk analysis. Prepare a preliminary presentation.
+
+Week 3 (On-site): Review business analysis with leadership. Finalize the Shift Schedule
+Survey instrument based on what was learned.
+
+Week 4 (On-site): Employee orientation and survey meetings. Every affected employee
+participates. Consultants available for individual questions. This is where workforce
+involvement begins in earnest.
+
+Week 5 (Off-site): Process survey results. Tabulate by overall results and by demographic
+groups — departments, shifts, family care responsibilities. Build the report.
+
+Week 6 (On-site): Present survey results to management. Develop schedule options and
+pay policies based on what the survey revealed. Begin implementation documentation.
+
+Week 7 (On-site): Present options to all affected personnel. Distribute implementation
+documentation. Collect schedule preference forms. Determine workforce preference.
+
+Follow-up: Conduct a follow-up survey after implementation. Measure satisfaction and
+identify any issues that need adjustment.
+
+SERVICE TIERS — THREE LEVELS:
+1. Schedule Development Advice — minimal analysis, no survey, suitable for smaller
+   operations (15-30 employees), minimal on-site work.
+2. Change and Implementation Management Assistance — some analysis, survey processing,
+   limited on-site, mid-sized operations (30-65 employees).
+3. Full Change and Implementation Management Leadership — thorough analysis, full survey,
+   extensive on-site, complex operations including union environments.
+
+PRICING — WHAT YOU CAN SAY:
+Fixed-fee projects priced based on the scope and complexity of the work involved.
+Every project is unique. Most range between 5 and 10 weeks, with 6 weeks being the
+average. Most engagements result in operational savings that recover costs within six
+months or less. Free initial consultation — if they don't pick up a pencil,
+their time is free.
+
+ASK THE VISITOR:
+What is their operation size and complexity? That helps frame which tier makes most sense.
+
+OUT OF SCOPE:
+Specific project costs or fee quotes. Those come from a direct conversation with the team.
+=== END TOPIC MODULE ===
+""",
+
+    "engage_us": """
+=== CURRENT TOPIC: HOW TO ENGAGE SHIFTWORK SOLUTIONS ===
+
+YOUR ROLE IN THIS TOPIC:
+Helpful guide through the engagement process. Not a sales pitch — an honest description
+of how this works, what to expect, and how to take the next step if it feels right.
+
+WHAT TO COVER:
+- Every engagement starts with a free initial consultation. No cost, no obligation.
+  The Shiftwork Solutions philosophy: if they do not pick up a pencil, the visitor's
+  time is free. This is a genuine conversation to understand the situation, not a
+  discovery call designed to close a deal.
+- After the initial consultation, Shiftwork Solutions will propose an approach —
+  which service tier fits the situation, what the engagement would involve, and
+  what the fixed fee would be.
+- Three service tiers exist (small operations, mid-sized, large/complex — see process
+  topic for detail). The right tier depends on facility size, union involvement,
+  operational complexity, and how much change management support is needed.
+- Fixed-fee model means no surprises. The fee is based on the scope and complexity
+  of the work. Every project is unique — most range between 5 and 10 weeks,
+  with 6 weeks being the average.
+- Most projects recover their cost within six months through overtime reduction,
+  improved retention, or asset utilization improvements.
+
+HOW TO TAKE THE NEXT STEP:
+- Book a direct consultation using the scheduling link in the sidebar.
+- Call (415) 265-1621.
+- Or reach out via shift-work.com.
+- Someone from the team — Jim Dillingham, Dan Capshaw, or Ethan Franklin — will
+  be on the call. Each has over 30 years of experience.
+
+WHAT NOT TO DO:
+Do not quote specific fees or project costs. Do not promise timelines. Do not oversell.
+Let the process speak for itself.
+
+ASK THE VISITOR:
+What is driving their interest right now — are they in a crisis, planning ahead, or
+just exploring? That shapes what the initial conversation should focus on.
+=== END TOPIC MODULE ===
+""",
+
+    "implementation": """
+=== CURRENT TOPIC: IMPLEMENTATION ===
+
+YOUR ROLE IN THIS TOPIC:
+Experienced advisor on what implementation actually involves — the preparation, the
+timing, the common mistakes, and why it is harder than it looks. Speak from experience.
+Conceptual guidance only — no specific plans, templates, or recommendations.
+
+KEY POINTS YOU CAN DISCUSS:
+- Implementation is where most schedule changes either succeed or unravel. The technical
+  design of the schedule is rarely the issue. Execution is.
+- Timing is critical. Small changes can be implemented relatively quickly. Major changes —
+  moving from a 5-day to a 7-day operation, changing shift lengths, restructuring coverage
+  patterns — may require weeks of workforce preparation before the first day of the new schedule.
+- Avoid holiday seasons, vacation peaks, and major production cycles. These are the wrong
+  times to ask a workforce to absorb change.
+- Union environments require additional planning: contract timing, negotiation sequencing,
+  and often neutral third-party facilitation.
+- Implementation documentation is essential: written descriptions of the new schedule,
+  pay policy changes, transition procedures. Employees should not be guessing.
+- Common mistakes: posting the schedule without preparation. Assuming supervisors will
+  carry the message without support. Ignoring the 20% who will resist regardless and
+  spending all the energy trying to convert them instead of supporting the 60% who are
+  waiting to see how it goes.
+- Follow-up is not optional. A post-implementation survey 3-6 months after launch
+  reveals adjustment issues before they become retention problems.
+
+WHAT NOT TO GIVE AWAY:
+Do not provide implementation templates, communication scripts, meeting agendas, or
+specific transition timelines. These are deliverables of a paid engagement.
+
+ASK THE VISITOR:
+Where are they in the process? Have they communicated to the workforce yet? Is there a
+target go-live date? This helps frame what is most relevant to discuss.
+
+OUT OF SCOPE:
+Implementation of non-scheduling operational changes. Redirect briefly if these come up.
+=== END TOPIC MODULE ===
+""",
+
+    "industry": """
+=== CURRENT TOPIC: INDUSTRY-SPECIFIC ISSUES ===
+
+YOUR ROLE IN THIS TOPIC:
+Knowledgeable guide with genuine industry depth. Ask about their industry first, then
+engage specifically with the known challenges of that sector. Do not guess — ask and respond.
+
+INDUSTRIES SHIFTWORK SOLUTIONS SERVES:
+Pharmaceuticals, food processing, manufacturing (all types), mining, distribution centers,
+refining, semi-conductors, chemical operations, packaging, call centers, transportation,
+port operations, and military operations.
+
+INDUSTRY-SPECIFIC KNOWLEDGE — USE APPROPRIATELY:
+
+FOOD PROCESSING:
+Sanitation cycle considerations dominate schedule design — the sanitation window must be
+built into the schedule, not worked around it. Continuous production requirements. High
+physical demand affects fatigue and shift length decisions. Seasonal volume swings require
+flexible coverage planning.
+
+PHARMACEUTICALS:
+FDA and GMP compliance affects how schedules are documented and changed. High-skilled
+workforce with specific retention challenges — these workers have options. Validation and
+documentation requirements add complexity to any schedule change. Change management must
+account for regulatory visibility.
+
+MANUFACTURING (ALL TYPES):
+Equipment utilization is the primary economic driver. A traditional 5-day/3-shift operation
+runs at roughly 71% of available hours — moving to 7-day coverage can increase capacity
+40% without capital investment. Maintenance scheduling must be integrated into the coverage
+plan. Lean manufacturing initiatives often create the trigger for a schedule evaluation.
+
+MINING:
+Remote locations create unique fatigue management challenges — fly-in/fly-out schedules,
+extended rotations, and travel time all affect how shifts are designed. Regulatory fatigue
+rules vary by jurisdiction and must be built into the schedule architecture.
+
+DISTRIBUTION CENTERS:
+Variable demand patterns — peak season, promotional spikes — require schedules that can
+flex without constant overtime. Fulfillment timing requirements drive shift start and end
+times. Multi-shift coordination with inbound and outbound operations creates coverage
+complexity that is often underestimated.
+
+CHEMICAL / REFINING:
+Continuous process operations where shutting down is not an option. Fatigue and alertness
+are safety-critical, not just performance issues. Regulatory compliance around hours of
+work is often more stringent than in other sectors.
+
+CALL CENTERS / TRANSPORTATION / PORTS:
+Demand-driven coverage patterns with high variability. Part-time and variable-hour
+workforces create scheduling complexity that traditional models do not handle well.
+
+APPROACH:
+Ask the visitor their industry first. Then engage specifically with the challenges most
+relevant to that sector. If their industry is not listed, note that Shiftwork Solutions
+has worked across virtually all industries with shift operations and ask them to describe
+their specific situation — the issues are likely familiar.
+
+ASK THE VISITOR:
+What industry are they in, and what is the specific issue they are dealing with?
+=== END TOPIC MODULE ===
+"""
+}
+
+# Opening messages per topic — used by /opening route
+TOPIC_OPENINGS = {
+    "diagnostic":     "Hi, I'm Thomas. I help operations managers get clear on what's really going on with their shift operations — not just the surface problem, but what's underneath it. You can also explore topics like employee engagement, implementation, or industry-specific issues using the sidebar on the left. But first — what brought you here today?",
+    "engagement":     "Employee engagement and change management are really the same thing in a shift environment — you can't do one without the other. Shiftwork Solutions has a specific three-phase approach that's been refined across hundreds of facilities. What's your situation — have you been through a schedule change before, or is this new territory?",
+    "process":        "I can walk you through exactly how Shiftwork Solutions approaches an engagement — there's nothing secret about the process itself. Are you trying to understand what an engagement would look like, or are you further along than that?",
+    "engage_us":      "Happy to talk about what working with Shiftwork Solutions actually looks like. Everything starts with a free initial consultation — no pitch, just a real conversation. What's driving your interest right now?",
+    "implementation": "Implementation is where most schedule changes either hold or unravel — and it's almost always underestimated. Are you in the planning phase, or are you already in the middle of a change?",
+    "industry":       "Shiftwork Solutions has worked across virtually every industry with shift operations — pharmaceuticals, food processing, manufacturing, mining, distribution, and more. What industry are you in, and what's the specific issue you're dealing with?"
+}
+
+conversation_histories = {}
+
+
+def build_system_prompt(topic):
+    """Combine master prompt with the appropriate topic module."""
+    module = TOPIC_MODULES.get(topic, TOPIC_MODULES["diagnostic"])
+    return THOMAS_MASTER_PROMPT + module
+
+
+def is_bot_response(reply):
+    """Check if Claude returned the bot detection signal."""
+    return reply.strip() == "BOT_DETECTED"
+
+
+def generate_speech(text):
+    """Call ElevenLabs TTS, return base64 MP3. Returns None on failure."""
+    if not ELEVENLABS_API_KEY:
+        return None
     try:
-        from migrate_missing_tables import run_migration
-        from io import StringIO
-        import sys
-        old_stdout = sys.stdout
-        sys.stdout = captured = StringIO()
-        results = run_migration()
-        sys.stdout = old_stdout
-        output = captured.getvalue()
-        return jsonify({'success': results['success'], 'output': output, 'results': results})
-    except Exception as e:
-        import traceback
-        return jsonify({'success': False, 'error': str(e), 'traceback': traceback.format_exc()}), 500
-
-@app.route('/workflow')
-def workflow():
-    """Workflow interface"""
-    return render_template('index_workflow.html')
-
-@app.route('/memory-admin')
-def memory_admin():
-    return render_template('memory_admin.html')
-
-@app.route('/api/admin/migrate-storage', methods=['GET', 'POST'])
-def migrate_storage():
-    """One-time migration endpoint to move projects from /tmp to persistent storage."""
-    try:
-        import migrate_project_storage
-        from io import StringIO
-        import sys
-        old_stdout = sys.stdout
-        sys.stdout = captured_output = StringIO()
-        migrate_project_storage.migrate_project_storage()
-        sys.stdout = old_stdout
-        output = captured_output.getvalue()
-        return jsonify({'success': True, 'message': 'Migration complete!', 'output': output})
-    except Exception as e:
-        import traceback
-        return jsonify({'success': False, 'error': str(e), 'traceback': traceback.format_exc()}), 500
-
-@app.route('/api/admin/bootstrap-knowledge', methods=['GET'])
-def bootstrap_knowledge_endpoint():
-    """One-time endpoint to bootstrap knowledge base."""
-    try:
-        import bootstrap_knowledge
-        from io import StringIO
-        import sys
-        old_stdout = sys.stdout
-        sys.stdout = captured_output = StringIO()
-        result = bootstrap_knowledge.bootstrap_knowledge_base(project_path='./project_files')
-        sys.stdout = old_stdout
-        output = captured_output.getvalue()
-        return jsonify({
-            'success': True,
-            'message': 'Bootstrap complete!',
-            'output': output,
-            'results': {
-                'successful': len(result['success']),
-                'already_ingested': len(result['already_ingested']),
-                'failed': len(result['failed'])
+        headers = {
+            "xi-api-key": ELEVENLABS_API_KEY,
+            "Content-Type": "application/json",
+            "Accept": "audio/mpeg"
+        }
+        payload = {
+            "text": text,
+            "model_id": "eleven_turbo_v2",
+            "voice_settings": {
+                "stability": 0.55,
+                "similarity_boost": 0.80,
+                "style": 0.20,
+                "use_speaker_boost": True
             }
-        })
+        }
+        response = requests.post(ELEVENLABS_TTS_URL, headers=headers,
+                                 json=payload, timeout=15)
+        if response.status_code == 200:
+            return base64.b64encode(response.content).decode("utf-8")
+        print(f"ElevenLabs TTS error {response.status_code}: {response.text}")
+        return None
     except Exception as e:
-        import traceback
-        return jsonify({'success': False, 'error': str(e), 'traceback': traceback.format_exc()}), 500
+        print(f"ElevenLabs TTS exception: {e}")
+        return None
 
-@app.route('/api/admin/list-project-files', methods=['GET'])
-def list_project_files():
-    """Diagnostic endpoint to see what files are actually accessible."""
-    from pathlib import Path
-    results = {}
-    locations_to_check = [
-        '/mnt/project',
-        '/mnt/project/project_files',
-        'project_files',
-        './project_files',
-        os.path.join(os.getcwd(), 'project_files')
-    ]
-    for location in locations_to_check:
-        try:
-            path = Path(location)
-            if path.exists():
-                if path.is_dir():
-                    files = [f.name for f in path.iterdir() if f.is_file()]
-                    results[str(location)] = {
-                        'exists': True, 'is_dir': True,
-                        'file_count': len(files), 'files': files[:10],
-                        'total_files': len(files)
-                    }
-                else:
-                    results[str(location)] = {'exists': True, 'is_dir': False, 'note': 'This is a file, not a directory'}
+
+def generate_transcript_pdf(session_id, messages, lead_info=None):
+    """Generate branded PDF transcript. Returns BytesIO buffer."""
+    buffer = io.BytesIO()
+    c = pdf_canvas.Canvas(buffer, pagesize=letter)
+    width, height = letter
+    navy   = HexColor("#1a2744")
+    gold   = HexColor("#c8952a")
+    gray   = HexColor("#6b7280")
+    dark   = HexColor("#1f2937")
+    margin = inch
+
+    def check_page(y, needed=1.5):
+        if y < needed * inch:
+            c.showPage()
+            return height - margin
+        return y
+
+    c.setFillColor(navy)
+    c.rect(0, height - 1.4*inch, width, 1.4*inch, fill=1, stroke=0)
+    c.setFillColor(gold)
+    c.setFont("Helvetica-Bold", 20)
+    c.drawString(margin, height - 0.65*inch, "Shiftwork Solutions LLC")
+    c.setFillColorRGB(1, 1, 1)
+    c.setFont("Helvetica", 11)
+    c.drawRightString(width - margin, height - 0.55*inch,
+                      "Diagnostic Conversation Transcript")
+    c.drawRightString(width - margin, height - 0.85*inch,
+                      datetime.now().strftime("%B %d, %Y"))
+
+    y = height - 1.9*inch
+    c.setFillColor(navy)
+    c.setFont("Helvetica-Bold", 13)
+    c.drawString(margin, y, "Conversation Transcript")
+    y -= 0.1*inch
+    c.setStrokeColor(gold)
+    c.setLineWidth(1.5)
+    c.line(margin, y, width - margin, y)
+    y -= 0.35*inch
+
+    max_w = width - 2*margin - 0.25*inch
+
+    for msg in messages:
+        role    = msg.get("role", "")
+        content = msg.get("content", "")
+        if content in ("__INIT__", "BOT_DETECTED"):
+            continue
+        speaker = "Thomas" if role == "assistant" else "Visitor"
+        c.setFillColor(navy if role == "assistant" else gray)
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(margin, y, speaker + ":")
+        y -= 0.22*inch
+        c.setFont("Helvetica", 10)
+        c.setFillColor(dark)
+        words = content.split()
+        line  = ""
+        for word in words:
+            test = (line + " " + word).strip()
+            if c.stringWidth(test, "Helvetica", 10) < max_w:
+                line = test
             else:
-                results[str(location)] = {'exists': False}
-        except Exception as e:
-            results[str(location)] = {'error': str(e)}
-    results['current_working_directory'] = os.getcwd()
-    return jsonify({'success': True, 'locations_checked': results})
+                c.drawString(margin + 0.25*inch, y, line)
+                y -= 0.18*inch
+                y  = check_page(y)
+                line = word
+        if line:
+            c.drawString(margin + 0.25*inch, y, line)
+            y -= 0.18*inch
+        y -= 0.18*inch
+        y = check_page(y)
 
-# ============================================================================
-# KB DIAGNOSE ENDPOINT
-# ============================================================================
-@app.route('/api/admin/kb-diagnose', methods=['GET'])
-def kb_diagnose():
-    """Real-time knowledge base diagnostic endpoint."""
-    if knowledge_base is None:
-        return jsonify({
-            'success': False,
-            'error': 'Knowledge base object was never created. Check startup logs.',
-            'knowledge_base_initialized': False
-        }), 503
-    try:
-        status = knowledge_base.get_index_status()
-        return jsonify({'success': True, 'knowledge_base_initialized': True, **status})
-    except Exception as e:
-        import traceback
-        return jsonify({'success': False, 'error': str(e), 'traceback': traceback.format_exc()}), 500
+    if lead_info:
+        y = check_page(y, needed=3)
+        y -= 0.2*inch
+        c.setFillColor(navy)
+        c.setFont("Helvetica-Bold", 13)
+        c.drawString(margin, y, "Contact Information Provided")
+        y -= 0.1*inch
+        c.setStrokeColor(gold)
+        c.setLineWidth(1.5)
+        c.line(margin, y, width - margin, y)
+        y -= 0.3*inch
+        c.setFont("Helvetica", 11)
+        c.setFillColor(dark)
+        for key, val in lead_info.items():
+            if val:
+                c.drawString(margin, y, f"{key}:  {val}")
+                y -= 0.28*inch
 
-# ============================================================================
-# CLEAR KNOWLEDGE DB ENDPOINT
-# ============================================================================
-@app.route('/api/admin/clear-knowledge-db', methods=['GET'])
-def clear_knowledge_db():
-    """Wipe all uploaded knowledge documents, learned patterns, and ingestion log."""
-    try:
-        import sqlite3
-        from document_ingestion_engine import get_document_ingestor
-        ingestor = get_document_ingestor()
-        db = sqlite3.connect(ingestor.db_path)
-        cursor = db.cursor()
-        cursor.execute('DELETE FROM knowledge_extracts')
-        extracts_deleted = cursor.rowcount
-        cursor.execute('DELETE FROM learned_patterns')
-        patterns_deleted = cursor.rowcount
-        cursor.execute('DELETE FROM ingestion_log')
-        log_deleted = cursor.rowcount
-        db.commit()
-        db.close()
-        return jsonify({
-            'success': True,
-            'message': 'Knowledge base cleared. Ready for fresh uploads.',
-            'deleted': {
-                'knowledge_extracts': extracts_deleted,
-                'learned_patterns': patterns_deleted,
-                'ingestion_log': log_deleted
-            }
-        })
-    except Exception as e:
-        import traceback
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'traceback': traceback.format_exc()
-        }), 500
+    c.setFillColor(navy)
+    c.rect(0, 0, width, 0.65*inch, fill=1, stroke=0)
+    c.setFillColorRGB(1, 1, 1)
+    c.setFont("Helvetica", 9)
+    c.drawString(margin, 0.38*inch,
+                 "Shiftwork Solutions LLC  |  jim@shift-work.com  |  shift-work.com  |  (415) 265-1621")
+    c.drawRightString(width - margin, 0.38*inch, "Confidential")
 
-# ============================================================================
-# RESTORE KNOWLEDGE ENDPOINT
-# ============================================================================
-@app.route('/api/admin/restore-knowledge', methods=['POST'])
-def restore_knowledge():
-    """Restore the knowledge base from a JSON export file."""
-    try:
-        if 'export_file' not in request.files:
-            return jsonify({
-                'success': False,
-                'error': 'No export_file field in request. POST multipart/form-data with field name export_file.'
-            }), 400
+    c.save()
+    buffer.seek(0)
+    return buffer
 
-        export_file = request.files['export_file']
 
-        if not export_file.filename.endswith('.json'):
-            return jsonify({
-                'success': False,
-                'error': f'File must be a .json export file. Got: {export_file.filename}'
-            }), 400
-
-        import json as json_module
-        try:
-            export_data = json_module.load(export_file)
-        except Exception as parse_err:
-            return jsonify({
-                'success': False,
-                'error': f'Could not parse JSON file: {str(parse_err)}'
-            }), 400
-
-        from knowledge_restore import restore_knowledge_from_export
-        result = restore_knowledge_from_export(export_data)
-        status_code = 200 if result['success'] else 207
-        return jsonify(result), status_code
-
-    except Exception as e:
-        import traceback
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'traceback': traceback.format_exc()
-        }), 500
-
-@app.route('/api/admin/fix-patterns-table', methods=['GET'])
-def fix_patterns_table():
-    """One-time migration to fix learned_patterns table."""
-    try:
-        import migrate_learned_patterns
-        from io import StringIO
-        import sys
-        old_stdout = sys.stdout
-        sys.stdout = captured_output = StringIO()
-        migrate_learned_patterns.migrate_learned_patterns()
-        sys.stdout = old_stdout
-        output = captured_output.getvalue()
-        return jsonify({'success': True, 'message': 'Migration complete!', 'output': output})
-    except Exception as e:
-        import traceback
-        return jsonify({'success': False, 'error': str(e), 'traceback': traceback.format_exc()}), 500
-
-@app.route('/api/admin/diagnose-databases', methods=['GET'])
-def diagnose_databases():
-    """Find all swarm_intelligence.db files and show their contents."""
-    import sqlite3
-    from pathlib import Path
-    results = {}
-    search_paths = ['.', '/opt/render/project/src', '/mnt/project', '/tmp']
-    for search_path in search_paths:
-        try:
-            path = Path(search_path)
-            if path.exists():
-                for db_file in path.rglob('swarm_intelligence.db'):
-                    db_path = str(db_file.absolute())
-                    try:
-                        db = sqlite3.connect(db_path)
-                        cursor = db.cursor()
-                        cursor.execute('SELECT COUNT(*) FROM knowledge_extracts')
-                        doc_count = cursor.fetchone()[0]
-                        file_size = os.path.getsize(db_path)
-                        db.close()
-                        results[db_path] = {
-                            'exists': True, 'documents': doc_count,
-                            'size_bytes': file_size,
-                            'size_mb': round(file_size / 1024 / 1024, 2)
-                        }
-                    except Exception as e:
-                        results[db_path] = {'exists': True, 'error': str(e)}
-        except Exception:
-            pass
-    try:
-        from document_ingestion_engine import get_document_ingestor
-        ingestor = get_document_ingestor()
-        results['api_uses_path'] = ingestor.db_path
-    except Exception:
-        results['api_uses_path'] = 'error_loading'
-    results['current_directory'] = os.getcwd()
-    return jsonify({'success': True, 'databases_found': results})
-
-@app.route('/survey')
-def survey():
-    """Survey builder interface"""
-    return render_template('survey.html')
-
-@app.route('/api/patterns', methods=['GET'])
-def get_user_patterns():
-    """API endpoint to retrieve user patterns for dashboard"""
-    try:
-        from enhanced_intelligence import EnhancedIntelligence
-        intelligence = EnhancedIntelligence()
-        patterns = intelligence.get_all_patterns()
-        return jsonify({'success': True, 'patterns': patterns})
-    except Exception as e:
-        import traceback
-        print(f"Error fetching patterns: {traceback.format_exc()}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@app.route('/health')
+@app.route("/health")
 def health():
-    """Health check endpoint"""
-    from config import ANTHROPIC_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, GOOGLE_API_KEY
-    from db_engine import get_db_type
-
-    kb_ready = knowledge_base.is_ready if knowledge_base else False
-    kb_doc_count = len(knowledge_base.knowledge_index) if knowledge_base else 0
-    kb_status = 'initialized' if kb_ready and kb_doc_count > 0 else ('initializing' if knowledge_base else 'not_initialized')
-
-    research_status = 'disabled'
-    try:
-        from research_agent import get_research_agent
-        ra = get_research_agent()
-        research_status = 'enabled' if ra.is_available else 'api_key_missing'
-    except Exception:
-        research_status = 'not_installed'
-
-    alert_status = 'disabled'
-    alert_email_enabled = False
-    try:
-        from alert_system import get_alert_manager, ENABLE_EMAIL_ALERTS
-        am = get_alert_manager()
-        alert_status = 'enabled'
-        alert_email_enabled = ENABLE_EMAIL_ALERTS
-    except Exception:
-        alert_status = 'not_installed'
-
-    intelligence_status = 'disabled'
-    intelligence_companies = 0
-    try:
-        from intelligence import get_lead_manager, INDUSTRY_CATEGORIES
-        lm = get_lead_manager()
-        intelligence_status = 'enabled'
-        intelligence_companies = sum(len(c) for c in INDUSTRY_CATEGORIES.values())
-    except Exception:
-        intelligence_status = 'not_installed'
-
-    marketing_status = 'disabled'
-    try:
-        from content_marketing_engine import get_content_engine
-        ce = get_content_engine()
-        marketing_status = 'enabled'
-    except Exception:
-        marketing_status = 'not_installed'
-
-    avatar_status = 'disabled'
-    try:
-        from avatar_consultation_engine import get_avatar_engine
-        ae = get_avatar_engine()
-        avatar_status = 'enabled'
-    except Exception:
-        avatar_status = 'not_installed'
-
-    evaluation_status = 'disabled'
-    last_evaluation = None
-    try:
-        from swarm_self_evaluation import get_swarm_evaluator
-        evaluator = get_swarm_evaluator()
-        evaluation_status = 'enabled'
-        last_eval = evaluator.get_latest_evaluation()
-        if last_eval:
-            last_evaluation = {
-                'date': last_eval.get('evaluation_date'),
-                'health_score': last_eval.get('health_score'),
-                'trend': last_eval.get('trend')
-            }
-    except Exception:
-        evaluation_status = 'not_installed'
-
-    introspection_status = 'disabled'
-    last_introspection = None
-    try:
-        from introspection import get_introspection_engine, check_introspection_notifications
-        intro_engine = get_introspection_engine()
-        introspection_status = 'enabled'
-        latest_intro = intro_engine.get_latest_introspection()
-        if latest_intro:
-            last_introspection = {
-                'id': latest_intro.get('id'),
-                'created_at': latest_intro.get('created_at'),
-                'health_score': int(latest_intro.get('confidence_score', 0) * 100)
-            }
-        notification = check_introspection_notifications()
-        if notification.get('has_notification'):
-            introspection_status = 'enabled_with_notification'
-    except Exception:
-        introspection_status = 'not_installed'
-
-    manual_generator_status = 'disabled'
-    try:
-        from implementation_manual_generator import get_manuals_dashboard
-        dashboard = get_manuals_dashboard()
-        manual_generator_status = 'enabled'
-    except Exception:
-        manual_generator_status = 'not_installed'
-
-    project_management_status = 'disabled'
-    project_count = 0
-    try:
-        from database_file_management import get_project_manager
-        pm = get_project_manager()
-        projects = pm.list_projects(status='all', limit=1000)
-        project_count = len(projects)
-        project_management_status = 'enabled'
-    except Exception:
-        project_management_status = 'not_installed'
-
-    case_studies_status = 'disabled'
-    try:
-        from case_study_generator import INDUSTRY_DISPLAY_NAMES
-        case_studies_status = 'enabled'
-    except Exception:
-        case_studies_status = 'not_installed'
-
-    blog_posts_status = 'disabled'
-    try:
-        from blog_post_generator import BLOG_TOPICS
-        blog_posts_status = 'enabled'
-    except Exception:
-        blog_posts_status = 'not_installed'
-
-    # =========================================================================
-    # PHASE 3: CAPABILITIES MANIFEST STATUS
-    # Added: March 08, 2026
-    # =========================================================================
-    capabilities_manifest_status = {}
-    try:
-        from intelligence.capabilities_manifest import get_manifest_summary, get_manifest_metadata
-        caps_summary = get_manifest_summary()
-        caps_meta    = get_manifest_metadata()
-        capabilities_manifest_status = {
-            'status':          'active',
-            'summary':         caps_summary,
-            'manifest_length': caps_meta.get('manifest_length', 0),
-            'cached':          caps_meta.get('cached', False),
-            'refresh_url':     '/api/capabilities/refresh',
-            'full_url':        '/api/capabilities',
-        }
-    except Exception as e:
-        capabilities_manifest_status = {
-            'status': 'error',
-            'error':  str(e),
-        }
-
     return jsonify({
-        'status': 'healthy',
-        'version': 'Survey in a Box Phase 3 Mar13 + Phase 6 Proactive Agent Mar12 + Phase 2 Survey Assembly Mar12 + Phase 1 Onboarding Mar10 + Phase 3 Capabilities Manifest Mar08 + Phase 2A Memory Mar05 + PostgreSQL Migration Mar02',
-        'database': {
-            'type': get_db_type(),
-            'backend': 'PostgreSQL (persistent)' if get_db_type() == 'postgresql' else 'SQLite (local dev)'
-        },
-        'file_upload_limit': '100MB',
-        'storage_path': '/mnt/project/swarm_projects/',
-        'orchestrators': {
-            'sonnet': 'configured' if ANTHROPIC_API_KEY else 'missing',
-            'opus': 'configured' if ANTHROPIC_API_KEY else 'missing'
-        },
-        'specialists': {
-            'gpt4': 'configured' if OPENAI_API_KEY else 'missing',
-            'deepseek': 'configured' if DEEPSEEK_API_KEY else 'missing',
-            'gemini': 'configured' if GOOGLE_API_KEY else 'missing'
-        },
-        'knowledge_base': {
-            'status': kb_status,
-            'documents_indexed': kb_doc_count,
-            'initialization_complete': kb_ready,
-            'diagnose_url': '/api/admin/kb-diagnose'
-        },
-        'schedule_generator': {
-            'status': 'enabled' if SCHEDULE_GENERATOR_AVAILABLE else 'disabled',
-            'type': 'pattern_based_conversational'
-        },
-        'output_formatter': {
-            'status': 'enabled' if OUTPUT_FORMATTER_AVAILABLE else 'disabled'
-        },
-        'research_agent': {'status': research_status},
-        'alert_system': {'status': alert_status, 'email_enabled': alert_email_enabled},
-        'intelligence_dashboard': {
-            'status': intelligence_status,
-            'past_clients_indexed': intelligence_companies
-        },
-        'content_marketing': {'status': marketing_status},
-        'avatar_consultation': {'status': avatar_status, 'avatars': ['david', 'sarah']},
-        'swarm_evaluation': {'status': evaluation_status, 'last_evaluation': last_evaluation},
-        'introspection_layer': {
-            'status': introspection_status,
-            'last_introspection': last_introspection
-        },
-        'manual_generator': {'status': manual_generator_status},
-        'project_management': {
-            'status': project_management_status,
-            'total_projects': project_count
-        },
-        'case_study_generator': {
-            'status': case_studies_status,
-            'features': ['ai_generation', 'seo_optimized', 'word_doc_download', 'saved_library', '16_industries_supported']
-        },
-        'blog_post_generator': {
-            'status': blog_posts_status,
-            'features': ['ai_generation', 'seo_optimized', 'conversational_tone', 'word_doc_download', 'saved_library', '12_topics']
-        },
-        'knowledge_restore': {
-            'status': 'enabled',
-            'endpoint': '/api/admin/restore-knowledge',
-            'method': 'POST multipart/form-data, field: export_file'
-        },
-        'capabilities_manifest': capabilities_manifest_status,
-        'survey_in_a_box': {
-            'status': 'enabled',
-            'intake_form': '/survey/start',
-            'admin_dashboard': '/survey/admin',
-            'phase': '3 - Online Survey Engine'
-        },
-        'proactive_agent': {
-            'status': 'enabled',
-            'briefing_url': '/api/briefing',
-            'tasks_url': '/api/tasks',
-            'status_url': '/api/proactive/status',
-            'phase': '6 - Proactive Agent (Deliverables 1-7 active)',
-        },
+        "status":      "ok",
+        "service":     "shift-work-diagnostic",
+        "tts_enabled": bool(ELEVENLABS_API_KEY)
+    }), 200
+
+
+@app.route("/")
+def index():
+    return render_template_string(open("templates/index.html").read())
+
+
+@app.route("/opening", methods=["POST"])
+def opening():
+    """
+    Return a topic-specific opening message and audio.
+    Called when the page loads or when a topic is selected.
+    Accepts: { session_id, topic }
+    """
+    data       = request.get_json() or {}
+    session_id = data.get("session_id", "default")
+    topic      = data.get("topic", "diagnostic")
+
+    opening_text = TOPIC_OPENINGS.get(topic, TOPIC_OPENINGS["diagnostic"])
+
+    # Initialize or reset session for this topic
+    conversation_histories[session_id] = [{
+        "role":    "assistant",
+        "content": opening_text
+    }]
+
+    audio_b64 = generate_speech(opening_text)
+    return jsonify({
+        "reply":      opening_text,
+        "audio":      audio_b64,
+        "session_id": session_id,
+        "topic":      topic
+    }), 200
+
+
+@app.route("/transcribe", methods=["POST"])
+def transcribe():
+    """
+    Receive audio blob from frontend, send to ElevenLabs STT,
+    return transcribed text. Replaces unreliable browser
+    SpeechRecognition API.
+
+    Handles all browser audio formats:
+    - Chrome/Edge: audio/webm;codecs=opus  -> audio.webm
+    - Firefox:     audio/ogg;codecs=opus   -> audio.ogg
+    - Safari:      audio/mp4               -> audio.mp4
+    """
+    if not ELEVENLABS_API_KEY:
+        return jsonify({"error": "STT not configured"}), 503
+
+    if "audio" not in request.files:
+        return jsonify({"error": "No audio file provided"}), 400
+
+    audio_file = request.files["audio"]
+    audio_data = audio_file.read()
+
+    if not audio_data:
+        return jsonify({"error": "Empty audio file"}), 400
+
+    raw_mime  = audio_file.content_type or "audio/webm"
+    base_mime = raw_mime.split(";")[0].strip().lower()
+
+    mime_map = {
+        "audio/webm":  ("audio.webm", "audio/webm"),
+        "audio/ogg":   ("audio.ogg",  "audio/ogg"),
+        "audio/mp4":   ("audio.mp4",  "audio/mp4"),
+        "audio/mpeg":  ("audio.mp3",  "audio/mpeg"),
+        "audio/wav":   ("audio.wav",  "audio/wav"),
+        "audio/x-wav": ("audio.wav",  "audio/wav"),
+    }
+
+    filename, content_type = mime_map.get(base_mime, ("audio.webm", "audio/webm"))
+
+    print(f"STT: raw_mime={raw_mime} base_mime={base_mime} "
+          f"filename={filename} size={len(audio_data)}")
+
+    try:
+        headers = {"xi-api-key": ELEVENLABS_API_KEY}
+        files   = {"file": (filename, audio_data, content_type)}
+        data    = {"model_id": "scribe_v1", "language_code": "en"}
+
+        response = requests.post(
+            ELEVENLABS_STT_URL,
+            headers=headers,
+            files=files,
+            data=data,
+            timeout=20
+        )
+
+        if response.status_code == 200:
+            result = response.json()
+            text   = result.get("text", "").strip()
+            print(f"STT result: {repr(text)}")
+            return jsonify({"text": text}), 200
+
+        print(f"ElevenLabs STT error {response.status_code}: {response.text}")
+        return jsonify({"error": f"STT failed: {response.status_code}"}), 500
+
+    except Exception as e:
+        print(f"ElevenLabs STT exception: {e}")
+        return jsonify({"error": f"STT exception: {str(e)}"}), 500
+
+
+@app.route("/chat", methods=["POST"])
+def chat():
+    """
+    Main conversation route.
+    Accepts: { message, session_id, topic }
+    Topic defaults to 'diagnostic' if not provided.
+    Returns bot_detected:true if bot signal received — frontend
+    silently ends the session without displaying any message.
+    """
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+
+    session_id   = data.get("session_id", "default")
+    user_message = data.get("message", "").strip()
+    topic        = data.get("topic", "diagnostic")
+
+    if not user_message:
+        return jsonify({"error": "No message provided"}), 400
+
+    if session_id not in conversation_histories:
+        conversation_histories[session_id] = []
+
+    conversation_histories[session_id].append({
+        "role": "user", "content": user_message
     })
 
-# Register blueprints
-from routes.core import core_bp
-from routes.analysis import analysis_bp
-from routes.survey import survey_bp
-app.register_blueprint(core_bp)
-app.register_blueprint(analysis_bp)
-app.register_blueprint(survey_bp)
+    # Keep last 40 messages to manage context window
+    if len(conversation_histories[session_id]) > 40:
+        conversation_histories[session_id] = \
+            conversation_histories[session_id][-40:]
 
-from routes.orchestration_handler import orchestration_bp
-app.register_blueprint(orchestration_bp)
-print("Orchestration Handler API registered")
+    system_prompt = build_system_prompt(topic)
 
-print("DEBUG: About to import bulletproof project routes...")
-try:
-    from routes.projects_bulletproof import projects_bp
-    app.register_blueprint(projects_bp)
-    print("Bulletproof Project Management API registered")
-except ImportError as e:
-    print(f"IMPORT ERROR: Bulletproof Project Management routes not found: {e}")
-except Exception as e:
-    print(f"EXCEPTION: Bulletproof Project Management registration failed: {e}")
+    # Layer 1: Append live normative context from Swarm if available.
+    # Graceful — adds nothing if Swarm is down or topic has no query.
+    swarm_context = get_swarm_context(topic, conversation_histories[session_id])
+    if swarm_context:
+        system_prompt = system_prompt + swarm_context
 
-try:
-    from routes.voice import voice_bp, register_voice_websocket
-    app.register_blueprint(voice_bp)
-    register_voice_websocket(app)
-    print("Voice Control WebSocket registered")
-except ImportError as e:
-    print(f"Voice Control routes not found: {e}")
-except Exception as e:
-    print(f"Voice Control registration failed: {e}")
-
-try:
-    from routes.research import research_bp
-    app.register_blueprint(research_bp)
-    print("Research Agent API registered")
-except ImportError:
-    print("Research Agent routes not found - research features disabled")
-except Exception as e:
-    print(f"Research Agent registration failed: {e}")
-
-try:
-    from routes.alerts import alerts_bp
-    app.register_blueprint(alerts_bp)
-    print("Alert System API registered")
-except ImportError:
-    print("Alert System routes not found - alert features disabled")
-except Exception as e:
-    print(f"Alert System registration failed: {e}")
-
-try:
-    from routes.intelligence import intelligence_bp
-    app.register_blueprint(intelligence_bp)
-    print("Intelligence Dashboard API registered")
-except ImportError as e:
-    print(f"Intelligence Dashboard routes not found: {e}")
-except Exception as e:
-    print(f"Intelligence Dashboard registration failed: {e}")
-
-try:
-    from routes.marketing import marketing_bp
-    app.register_blueprint(marketing_bp)
-    print("Content Marketing Engine API registered")
-except ImportError as e:
-    print(f"Content Marketing Engine routes not found: {e}")
-except Exception as e:
-    print(f"Content Marketing Engine registration failed: {e}")
-
-try:
-    from routes.avatar import avatar_bp
-    app.register_blueprint(avatar_bp)
-    print("Avatar Consultation System API registered")
-except ImportError as e:
-    print(f"Avatar Consultation routes not found: {e}")
-except Exception as e:
-    print(f"Avatar Consultation registration failed: {e}")
-
-try:
-    from routes.evaluation import evaluation_bp
-    app.register_blueprint(evaluation_bp)
-    print("Swarm Self-Evaluation API registered")
-except ImportError as e:
-    print(f"Swarm Self-Evaluation routes not found: {e}")
-except Exception as e:
-    print(f"Swarm Self-Evaluation registration failed: {e}")
-
-try:
-    from routes.introspection import introspection_bp
-    app.register_blueprint(introspection_bp)
-    print("Introspection Layer API registered")
-except ImportError as e:
-    print(f"Introspection Layer routes not found: {e}")
-except Exception as e:
-    print(f"Introspection Layer registration failed: {e}")
-
-try:
-    from routes.manuals import manuals_bp
-    app.register_blueprint(manuals_bp)
-    print("Implementation Manual Generator API registered")
-except ImportError as e:
-    print(f"Implementation Manual Generator routes not found: {e}")
-except Exception as e:
-    print(f"Implementation Manual Generator registration failed: {e}")
-
-try:
-    from routes.learning import learning_bp
-    app.register_blueprint(learning_bp)
-    print("Adaptive Learning Engine API registered")
-except ImportError as e:
-    print(f"Adaptive Learning Engine routes not found: {e}")
-except Exception as e:
-    print(f"Adaptive Learning Engine registration failed: {e}")
-
-try:
-    from routes.predictive import predictive_bp
-    app.register_blueprint(predictive_bp)
-    print("Predictive Intelligence API registered")
-except ImportError as e:
-    print(f"Predictive Intelligence routes not found: {e}")
-except Exception as e:
-    print(f"Predictive Intelligence registration failed: {e}")
-
-try:
-    from routes.optimization import optimization_bp
-    app.register_blueprint(optimization_bp)
-    print("Self-Optimization Engine API registered")
-except ImportError as e:
-    print(f"Self-Optimization Engine routes not found: {e}")
-except Exception as e:
-    print(f"Self-Optimization Engine registration failed: {e}")
-
-try:
-    from routes.ingest import ingest_bp
-    app.register_blueprint(ingest_bp)
-    print("Knowledge Ingestion API registered")
-except ImportError as e:
-    print(f"Knowledge Ingestion routes not found: {e}")
-except Exception as e:
-    print(f"Knowledge Ingestion registration failed: {e}")
-
-try:
-    from conversation_learning import learning_bp as conv_learning_bp
-    app.register_blueprint(conv_learning_bp)
-    print("Unified Conversation Learning API registered")
-except ImportError as e:
-    print(f"Conversation Learning routes not found: {e}")
-except Exception as e:
-    print(f"Conversation Learning registration failed: {e}")
-
-try:
-    from routes.pattern_recognition import pattern_bp
-    app.register_blueprint(pattern_bp)
-    print("Pattern Recognition API registered")
-except ImportError as e:
-    print(f"Pattern Recognition routes not found: {e}")
-except Exception as e:
-    print(f"Pattern Recognition registration failed: {e}")
-
-try:
-    from routes.phase1_intelligence import intelligence_bp as phase1_intelligence_bp
-    app.register_blueprint(phase1_intelligence_bp, name='phase1_intelligence')
-    print("Phase 1 Intelligence API registered")
-except ImportError as e:
-    print(f"Phase 1 Intelligence routes not found: {e}")
-except Exception as e:
-    print(f"Phase 1 Intelligence registration failed: {e}")
-
-try:
-    from routes.case_studies import case_studies_bp
-    app.register_blueprint(case_studies_bp)
-    print("Case Study Generator API registered")
-except ImportError as e:
-    print(f"Case Study Generator routes not found: {e}")
-except Exception as e:
-    print(f"Case Study Generator registration failed: {e}")
-
-try:
-    from routes.blog_posts import blog_posts_bp
-    app.register_blueprint(blog_posts_bp)
-    print("Blog Post Generator API registered")
-except ImportError as e:
-    print(f"Blog Post Generator routes not found: {e}")
-except Exception as e:
-    print(f"Blog Post Generator registration failed: {e}")
-
-# ----------------------------------------------------------------------------
-# Phase 2A: Memory System API
-# Provides /api/memory/health, /api/memory/stats, /api/memory/recent,
-# /api/memory/search endpoints.
-# Added: March 05, 2026
-# ----------------------------------------------------------------------------
-try:
-    from routes.memory import memory_bp
-    app.register_blueprint(memory_bp)
-    print("Phase 2A Memory System API registered")
-except ImportError as e:
-    print(f"Memory System routes not found: {e}")
-except Exception as e:
-    print(f"Memory System registration failed: {e}")
-
-# ----------------------------------------------------------------------------
-# Phase 3: Capabilities Manifest API
-# Provides GET /api/capabilities, GET /api/capabilities/summary,
-# POST /api/capabilities/refresh endpoints.
-# Added: March 08, 2026
-# ----------------------------------------------------------------------------
-try:
-    from routes.capabilities import capabilities_bp
-    app.register_blueprint(capabilities_bp)
-    print("Phase 3 Capabilities Manifest API registered")
-except ImportError as e:
-    print(f"Capabilities Manifest routes not found: {e}")
-except Exception as e:
-    print(f"Capabilities Manifest registration failed: {e}")
-
-# ----------------------------------------------------------------------------
-# Survey in a Box: Intake Form API
-# Provides GET /survey/start (public form) and POST /api/survey/intake/submit.
-# Added: March 10, 2026
-# ----------------------------------------------------------------------------
-try:
-    from routes.survey_intake import survey_intake_bp
-    app.register_blueprint(survey_intake_bp)
-    print("Survey in a Box Intake API registered")
-except ImportError as e:
-    print(f"Survey Intake routes not found: {e}")
-except Exception as e:
-    print(f"Survey Intake registration failed: {e}")
-
-# ----------------------------------------------------------------------------
-# Survey in a Box: Admin Dashboard API
-# Provides GET /survey/admin and all /api/survey/admin/* endpoints.
-# Added: March 10, 2026
-# ----------------------------------------------------------------------------
-try:
-    from routes.survey_admin import survey_admin_bp
-    app.register_blueprint(survey_admin_bp)
-    print("Survey in a Box Admin API registered")
-except ImportError as e:
-    print(f"Survey Admin routes not found: {e}")
-except Exception as e:
-    print(f"Survey Admin registration failed: {e}")
-
-# ----------------------------------------------------------------------------
-# Survey in a Box: Respondent API (Phase 3)
-# Provides /survey/take/<token>, /api/survey/take/* endpoints,
-# and /api/survey/admin/project/*/open,close,responses,export.
-# Added: March 13, 2026
-# ----------------------------------------------------------------------------
-try:
-    from routes.survey_respondent import survey_respondent_bp
-    app.register_blueprint(survey_respondent_bp)
-    print("Survey in a Box Respondent API registered")
-except ImportError as e:
-    print(f"Survey Respondent routes not found: {e}")
-except Exception as e:
-    print(f"Survey Respondent registration failed: {e}")
-
-# ----------------------------------------------------------------------------
-# Survey in a Box: Normative Database API (Phase 5, Step 5.1)
-# Provides GET /api/survey/norm/status (load verification),
-# POST /api/survey/norm/compare, POST /api/survey/norm/compare-categorical,
-# POST /api/survey/norm/batch, POST /api/survey/norm/significant,
-# GET /api/survey/norm/search endpoints.
-# Added: March 13, 2026
-# ----------------------------------------------------------------------------
-try:
-    from routes.survey_normative import survey_normative_bp
-    app.register_blueprint(survey_normative_bp)
-    print("Survey in a Box Normative Database API registered")
-except ImportError as e:
-    print(f"Survey Normative routes not found: {e}")
-except Exception as e:
-    print(f"Survey Normative registration failed: {e}")
-
-# ----------------------------------------------------------------------------
-# Phase 6: Proactive Agent API
-# Provides /api/briefing, /api/tasks, /api/leads, /api/monitor/services,
-# /api/proactive/status endpoints.
-# Added: March 12, 2026
-# ----------------------------------------------------------------------------
-try:
-    from routes.proactive import proactive_bp
-    app.register_blueprint(proactive_bp)
-    print("Phase 6 Proactive Agent API registered")
-except ImportError as e:
-    print(f"Proactive Agent routes not found: {e}")
-except Exception as e:
-    print(f"Proactive Agent registration failed: {e}")
-
-try:
-    from routes.background_jobs import background_jobs_bp
-    app.register_blueprint(background_jobs_bp)
-    print("Background File Processor API registered")
-except ImportError as e:
-    print(f"Background File Processor routes not found: {e}")
-except Exception as e:
-    print(f"Background File Processor registration failed: {e}")
-
-try:
-    from knowledge_backup_routes import knowledge_backup_bp
-    app.register_blueprint(knowledge_backup_bp)
-    print("Knowledge Backup System API registered")
-except ImportError as e:
-    print("Knowledge Backup: module not enabled (knowledge_backup_system not installed)")
-except Exception as e:
-    print(f"Knowledge Backup registration failed: {e}")
-
-@app.route('/knowledge')
-def knowledge_management():
-    """Knowledge Management interface - Shoulders of Giants system"""
-    return render_template('knowledge_management.html')
-
-try:
-    from project_dashboard import dashboard_bp
-    app.register_blueprint(dashboard_bp)
-    print("Project Dashboard API registered")
-except ImportError:
-    print("Project Dashboard not found")
-
-try:
-    from analytics_engine import analytics_bp
-    app.register_blueprint(analytics_bp)
-    print("Analytics API registered")
-except ImportError:
-    print("Analytics Engine not found")
-
-try:
-    from workflow_engine import workflow_bp
-    app.register_blueprint(workflow_bp)
-    print("Workflow Engine API registered")
-except ImportError:
-    print("Workflow Engine not found")
-
-try:
-    from integration_hub import integration_bp
-    app.register_blueprint(integration_bp)
-    print("Integration Hub API registered")
-except ImportError:
-    print("Integration Hub not found")
-
-# ============================================================================
-# ADMIN: FIX MEMORY STORE COLUMNS (Phase 2A - Add new columns)
-# ============================================================================
-@app.route('/api/admin/fix-memory-store', methods=['GET'])
-def fix_memory_store():
-    """One-time fix: add Phase 2A columns to memory_store table."""
     try:
-        from db_engine import get_db_connection
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        results = []
-        columns = [
-            ("category",       "TEXT DEFAULT 'general'"),
-            ("content",        "TEXT DEFAULT ''"),
-            ("source_task_id", "INTEGER"),
-            ("updated_at",     "TIMESTAMP DEFAULT NOW()"),
-        ]
-        for col_name, col_def in columns:
-            try:
-                cursor.execute(
-                    f"ALTER TABLE memory_store ADD COLUMN IF NOT EXISTS {col_name} {col_def}"
-                )
-                results.append(f"OK: {col_name}")
-            except Exception as e:
-                results.append(f"SKIP: {col_name} — {e}")
-        conn.commit()
-        conn.close()
-        return jsonify({'success': True, 'results': results})
-    except Exception as e:
-        import traceback
-        return jsonify({'success': False, 'error': str(e), 'traceback': traceback.format_exc()}), 500
+        response = anthropic_client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=400,
+            system=system_prompt,
+            messages=conversation_histories[session_id]
+        )
+        thomas_reply = response.content[0].text
 
-# ============================================================================
-# ADMIN: FIX MEMORY SCHEMA (Phase 2A - Drop orphaned Phase 1 columns)
-# ============================================================================
-@app.route('/api/admin/fix-memory-schema', methods=['GET'])
-def fix_memory_schema():
-    """
-    One-time migration: drop Phase 1 orphan columns from memory_store.
-    Run once after deploying this update. Safe to run multiple times.
-    """
-    try:
-        from db_engine import get_db_connection
-        results = []
-        orphan_columns = [
-            'memory_key',
-            'memory_value',
-            'expires_at',
-            'access_count',
-            'last_accessed',
-        ]
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
+        # Bot detection — silent termination
+        if is_bot_response(thomas_reply):
+            conversation_histories.pop(session_id, None)
+            return jsonify({"bot_detected": True}), 200
 
-            cursor.execute("""
-                SELECT column_name, data_type, is_nullable
-                FROM information_schema.columns
-                WHERE table_name = 'memory_store'
-                ORDER BY ordinal_position
-            """)
-            before_cols = [
-                {
-                    'column': r['column_name'],
-                    'type': r['data_type'],
-                    'nullable': r['is_nullable']
-                }
-                for r in cursor.fetchall()
-            ]
-
-            for col in orphan_columns:
-                try:
-                    cursor.execute(
-                        f"ALTER TABLE memory_store DROP COLUMN IF EXISTS {col}"
-                    )
-                    results.append(f"DROPPED: {col}")
-                except Exception as col_err:
-                    results.append(f"ERROR dropping {col}: {col_err}")
-
-            cursor.execute("""
-                SELECT column_name, data_type, is_nullable
-                FROM information_schema.columns
-                WHERE table_name = 'memory_store'
-                ORDER BY ordinal_position
-            """)
-            after_cols = [
-                {
-                    'column': r['column_name'],
-                    'type': r['data_type'],
-                    'nullable': r['is_nullable']
-                }
-                for r in cursor.fetchall()
-            ]
-
-        return jsonify({
-            'success': True,
-            'message': (
-                'Phase 1 orphan columns removed. '
-                'Memory system should now store memories correctly.'
-            ),
-            'operations': results,
-            'schema_before': before_cols,
-            'schema_after': after_cols,
-            'next_step': (
-                'Send a message to /api/orchestrate, '
-                'then check /api/memory/recent to confirm memories are being stored.'
-            )
+        conversation_histories[session_id].append({
+            "role": "assistant", "content": thomas_reply
         })
-
-    except Exception as e:
-        import traceback
+        audio_b64 = generate_speech(thomas_reply)
         return jsonify({
-            'success': False,
-            'error': str(e),
-            'traceback': traceback.format_exc()
-        }), 500
+            "reply":      thomas_reply,
+            "audio":      audio_b64,
+            "session_id": session_id,
+            "topic":      topic
+        }), 200
 
-# ============================================================================
-# PHASE 6: BACKGROUND SCHEDULER INIT
-# Must run AFTER all blueprints are registered so all proactive.* modules
-# are importable. Uses a PostgreSQL advisory lock — only one Gunicorn worker
-# starts the scheduler. The second worker silently skips.
-# Added: March 12, 2026 (Deliverable 7)
-# ============================================================================
-try:
-    from proactive.scheduler import init_scheduler
-    init_scheduler(app)
-except ImportError as e:
-    print(f"Scheduler not found (non-fatal): {e}")
-except Exception as e:
-    print(f"Scheduler init failed (non-fatal): {e}")
+    except anthropic.APIError as e:
+        return jsonify({"error": f"API error: {str(e)}"}), 500
+    except Exception as e:
+        return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
 
-# ============================================================================
-# PHASE 6: SWARM SELF-REGISTRATION
-# Register the Swarm's own /health endpoint as a monitored service.
-# UPSERT on service_name — safe to call on every startup.
-# Added: March 12, 2026 (Deliverable 7)
-# ============================================================================
-try:
-    from proactive.app_monitor import auto_register_swarm
-    auto_register_swarm()
-except ImportError as e:
-    print(f"App Monitor not found (non-fatal): {e}")
-except Exception as e:
-    print(f"Swarm self-registration failed (non-fatal): {e}")
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    debug = os.environ.get('FLASK_ENV') == 'development'
-    app.run(host='0.0.0.0', port=port, debug=debug)
+@app.route("/transcript", methods=["POST"])
+def download_transcript():
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+    session_id = data.get("session_id", "default")
+    lead_info  = data.get("lead_info", None)
+    messages   = conversation_histories.get(session_id, [])
+    if not messages:
+        return jsonify({"error": "No conversation found for this session"}), 404
+    try:
+        pdf_buffer = generate_transcript_pdf(session_id, messages, lead_info)
+        filename   = f"Shiftwork-Diagnostic-{datetime.now().strftime('%Y-%m-%d')}.pdf"
+        return send_file(pdf_buffer, mimetype="application/pdf",
+                         as_attachment=True, download_name=filename)
+    except Exception as e:
+        print(f"Transcript PDF error: {e}")
+        return jsonify({"error": f"PDF generation failed: {str(e)}"}), 500
+
+
+@app.route("/booking-link")
+def booking_link():
+    return jsonify({"url": TEAMS_BOOKING_LINK}), 200
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)
 
 # I did no harm and this file is not truncated
