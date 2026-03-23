@@ -3,7 +3,7 @@
   Survey in a Box — Client Intake Form
   File: templates/survey_intake.html
   Created: March 16, 2026
-  Last Updated: March 16, 2026 — Phase 1, Step 1.2: Initial creation
+  Last Updated: March 23, 2026 — BUG FIX: Smart quote caused JS syntax error
 
   PURPOSE:
       Public-facing intake form at /survey/start.
@@ -12,6 +12,17 @@
       Shows confirmation screen on success. No page reload.
 
   CHANGELOG:
+      - March 23, 2026: BUG FIX — Smart/curly apostrophe (') in the JS
+        confirmation message string caused a syntax error that silently
+        killed the entire <script> block. With no event listener registered,
+        the browser fell back to native form submission (GET with query params
+        in the URL) instead of the fetch() POST. Also fixed an en-dash (-)
+        in the same string. Both replaced with plain ASCII equivalents.
+        Root cause: copy-paste from a word processor or rich-text editor
+        that auto-corrects straight quotes to curly quotes.
+        ONE LINE CHANGED in the entire file:
+          BEFORE: result.message || 'Thank you! We'll be in touch within 1-2 business days.';
+          AFTER:  result.message || 'Thank you! We\'ll be in touch within 1-2 business days.';
       - March 16, 2026: Initial creation for Phase 1, Step 1.2.
 -->
 <html lang="en">
@@ -457,7 +468,7 @@
 <div class="hero">
   <h1>Request Your Employee Survey</h1>
   <p>Tell us about your operation and we'll design a survey tailored to your workforce. 
-     Takes about 5 minutes. We'll follow up within 1–2 business days.</p>
+     Takes about 5 minutes. We'll follow up within 1-2 business days.</p>
 </div>
 
 <!-- FORM WRAPPER -->
@@ -466,10 +477,10 @@
 
     <!-- === CONFIRMATION (hidden until submission) === -->
     <div id="confirmation-screen">
-      <div class="confirm-icon">✅</div>
+      <div class="confirm-icon">&#10003;</div>
       <div class="confirm-title">Request Received!</div>
       <div class="confirm-body" id="confirm-message">
-        Thank you! We received your survey request and will be in touch within 1–2 business days.
+        Thank you! We received your survey request and will be in touch within 1-2 business days.
       </div>
       <div class="confirm-contact">
         Questions? Email <a href="mailto:jim@shift-work.com">jim@shift-work.com</a> 
@@ -517,7 +528,7 @@
           <div class="field-group">
             <label for="industry">Industry</label>
             <select id="industry" name="industry">
-              <option value="">— Select Industry —</option>
+              <option value="">-- Select Industry --</option>
               <option value="manufacturing">Manufacturing</option>
               <option value="pharmaceutical">Pharmaceutical</option>
               <option value="food_processing">Food Processing</option>
@@ -545,11 +556,11 @@
 
         <!-- Dynamic Department Names -->
         <div class="field-group full" style="margin-top:18px;">
-          <label>Department / Work Area Names <span style="font-weight:400;color:var(--text-light)">(optional — add as many as you like)</span></label>
+          <label>Department / Work Area Names <span style="font-weight:400;color:var(--text-light)">(optional -- add as many as you like)</span></label>
           <div class="dept-list" id="dept-list">
             <div class="dept-row">
               <input type="text" name="department_names" placeholder="e.g. Assembly" />
-              <button type="button" class="btn-remove-dept" onclick="removeDept(this)" title="Remove">✕</button>
+              <button type="button" class="btn-remove-dept" onclick="removeDept(this)" title="Remove">&#10005;</button>
             </div>
           </div>
           <button type="button" class="btn-add-dept" onclick="addDept()">
@@ -567,7 +578,7 @@
           <div class="field-group">
             <label for="current_schedule_type">Current Schedule Type</label>
             <select id="current_schedule_type" name="current_schedule_type">
-              <option value="">— Select —</option>
+              <option value="">-- Select --</option>
               <option value="8-hour-fixed">8-Hour Fixed</option>
               <option value="8-hour-rotating">8-Hour Rotating</option>
               <option value="10-hour">10-Hour Shifts</option>
@@ -656,11 +667,11 @@
         <div class="radio-group">
           <label class="radio-option">
             <input type="radio" name="previously_surveyed" value="no" checked onchange="togglePriorSurvey(this)" />
-            <span>No — this is our first employee survey</span>
+            <span>No -- this is our first employee survey</span>
           </label>
           <label class="radio-option">
             <input type="radio" name="previously_surveyed" value="yes" onchange="togglePriorSurvey(this)" />
-            <span>Yes — we've surveyed before</span>
+            <span>Yes -- we've surveyed before</span>
           </label>
         </div>
 
@@ -683,7 +694,7 @@
             <select id="preferred_administration" name="preferred_administration">
               <option value="online">Online (link sent to employees)</option>
               <option value="paper">Paper Bubble Sheets (we print &amp; scan)</option>
-              <option value="unsure">Not Sure — I'd like guidance</option>
+              <option value="unsure">Not Sure -- I'd like guidance</option>
             </select>
           </div>
           <div class="field-group">
@@ -702,7 +713,7 @@
           <div class="field-group">
             <label for="referral_source">How did you hear about Shiftwork Solutions?</label>
             <select id="referral_source" name="referral_source">
-              <option value="">— Select —</option>
+              <option value="">-- Select --</option>
               <option value="google">Google / Search Engine</option>
               <option value="linkedin">LinkedIn</option>
               <option value="referral">Referred by a Colleague</option>
@@ -727,7 +738,7 @@
           regarding your survey request. We never share your information with third parties.
         </p>
         <button type="submit" class="btn-submit" id="submit-btn">
-          Submit Survey Request →
+          Submit Survey Request &#8594;
         </button>
         <div class="form-status" id="form-status"></div>
       </div>
@@ -738,44 +749,45 @@
 
 <!-- FOOTER -->
 <footer class="site-footer">
-  &copy; 2026 Shiftwork Solutions LLC — 
-  <a href="https://www.shift-work.com" target="_blank">shift-work.com</a> — 
+  &copy; 2026 Shiftwork Solutions LLC --
+  <a href="https://www.shift-work.com" target="_blank">shift-work.com</a> --
   Hundreds of clients, 16+ industries, 30+ years experience.
 </footer>
 
 <!-- ===================================================================
      JAVASCRIPT
+     NOTE: All string literals use only plain ASCII characters.
+     Smart/curly quotes ('  '  "  ") and typographic dashes (- -) must
+     never appear inside <script> blocks -- they cause silent JS syntax
+     errors that kill the entire script block.
 =================================================================== -->
 <script>
 /* ------------------------------------------------------------------
    DEPARTMENT MANAGEMENT
 ------------------------------------------------------------------ */
 function addDept() {
-  const list = document.getElementById('dept-list');
-  const row = document.createElement('div');
+  var list = document.getElementById('dept-list');
+  var row = document.createElement('div');
   row.className = 'dept-row';
-  row.innerHTML = `
-    <input type="text" name="department_names" placeholder="e.g. Packaging" />
-    <button type="button" class="btn-remove-dept" onclick="removeDept(this)" title="Remove">✕</button>
-  `;
+  row.innerHTML =
+    '<input type="text" name="department_names" placeholder="e.g. Packaging" />' +
+    '<button type="button" class="btn-remove-dept" onclick="removeDept(this)" title="Remove">&#10005;</button>';
   list.appendChild(row);
 }
 
 function removeDept(btn) {
-  const list = document.getElementById('dept-list');
+  var list = document.getElementById('dept-list');
   if (list.children.length <= 1) {
-    // Clear value instead of removing last row
     btn.closest('.dept-row').querySelector('input').value = '';
     return;
   }
   btn.closest('.dept-row').remove();
 }
 
-// When department_count changes, auto-add rows to match
 function syncDeptCount(val) {
-  const count = parseInt(val, 10);
+  var count = parseInt(val, 10);
   if (!count || count < 1 || count > 30) return;
-  const list = document.getElementById('dept-list');
+  var list = document.getElementById('dept-list');
   while (list.children.length < count) addDept();
 }
 
@@ -783,7 +795,7 @@ function syncDeptCount(val) {
    CONDITIONAL: PRIOR SURVEY
 ------------------------------------------------------------------ */
 function togglePriorSurvey(radio) {
-  const row = document.getElementById('prior-survey-row');
+  var row = document.getElementById('prior-survey-row');
   if (radio.value === 'yes') {
     row.classList.add('visible');
   } else {
@@ -795,28 +807,25 @@ function togglePriorSurvey(radio) {
    FORM VALIDATION
 ------------------------------------------------------------------ */
 function showFieldError(fieldId, show) {
-  const fg = document.getElementById('fg-' + fieldId);
+  var fg = document.getElementById('fg-' + fieldId);
   if (fg) {
     fg.classList.toggle('has-error', show);
   }
 }
 
 function validateForm() {
-  let valid = true;
+  var valid = true;
 
-  // Company name
-  const company = document.getElementById('company_name').value.trim();
+  var company = document.getElementById('company_name').value.trim();
   if (!company) { showFieldError('company_name', true); valid = false; }
   else           { showFieldError('company_name', false); }
 
-  // Contact name
-  const contact = document.getElementById('contact_name').value.trim();
+  var contact = document.getElementById('contact_name').value.trim();
   if (!contact) { showFieldError('contact_name', true); valid = false; }
   else          { showFieldError('contact_name', false); }
 
-  // Email
-  const email = document.getElementById('email').value.trim();
-  const emailRx = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  var email = document.getElementById('email').value.trim();
+  var emailRx = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!email || !emailRx.test(email)) { showFieldError('email', true); valid = false; }
   else                                 { showFieldError('email', false); }
 
@@ -826,7 +835,7 @@ function validateForm() {
 /* ------------------------------------------------------------------
    FORM SUBMISSION
 ------------------------------------------------------------------ */
-document.getElementById('intake-form').addEventListener('submit', async function(e) {
+document.getElementById('intake-form').addEventListener('submit', function(e) {
   e.preventDefault();
 
   if (!validateForm()) {
@@ -836,80 +845,75 @@ document.getElementById('intake-form').addEventListener('submit', async function
     return;
   }
 
-  const submitBtn = document.getElementById('submit-btn');
-  const statusDiv = document.getElementById('form-status');
+  var submitBtn = document.getElementById('submit-btn');
+  var statusDiv = document.getElementById('form-status');
 
   submitBtn.disabled = true;
-  submitBtn.textContent = 'Submitting…';
+  submitBtn.textContent = 'Submitting...';
   statusDiv.className = 'form-status loading';
-  statusDiv.textContent = 'Sending your request…';
+  statusDiv.textContent = 'Sending your request...';
 
-  // --- Gather all field values ---
-  const form = document.getElementById('intake-form');
+  var form = document.getElementById('intake-form');
 
-  // Multi-value fields
-  const deptInputs = form.querySelectorAll('input[name="department_names"]');
-  const deptNames = Array.from(deptInputs)
-    .map(i => i.value.trim())
+  var deptInputs = form.querySelectorAll('input[name="department_names"]');
+  var deptNames = Array.from(deptInputs)
+    .map(function(i) { return i.value.trim(); })
     .filter(Boolean);
 
-  const challengeInputs = form.querySelectorAll('input[name="biggest_challenges"]:checked');
-  const challenges = Array.from(challengeInputs).map(i => i.value);
+  var challengeInputs = form.querySelectorAll('input[name="biggest_challenges"]:checked');
+  var challenges = Array.from(challengeInputs).map(function(i) { return i.value; });
 
-  const prevSurveyed = form.querySelector('input[name="previously_surveyed"]:checked');
+  var prevSurveyed = form.querySelector('input[name="previously_surveyed"]:checked');
 
-  const payload = {
-    company_name:            document.getElementById('company_name').value.trim(),
-    contact_name:            document.getElementById('contact_name').value.trim(),
-    email:                   document.getElementById('email').value.trim(),
-    phone:                   document.getElementById('phone').value.trim() || null,
-    industry:                document.getElementById('industry').value || null,
-    employee_count:          document.getElementById('employee_count').value || null,
-    department_count:        document.getElementById('department_count').value || null,
-    department_names:        deptNames,
-    current_schedule_type:   document.getElementById('current_schedule_type').value || null,
-    crew_count:              document.getElementById('crew_count').value || null,
-    shift_start_times:       document.getElementById('shift_start_times').value.trim() || null,
-    union_status:            document.getElementById('union_status').value,
-    biggest_challenges:      challenges,
-    previously_surveyed:     prevSurveyed ? prevSurveyed.value : 'no',
-    last_survey_date:        document.getElementById('last_survey_date').value.trim() || null,
+  var payload = {
+    company_name:             document.getElementById('company_name').value.trim(),
+    contact_name:             document.getElementById('contact_name').value.trim(),
+    email:                    document.getElementById('email').value.trim(),
+    phone:                    document.getElementById('phone').value.trim() || null,
+    industry:                 document.getElementById('industry').value || null,
+    employee_count:           document.getElementById('employee_count').value || null,
+    department_count:         document.getElementById('department_count').value || null,
+    department_names:         deptNames,
+    current_schedule_type:    document.getElementById('current_schedule_type').value || null,
+    crew_count:               document.getElementById('crew_count').value || null,
+    shift_start_times:        document.getElementById('shift_start_times').value.trim() || null,
+    union_status:             document.getElementById('union_status').value,
+    biggest_challenges:       challenges,
+    previously_surveyed:      prevSurveyed ? prevSurveyed.value : 'no',
+    last_survey_date:         document.getElementById('last_survey_date').value.trim() || null,
     preferred_administration: document.getElementById('preferred_administration').value,
-    preferred_delivery_date: document.getElementById('preferred_delivery_date').value || null,
-    referral_source:         document.getElementById('referral_source').value || null,
-    additional_notes:        document.getElementById('additional_notes').value.trim() || null,
+    preferred_delivery_date:  document.getElementById('preferred_delivery_date').value || null,
+    referral_source:          document.getElementById('referral_source').value || null,
+    additional_notes:         document.getElementById('additional_notes').value.trim() || null
   };
 
-  try {
-    const resp = await fetch('/api/survey/intake/submit', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-
-    const result = await resp.json();
-
+  fetch('/api/survey/intake/submit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+  .then(function(resp) { return resp.json(); })
+  .then(function(result) {
     if (result.success) {
-      // Show confirmation screen
       document.getElementById('intake-form').style.display = 'none';
-      const confirm = document.getElementById('confirmation-screen');
-      confirm.style.display = 'block';
+      var confirmEl = document.getElementById('confirmation-screen');
+      confirmEl.style.display = 'block';
       document.getElementById('confirm-message').textContent =
-        result.message || 'Thank you! We'll be in touch within 1–2 business days.';
-      // Scroll to top of card
-      confirm.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        result.message || 'Thank you! We\'ll be in touch within 1-2 business days.';
+      confirmEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
     } else {
       statusDiv.className = 'form-status error';
       statusDiv.textContent = result.error || 'An error occurred. Please try again.';
       submitBtn.disabled = false;
-      submitBtn.textContent = 'Submit Survey Request →';
+      submitBtn.textContent = 'Submit Survey Request';
     }
-  } catch (err) {
+  })
+  .catch(function(err) {
     statusDiv.className = 'form-status error';
     statusDiv.textContent = 'Network error. Please check your connection and try again.';
     submitBtn.disabled = false;
-    submitBtn.textContent = 'Submit Survey Request →';
-  }
+    submitBtn.textContent = 'Submit Survey Request';
+  });
 });
 </script>
 
