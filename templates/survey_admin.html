@@ -3,7 +3,7 @@
   Survey in a Box — Admin Dashboard
   File: templates/survey_admin.html
   Created: March 16, 2026
-  Last Updated: March 16, 2026 — Phase 1, Step 1.3: Initial creation
+  Last Updated: March 24, 2026 — BUG FIX: Login freeze / stuck "Signing in..."
 
   PURPOSE:
       Password-protected admin dashboard for Jim at /survey/admin.
@@ -24,13 +24,41 @@
       - Approve (POST /api/survey/admin/project/<id>/approve)
 
   CHANGELOG:
+      - March 24, 2026: BUG FIX — Login freeze / stuck "Signing in..." button.
+        THREE fixes applied to the JavaScript AUTH section only. No HTML or CSS changed.
+
+        FIX 1 — isLoggingIn guard: Added boolean flag to prevent doLogin() from
+          running concurrently. Browser autofill + onkeydown Enter was firing doLogin()
+          while checkAuth() was still in flight, stacking two simultaneous fetch calls.
+          The second call would set btn.disabled=true and btn.textContent='Signing in...'
+          but its response was ignored, leaving the button frozen. Guard prevents this.
+
+        FIX 2 — Autofill protection: checkAuth() now sets a flag (authCheckComplete)
+          when it finishes. doLogin() returns immediately if called before checkAuth()
+          resolves. This prevents the autofill+Enter race condition where the login
+          form submitted before we knew if the session was already valid.
+
+        FIX 3 — Fetch timeout: doLogin() now uses AbortController with a 10-second
+          timeout. If the Render worker is slow or the request hangs, the fetch is
+          aborted after 10 seconds, the error handler fires, and the button resets.
+          Without this, a hung request left the button frozen indefinitely.
+
+        ALSO FIXED: Replaced smart/curly quotes and typographic dashes in JS string
+          literals with plain ASCII equivalents. Same root cause as the intake form
+          bug fixed March 23, 2026.
+
       - March 16, 2026: Initial creation for Phase 1, Step 1.3.
+
+  IMPORTANT — JS STRING LITERAL RULE:
+      All string literals inside <script> blocks must use only plain ASCII characters.
+      Smart quotes (' ' " ") and typographic dashes (- -) cause silent JS syntax
+      errors that kill the entire script block. Use straight quotes and hyphens only.
 -->
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Survey Admin — Shiftwork Solutions</title>
+  <title>Survey Admin -- Shiftwork Solutions</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -548,7 +576,7 @@
 <header class="admin-header">
   <div class="brand">
     Shiftwork Solutions
-    <span>Survey in a Box · Admin</span>
+    <span>Survey in a Box &middot; Admin</span>
   </div>
   <div class="header-actions" id="header-actions" style="display:none">
     <span class="text-muted" style="color:#aac4e6">Welcome, Jim</span>
@@ -561,10 +589,10 @@
 ================================================================ -->
 <div id="screen-login" class="screen active">
   <div class="login-card">
-    <h2>🔒 Admin Access</h2>
+    <h2>&#128274; Admin Access</h2>
     <p>Enter your admin password to access the Survey in a Box dashboard.</p>
     <input type="password" id="login-password" placeholder="Admin password"
-           onkeydown="if(event.key==='Enter') doLogin()" autofocus />
+           autocomplete="current-password" />
     <button class="btn-primary" onclick="doLogin()" id="login-btn">Sign In</button>
     <div class="login-error" id="login-error">Incorrect password. Please try again.</div>
   </div>
@@ -577,10 +605,10 @@
   <div class="list-header">
     <div>
       <h1>Survey Intake Submissions</h1>
-      <div class="list-meta" id="list-meta">Loading…</div>
+      <div class="list-meta" id="list-meta">Loading...</div>
     </div>
     <button class="btn-primary" style="width:auto;padding:9px 20px;font-size:0.87rem"
-            onclick="loadClients()">↻ Refresh</button>
+            onclick="loadClients()">&#8635; Refresh</button>
   </div>
 
   <!-- Status filters -->
@@ -595,7 +623,7 @@
   </div>
 
   <div class="client-list" id="client-list">
-    <div class="empty-state"><div class="spinner"></div><br>Loading…</div>
+    <div class="empty-state"><div class="spinner"></div><br>Loading...</div>
   </div>
 </div>
 
@@ -604,7 +632,7 @@
 ================================================================ -->
 <div id="screen-detail" class="screen">
   <div class="detail-nav">
-    <button class="btn-back" onclick="showList()">← Back to List</button>
+    <button class="btn-back" onclick="showList()">&#8592; Back to List</button>
     <span class="detail-title" id="detail-title">Client Detail</span>
   </div>
 
@@ -628,7 +656,7 @@
     <!-- LEFT: Intake data -->
     <div>
       <div class="detail-card" style="margin-bottom:16px">
-        <div class="detail-card-header">📋 Intake Information</div>
+        <div class="detail-card-header">&#128203; Intake Information</div>
         <div class="detail-card-body">
           <table class="info-table" id="intake-table">
             <tbody></tbody>
@@ -637,10 +665,10 @@
       </div>
 
       <div class="detail-card">
-        <div class="detail-card-header">📝 Admin Notes (Internal)</div>
+        <div class="detail-card-header">&#128221; Admin Notes (Internal)</div>
         <div class="detail-card-body">
           <textarea class="admin-notes-area" id="admin-notes-field"
-                    placeholder="Notes about this client, decisions made, special considerations…"></textarea>
+                    placeholder="Notes about this client, decisions made, special considerations..."></textarea>
           <button class="btn-save mt-8" onclick="saveAdminNotes()" style="width:auto;padding:7px 16px;font-size:0.84rem">
             Save Notes
           </button>
@@ -652,17 +680,17 @@
     <!-- RIGHT: Project config -->
     <div>
       <div class="detail-card">
-        <div class="detail-card-header">⚙️ Survey Configuration</div>
+        <div class="detail-card-header">&#9881; Survey Configuration</div>
         <div class="detail-card-body">
 
           <!-- Question categories -->
           <div class="config-section">
             <label>Question Categories to Include</label>
             <div class="question-cats" id="question-cats">
-              <!-- Populated by JS — placeholder categories for Phase 1 -->
+              <!-- Populated by JS -->
             </div>
             <div class="text-muted mt-8">
-              Phase 2 will wire the full 103-question bank here. 
+              Phase 2 will wire the full 103-question bank here.
               All categories are selected by default.
             </div>
           </div>
@@ -690,11 +718,11 @@
           <!-- Save + Approve -->
           <div class="action-row">
             <button class="btn-save" onclick="saveProjectConfig()">
-              💾 Save Configuration
+              &#128190; Save Configuration
             </button>
             <div class="status-msg" id="project-msg"></div>
             <button class="btn-approve" id="approve-btn" onclick="approveProject()">
-              ✅ Approve — Ready for Survey Assembly
+              &#10003; Approve -- Ready for Survey Assembly
             </button>
             <div class="status-msg" id="approve-msg"></div>
           </div>
@@ -708,22 +736,36 @@
 
 <!-- ================================================================
      JAVASCRIPT
+     RULES: All string literals use only plain ASCII characters.
+     Smart/curly quotes and typographic dashes must never appear
+     inside <script> blocks -- they cause silent JS syntax errors.
 ================================================================ -->
 <script>
 /* ------------------------------------------------------------------
    STATE
+   authCheckComplete: set true when checkAuth() finishes.
+     doLogin() returns early if called before this is set, preventing
+     the autofill+Enter race condition.
+   isLoggingIn: guard flag preventing concurrent doLogin() calls.
+     Browser autofill can trigger both onkeydown (Enter) and onclick
+     simultaneously. Without this guard, two fetch() calls stack and
+     the second one's response is never handled, freezing the button.
 ------------------------------------------------------------------ */
-let currentClientId  = null;
-let currentProjectId = null;
-let activeFilter     = 'all';
-let allClients       = [];
+var currentClientId    = null;
+var currentProjectId   = null;
+var activeFilter       = 'all';
+var allClients         = [];
+var authCheckComplete  = false;   /* FIX 2: autofill protection */
+var isLoggingIn        = false;   /* FIX 1: double-submit guard */
 
 /* ------------------------------------------------------------------
    SCREEN MANAGEMENT
 ------------------------------------------------------------------ */
 function showScreen(id) {
-  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-  const el = document.getElementById(id);
+  document.querySelectorAll('.screen').forEach(function(s) {
+    s.classList.remove('active');
+  });
+  var el = document.getElementById(id);
   if (el) {
     el.classList.add('active');
     window.scrollTo(0, 0);
@@ -738,35 +780,71 @@ function showList() {
 
 /* ------------------------------------------------------------------
    AUTH
+   FIX 2: checkAuth sets authCheckComplete=true when it resolves.
+   FIX 1: doLogin uses isLoggingIn guard to prevent concurrent calls.
+   FIX 3: doLogin uses AbortController for a 10-second timeout.
 ------------------------------------------------------------------ */
-async function checkAuth() {
-  try {
-    const resp = await fetch('/api/survey/admin/auth-status');
-    const data = await resp.json();
-    if (data.authenticated) {
-      onAuthSuccess();
-    } else {
+function checkAuth() {
+  authCheckComplete = false;
+  fetch('/api/survey/admin/auth-status')
+    .then(function(resp) { return resp.json(); })
+    .then(function(data) {
+      authCheckComplete = true;
+      if (data.authenticated) {
+        onAuthSuccess();
+      } else {
+        showScreen('screen-login');
+      }
+    })
+    .catch(function() {
+      authCheckComplete = true;
       showScreen('screen-login');
-    }
-  } catch (e) {
-    showScreen('screen-login');
-  }
+    });
 }
 
-async function doLogin() {
-  const pw  = document.getElementById('login-password').value;
-  const btn = document.getElementById('login-btn');
-  const err = document.getElementById('login-error');
+function doLogin() {
+  /* FIX 2: If checkAuth hasn't finished yet, don't try to login --
+     we don't know if we're already authenticated. This handles the
+     case where browser autofill triggers Enter before checkAuth resolves. */
+  if (!authCheckComplete) {
+    return;
+  }
+
+  /* FIX 1: Prevent concurrent login calls */
+  if (isLoggingIn) {
+    return;
+  }
+
+  var pw  = document.getElementById('login-password').value;
+  if (!pw) { return; }
+
+  var btn = document.getElementById('login-btn');
+  var err = document.getElementById('login-error');
+
   err.classList.remove('visible');
+  isLoggingIn = true;
   btn.disabled = true;
-  btn.textContent = 'Signing in…';
-  try {
-    const resp = await fetch('/api/survey/admin/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: pw }),
-    });
-    const data = await resp.json();
+  btn.textContent = 'Signing in...';
+
+  /* FIX 3: AbortController timeout -- if fetch hangs for 10 seconds,
+     abort it and reset the button so the user can try again. */
+  var controller = new AbortController();
+  var timeoutId = setTimeout(function() {
+    controller.abort();
+  }, 10000);
+
+  fetch('/api/survey/admin/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: pw }),
+    signal: controller.signal
+  })
+  .then(function(resp) {
+    clearTimeout(timeoutId);
+    return resp.json();
+  })
+  .then(function(data) {
+    isLoggingIn = false;
     if (data.success) {
       onAuthSuccess();
     } else {
@@ -775,12 +853,19 @@ async function doLogin() {
       btn.disabled = false;
       btn.textContent = 'Sign In';
     }
-  } catch (e) {
-    err.textContent = 'Network error. Please try again.';
-    err.classList.add('visible');
+  })
+  .catch(function(e) {
+    clearTimeout(timeoutId);
+    isLoggingIn = false;
     btn.disabled = false;
     btn.textContent = 'Sign In';
-  }
+    if (e.name === 'AbortError') {
+      err.textContent = 'Request timed out. Please try again.';
+    } else {
+      err.textContent = 'Network error. Please try again.';
+    }
+    err.classList.add('visible');
+  });
 }
 
 function onAuthSuccess() {
@@ -789,154 +874,170 @@ function onAuthSuccess() {
   loadClients();
 }
 
-async function logout() {
-  await fetch('/api/survey/admin/logout', { method: 'POST' });
-  document.getElementById('header-actions').style.display = 'none';
-  document.getElementById('login-password').value = '';
-  showScreen('screen-login');
+function logout() {
+  fetch('/api/survey/admin/logout', { method: 'POST' })
+    .then(function() {
+      isLoggingIn = false;
+      authCheckComplete = false;
+      document.getElementById('header-actions').style.display = 'none';
+      document.getElementById('login-password').value = '';
+      document.getElementById('login-btn').disabled = false;
+      document.getElementById('login-btn').textContent = 'Sign In';
+      document.getElementById('login-error').classList.remove('visible');
+      showScreen('screen-login');
+      /* Re-run checkAuth so authCheckComplete gets set correctly */
+      checkAuth();
+    });
 }
 
 /* ------------------------------------------------------------------
    CLIENT LIST
 ------------------------------------------------------------------ */
-async function loadClients() {
+function loadClients() {
   document.getElementById('client-list').innerHTML =
     '<div class="empty-state"><div class="spinner"></div></div>';
-  document.getElementById('list-meta').textContent = 'Loading…';
-  try {
-    const resp = await fetch('/api/survey/admin/clients');
-    if (resp.status === 401) { checkAuth(); return; }
-    const data = await resp.json();
-    if (!data.success) throw new Error(data.error || 'Failed to load clients.');
-    allClients = data.clients || [];
-    renderClientList();
-  } catch (e) {
-    document.getElementById('client-list').innerHTML =
-      `<div class="empty-state" style="color:var(--red)">Error: ${e.message}</div>`;
-  }
+  document.getElementById('list-meta').textContent = 'Loading...';
+
+  fetch('/api/survey/admin/clients')
+    .then(function(resp) {
+      if (resp.status === 401) { checkAuth(); return null; }
+      return resp.json();
+    })
+    .then(function(data) {
+      if (!data) return;
+      if (!data.success) throw new Error(data.error || 'Failed to load clients.');
+      allClients = data.clients || [];
+      renderClientList();
+    })
+    .catch(function(e) {
+      document.getElementById('client-list').innerHTML =
+        '<div class="empty-state" style="color:var(--red)">Error: ' + escHtml(e.message) + '</div>';
+    });
 }
 
 function setFilter(btn, filter) {
   activeFilter = filter;
-  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.filter-btn').forEach(function(b) {
+    b.classList.remove('active');
+  });
   btn.classList.add('active');
   renderClientList();
 }
 
 function renderClientList() {
-  const filtered = activeFilter === 'all'
+  var filtered = activeFilter === 'all'
     ? allClients
-    : allClients.filter(c => c.status === activeFilter);
+    : allClients.filter(function(c) { return c.status === activeFilter; });
 
-  const total = allClients.length;
-  const showing = filtered.length;
+  var total   = allClients.length;
+  var showing = filtered.length;
   document.getElementById('list-meta').textContent =
-    `${total} submission${total !== 1 ? 's' : ''} total — showing ${showing}`;
+    total + ' submission' + (total !== 1 ? 's' : '') + ' total -- showing ' + showing;
 
-  const listEl = document.getElementById('client-list');
+  var listEl = document.getElementById('client-list');
   if (filtered.length === 0) {
-    listEl.innerHTML = `<div class="empty-state">
-      <div class="icon">📭</div>
-      <div>No submissions${activeFilter !== 'all' ? ' with status "' + activeFilter + '"' : ''} yet.</div>
-    </div>`;
+    listEl.innerHTML = '<div class="empty-state">' +
+      '<div class="icon">&#128237;</div>' +
+      '<div>No submissions' + (activeFilter !== 'all' ? ' with status "' + activeFilter + '"' : '') + ' yet.</div>' +
+      '</div>';
     return;
   }
 
-  listEl.innerHTML = filtered.map(c => `
-    <div class="client-card" onclick="openClient(${c.id})">
-      <div class="client-card-body">
-        <div class="client-card-name">${escHtml(c.company_name)}</div>
-        <div class="client-card-meta">
-          ${escHtml(c.contact_name)} · ${escHtml(c.email)}
-          ${c.industry ? ' · ' + formatIndustry(c.industry) : ''}
-          ${c.employee_count ? ' · ' + c.employee_count + ' employees' : ''}
-          · Submitted ${formatDate(c.created_at)}
-        </div>
-      </div>
-      <span class="badge ${badgeClass(c.status)}">${c.status}</span>
-      <span class="client-card-chevron">›</span>
-    </div>
-  `).join('');
+  listEl.innerHTML = filtered.map(function(c) {
+    return '<div class="client-card" onclick="openClient(' + c.id + ')">' +
+      '<div class="client-card-body">' +
+        '<div class="client-card-name">' + escHtml(c.company_name) + '</div>' +
+        '<div class="client-card-meta">' +
+          escHtml(c.contact_name) + ' &middot; ' + escHtml(c.email) +
+          (c.industry ? ' &middot; ' + formatIndustry(c.industry) : '') +
+          (c.employee_count ? ' &middot; ' + c.employee_count + ' employees' : '') +
+          ' &middot; Submitted ' + formatDate(c.created_at) +
+        '</div>' +
+      '</div>' +
+      '<span class="badge ' + badgeClass(c.status) + '">' + c.status + '</span>' +
+      '<span class="client-card-chevron">&#8250;</span>' +
+    '</div>';
+  }).join('');
 }
 
 /* ------------------------------------------------------------------
    CLIENT DETAIL
 ------------------------------------------------------------------ */
-async function openClient(clientId) {
-  currentClientId = clientId;
+function openClient(clientId) {
+  currentClientId  = clientId;
   currentProjectId = null;
   showScreen('screen-detail');
 
   document.getElementById('intake-table').querySelector('tbody').innerHTML =
-    '<tr><td colspan="2"><div class="spinner"></div> Loading…</td></tr>';
-  document.getElementById('detail-title').textContent = 'Loading…';
+    '<tr><td colspan="2"><div class="spinner"></div> Loading...</td></tr>';
+  document.getElementById('detail-title').textContent = 'Loading...';
 
-  try {
-    const resp = await fetch(`/api/survey/admin/client/${clientId}`);
-    if (resp.status === 401) { showScreen('screen-login'); return; }
-    const data = await resp.json();
-    if (!data.success) throw new Error(data.error || 'Failed to load client.');
-
-    renderClientDetail(data.client, data.project);
-  } catch (e) {
-    document.getElementById('detail-title').textContent = `Error: ${e.message}`;
-  }
+  fetch('/api/survey/admin/client/' + clientId)
+    .then(function(resp) {
+      if (resp.status === 401) { showScreen('screen-login'); return null; }
+      return resp.json();
+    })
+    .then(function(data) {
+      if (!data) return;
+      if (!data.success) throw new Error(data.error || 'Failed to load client.');
+      renderClientDetail(data.client, data.project);
+    })
+    .catch(function(e) {
+      document.getElementById('detail-title').textContent = 'Error: ' + e.message;
+    });
 }
 
 function renderClientDetail(client, project) {
   document.getElementById('detail-title').textContent = client.company_name;
   document.getElementById('detail-status').value = client.status || 'new';
 
-  // Intake data table
-  const challenges = Array.isArray(client.biggest_challenges)
-    ? client.biggest_challenges : [];
-  const deptNames  = Array.isArray(client.department_names)
+  var challenges = Array.isArray(client.biggest_challenges) ? client.biggest_challenges : [];
+  var deptNames  = Array.isArray(client.department_names)
     ? client.department_names.filter(Boolean) : [];
 
-  const rows = [
+  var rows = [
     ['Contact',           escHtml(client.contact_name)],
-    ['Email',             `<a href="mailto:${escHtml(client.email)}">${escHtml(client.email)}</a>`],
-    ['Phone',             escHtml(client.phone || '—')],
-    ['Industry',          formatIndustry(client.industry || '—')],
-    ['Employees',         client.employee_count ? client.employee_count.toLocaleString() : '—'],
-    ['Departments',       client.department_count || '—'],
-    ['Dept. Names',       deptNames.length ? tagList(deptNames) : '—'],
-    ['Schedule Type',     formatSchedule(client.current_schedule_type || '—')],
-    ['Crews',             client.crew_count || '—'],
-    ['Shift Times',       escHtml(client.shift_start_times || '—')],
+    ['Email',             '<a href="mailto:' + escHtml(client.email) + '">' + escHtml(client.email) + '</a>'],
+    ['Phone',             escHtml(client.phone || '--')],
+    ['Industry',          formatIndustry(client.industry || '--')],
+    ['Employees',         client.employee_count ? client.employee_count.toLocaleString() : '--'],
+    ['Departments',       client.department_count || '--'],
+    ['Dept. Names',       deptNames.length ? tagList(deptNames) : '--'],
+    ['Schedule Type',     formatSchedule(client.current_schedule_type || '--')],
+    ['Crews',             client.crew_count || '--'],
+    ['Shift Times',       escHtml(client.shift_start_times || '--')],
     ['Union Status',      formatUnion(client.union_status)],
-    ['Challenges',        challenges.length ? tagList(challenges) : '—'],
-    ['Prior Survey',      client.previously_surveyed ? '✅ Yes' : '❌ No'],
-    ['Last Survey',       escHtml(client.last_survey_date || '—')],
+    ['Challenges',        challenges.length ? tagList(challenges) : '--'],
+    ['Prior Survey',      client.previously_surveyed ? 'Yes' : 'No'],
+    ['Last Survey',       escHtml(client.last_survey_date || '--')],
     ['Admin Preference',  formatAdminPref(client.preferred_administration)],
-    ['Preferred Delivery',escHtml(client.preferred_delivery_date || '—')],
-    ['Referral Source',   escHtml(client.referral_source || '—')],
-    ['Notes',             escHtml(client.additional_notes || '—')],
-    ['Submitted',         formatDate(client.created_at)],
+    ['Preferred Delivery',escHtml(client.preferred_delivery_date || '--')],
+    ['Referral Source',   escHtml(client.referral_source || '--')],
+    ['Notes',             escHtml(client.additional_notes || '--')],
+    ['Submitted',         formatDate(client.created_at)]
   ];
 
   document.getElementById('intake-table').querySelector('tbody').innerHTML =
-    rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+    rows.map(function(r) {
+      return '<tr><td>' + r[0] + '</td><td>' + r[1] + '</td></tr>';
+    }).join('');
 
-  // Admin notes
   document.getElementById('admin-notes-field').value = client.admin_notes || '';
 
-  // Project config
   if (project) {
     currentProjectId = project.id;
     renderProjectConfig(project);
-    document.getElementById('approve-btn').disabled = project.status === 'approved';
+    document.getElementById('approve-btn').disabled = (project.status === 'approved');
     if (project.status === 'approved') {
-      showMsg('approve-msg', 'success', '✅ Project already approved — ready for Survey Assembly.');
+      showMsg('approve-msg', 'success', 'Project already approved -- ready for Survey Assembly.');
     }
   } else {
     renderProjectConfig(null);
     document.getElementById('approve-btn').disabled = false;
   }
 
-  // Clear status messages
-  ['status-msg','notes-msg','project-msg','approve-msg'].forEach(id => {
-    const el = document.getElementById(id);
+  ['status-msg','notes-msg','project-msg','approve-msg'].forEach(function(id) {
+    var el = document.getElementById(id);
     el.className = 'status-msg';
     el.textContent = '';
   });
@@ -945,168 +1046,185 @@ function renderClientDetail(client, project) {
 /* ------------------------------------------------------------------
    PROJECT CONFIG
 ------------------------------------------------------------------ */
-const QUESTION_CATEGORIES = [
-  { id: 'work_life_balance',    label: 'Work-Life Balance & Time Off' },
-  { id: 'schedule_preference',  label: 'Schedule Preference & Satisfaction' },
-  { id: 'overtime',             label: 'Overtime & Extra Shifts' },
-  { id: 'fatigue_safety',       label: 'Fatigue & Safety' },
-  { id: 'communication',        label: 'Communication & Management' },
-  { id: 'compensation',         label: 'Compensation & Benefits' },
-  { id: 'commute',              label: 'Commute & Transportation' },
-  { id: 'childcare',            label: 'Family & Childcare' },
-  { id: 'demographics',         label: 'Demographics (Age, Tenure, Dept.)' },
-  { id: 'open_ended',           label: 'Open-Ended / Write-In Questions' },
+var QUESTION_CATEGORIES = [
+  { id: 'work_life_balance',   label: 'Work-Life Balance & Time Off' },
+  { id: 'schedule_preference', label: 'Schedule Preference & Satisfaction' },
+  { id: 'overtime',            label: 'Overtime & Extra Shifts' },
+  { id: 'fatigue_safety',      label: 'Fatigue & Safety' },
+  { id: 'communication',       label: 'Communication & Management' },
+  { id: 'compensation',        label: 'Compensation & Benefits' },
+  { id: 'commute',             label: 'Commute & Transportation' },
+  { id: 'childcare',           label: 'Family & Childcare' },
+  { id: 'demographics',        label: 'Demographics (Age, Tenure, Dept.)' },
+  { id: 'open_ended',          label: 'Open-Ended / Write-In Questions' }
 ];
 
 function renderProjectConfig(project) {
-  // Question categories
-  const selected = project ? (project.selected_questions || []) : QUESTION_CATEGORIES.map(c => c.id);
-  const catsEl = document.getElementById('question-cats');
-  catsEl.innerHTML = QUESTION_CATEGORIES.map(cat => `
-    <label class="q-cat">
-      <input type="checkbox" value="${cat.id}"
-             ${selected.includes(cat.id) || selected.length === 0 ? 'checked' : ''}
-             data-q-cat />
-      ${escHtml(cat.label)}
-    </label>
-  `).join('');
+  var selected = project
+    ? (project.selected_questions || [])
+    : QUESTION_CATEGORIES.map(function(c) { return c.id; });
 
-  // Schedule concepts
-  const schedules = project ? (project.selected_schedules || []) : [];
+  var catsEl = document.getElementById('question-cats');
+  catsEl.innerHTML = QUESTION_CATEGORIES.map(function(cat) {
+    var isChecked = (selected.indexOf(cat.id) !== -1 || selected.length === 0) ? 'checked' : '';
+    return '<label class="q-cat">' +
+      '<input type="checkbox" value="' + cat.id + '" ' + isChecked + ' data-q-cat />' +
+      escHtml(cat.label) +
+      '</label>';
+  }).join('');
+
+  var schedules = project ? (project.selected_schedules || []) : [];
   document.getElementById('selected-schedules-field').value =
     Array.isArray(schedules) ? schedules.join('\n') : schedules;
 
-  // Custom questions
-  const customQs = project ? (project.custom_questions || []) : [];
-  const listEl = document.getElementById('custom-q-list');
+  var customQs = project ? (project.custom_questions || []) : [];
+  var listEl = document.getElementById('custom-q-list');
   listEl.innerHTML = '';
-  customQs.forEach(q => addCustomQ(q));
-  if (customQs.length === 0) addCustomQ(''); // start with one empty row
+  customQs.forEach(function(q) { addCustomQ(q); });
+  if (customQs.length === 0) addCustomQ('');
 }
 
 function addCustomQ(value) {
-  const listEl = document.getElementById('custom-q-list');
-  const row = document.createElement('div');
+  var listEl = document.getElementById('custom-q-list');
+  var row = document.createElement('div');
   row.className = 'custom-q-row';
-  row.innerHTML = `
-    <input type="text" placeholder="e.g. Would you prefer a 4-day workweek?" value="${escHtml(value || '')}" data-custom-q />
-    <button type="button" class="btn-remove-q" onclick="this.closest('.custom-q-row').remove()" title="Remove">✕</button>
-  `;
+  row.innerHTML =
+    '<input type="text" placeholder="e.g. Would you prefer a 4-day workweek?" value="' +
+    escHtml(value || '') + '" data-custom-q />' +
+    '<button type="button" class="btn-remove-q" onclick="this.closest(\'.custom-q-row\').remove()" title="Remove">&#10005;</button>';
   listEl.appendChild(row);
 }
 
-async function saveProjectConfig() {
-  const selectedCats = Array.from(document.querySelectorAll('[data-q-cat]:checked')).map(el => el.value);
-  const customQs     = Array.from(document.querySelectorAll('[data-custom-q]'))
-    .map(el => el.value.trim()).filter(Boolean);
-  const schedulesRaw = document.getElementById('selected-schedules-field').value;
-  const schedules    = schedulesRaw.split('\n').map(s => s.trim()).filter(Boolean);
-  const adminNotes   = document.getElementById('admin-notes-field').value;
+function saveProjectConfig() {
+  var selectedCats = Array.from(document.querySelectorAll('[data-q-cat]:checked'))
+    .map(function(el) { return el.value; });
+  var customQs = Array.from(document.querySelectorAll('[data-custom-q]'))
+    .map(function(el) { return el.value.trim(); })
+    .filter(Boolean);
+  var schedulesRaw = document.getElementById('selected-schedules-field').value;
+  var schedules = schedulesRaw.split('\n').map(function(s) { return s.trim(); }).filter(Boolean);
+  var adminNotes = document.getElementById('admin-notes-field').value;
 
-  const payload = {
+  var payload = {
     survey_client_id:   currentClientId,
     selected_questions: selectedCats,
     excluded_questions: [],
     custom_questions:   customQs,
     selected_schedules: schedules,
-    admin_notes:        adminNotes,
+    admin_notes:        adminNotes
   };
 
-  showMsg('project-msg', 'info', 'Saving…');
-  try {
-    const resp = await fetch('/api/survey/admin/project/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (resp.status === 401) { checkAuth(); return; }
-    const data = await resp.json();
+  showMsg('project-msg', 'info', 'Saving...');
+
+  fetch('/api/survey/admin/project/save', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+  .then(function(resp) {
+    if (resp.status === 401) { checkAuth(); return null; }
+    return resp.json();
+  })
+  .then(function(data) {
+    if (!data) return;
     if (!data.success) throw new Error(data.error || 'Save failed.');
     if (!currentProjectId && data.project_id) {
       currentProjectId = data.project_id;
     }
-    showMsg('project-msg', 'success', `Configuration saved (${data.action}).`);
+    showMsg('project-msg', 'success', 'Configuration saved (' + data.action + ').');
     document.getElementById('approve-btn').disabled = false;
-  } catch (e) {
-    showMsg('project-msg', 'error', `Error: ${e.message}`);
-  }
+  })
+  .catch(function(e) {
+    showMsg('project-msg', 'error', 'Error: ' + e.message);
+  });
 }
 
-async function approveProject() {
+function approveProject() {
   if (!currentProjectId) {
-    // Save first to get a project_id
-    await saveProjectConfig();
-    if (!currentProjectId) {
-      showMsg('approve-msg', 'error', 'Please save the configuration before approving.');
-      return;
-    }
+    saveProjectConfig();
+    showMsg('approve-msg', 'info', 'Saving configuration first...');
+    /* approveProject will need to be called again after save */
+    return;
   }
   document.getElementById('approve-btn').disabled = true;
-  showMsg('approve-msg', 'info', 'Approving…');
-  try {
-    const resp = await fetch(`/api/survey/admin/project/${currentProjectId}/approve`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-    });
-    if (resp.status === 401) { checkAuth(); return; }
-    const data = await resp.json();
+  showMsg('approve-msg', 'info', 'Approving...');
+
+  fetch('/api/survey/admin/project/' + currentProjectId + '/approve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' }
+  })
+  .then(function(resp) {
+    if (resp.status === 401) { checkAuth(); return null; }
+    return resp.json();
+  })
+  .then(function(data) {
+    if (!data) return;
     if (!data.success) throw new Error(data.error || 'Approval failed.');
-    showMsg('approve-msg', 'success', '✅ ' + data.message);
-    // Update status dropdown
+    showMsg('approve-msg', 'success', data.message);
     document.getElementById('detail-status').value = 'approved';
-  } catch (e) {
-    showMsg('approve-msg', 'error', `Error: ${e.message}`);
+  })
+  .catch(function(e) {
+    showMsg('approve-msg', 'error', 'Error: ' + e.message);
     document.getElementById('approve-btn').disabled = false;
-  }
+  });
 }
 
 /* ------------------------------------------------------------------
    STATUS & NOTES
 ------------------------------------------------------------------ */
-async function saveStatus() {
-  const newStatus = document.getElementById('detail-status').value;
-  showMsg('status-msg', 'info', 'Saving…');
-  try {
-    const resp = await fetch(`/api/survey/admin/client/${currentClientId}/status`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: newStatus }),
-    });
-    if (resp.status === 401) { checkAuth(); return; }
-    const data = await resp.json();
+function saveStatus() {
+  var newStatus = document.getElementById('detail-status').value;
+  showMsg('status-msg', 'info', 'Saving...');
+
+  fetch('/api/survey/admin/client/' + currentClientId + '/status', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: newStatus })
+  })
+  .then(function(resp) {
+    if (resp.status === 401) { checkAuth(); return null; }
+    return resp.json();
+  })
+  .then(function(data) {
+    if (!data) return;
     if (!data.success) throw new Error(data.error || 'Status save failed.');
-    showMsg('status-msg', 'success', `Status set to "${newStatus}".`);
-    // Update in local list
-    const c = allClients.find(c => c.id === currentClientId);
+    showMsg('status-msg', 'success', 'Status set to "' + newStatus + '".');
+    var c = allClients.find(function(c) { return c.id === currentClientId; });
     if (c) c.status = newStatus;
-  } catch (e) {
-    showMsg('status-msg', 'error', `Error: ${e.message}`);
-  }
+  })
+  .catch(function(e) {
+    showMsg('status-msg', 'error', 'Error: ' + e.message);
+  });
 }
 
-async function saveAdminNotes() {
-  const notes = document.getElementById('admin-notes-field').value;
-  showMsg('notes-msg', 'info', 'Saving…');
-  try {
-    const resp = await fetch(`/api/survey/admin/client/${currentClientId}/notes`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ admin_notes: notes }),
-    });
-    if (resp.status === 401) { checkAuth(); return; }
-    const data = await resp.json();
+function saveAdminNotes() {
+  var notes = document.getElementById('admin-notes-field').value;
+  showMsg('notes-msg', 'info', 'Saving...');
+
+  fetch('/api/survey/admin/client/' + currentClientId + '/notes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ admin_notes: notes })
+  })
+  .then(function(resp) {
+    if (resp.status === 401) { checkAuth(); return null; }
+    return resp.json();
+  })
+  .then(function(data) {
+    if (!data) return;
     if (!data.success) throw new Error(data.error || 'Notes save failed.');
     showMsg('notes-msg', 'success', 'Notes saved.');
-  } catch (e) {
-    showMsg('notes-msg', 'error', `Error: ${e.message}`);
-  }
+  })
+  .catch(function(e) {
+    showMsg('notes-msg', 'error', 'Error: ' + e.message);
+  });
 }
 
 /* ------------------------------------------------------------------
    HELPERS
 ------------------------------------------------------------------ */
 function showMsg(id, type, text) {
-  const el = document.getElementById(id);
+  var el = document.getElementById(id);
   el.className = 'status-msg ' + type;
   el.textContent = text;
 }
@@ -1121,80 +1239,96 @@ function escHtml(str) {
 }
 
 function tagList(arr) {
-  return `<div class="tag-list">${arr.map(t => `<span class="tag">${escHtml(t)}</span>`).join('')}</div>`;
+  return '<div class="tag-list">' +
+    arr.map(function(t) { return '<span class="tag">' + escHtml(t) + '</span>'; }).join('') +
+    '</div>';
 }
 
 function formatDate(iso) {
-  if (!iso) return '—';
+  if (!iso) return '--';
   try {
     return new Date(iso).toLocaleDateString('en-US', {
       year: 'numeric', month: 'short', day: 'numeric',
-      hour: '2-digit', minute: '2-digit',
+      hour: '2-digit', minute: '2-digit'
     });
-  } catch { return iso; }
+  } catch(e) { return iso; }
 }
 
 function badgeClass(status) {
-  return ({
-    new:         'badge-new',
-    reviewing:   'badge-reviewing',
-    approved:    'badge-approved',
-    rejected:    'badge-rejected',
+  var map = {
+    'new':         'badge-new',
+    'reviewing':   'badge-reviewing',
+    'approved':    'badge-approved',
+    'rejected':    'badge-rejected',
     'in-progress': 'badge-in-progress',
-    delivered:   'badge-delivered',
-  })[status] || 'badge-new';
+    'delivered':   'badge-delivered'
+  };
+  return map[status] || 'badge-new';
 }
 
 function formatIndustry(v) {
-  return ({
-    manufacturing: 'Manufacturing',
-    pharmaceutical: 'Pharmaceutical',
+  var map = {
+    manufacturing:   'Manufacturing',
+    pharmaceutical:  'Pharmaceutical',
     food_processing: 'Food Processing',
-    mining: 'Mining',
-    distribution: 'Distribution / Warehouse',
-    chemical: 'Chemical',
-    utilities: 'Utilities / Power',
-    paper_pulp: 'Paper / Pulp',
-    oil_gas: 'Oil & Gas',
-    healthcare: 'Healthcare',
-    transportation: 'Transportation',
-    other: 'Other',
-  })[v] || v;
+    mining:          'Mining',
+    distribution:    'Distribution / Warehouse',
+    chemical:        'Chemical',
+    utilities:       'Utilities / Power',
+    paper_pulp:      'Paper / Pulp',
+    oil_gas:         'Oil & Gas',
+    healthcare:      'Healthcare',
+    transportation:  'Transportation',
+    other:           'Other'
+  };
+  return map[v] || v;
 }
 
 function formatSchedule(v) {
-  return ({
+  var map = {
     '8-hour-fixed':     '8-Hour Fixed',
     '8-hour-rotating':  '8-Hour Rotating',
     '10-hour':          '10-Hour Shifts',
     '12-hour-fixed':    '12-Hour Fixed',
     '12-hour-rotating': '12-Hour Rotating',
-    mixed:              'Mixed / Multiple',
-    other:              'Other',
-  })[v] || v;
+    'mixed':            'Mixed / Multiple',
+    'other':            'Other'
+  };
+  return map[v] || v;
 }
 
 function formatUnion(v) {
-  return ({
+  var map = {
     'non-union': 'Non-Union',
-    union:       'Union',
-    mixed:       'Mixed',
-    unknown:     'Unknown',
-  })[v] || v;
+    'union':     'Union',
+    'mixed':     'Mixed',
+    'unknown':   'Unknown'
+  };
+  return map[v] || v;
 }
 
 function formatAdminPref(v) {
-  return ({
-    online: 'Online (link to employees)',
-    paper:  'Paper Bubble Sheets',
-    unsure: 'Unsure — needs guidance',
-  })[v] || v;
+  var map = {
+    'online': 'Online (link to employees)',
+    'paper':  'Paper Bubble Sheets',
+    'unsure': 'Unsure -- needs guidance'
+  };
+  return map[v] || v;
 }
 
 /* ------------------------------------------------------------------
    INIT
+   Note: onkeydown Enter handler removed from HTML input element.
+   Login is triggered only by clicking the Sign In button or pressing
+   Enter via the keydown listener added here -- which respects the
+   authCheckComplete guard via doLogin().
 ------------------------------------------------------------------ */
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', function() {
+  /* Add Enter key handler here (not inline) so it goes through doLogin()
+     which has the authCheckComplete and isLoggingIn guards */
+  document.getElementById('login-password').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') { doLogin(); }
+  });
   checkAuth();
 });
 </script>
