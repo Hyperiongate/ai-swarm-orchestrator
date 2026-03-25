@@ -142,11 +142,17 @@
     .screen.active { display: block; }
 
     /* ===== LOGIN SCREEN ===== */
+    /* IMPORTANT: display:flex is on #screen-login.active, NOT #screen-login.
+       If display:flex is on the bare #screen-login rule it overrides
+       .screen { display:none } and the login card stays visible even after
+       showScreen() switches to screen-list. */
     #screen-login {
-      display: flex;
       align-items: center;
       justify-content: center;
       min-height: calc(100vh - 54px);
+    }
+    #screen-login.active {
+      display: flex;
     }
     .login-card {
       background: var(--white);
