@@ -2,7 +2,7 @@
 SURVEY IN A BOX — Respondent Routes
 File: routes/survey_respondent.py
 Created: March 13, 2026
-Last Updated: March 13, 2026 — BUG FIX: _get_survey_questions_ordered now iterates questions not sections
+Last Updated: March 25, 2026 — BUG FIX: Wrong session key in _require_admin_auth()
 
 PURPOSE:
     Employee-facing survey engine for Survey in a Box Phase 3.
@@ -61,6 +61,13 @@ POSTGRESQL RULES:
     - RETURNING id on INSERT
 
 CHANGELOG:
+    - March 25, 2026: BUG FIX — _require_admin_auth() was checking the wrong
+      Flask session key. It checked session.get('survey_admin_logged_in') but
+      survey_admin.py sets session['survey_admin_authenticated']. This caused
+      all admin-protected endpoints in this file (/open, /close, /responses,
+      /export) to always return 401 even when the admin was logged in.
+      ONE LINE CHANGED: 'survey_admin_logged_in' -> 'survey_admin_authenticated'
+
     - March 13, 2026 (BUG FIX): Fixed _get_survey_questions_ordered().
       SurveyBuilder.create_survey() returns a flat 'questions' list, not a
       'sections' hierarchy. The original code iterated survey_obj['sections']
@@ -236,8 +243,16 @@ def _get_survey_questions_ordered(project_row):
 # ---------------------------------------------------------------------------
 
 def _require_admin_auth():
-    """Check Flask session for admin login. Returns error response or None."""
-    if not session.get('survey_admin_logged_in'):
+    """
+    Check Flask session for admin login. Returns error response or None.
+
+    IMPORTANT: The session key must match ADMIN_SESSION_KEY in survey_admin.py.
+    survey_admin.py sets: session['survey_admin_authenticated'] = True
+    This function checks: session.get('survey_admin_authenticated')
+    These must always match. If survey_admin.py ever changes its key,
+    update this function to match.
+    """
+    if not session.get('survey_admin_authenticated'):
         return jsonify({'success': False, 'error': 'Not authenticated',
                         'redirect': '/survey/admin'}), 401
     return None
