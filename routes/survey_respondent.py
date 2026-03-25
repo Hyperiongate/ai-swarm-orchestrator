@@ -1,5 +1,5 @@
 """
-SURVEY IN A BOX — Respondent Routes 
+SURVEY IN A BOX — Respondent Routes
 File: routes/survey_respondent.py
 Created: March 13, 2026
 Last Updated: March 25, 2026 — BUG FIX: Wrong session key in _require_admin_auth()
@@ -199,6 +199,43 @@ def _get_survey_questions_ordered(project_row):
 
         if not selected_questions:
             selected_questions = list(builder.question_bank.keys())
+        else:
+            # The admin dashboard stores category names (e.g. 'work_life_balance',
+            # 'schedule_preference') in selected_questions, but create_survey()
+            # expects question IDs (e.g. 'dept', 'tenure', 'safety_rating').
+            # Detect this: if none of the stored values match question bank keys,
+            # they are category names. Map them to question bank categories and
+            # expand to all matching question IDs.
+            question_ids_in_bank = set(builder.question_bank.keys())
+            any_match_as_id = any(q in question_ids_in_bank for q in selected_questions)
+            if not any_match_as_id:
+                # Map admin UI category labels to question bank category values
+                CATEGORY_MAP = {
+                    'work_life_balance':   'schedule_features',
+                    'schedule_preference': 'schedule_features',
+                    'overtime':            'overtime',
+                    'fatigue_safety':      'working_conditions',
+                    'communication':       'working_conditions',
+                    'compensation':        'working_conditions',
+                    'commute':             'demographics',
+                    'childcare':           'daycare_eldercare',
+                    'demographics':        'demographics',
+                    'open_ended':          'open_ended',
+                }
+                bank_categories = set()
+                for sel in selected_questions:
+                    mapped = CATEGORY_MAP.get(sel)
+                    if mapped:
+                        bank_categories.add(mapped)
+                    else:
+                        bank_categories.add(sel)
+                if bank_categories:
+                    selected_questions = [
+                        qid for qid, qdata in builder.question_bank.items()
+                        if qdata.get('category') in bank_categories
+                    ]
+                else:
+                    selected_questions = list(builder.question_bank.keys())
 
         survey_obj = builder.create_survey(
             project_name='Survey',
