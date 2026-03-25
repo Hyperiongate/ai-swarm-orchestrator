@@ -1,5 +1,5 @@
 """
-SURVEY IN A BOX — Respondent Routes
+SURVEY IN A BOX — Respondent Routes 
 File: routes/survey_respondent.py
 Created: March 13, 2026
 Last Updated: March 25, 2026 — BUG FIX: Wrong session key in _require_admin_auth()
