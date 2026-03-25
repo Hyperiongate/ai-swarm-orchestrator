@@ -3,7 +3,7 @@
 SURVEY IN A BOX — Employee Survey Page
 File: templates/survey_take.html
 Created: March 13, 2026
-Last Updated: March 13, 2026 — Phase 3: Online Survey Engine
+Last Updated: March 25, 2026 — BUG FIX: Allow skipping questions + clarify rules
 
 PURPOSE:
     Employee-facing survey interface. Displays one section at a time
@@ -13,18 +13,28 @@ PURPOSE:
 DESIGN:
     - Mobile-first responsive layout
     - One section at a time with progress indicator
-    - Required question enforcement before advancing sections
+    - Questions are optional — employees may skip any question
     - Thank You page on successful submission
     - Graceful handling of closed surveys and duplicate submissions
 
 CHANGELOG:
+    - March 25, 2026: TWO CHANGES ONLY:
+      1. INTRO SCREEN: Added "Questions are optional" and "one answer per
+         question" bullets to the intro card so employees know the rules
+         before starting.
+      2. goNext() VALIDATION: Removed the hard block that prevented advancing
+         when questions were unanswered. Surveys are voluntary — employees
+         should be able to skip any question. The validation error div and
+         its display logic are removed from goNext(). The review screen
+         still shows which questions were not answered so employees can
+         go back if they wish.
     - March 13, 2026: Initial creation. Phase 3 of Survey in a Box.
 -->
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Employee Survey — {{ company_name }}</title>
+    <title>Employee Survey -- {{ company_name }}</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -145,10 +155,6 @@ CHANGELOG:
             color: #2d3748;
             margin-bottom: 12px;
             line-height: 1.5;
-        }
-        .question-required {
-            color: #e53e3e;
-            margin-left: 3px;
         }
 
         /* ---- Radio / Checkbox options ---- */
@@ -281,18 +287,6 @@ CHANGELOG:
             cursor: not-allowed;
         }
 
-        /* ---- Validation error ---- */
-        .validation-error {
-            background: #fff5f5;
-            border: 1px solid #fc8181;
-            color: #c53030;
-            border-radius: 7px;
-            padding: 12px 16px;
-            font-size: 14px;
-            margin-bottom: 16px;
-            display: none;
-        }
-
         /* ---- Loading state ---- */
         .loading-screen {
             text-align: center;
@@ -394,7 +388,7 @@ CHANGELOG:
 <div class="survey-header">
     <div>
         <div class="logo-text">SHIFTWORK SOLUTIONS LLC</div>
-        <div class="company-name">{{ company_name }} — Employee Survey</div>
+        <div class="company-name">{{ company_name }} &mdash; Employee Survey</div>
     </div>
 </div>
 
@@ -410,39 +404,38 @@ CHANGELOG:
 <div class="survey-content" id="surveyContent">
     <div class="loading-screen">
         <div class="spinner"></div>
-        <p>Loading your survey…</p>
+        <p>Loading your survey...</p>
     </div>
 </div>
 
 <script>
 // ============================================================================
-// SURVEY IN A BOX — Employee Survey JavaScript
+// SURVEY IN A BOX -- Employee Survey JavaScript
 // ============================================================================
-const SURVEY_TOKEN  = {{ token | tojson }};
-const COMPANY_NAME  = {{ company_name | tojson }};
+var SURVEY_TOKEN  = {{ token | tojson }};
+var COMPANY_NAME  = {{ company_name | tojson }};
 
-let surveyData      = null;   // {sections, total_questions}
-let currentSection  = -1;     // -1 = intro, sections.length = thank you
-let allAnswers      = {};     // {short_label: answer_text}
+var surveyData     = null;   // {sections, total_questions}
+var currentSection = -1;     // -1 = intro, sections.length = thank you
+var allAnswers     = {};     // {short_label: answer_text}
 
 // ---------------------------------------------------------------------------
 // INIT
 // ---------------------------------------------------------------------------
-async function init() {
-    try {
-        const resp = await fetch(`/api/survey/take/${SURVEY_TOKEN}/questions`);
-        const data = await resp.json();
-
-        if (!data.success) {
-            showError(data.error || 'This survey is not currently available.');
-            return;
-        }
-
-        surveyData = data;
-        showIntro();
-    } catch (err) {
-        showError('Unable to load the survey. Please check your internet connection and try again.');
-    }
+function init() {
+    fetch('/api/survey/take/' + SURVEY_TOKEN + '/questions')
+        .then(function(resp) { return resp.json(); })
+        .then(function(data) {
+            if (!data.success) {
+                showError(data.error || 'This survey is not currently available.');
+                return;
+            }
+            surveyData = data;
+            showIntro();
+        })
+        .catch(function() {
+            showError('Unable to load the survey. Please check your internet connection and try again.');
+        });
 }
 
 // ---------------------------------------------------------------------------
@@ -451,28 +444,34 @@ async function init() {
 function showIntro() {
     currentSection = -1;
     hideProgress();
-    const totalQ  = surveyData.total_questions;
-    const sections = surveyData.sections || [];
-    const estMins = Math.ceil(totalQ / 8);
+    var totalQ   = surveyData.total_questions;
+    var sections = surveyData.sections || [];
+    var estMins  = Math.ceil(totalQ / 8);
 
-    setContent(`
-        <div class="intro-card">
-            <h1>Welcome to the ${escHtml(COMPANY_NAME)} Employee Survey</h1>
-            <p>Your feedback matters. This survey helps leadership understand what's working and what can be improved about your work schedule and work environment.</p>
-            <div class="intro-bullets">
-                <ul>
-                    <li><strong>Completely anonymous</strong> — your name is never collected or stored.</li>
-                    <li><strong>${totalQ} questions</strong> across ${sections.length} sections — estimated ${estMins}–${estMins + 2} minutes.</li>
-                    <li>You can go <strong>Back</strong> to change answers before submitting.</li>
-                    <li>Your responses are saved only when you click <strong>Submit</strong> on the final page.</li>
-                </ul>
-            </div>
-            <p style="font-size:13px; color:#a0aec0;">This survey is administered by Shiftwork Solutions LLC on behalf of ${escHtml(COMPANY_NAME)}.</p>
-            <div style="margin-top:24px;">
-                <button class="btn btn-primary" onclick="startSurvey()">Begin Survey →</button>
-            </div>
-        </div>
-    `);
+    /* CHANGE 1: Added two new bullets:
+       - "Questions are optional" so employees know they can skip
+       - "Only one answer per question" so they know the single-select rule
+       These were missing from the original and caused confusion. */
+    setContent(
+        '<div class="intro-card">' +
+            '<h1>Welcome to the ' + escHtml(COMPANY_NAME) + ' Employee Survey</h1>' +
+            '<p>Your feedback matters. This survey helps leadership understand what\'s working and what can be improved about your work schedule and work environment.</p>' +
+            '<div class="intro-bullets">' +
+                '<ul>' +
+                    '<li><strong>Completely anonymous</strong> -- your name is never collected or stored.</li>' +
+                    '<li><strong>' + totalQ + ' questions</strong> across ' + sections.length + ' sections -- estimated ' + estMins + '-' + (estMins + 2) + ' minutes.</li>' +
+                    '<li><strong>Questions are optional</strong> -- you may skip any question you prefer not to answer.</li>' +
+                    '<li><strong>One answer per question</strong> -- select only one response for each question unless told otherwise.</li>' +
+                    '<li>You can go <strong>Back</strong> to change answers before submitting.</li>' +
+                    '<li>Your responses are saved only when you click <strong>Submit</strong> on the final page.</li>' +
+                '</ul>' +
+            '</div>' +
+            '<p style="font-size:13px; color:#a0aec0;">This survey is administered by Shiftwork Solutions LLC on behalf of ' + escHtml(COMPANY_NAME) + '.</p>' +
+            '<div style="margin-top:24px;">' +
+                '<button class="btn btn-primary" onclick="startSurvey()">Begin Survey &#8594;</button>' +
+            '</div>' +
+        '</div>'
+    );
 }
 
 function startSurvey() {
@@ -481,214 +480,211 @@ function startSurvey() {
 }
 
 function showCurrentSection() {
-    const sections = surveyData.sections || [];
+    var sections = surveyData.sections || [];
     if (currentSection >= sections.length) {
         showReviewAndSubmit();
         return;
     }
 
-    const section  = sections[currentSection];
-    const questions = section.questions || [];
+    var section   = sections[currentSection];
+    var questions = section.questions || [];
     updateProgress();
 
-    // Build question HTML
-    let questionsHtml = '';
-    let qNum = getGlobalQuestionNumber(currentSection, 0);
+    var questionsHtml = '';
+    var qNum = getGlobalQuestionNumber(currentSection, 0);
 
-    questions.forEach((q, idx) => {
+    questions.forEach(function(q, idx) {
         questionsHtml += buildQuestionHtml(q, qNum + idx);
     });
 
-    const isLast   = currentSection === sections.length - 1;
-    const isFirst  = currentSection === 0;
-    const nextLabel = isLast ? 'Review & Submit →' : 'Next →';
+    var isLast  = (currentSection === sections.length - 1);
+    var isFirst = (currentSection === 0);
+    var nextLabel = isLast ? 'Review &amp; Submit &#8594;' : 'Next &#8594;';
 
-    setContent(`
-        <div id="validationError" class="validation-error">
-            Please answer all questions before continuing.
-        </div>
-        <div class="section-card">
-            <div class="section-header">
-                <div class="section-title">${escHtml(section.name || section.category || 'Survey Questions')}</div>
-                <div class="section-subtitle">Section ${currentSection + 1} of ${sections.length}</div>
-            </div>
-            <div class="section-body">
-                ${questionsHtml}
-            </div>
-        </div>
-        <div class="nav-bar">
-            <button class="btn btn-secondary" onclick="goBack()" ${isFirst ? 'onclick="showIntro()"' : ''}>
-                ${isFirst ? '← Introduction' : '← Back'}
-            </button>
-            <button class="btn btn-primary" onclick="goNext()">
-                ${nextLabel}
-            </button>
-        </div>
-    `);
+    setContent(
+        '<div class="section-card">' +
+            '<div class="section-header">' +
+                '<div class="section-title">' + escHtml(section.name || section.category || 'Survey Questions') + '</div>' +
+                '<div class="section-subtitle">Section ' + (currentSection + 1) + ' of ' + sections.length + '</div>' +
+            '</div>' +
+            '<div class="section-body">' +
+                questionsHtml +
+            '</div>' +
+        '</div>' +
+        '<div class="nav-bar">' +
+            '<button class="btn btn-secondary" onclick="goBack()">' +
+                (isFirst ? '&#8592; Introduction' : '&#8592; Back') +
+            '</button>' +
+            '<button class="btn btn-primary" onclick="goNext()">' +
+                nextLabel +
+            '</button>' +
+        '</div>'
+    );
 
-    // Restore any previously saved answers
     restoreAnswers(questions);
-    // Bind click handlers
     bindOptionHandlers();
     window.scrollTo(0, 0);
 }
 
 function showReviewAndSubmit() {
     updateProgress(true);
-    const sections = surveyData.sections || [];
-    const totalQ   = surveyData.total_questions;
-    const answered = Object.keys(allAnswers).length;
-    const pct      = Math.round((answered / totalQ) * 100);
+    var sections = surveyData.sections || [];
+    var totalQ   = surveyData.total_questions;
+    var answered = Object.keys(allAnswers).filter(function(k) { return allAnswers[k]; }).length;
+    var pct      = Math.round((answered / totalQ) * 100);
 
-    setContent(`
-        <div id="validationError" class="validation-error">
-            Please answer all questions before submitting.
-        </div>
-        <div class="section-card">
-            <div class="section-header">
-                <div class="section-title">Review &amp; Submit</div>
-                <div class="section-subtitle">You answered ${answered} of ${totalQ} questions (${pct}%)</div>
-            </div>
-            <div class="section-body">
-                <p style="font-size:15px; color:#4a5568; line-height:1.6; margin-bottom:20px;">
-                    Please review your responses below. Click <strong>Back</strong> to make changes,
-                    or click <strong>Submit Survey</strong> when you are ready. Once submitted,
-                    your responses cannot be changed.
-                </p>
-                ${buildReviewHtml(sections)}
-            </div>
-        </div>
-        <div class="nav-bar">
-            <button class="btn btn-secondary" onclick="goBackToLastSection()">← Back</button>
-            <button class="btn btn-primary" id="submitBtn" onclick="submitSurvey()">
-                Submit Survey ✓
-            </button>
-        </div>
-    `);
+    setContent(
+        '<div class="section-card">' +
+            '<div class="section-header">' +
+                '<div class="section-title">Review &amp; Submit</div>' +
+                '<div class="section-subtitle">You answered ' + answered + ' of ' + totalQ + ' questions (' + pct + '%)</div>' +
+            '</div>' +
+            '<div class="section-body">' +
+                '<p style="font-size:15px; color:#4a5568; line-height:1.6; margin-bottom:20px;">' +
+                    'Please review your responses below. Click <strong>Back</strong> to make changes, ' +
+                    'or click <strong>Submit Survey</strong> when you are ready. Once submitted, ' +
+                    'your responses cannot be changed.' +
+                '</p>' +
+                buildReviewHtml(sections) +
+            '</div>' +
+        '</div>' +
+        '<div class="nav-bar">' +
+            '<button class="btn btn-secondary" onclick="goBackToLastSection()">&#8592; Back</button>' +
+            '<button class="btn btn-primary" id="submitBtn" onclick="submitSurvey()">Submit Survey &#10003;</button>' +
+        '</div>'
+    );
     window.scrollTo(0, 0);
 }
 
 function showThankYou() {
     hideProgress();
-    setContent(`
-        <div class="thankyou-card">
-            <div class="thankyou-icon">✅</div>
-            <h1>Thank You!</h1>
-            <p>Your response has been recorded anonymously. Your feedback is valuable and will help shape decisions about your work schedule and environment.</p>
-            <p>You may now close this window.</p>
-            <div class="shiftwork-footer">
-                Survey administered by Shiftwork Solutions LLC &nbsp;|&nbsp;
-                <a href="https://shift-work.com" style="color:#a0aec0;">shift-work.com</a>
-            </div>
-        </div>
-    `);
+    setContent(
+        '<div class="thankyou-card">' +
+            '<div class="thankyou-icon">&#10003;</div>' +
+            '<h1>Thank You!</h1>' +
+            '<p>Your response has been recorded anonymously. Your feedback is valuable and will help shape decisions about your work schedule and environment.</p>' +
+            '<p>You may now close this window.</p>' +
+            '<div class="shiftwork-footer">' +
+                'Survey administered by Shiftwork Solutions LLC &nbsp;|&nbsp;' +
+                '<a href="https://shift-work.com" style="color:#a0aec0;">shift-work.com</a>' +
+            '</div>' +
+        '</div>'
+    );
 }
 
 function showError(message) {
     hideProgress();
-    setContent(`
-        <div class="error-card">
-            <h1>Survey Unavailable</h1>
-            <p>${escHtml(message)}</p>
-        </div>
-    `);
+    setContent(
+        '<div class="error-card">' +
+            '<h1>Survey Unavailable</h1>' +
+            '<p>' + escHtml(message) + '</p>' +
+        '</div>'
+    );
 }
 
 // ---------------------------------------------------------------------------
 // QUESTION RENDERING
 // ---------------------------------------------------------------------------
 function buildQuestionHtml(q, qNum) {
-    const shortLabel = q.short_label || q.id || '';
-    const fullText   = q.full_text || q.text || shortLabel;
-    const qType      = (q.question_type || q.type || 'radio').toLowerCase();
-    const options    = q.options || q.answer_options || [];
-    const savedVal   = allAnswers[shortLabel] || '';
+    var shortLabel = q.short_label || q.id || '';
+    var fullText   = q.full_text || q.text || shortLabel;
+    var qType      = (q.question_type || q.type || 'radio').toLowerCase();
+    var options    = q.options || q.answer_options || [];
+    var savedVal   = allAnswers[shortLabel] || '';
 
-    let optionsHtml = '';
+    var optionsHtml = '';
 
     if (qType === 'likert' || qType === 'scale') {
-        optionsHtml = `<div class="likert-scale">`;
-        options.forEach((opt, i) => {
-            const optText = typeof opt === 'string' ? opt : (opt.text || opt.label || String(opt));
-            const checked = savedVal === optText ? 'checked' : '';
-            const selClass = savedVal === optText ? 'selected' : '';
-            optionsHtml += `
-                <label class="likert-option ${selClass}" data-short="${escHtml(shortLabel)}" data-val="${escHtml(optText)}">
-                    <input type="radio" name="q_${escAttr(shortLabel)}" value="${escAttr(optText)}" ${checked}>
-                    <span class="likert-label">${escHtml(optText)}</span>
-                </label>`;
+        optionsHtml = '<div class="likert-scale">';
+        options.forEach(function(opt) {
+            var optText  = typeof opt === 'string' ? opt : (opt.text || opt.label || String(opt));
+            var checked  = savedVal === optText ? 'checked' : '';
+            var selClass = savedVal === optText ? 'selected' : '';
+            optionsHtml +=
+                '<label class="likert-option ' + selClass + '" data-short="' + escHtml(shortLabel) + '" data-val="' + escHtml(optText) + '">' +
+                    '<input type="radio" name="q_' + escAttr(shortLabel) + '" value="' + escAttr(optText) + '" ' + checked + '>' +
+                    '<span class="likert-label">' + escHtml(optText) + '</span>' +
+                '</label>';
         });
-        optionsHtml += `</div>`;
+        optionsHtml += '</div>';
 
     } else if (qType === 'checkbox' || qType === 'multi') {
-        optionsHtml = `<div class="options-list">`;
-        const savedArr = savedVal ? savedVal.split('|') : [];
-        options.forEach((opt) => {
-            const optText = typeof opt === 'string' ? opt : (opt.text || opt.label || String(opt));
-            const checked = savedArr.includes(optText) ? 'checked' : '';
-            const selClass = savedArr.includes(optText) ? 'selected' : '';
-            optionsHtml += `
-                <label class="option-item ${selClass}" data-short="${escHtml(shortLabel)}" data-val="${escHtml(optText)}" data-type="checkbox">
-                    <input type="checkbox" name="q_${escAttr(shortLabel)}" value="${escAttr(optText)}" ${checked}>
-                    <span class="option-label">${escHtml(optText)}</span>
-                </label>`;
+        optionsHtml = '<div class="options-list">';
+        var savedArr = savedVal ? savedVal.split('|') : [];
+        options.forEach(function(opt) {
+            var optText  = typeof opt === 'string' ? opt : (opt.text || opt.label || String(opt));
+            var checked  = savedArr.indexOf(optText) !== -1 ? 'checked' : '';
+            var selClass = savedArr.indexOf(optText) !== -1 ? 'selected' : '';
+            optionsHtml +=
+                '<label class="option-item ' + selClass + '" data-short="' + escHtml(shortLabel) + '" data-val="' + escHtml(optText) + '" data-type="checkbox">' +
+                    '<input type="checkbox" name="q_' + escAttr(shortLabel) + '" value="' + escAttr(optText) + '" ' + checked + '>' +
+                    '<span class="option-label">' + escHtml(optText) + '</span>' +
+                '</label>';
         });
-        optionsHtml += `</div>`;
+        optionsHtml += '</div>';
 
     } else if (qType === 'text' || qType === 'open') {
-        optionsHtml = `<textarea class="question-textarea"
-            name="q_${escAttr(shortLabel)}"
-            data-short="${escHtml(shortLabel)}"
-            placeholder="Type your response here…"
-            oninput="allAnswers['${escJs(shortLabel)}'] = this.value.trim()"
-        >${escHtml(savedVal)}</textarea>`;
+        optionsHtml =
+            '<textarea class="question-textarea"' +
+                ' name="q_' + escAttr(shortLabel) + '"' +
+                ' data-short="' + escHtml(shortLabel) + '"' +
+                ' placeholder="Type your response here (optional)..."' +
+                ' oninput="allAnswers[\'' + escJs(shortLabel) + '\'] = this.value.trim()"' +
+            '>' + escHtml(savedVal) + '</textarea>';
 
     } else {
         // Default: radio list
-        optionsHtml = `<div class="options-list">`;
-        options.forEach((opt) => {
-            const optText = typeof opt === 'string' ? opt : (opt.text || opt.label || String(opt));
-            const checked = savedVal === optText ? 'checked' : '';
-            const selClass = savedVal === optText ? 'selected' : '';
-            optionsHtml += `
-                <label class="option-item ${selClass}" data-short="${escHtml(shortLabel)}" data-val="${escHtml(optText)}">
-                    <input type="radio" name="q_${escAttr(shortLabel)}" value="${escAttr(optText)}" ${checked}>
-                    <span class="option-label">${escHtml(optText)}</span>
-                </label>`;
+        optionsHtml = '<div class="options-list">';
+        options.forEach(function(opt) {
+            var optText  = typeof opt === 'string' ? opt : (opt.text || opt.label || String(opt));
+            var checked  = savedVal === optText ? 'checked' : '';
+            var selClass = savedVal === optText ? 'selected' : '';
+            optionsHtml +=
+                '<label class="option-item ' + selClass + '" data-short="' + escHtml(shortLabel) + '" data-val="' + escHtml(optText) + '">' +
+                    '<input type="radio" name="q_' + escAttr(shortLabel) + '" value="' + escAttr(optText) + '" ' + checked + '>' +
+                    '<span class="option-label">' + escHtml(optText) + '</span>' +
+                '</label>';
         });
-        optionsHtml += `</div>`;
+        optionsHtml += '</div>';
     }
 
-    return `
-        <div class="question-block" data-short="${escHtml(shortLabel)}">
-            <div class="question-number">Question ${qNum}</div>
-            <div class="question-text">${escHtml(fullText)}</div>
-            ${optionsHtml}
-        </div>`;
+    return (
+        '<div class="question-block" data-short="' + escHtml(shortLabel) + '">' +
+            '<div class="question-number">Question ' + qNum + '</div>' +
+            '<div class="question-text">' + escHtml(fullText) + '</div>' +
+            optionsHtml +
+        '</div>'
+    );
 }
 
 function buildReviewHtml(sections) {
-    let html = '';
-    sections.forEach((section) => {
-        const questions = section.questions || [];
-        const sectionAnswered = questions.filter(q => allAnswers[q.short_label || q.id]).length;
-        html += `<div style="margin-bottom:20px;">
-            <div style="font-weight:600; color:#2b6cb0; margin-bottom:8px; font-size:14px; text-transform:uppercase; letter-spacing:0.5px;">
-                ${escHtml(section.name || section.category || 'Questions')}
-                <span style="color:#a0aec0; font-weight:400;">(${sectionAnswered}/${questions.length} answered)</span>
-            </div>`;
-        questions.forEach(q => {
-            const shortLabel = q.short_label || q.id || '';
-            const fullText   = q.full_text || q.text || shortLabel;
-            const ans        = allAnswers[shortLabel] || '';
-            const ansDisplay = ans || '<em style="color:#a0aec0;">Not answered</em>';
-            const ansColor   = ans ? '#2d3748' : '#fc8181';
-            html += `<div style="display:flex; justify-content:space-between; align-items:flex-start; padding:8px 0; border-bottom:1px solid #f0f4f8; gap:12px;">
-                <div style="font-size:13px; color:#4a5568; flex:1;">${escHtml(fullText)}</div>
-                <div style="font-size:13px; color:${ansColor}; font-weight:500; text-align:right; max-width:220px;">${ans ? escHtml(ans) : ansDisplay}</div>
-            </div>`;
+    var html = '';
+    sections.forEach(function(section) {
+        var questions      = section.questions || [];
+        var sectionAnswered = questions.filter(function(q) {
+            return allAnswers[q.short_label || q.id];
+        }).length;
+        html +=
+            '<div style="margin-bottom:20px;">' +
+                '<div style="font-weight:600; color:#2b6cb0; margin-bottom:8px; font-size:14px; text-transform:uppercase; letter-spacing:0.5px;">' +
+                    escHtml(section.name || section.category || 'Questions') +
+                    ' <span style="color:#a0aec0; font-weight:400;">(' + sectionAnswered + '/' + questions.length + ' answered)</span>' +
+                '</div>';
+        questions.forEach(function(q) {
+            var shortLabel = q.short_label || q.id || '';
+            var fullText   = q.full_text || q.text || shortLabel;
+            var ans        = allAnswers[shortLabel] || '';
+            var ansDisplay = ans || '<em style="color:#a0aec0;">Skipped</em>';
+            var ansColor   = ans ? '#2d3748' : '#a0aec0';
+            html +=
+                '<div style="display:flex; justify-content:space-between; align-items:flex-start; padding:8px 0; border-bottom:1px solid #f0f4f8; gap:12px;">' +
+                    '<div style="font-size:13px; color:#4a5568; flex:1;">' + escHtml(fullText) + '</div>' +
+                    '<div style="font-size:13px; color:' + ansColor + '; font-weight:500; text-align:right; max-width:220px;">' +
+                        (ans ? escHtml(ans) : ansDisplay) +
+                    '</div>' +
+                '</div>';
         });
-        html += `</div>`;
+        html += '</div>';
     });
     return html;
 }
@@ -698,39 +694,39 @@ function buildReviewHtml(sections) {
 // ---------------------------------------------------------------------------
 function bindOptionHandlers() {
     // Radio / single-select
-    document.querySelectorAll('label.option-item:not([data-type="checkbox"]), label.likert-option').forEach(label => {
+    document.querySelectorAll('label.option-item:not([data-type="checkbox"]), label.likert-option').forEach(function(label) {
         label.addEventListener('click', function() {
-            const shortLabel = this.dataset.short;
-            const val        = this.dataset.val;
+            var shortLabel = this.dataset.short;
+            var val        = this.dataset.val;
             allAnswers[shortLabel] = val;
 
-            // Deselect siblings
-            const name = this.querySelector('input').name;
-            document.querySelectorAll(`label[data-short="${CSS.escape(shortLabel)}"]`).forEach(l => l.classList.remove('selected'));
+            document.querySelectorAll('label[data-short="' + CSS.escape(shortLabel) + '"]').forEach(function(l) {
+                l.classList.remove('selected');
+            });
             this.classList.add('selected');
-            const inp = this.querySelector('input[type="radio"]');
+            var inp = this.querySelector('input[type="radio"]');
             if (inp) inp.checked = true;
         });
     });
 
     // Checkboxes
-    document.querySelectorAll('label.option-item[data-type="checkbox"]').forEach(label => {
+    document.querySelectorAll('label.option-item[data-type="checkbox"]').forEach(function(label) {
         label.addEventListener('click', function(e) {
-            if (e.target.tagName === 'INPUT') return; // handled by change event
-            const inp = this.querySelector('input[type="checkbox"]');
+            if (e.target.tagName === 'INPUT') return;
+            var inp = this.querySelector('input[type="checkbox"]');
             if (inp) { inp.checked = !inp.checked; inp.dispatchEvent(new Event('change')); }
         });
-        const inp = label.querySelector('input[type="checkbox"]');
+        var inp = label.querySelector('input[type="checkbox"]');
         if (inp) {
             inp.addEventListener('change', function() {
-                const shortLabel = label.dataset.short;
-                const val        = label.dataset.val;
-                const currentArr = allAnswers[shortLabel] ? allAnswers[shortLabel].split('|') : [];
+                var shortLabel  = label.dataset.short;
+                var val         = label.dataset.val;
+                var currentArr  = allAnswers[shortLabel] ? allAnswers[shortLabel].split('|') : [];
                 if (this.checked) {
-                    if (!currentArr.includes(val)) currentArr.push(val);
+                    if (currentArr.indexOf(val) === -1) currentArr.push(val);
                     label.classList.add('selected');
                 } else {
-                    const idx = currentArr.indexOf(val);
+                    var idx = currentArr.indexOf(val);
                     if (idx > -1) currentArr.splice(idx, 1);
                     label.classList.remove('selected');
                 }
@@ -741,20 +737,17 @@ function bindOptionHandlers() {
 }
 
 function restoreAnswers(questions) {
-    // After rendering, restore saved state for already-answered questions
-    questions.forEach(q => {
-        const shortLabel = q.short_label || q.id || '';
-        const savedVal   = allAnswers[shortLabel];
+    questions.forEach(function(q) {
+        var shortLabel = q.short_label || q.id || '';
+        var savedVal   = allAnswers[shortLabel];
         if (!savedVal) return;
 
-        const qType = (q.question_type || q.type || 'radio').toLowerCase();
-        if (qType === 'checkbox' || qType === 'multi') {
-            // handled in buildQuestionHtml
-        } else {
-            const inp = document.querySelector(`input[name="q_${CSS.escape(shortLabel)}"][value="${CSS.escape(savedVal)}"]`);
+        var qType = (q.question_type || q.type || 'radio').toLowerCase();
+        if (qType !== 'checkbox' && qType !== 'multi') {
+            var inp = document.querySelector('input[name="q_' + CSS.escape(shortLabel) + '"][value="' + CSS.escape(savedVal) + '"]');
             if (inp) {
                 inp.checked = true;
-                inp.closest('label')?.classList.add('selected');
+                if (inp.closest('label')) inp.closest('label').classList.add('selected');
             }
         }
     });
@@ -762,31 +755,12 @@ function restoreAnswers(questions) {
 
 // ---------------------------------------------------------------------------
 // NAVIGATION
+// CHANGE 2: goNext() no longer blocks on unanswered questions.
+// Surveys are voluntary -- employees may skip any question they prefer
+// not to answer. The review screen shows skipped questions in gray so
+// employees can go back if they wish before submitting.
 // ---------------------------------------------------------------------------
 function goNext() {
-    const sections = surveyData.sections || [];
-    const section  = sections[currentSection];
-    if (!section) return;
-
-    // Validate — all questions in this section must have an answer
-    const questions = section.questions || [];
-    const unanswered = questions.filter(q => {
-        const shortLabel = q.short_label || q.id || '';
-        const qType = (q.question_type || q.type || 'radio').toLowerCase();
-        if (qType === 'text' || qType === 'open') return false; // text is optional
-        return !allAnswers[shortLabel];
-    });
-
-    if (unanswered.length > 0) {
-        const errEl = document.getElementById('validationError');
-        if (errEl) {
-            errEl.style.display = 'block';
-            errEl.textContent = `Please answer all ${unanswered.length} remaining question(s) before continuing.`;
-            window.scrollTo(0, 0);
-        }
-        return;
-    }
-
     currentSection++;
     showCurrentSection();
 }
@@ -801,7 +775,7 @@ function goBack() {
 }
 
 function goBackToLastSection() {
-    const sections = surveyData.sections || [];
+    var sections = surveyData.sections || [];
     currentSection = sections.length - 1;
     showCurrentSection();
 }
@@ -809,89 +783,81 @@ function goBackToLastSection() {
 // ---------------------------------------------------------------------------
 // SUBMIT
 // ---------------------------------------------------------------------------
-async function submitSurvey() {
-    const submitBtn = document.getElementById('submitBtn');
+function submitSurvey() {
+    var submitBtn = document.getElementById('submitBtn');
     if (submitBtn) {
         submitBtn.disabled = true;
-        submitBtn.textContent = 'Submitting…';
+        submitBtn.textContent = 'Submitting...';
     }
 
-    // Build final answers — send only non-empty values
-    // Checkbox answers stored as "A|B|C" — convert to first value for
-    // SurveySelector compatibility (multi-select not standard in Remark)
-    const finalAnswers = {};
-    Object.entries(allAnswers).forEach(([k, v]) => {
+    // Build final answers -- send only non-empty values
+    // Checkbox answers stored as "A|B|C" -- join with semicolon for export
+    var finalAnswers = {};
+    Object.keys(allAnswers).forEach(function(k) {
+        var v = allAnswers[k];
         if (v && v.trim()) {
-            // If pipe-separated (checkbox), join with semicolon for export
-            finalAnswers[k] = v.includes('|') ? v.split('|').join('; ') : v;
+            finalAnswers[k] = v.indexOf('|') !== -1 ? v.split('|').join('; ') : v;
         }
     });
 
-    try {
-        const resp = await fetch(`/api/survey/take/${SURVEY_TOKEN}/submit`, {
-            method:  'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ answers: finalAnswers }),
+    fetch('/api/survey/take/' + SURVEY_TOKEN + '/submit', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ answers: finalAnswers })
+    })
+    .then(function(resp) {
+        return resp.json().then(function(data) {
+            return { status: resp.status, data: data };
         });
-        const data = await resp.json();
-
-        if (data.success) {
+    })
+    .then(function(result) {
+        if (result.data.success) {
             showThankYou();
-        } else if (resp.status === 409) {
-            // Duplicate submission
-            showError('It looks like you have already submitted a response for this survey. '
-                    + 'Only one response per person is allowed. Thank you!');
+        } else if (result.status === 409) {
+            showError('It looks like you have already submitted a response for this survey. Only one response per person is allowed. Thank you!');
         } else {
-            const errEl = document.getElementById('validationError');
-            if (errEl) {
-                errEl.style.display = 'block';
-                errEl.textContent = data.error || 'An error occurred. Please try again.';
-            }
+            showError(result.data.error || 'An error occurred. Please try again.');
             if (submitBtn) {
                 submitBtn.disabled = false;
-                submitBtn.textContent = 'Submit Survey ✓';
+                submitBtn.textContent = 'Submit Survey';
             }
         }
-    } catch (err) {
-        const errEl = document.getElementById('validationError');
-        if (errEl) {
-            errEl.style.display = 'block';
-            errEl.textContent = 'Network error. Please check your connection and try again.';
-        }
+    })
+    .catch(function() {
+        showError('Network error. Please check your connection and try again.');
         if (submitBtn) {
             submitBtn.disabled = false;
-            submitBtn.textContent = 'Submit Survey ✓';
+            submitBtn.textContent = 'Submit Survey';
         }
-    }
+    });
 }
 
 // ---------------------------------------------------------------------------
 // PROGRESS BAR
 // ---------------------------------------------------------------------------
-function updateProgress(onReview = false) {
-    const sections = surveyData ? surveyData.sections || [] : [];
-    const container = document.getElementById('progressContainer');
+function updateProgress(onReview) {
+    var sections  = surveyData ? surveyData.sections || [] : [];
+    var container = document.getElementById('progressContainer');
     if (!container) return;
     container.style.display = 'flex';
 
-    let pct  = 0;
-    let text = '';
+    var pct, text;
     if (onReview) {
         pct  = 100;
         text = 'Review & Submit';
     } else {
-        pct  = sections.length > 0 ? Math.round(((currentSection) / sections.length) * 100) : 0;
-        text = `Section ${currentSection + 1} of ${sections.length}`;
+        pct  = sections.length > 0 ? Math.round((currentSection / sections.length) * 100) : 0;
+        text = 'Section ' + (currentSection + 1) + ' of ' + sections.length;
     }
 
-    const fill = document.getElementById('progressFill');
-    const textEl = document.getElementById('progressText');
+    var fill   = document.getElementById('progressFill');
+    var textEl = document.getElementById('progressText');
     if (fill)   fill.style.width = pct + '%';
     if (textEl) textEl.textContent = text;
 }
 
 function hideProgress() {
-    const container = document.getElementById('progressContainer');
+    var container = document.getElementById('progressContainer');
     if (container) container.style.display = 'none';
 }
 
@@ -899,9 +865,9 @@ function hideProgress() {
 // HELPERS
 // ---------------------------------------------------------------------------
 function getGlobalQuestionNumber(sectionIdx, questionIdx) {
-    const sections = surveyData ? surveyData.sections || [] : [];
-    let count = 1;
-    for (let i = 0; i < sectionIdx; i++) {
+    var sections = surveyData ? surveyData.sections || [] : [];
+    var count = 1;
+    for (var i = 0; i < sectionIdx; i++) {
         count += (sections[i].questions || []).length;
     }
     return count + questionIdx;
@@ -921,13 +887,14 @@ function escHtml(str) {
         .replace(/'/g, '&#39;');
 }
 
-function escAttr(str) {
-    return escHtml(str);
-}
+function escAttr(str) { return escHtml(str); }
 
 function escJs(str) {
     if (!str) return '';
-    return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
+    return String(str)
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/"/g, '\\"');
 }
 
 // ---------------------------------------------------------------------------
