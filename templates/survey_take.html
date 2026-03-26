@@ -3,7 +3,7 @@
 SURVEY IN A BOX — Employee Survey Page
 File: templates/survey_take.html
 Created: March 13, 2026
-Last Updated: March 25, 2026 — BUG FIX: Allow skipping questions + clarify rules
+Last Updated: March 26, 2026 — Phase 2: Instructions screen + employee code entry
 
 PURPOSE:
     Employee-facing survey interface. Displays one section at a time
@@ -18,17 +18,35 @@ DESIGN:
     - Graceful handling of closed surveys and duplicate submissions
 
 CHANGELOG:
+    - March 26, 2026: Phase 2 — TWO CHANGES ONLY:
+      1. showIntro() REPLACED with showInstructions(): The intro card now
+         matches the formal CONFIDENTIAL EMPLOYEE SURVEY instructions page
+         specified in the Phase 2 handoff. Includes:
+         - Confidentiality statement
+         - Estimated time (from question count)
+         - Instructions bullets
+         - 5-digit employee code input field (shown only when the questions
+           API returns roster_uploaded=true)
+         - Code is validated (5 digits, required if roster) before Begin Survey
+         - Code is stored in JS var employeeCode and sent with submit payload
+         The function name changed from showIntro to showInstructions. All
+         callers updated (goBack when currentSection=0 now calls showInstructions).
+      2. submitSurvey() UPDATED: employee_code added to POST body when set.
+         No other changes to submit logic.
+      NOTE: roster_uploaded is read from the /questions API response (not a
+      template variable), so survey_respondent.py route needed no change.
+
     - March 25, 2026: TWO CHANGES ONLY:
       1. INTRO SCREEN: Added "Questions are optional" and "one answer per
-         question" bullets to the intro card so employees know the rules
-         before starting.
-      2. goNext() VALIDATION: Removed the hard block that prevented advancing
-         when questions were unanswered. Surveys are voluntary — employees
-         should be able to skip any question. The validation error div and
-         its display logic are removed from goNext(). The review screen
-         still shows which questions were not answered so employees can
-         go back if they wish.
+         question" bullets.
+      2. goNext() VALIDATION: Removed hard block on unanswered questions.
+
     - March 13, 2026: Initial creation. Phase 3 of Survey in a Box.
+
+IMPORTANT — JS STRING LITERAL RULE:
+    All string literals inside <script> blocks must use only plain ASCII
+    characters. Smart/curly quotes and typographic dashes cause silent JS
+    syntax errors. Use straight quotes and hyphens only.
 -->
 <html lang="en">
 <head>
@@ -304,38 +322,133 @@ CHANGELOG:
         }
         @keyframes spin { to { transform: rotate(360deg); } }
 
-        /* ---- Intro card ---- */
-        .intro-card {
+        /* ---- Instructions card (Phase 2) ---- */
+        .instructions-card {
             background: white;
             border-radius: 10px;
             box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-            padding: 32px 28px;
+            overflow: hidden;
+        }
+        .instructions-header {
+            background: #1a365d;
+            color: white;
+            padding: 24px 28px 20px;
             text-align: center;
         }
-        .intro-card h1 {
-            font-size: 22px;
-            color: #1a365d;
+        .instructions-header .confidential-label {
+            font-size: 11px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            opacity: 0.7;
+            margin-bottom: 6px;
+        }
+        .instructions-header h1 {
+            font-size: 20px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+        .instructions-header .conducted-by {
+            font-size: 13px;
+            opacity: 0.75;
+        }
+        .instructions-body {
+            padding: 24px 28px;
+        }
+        .instructions-body h2 {
+            font-size: 14px;
+            font-weight: 700;
+            color: #2d3748;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
             margin-bottom: 12px;
         }
-        .intro-card p {
-            color: #718096;
-            font-size: 15px;
-            line-height: 1.6;
-            margin-bottom: 10px;
+        .instructions-list {
+            list-style: none;
+            padding: 0;
+            margin-bottom: 24px;
         }
-        .intro-card .intro-bullets {
-            text-align: left;
-            background: #f7fafc;
-            border-radius: 8px;
-            padding: 16px 20px;
-            margin: 16px 0;
-        }
-        .intro-card .intro-bullets li {
+        .instructions-list li {
             font-size: 14px;
             color: #4a5568;
-            margin-bottom: 6px;
-            margin-left: 16px;
-            line-height: 1.5;
+            line-height: 1.6;
+            padding: 8px 0 8px 28px;
+            border-bottom: 1px solid #f0f4f8;
+            position: relative;
+        }
+        .instructions-list li:last-child {
+            border-bottom: none;
+        }
+        .instructions-list li::before {
+            content: attr(data-bullet);
+            position: absolute;
+            left: 0;
+            top: 8px;
+            font-size: 15px;
+        }
+
+        /* ---- Employee code input ---- */
+        .code-section {
+            background: #f7fafc;
+            border: 1.5px solid #bee3f8;
+            border-radius: 8px;
+            padding: 18px 20px;
+            margin-bottom: 20px;
+        }
+        .code-section label {
+            display: block;
+            font-size: 13px;
+            font-weight: 700;
+            color: #2b6cb0;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .code-input-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .code-input {
+            width: 140px;
+            padding: 10px 14px;
+            border: 2px solid #bee3f8;
+            border-radius: 7px;
+            font-size: 22px;
+            font-weight: 700;
+            letter-spacing: 6px;
+            text-align: center;
+            color: #1a365d;
+            font-family: 'Courier New', monospace;
+            transition: border-color 0.15s;
+        }
+        .code-input:focus {
+            outline: none;
+            border-color: #3182ce;
+        }
+        .code-input.error {
+            border-color: #fc8181;
+            background: #fff5f5;
+        }
+        .code-hint {
+            font-size: 12px;
+            color: #718096;
+        }
+        .code-error {
+            font-size: 13px;
+            color: #c53030;
+            margin-top: 6px;
+            display: none;
+        }
+        .code-error.visible {
+            display: block;
+        }
+
+        /* ---- Contact line ---- */
+        .contact-line {
+            font-size: 13px;
+            color: #718096;
+            text-align: center;
+            margin-bottom: 20px;
         }
 
         /* ---- Thank you screen ---- */
@@ -411,13 +524,16 @@ CHANGELOG:
 <script>
 // ============================================================================
 // SURVEY IN A BOX -- Employee Survey JavaScript
+// IMPORTANT: All string literals use only plain ASCII characters.
+// Smart/curly quotes and typographic dashes cause silent JS syntax errors.
 // ============================================================================
 var SURVEY_TOKEN  = {{ token | tojson }};
 var COMPANY_NAME  = {{ company_name | tojson }};
 
-var surveyData     = null;   // {sections, total_questions}
-var currentSection = -1;     // -1 = intro, sections.length = thank you
+var surveyData     = null;   // {sections, total_questions, roster_uploaded, roster_count}
+var currentSection = -1;     // -1 = instructions, sections.length = review/submit
 var allAnswers     = {};     // {short_label: answer_text}
+var employeeCode   = '';     // Phase 2: 5-digit code entered by employee
 
 // ---------------------------------------------------------------------------
 // INIT
@@ -431,7 +547,7 @@ function init() {
                 return;
             }
             surveyData = data;
-            showIntro();
+            showInstructions();
         })
         .catch(function() {
             showError('Unable to load the survey. Please check your internet connection and try again.');
@@ -441,40 +557,115 @@ function init() {
 // ---------------------------------------------------------------------------
 // SCREENS
 // ---------------------------------------------------------------------------
-function showIntro() {
+
+/*
+ * showInstructions() — Phase 2 replacement for showIntro()
+ *
+ * Renders the CONFIDENTIAL EMPLOYEE SURVEY instructions page.
+ * If the project has a roster (surveyData.roster_uploaded = true),
+ * shows the 5-digit code input field and validates it before
+ * allowing the employee to proceed to the survey questions.
+ * If no roster, the code field is hidden and Begin Survey proceeds directly.
+ */
+function showInstructions() {
     currentSection = -1;
     hideProgress();
-    var totalQ   = surveyData.total_questions;
-    var sections = surveyData.sections || [];
-    var estMins  = Math.ceil(totalQ / 8);
 
-    /* CHANGE 1: Added two new bullets:
-       - "Questions are optional" so employees know they can skip
-       - "Only one answer per question" so they know the single-select rule
-       These were missing from the original and caused confusion. */
+    var totalQ      = surveyData.total_questions;
+    var sections    = surveyData.sections || [];
+    var estMins     = Math.ceil(totalQ / 8);
+    var hasRoster   = surveyData.roster_uploaded === true;
+
+    // Build the employee code section (only when roster exists)
+    var codeSectionHtml = '';
+    if (hasRoster) {
+        codeSectionHtml =
+            '<div class="code-section">' +
+                '<label>Your 5-Digit Survey Code</label>' +
+                '<div class="code-input-row">' +
+                    '<input type="text" id="employeeCodeInput" class="code-input"' +
+                    '       maxlength="5" inputmode="numeric" pattern="[0-9]*"' +
+                    '       placeholder="00000"' +
+                    '       oninput="this.value=this.value.replace(/[^0-9]/g,\'\').slice(0,5)"' +
+                    '       onkeydown="if(event.key===\'Enter\')beginSurvey()" />' +
+                    '<span class="code-hint">Enter the code from your<br>code sheet</span>' +
+                '</div>' +
+                '<div class="code-error" id="codeError">Please enter your 5-digit survey code before continuing.</div>' +
+            '</div>';
+    }
+
     setContent(
-        '<div class="intro-card">' +
-            '<h1>Welcome to the ' + escHtml(COMPANY_NAME) + ' Employee Survey</h1>' +
-            '<p>Your feedback matters. This survey helps leadership understand what\'s working and what can be improved about your work schedule and work environment.</p>' +
-            '<div class="intro-bullets">' +
-                '<ul>' +
-                    '<li><strong>Completely anonymous</strong> -- your name is never collected or stored.</li>' +
-                    '<li><strong>' + totalQ + ' questions</strong> across ' + sections.length + ' sections -- estimated ' + estMins + '-' + (estMins + 2) + ' minutes.</li>' +
-                    '<li><strong>Questions are optional</strong> -- you may skip any question you prefer not to answer.</li>' +
-                    '<li><strong>One answer per question</strong> -- select only one response for each question unless told otherwise.</li>' +
-                    '<li>You can go <strong>Back</strong> to change answers before submitting.</li>' +
-                    '<li>Your responses are saved only when you click <strong>Submit</strong> on the final page.</li>' +
-                '</ul>' +
+        '<div class="instructions-card">' +
+            '<div class="instructions-header">' +
+                '<div class="confidential-label">Confidential Employee Survey</div>' +
+                '<h1>' + escHtml(COMPANY_NAME) + '</h1>' +
+                '<div class="conducted-by">Conducted by Shiftwork Solutions LLC</div>' +
             '</div>' +
-            '<p style="font-size:13px; color:#a0aec0;">This survey is administered by Shiftwork Solutions LLC on behalf of ' + escHtml(COMPANY_NAME) + '.</p>' +
-            '<div style="margin-top:24px;">' +
-                '<button class="btn btn-primary" onclick="startSurvey()">Begin Survey &#8594;</button>' +
+            '<div class="instructions-body">' +
+                '<h2>Instructions</h2>' +
+                '<ul class="instructions-list">' +
+                    '<li data-bullet="&#128274;">' +
+                        '<strong>This survey is confidential.</strong> Your individual responses will not be shared with management. Results are reported only in aggregate.' +
+                    '</li>' +
+                    (hasRoster
+                        ? '<li data-bullet="&#128273;">' +
+                            'Enter your <strong>5-digit survey code</strong> below. This code is used only to prevent duplicate submissions. It cannot be linked to your identity by anyone at ' + escHtml(COMPANY_NAME) + '.' +
+                          '</li>'
+                        : '') +
+                    '<li data-bullet="&#9745;">' +
+                        '<strong>Most questions are optional.</strong> If you prefer not to answer a question, you may skip it.' +
+                    '</li>' +
+                    '<li data-bullet="&#128221;">' +
+                        'Select <strong>one answer per question</strong> unless otherwise noted.' +
+                    '</li>' +
+                    '<li data-bullet="&#8987;">' +
+                        'The survey takes approximately <strong>' + estMins + '-' + (estMins + 5) + ' minutes</strong> to complete (' + totalQ + ' questions across ' + sections.length + ' sections).' +
+                    '</li>' +
+                    '<li data-bullet="&#128222;">' +
+                        'If you have questions about the survey, contact: <strong>Shiftwork Solutions LLC -- (415) 265-1621</strong>' +
+                    '</li>' +
+                '</ul>' +
+                codeSectionHtml +
+                '<div class="contact-line">' +
+                    'This survey is administered by Shiftwork Solutions LLC on behalf of ' + escHtml(COMPANY_NAME) + '.' +
+                '</div>' +
+                '<div style="text-align:center;">' +
+                    '<button class="btn btn-primary" onclick="beginSurvey()">Begin Survey &#8594;</button>' +
+                '</div>' +
             '</div>' +
         '</div>'
     );
 }
 
-function startSurvey() {
+/*
+ * beginSurvey() — validates employee code (if required) then starts survey
+ */
+function beginSurvey() {
+    var hasRoster = surveyData && surveyData.roster_uploaded === true;
+
+    if (hasRoster) {
+        var input    = document.getElementById('employeeCodeInput');
+        var errEl    = document.getElementById('codeError');
+        var codeVal  = input ? input.value.trim() : '';
+
+        // Clear prior error state
+        if (input)  input.classList.remove('error');
+        if (errEl)  errEl.classList.remove('visible');
+
+        if (!codeVal || codeVal.length !== 5 || !/^\d{5}$/.test(codeVal)) {
+            if (input) input.classList.add('error');
+            if (errEl) {
+                errEl.textContent = 'Please enter your 5-digit survey code before continuing.';
+                errEl.classList.add('visible');
+            }
+            return;
+        }
+
+        employeeCode = codeVal;
+    } else {
+        employeeCode = '';
+    }
+
     currentSection = 0;
     showCurrentSection();
 }
@@ -504,7 +695,7 @@ function showCurrentSection() {
     setContent(
         '<div class="section-card">' +
             '<div class="section-header">' +
-                '<div class="section-title">' + escHtml(section.name || section.category || 'Survey Questions') + '</div>' +
+                '<div class="section-title">' + escHtml(section.name || section.category || section.title || 'Survey Questions') + '</div>' +
                 '<div class="section-subtitle">Section ' + (currentSection + 1) + ' of ' + sections.length + '</div>' +
             '</div>' +
             '<div class="section-body">' +
@@ -513,7 +704,7 @@ function showCurrentSection() {
         '</div>' +
         '<div class="nav-bar">' +
             '<button class="btn btn-secondary" onclick="goBack()">' +
-                (isFirst ? '&#8592; Introduction' : '&#8592; Back') +
+                (isFirst ? '&#8592; Instructions' : '&#8592; Back') +
             '</button>' +
             '<button class="btn btn-primary" onclick="goNext()">' +
                 nextLabel +
@@ -562,7 +753,7 @@ function showThankYou() {
         '<div class="thankyou-card">' +
             '<div class="thankyou-icon">&#10003;</div>' +
             '<h1>Thank You!</h1>' +
-            '<p>Your response has been recorded anonymously. Your feedback is valuable and will help shape decisions about your work schedule and environment.</p>' +
+            '<p>Your response has been recorded anonymously. Your feedback is valuable and will help shape decisions about your work schedule and work environment.</p>' +
             '<p>You may now close this window.</p>' +
             '<div class="shiftwork-footer">' +
                 'Survey administered by Shiftwork Solutions LLC &nbsp;|&nbsp;' +
@@ -660,14 +851,14 @@ function buildQuestionHtml(q, qNum) {
 function buildReviewHtml(sections) {
     var html = '';
     sections.forEach(function(section) {
-        var questions      = section.questions || [];
+        var questions       = section.questions || [];
         var sectionAnswered = questions.filter(function(q) {
             return allAnswers[q.short_label || q.id];
         }).length;
         html +=
             '<div style="margin-bottom:20px;">' +
                 '<div style="font-weight:600; color:#2b6cb0; margin-bottom:8px; font-size:14px; text-transform:uppercase; letter-spacing:0.5px;">' +
-                    escHtml(section.name || section.category || 'Questions') +
+                    escHtml(section.name || section.category || section.title || 'Questions') +
                     ' <span style="color:#a0aec0; font-weight:400;">(' + sectionAnswered + '/' + questions.length + ' answered)</span>' +
                 '</div>';
         questions.forEach(function(q) {
@@ -755,10 +946,7 @@ function restoreAnswers(questions) {
 
 // ---------------------------------------------------------------------------
 // NAVIGATION
-// CHANGE 2: goNext() no longer blocks on unanswered questions.
-// Surveys are voluntary -- employees may skip any question they prefer
-// not to answer. The review screen shows skipped questions in gray so
-// employees can go back if they wish before submitting.
+// goBack() returns to showInstructions() (not showIntro) when at section 0
 // ---------------------------------------------------------------------------
 function goNext() {
     currentSection++;
@@ -767,7 +955,7 @@ function goNext() {
 
 function goBack() {
     if (currentSection <= 0) {
-        showIntro();
+        showInstructions();
         return;
     }
     currentSection--;
@@ -782,6 +970,7 @@ function goBackToLastSection() {
 
 // ---------------------------------------------------------------------------
 // SUBMIT
+// Phase 2: employee_code included in POST body when set
 // ---------------------------------------------------------------------------
 function submitSurvey() {
     var submitBtn = document.getElementById('submitBtn');
@@ -790,8 +979,6 @@ function submitSurvey() {
         submitBtn.textContent = 'Submitting...';
     }
 
-    // Build final answers -- send only non-empty values
-    // Checkbox answers stored as "A|B|C" -- join with semicolon for export
     var finalAnswers = {};
     Object.keys(allAnswers).forEach(function(k) {
         var v = allAnswers[k];
@@ -800,10 +987,16 @@ function submitSurvey() {
         }
     });
 
+    // Phase 2: include employee_code in payload when set
+    var payload = { answers: finalAnswers };
+    if (employeeCode) {
+        payload.employee_code = employeeCode;
+    }
+
     fetch('/api/survey/take/' + SURVEY_TOKEN + '/submit', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ answers: finalAnswers })
+        body:    JSON.stringify(payload)
     })
     .then(function(resp) {
         return resp.json().then(function(data) {
@@ -814,7 +1007,7 @@ function submitSurvey() {
         if (result.data.success) {
             showThankYou();
         } else if (result.status === 409) {
-            showError('It looks like you have already submitted a response for this survey. Only one response per person is allowed. Thank you!');
+            showError('It looks like this survey code has already been used, or you have already submitted a response. Only one response per person is allowed. Thank you!');
         } else {
             showError(result.data.error || 'An error occurred. Please try again.');
             if (submitBtn) {
