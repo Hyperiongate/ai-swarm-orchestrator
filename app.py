@@ -1,9 +1,21 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: March 13, 2026 — Survey in a Box Phase 3: Online Survey Engine
+Last Updated: March 26, 2026 — Survey in a Box Phase 2: Roster Upload & Code Generation
 
 CHANGELOG:
+- March 26, 2026: Survey in a Box Phase 2 — TWO CHANGES ONLY:
+  1. MIGRATION: Added migration_004_phase2_enhancements.py call in STEP 1,
+     immediately after migration_003_survey_responses.py. Creates the
+     survey_roster table and adds 3 columns to survey_projects
+     (roster_uploaded, roster_count, generated_document_path) and 1 column
+     to survey_responses (employee_code). Fully idempotent — safe to run
+     on every startup.
+  2. HEALTH CHECK: Updated survey_in_a_box phase string from
+     '3 - Online Survey Engine' to '2+3 - Survey Assembly & Online Engine'.
+  NO OTHER CHANGES. All existing routes, blueprints, features, and startup
+  sequence are completely unchanged.
+
 - March 13, 2026: Survey in a Box Phase 3 — THREE CHANGES ONLY:
   1. MIGRATION: Added migration_003_survey_responses.py call in STEP 1,
      immediately after migration_002_survey_in_a_box.py. Creates the
@@ -133,6 +145,29 @@ try:
     print("Survey Responses migration (003) complete")
 except Exception as e:
     print(f"Survey Responses migration (003) failed: {e}")
+    import traceback
+    traceback.print_exc()
+
+# ----------------------------------------------------------------------------
+# MIGRATION 004: Phase 2 Enhancements
+# Added: March 26, 2026
+# Creates survey_roster table.
+# Adds roster_uploaded, roster_count, generated_document_path to survey_projects.
+# Adds employee_code to survey_responses.
+# Fully idempotent — safe to run on every startup.
+# ----------------------------------------------------------------------------
+try:
+    import importlib.util as _ilu4
+    import os as _os4
+    _m004_path = _os4.path.join(_os4.path.dirname(_os4.path.abspath(__file__)),
+                                'migrations', 'migration_004_phase2_enhancements.py')
+    _spec004 = _ilu4.spec_from_file_location("migration_004_phase2_enhancements", _m004_path)
+    _mod004 = _ilu4.module_from_spec(_spec004)
+    _spec004.loader.exec_module(_mod004)
+    _mod004.run_migration()
+    print("Phase 2 Enhancements migration (004) complete")
+except Exception as e:
+    print(f"Phase 2 Enhancements migration (004) failed: {e}")
     import traceback
     traceback.print_exc()
 
@@ -769,7 +804,7 @@ def health():
 
     return jsonify({
         'status': 'healthy',
-        'version': 'Survey in a Box Phase 3 Mar13 + Phase 6 Proactive Agent Mar12 + Phase 2 Survey Assembly Mar12 + Phase 1 Onboarding Mar10 + Phase 3 Capabilities Manifest Mar08 + Phase 2A Memory Mar05 + PostgreSQL Migration Mar02',
+        'version': 'Survey in a Box Phase 2 Mar26 + Phase 3 Mar13 + Phase 6 Proactive Agent Mar12 + Phase 2 Survey Assembly Mar12 + Phase 1 Onboarding Mar10 + Phase 3 Capabilities Manifest Mar08 + Phase 2A Memory Mar05 + PostgreSQL Migration Mar02',
         'database': {
             'type': get_db_type(),
             'backend': 'PostgreSQL (persistent)' if get_db_type() == 'postgresql' else 'SQLite (local dev)'
@@ -834,7 +869,7 @@ def health():
             'status': 'enabled',
             'intake_form': '/survey/start',
             'admin_dashboard': '/survey/admin',
-            'phase': '3 - Online Survey Engine'
+            'phase': '2+3 - Survey Assembly & Online Engine'
         },
         'proactive_agent': {
             'status': 'enabled',
