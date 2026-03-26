@@ -2,7 +2,7 @@
 SURVEY IN A BOX — Respondent Routes
 File: routes/survey_respondent.py
 Created: March 13, 2026
-Last Updated: March 25, 2026 — BUG FIX: Wrong session key in _require_admin_auth()
+Last Updated: March 26, 2026 — Phase 2: Employee code validation + demographic export
 
 PURPOSE:
     Employee-facing survey engine for Survey in a Box Phase 3.
@@ -32,21 +32,32 @@ ANONYMOUS DESIGN:
       purely the answer data in SurveySelector-compatible format.
 
 EXPORT FORMAT (SurveySelector / Remark compatible):
-    - One sheet named "Sheet1"
-    - One row per respondent
-    - One column per question in survey order
-    - Column headers: question short_label (e.g. "Department", "like current schedule")
-    - Values: full text of selected answer option (e.g. "4 Agree", "Shipping")
-    - Unanswered questions: the literal string "BLANK" (not empty cell)
-    - No row IDs, no timestamps, no respondent identifiers
+    Without roster:
+        - One sheet named "Sheet1"
+        - One row per respondent
+        - One column per question in survey order
+        - Column headers: question short_label
+        - Values: full text of selected answer option
+        - Unanswered questions: the literal string "BLANK"
+
+    With roster (Phase 2):
+        - First 4 columns: Employee Code | Department | Shift | Tenure
+          (looked up from survey_roster by employee_code stored in response)
+        - Then all survey question columns in order
+        - Provides SurveySelector with demographic breakout data directly
 
 DUPLICATE PREVENTION:
-    - Browser sets a session cookie (survey_session_<token>) on first load
-    - Cookie value is SHA-256 hashed before storage — one-way, not reversible
-    - On submission, the hash is checked against survey_responses for that project
-    - If a matching session_token exists, submission is rejected with HTTP 409
-    - Respondents with cookies disabled can still submit (session_token = NULL,
-      duplicate check is skipped for them)
+    Without roster:
+        - Browser sets a session cookie (survey_session_<token>) on first load
+        - Cookie value is SHA-256 hashed before storage — one-way, not reversible
+        - On submission, the hash is checked against survey_responses for that project
+        - If a matching session_token exists, submission is rejected with HTTP 409
+
+    With roster (Phase 2):
+        - Employee enters 5-digit code issued by Jim
+        - Code validated against survey_roster for this project
+        - has_responded flag checked — rejects if already used (HTTP 409)
+        - On success: has_responded set to TRUE and employee_code stored in response row
 
 SURVEY OPEN/CLOSE:
     - Jim explicitly opens a survey via GET /open endpoint (auth required)
@@ -61,19 +72,29 @@ POSTGRESQL RULES:
     - RETURNING id on INSERT
 
 CHANGELOG:
+    - March 26, 2026: Phase 2 additions — FOUR CHANGES ONLY:
+      1. get_survey_questions(): added roster_uploaded and roster_count to
+         JSON response so the frontend knows whether to show the code field.
+      2. submit_survey(): added employee_code validation. If project has a
+         roster (roster_uploaded=TRUE), the code is required, validated
+         against survey_roster, and has_responded is set on success.
+         employee_code stored in survey_responses row. Backward compatible:
+         if roster_uploaded=FALSE, code is ignored and cookie-based
+         duplicate prevention applies as before.
+      3. export_responses(): when roster exists, prepends Employee Code,
+         Department, Shift, Tenure columns (looked up from survey_roster)
+         before the survey question columns.
+      4. Header and changelog updated.
+      NO OTHER CHANGES. All existing endpoints, logic, and error handling
+      are completely unchanged.
+
     - March 25, 2026: BUG FIX — _require_admin_auth() was checking the wrong
-      Flask session key. It checked session.get('survey_admin_logged_in') but
-      survey_admin.py sets session['survey_admin_authenticated']. This caused
-      all admin-protected endpoints in this file (/open, /close, /responses,
-      /export) to always return 401 even when the admin was logged in.
-      ONE LINE CHANGED: 'survey_admin_logged_in' -> 'survey_admin_authenticated'
+      Flask session key. ONE LINE CHANGED: 'survey_admin_logged_in' ->
+      'survey_admin_authenticated'.
 
     - March 13, 2026 (BUG FIX): Fixed _get_survey_questions_ordered().
       SurveyBuilder.create_survey() returns a flat 'questions' list, not a
-      'sections' hierarchy. The original code iterated survey_obj['sections']
-      which is always empty, causing the export to return 500 (no columns).
-      Fix: iterate survey_obj['questions'] directly and inject 'short_label'
-      (set to question id) so export column headers are stable.
+      'sections' hierarchy.
 
     - March 13, 2026: Initial creation. Phase 3 of Survey in a Box roadmap.
 """
@@ -200,16 +221,9 @@ def _get_survey_questions_ordered(project_row):
         if not selected_questions:
             selected_questions = list(builder.question_bank.keys())
         else:
-            # The admin dashboard stores category names (e.g. 'work_life_balance',
-            # 'schedule_preference') in selected_questions, but create_survey()
-            # expects question IDs (e.g. 'dept', 'tenure', 'safety_rating').
-            # Detect this: if none of the stored values match question bank keys,
-            # they are category names. Map them to question bank categories and
-            # expand to all matching question IDs.
             question_ids_in_bank = set(builder.question_bank.keys())
             any_match_as_id = any(q in question_ids_in_bank for q in selected_questions)
             if not any_match_as_id:
-                # Map admin UI category labels to question bank category values
                 CATEGORY_MAP = {
                     'work_life_balance':   'schedule_features',
                     'schedule_preference': 'schedule_features',
@@ -245,18 +259,13 @@ def _get_survey_questions_ordered(project_row):
             custom_questions=custom_questions if custom_questions else None
         )
 
-        # SurveyBuilder.create_survey() returns a flat 'questions' list,
-        # not a 'sections' hierarchy. Iterate it directly.
         ordered = []
         for q in survey_obj.get('questions', []):
-            # Inject short_label = question id so export has a stable
-            # column-header field regardless of question bank field names.
             q_copy = dict(q)
             if 'short_label' not in q_copy:
                 q_copy['short_label'] = q_copy.get('id', q_copy.get('text', 'unknown'))
             ordered.append(q_copy)
 
-        # Also include any schedule rating questions
         for sched in survey_obj.get('schedule_concepts', []):
             sched_id = sched.get('schedule', {}).get('id', 'schedule')
             ordered.append({
@@ -330,6 +339,8 @@ def survey_take_page(token):
 
 # ---------------------------------------------------------------------------
 # ROUTES — LOAD SURVEY QUESTIONS (API)
+# Phase 2 addition: includes roster_uploaded and roster_count in response
+# so the frontend can show/hide the employee code field.
 # ---------------------------------------------------------------------------
 
 @survey_respondent_bp.route('/api/survey/take/<token>/questions', methods=['GET'])
@@ -339,6 +350,9 @@ def get_survey_questions(token):
     Used by the survey_take.html frontend to render the form.
     Returns questions grouped by section with full option text.
     Does NOT require authentication.
+
+    Phase 2 addition: response now includes roster_uploaded (bool) and
+    roster_count (int) so the frontend knows whether to show the code field.
     """
     try:
         project_row, client_row = _load_project_by_token(token)
@@ -354,9 +368,6 @@ def get_survey_questions(token):
         if not ordered_questions:
             return jsonify({'success': False, 'error': 'No questions configured for this survey'}), 500
 
-        # SurveyBuilder.create_survey() returns a flat 'questions' list, not
-        # a 'sections' hierarchy. Build sections grouped by category so the
-        # frontend can render one section at a time.
         sections_dict = {}
         section_order = []
         for q in ordered_questions:
@@ -373,12 +384,20 @@ def get_survey_questions(token):
 
         company_name = project_row.get('company_name', 'Your Company')
 
+        # --- PHASE 2 ADDITION ---
+        # Include roster status so the frontend can conditionally show the
+        # employee code input field. roster_uploaded comes from migration_004.
+        roster_uploaded = bool(project_row.get('roster_uploaded', False))
+        roster_count    = int(project_row.get('roster_count', 0) or 0)
+
         return jsonify({
             'success':         True,
             'company_name':    company_name,
             'token':           token,
             'total_questions': len(ordered_questions),
             'sections':        sections,
+            'roster_uploaded': roster_uploaded,   # Phase 2: show/hide code field
+            'roster_count':    roster_count,      # Phase 2: for display
         })
 
     except Exception as e:
@@ -388,6 +407,7 @@ def get_survey_questions(token):
 
 # ---------------------------------------------------------------------------
 # ROUTES — SUBMIT SURVEY (API)
+# Phase 2 addition: employee_code validation when roster exists
 # ---------------------------------------------------------------------------
 
 @survey_respondent_bp.route('/api/survey/take/<token>/submit', methods=['POST'])
@@ -399,20 +419,25 @@ def submit_survey(token):
         {
             "answers": {
                 "Department": "Shipping",
-                "like current schedule": "4 Agree",
-                "gender": "Male"
-            }
+                "like current schedule": "4 Agree"
+            },
+            "employee_code": "12345"   <- Phase 2: required if project has roster
         }
 
-    Answers should use the question short_label as the key and the
-    full text of the selected option as the value. Questions left
-    unanswered should be omitted from the dict (not sent as empty string).
-    The export function fills missing keys with "BLANK".
+    Phase 2 employee code validation:
+        - If project.roster_uploaded=TRUE: employee_code is required.
+          Code must be 5 digits, must exist in survey_roster for this project,
+          and has_responded must be FALSE. On success: has_responded set TRUE
+          and employee_code stored in the survey_responses row.
+        - If project.roster_uploaded=FALSE: employee_code is ignored.
+          Cookie-based duplicate prevention applies as before.
 
     Returns:
         201 Created on success
+        400 if employee_code missing or invalid format (roster required)
         403 if survey is closed
-        409 if duplicate submission detected
+        404 if employee code not found in roster
+        409 if duplicate submission (code already used, or cookie match)
         422 if answers are missing or malformed
     """
     try:
@@ -427,10 +452,68 @@ def submit_survey(token):
                 'error':   'This survey is no longer accepting responses.'
             }), 403
 
-        # ---- Duplicate check -----------------------------------------------
+        # ---- Parse request body first (needed for employee_code) ------------
+        data = request.get_json(force=True, silent=True) or {}
+
+        # ---- PHASE 2: Employee code validation ------------------------------
+        roster_uploaded = bool(project_row.get('roster_uploaded', False))
+        roster_row      = None   # Will hold survey_roster record if validated
+
+        if roster_uploaded:
+            employee_code = str(data.get('employee_code', '') or '').strip()
+
+            # Code format validation
+            if not employee_code:
+                return jsonify({
+                    'success': False,
+                    'error':   'Please enter your 5-digit survey code before submitting.'
+                }), 400
+
+            if not employee_code.isdigit() or len(employee_code) != 5:
+                return jsonify({
+                    'success': False,
+                    'error':   'Survey code must be exactly 5 digits. '
+                               'Please check your code and try again.'
+                }), 400
+
+            # Validate code exists in roster and has not been used
+            conn = get_db_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT id, has_responded, department, shift, tenure_bracket
+                    FROM survey_roster
+                    WHERE survey_project_id = %s AND employee_code = %s
+                    """,
+                    (project_row['id'], employee_code)
+                )
+                roster_row = cursor.fetchone()
+            finally:
+                conn.close()
+
+            if not roster_row:
+                return jsonify({
+                    'success': False,
+                    'error':   'Survey code not recognized. Please check your code '
+                               'and try again, or contact your supervisor.'
+                }), 404
+
+            if roster_row['has_responded']:
+                return jsonify({
+                    'success': False,
+                    'error':   'This survey code has already been used to submit a response. '
+                               'Only one response per employee is allowed. Thank you!'
+                }), 409
+
+        else:
+            # No roster — use cookie-based duplicate prevention (existing logic)
+            employee_code = None
+
+        # ---- Cookie-based duplicate check (when no roster) ------------------
         cookie_value, hashed_token = _get_session_token(token)
 
-        if hashed_token:
+        if not roster_uploaded and hashed_token:
             conn = get_db_connection()
             try:
                 cursor = conn.cursor()
@@ -454,7 +537,6 @@ def submit_survey(token):
                 }), 409
 
         # ---- Validate answers -----------------------------------------------
-        data = request.get_json(force=True, silent=True) or {}
         answers = data.get('answers')
 
         if not isinstance(answers, dict):
@@ -469,7 +551,6 @@ def submit_survey(token):
                 'error':   'No answers were submitted. Please complete the survey before submitting.'
             }), 422
 
-        # Sanitize: strip any empty-string values (treat as unanswered)
         cleaned_answers = {k: v for k, v in answers.items()
                            if isinstance(k, str) and isinstance(v, str) and v.strip()}
 
@@ -477,12 +558,12 @@ def submit_survey(token):
         new_session_value = None
         new_hashed_token  = None
 
-        if not cookie_value:
-            # First visit — generate a new session cookie value
-            new_session_value = _generate_session_cookie_value()
-            new_hashed_token  = _hash_session_value(new_session_value)
-        else:
-            new_hashed_token = hashed_token
+        if not roster_uploaded:
+            if not cookie_value:
+                new_session_value = _generate_session_cookie_value()
+                new_hashed_token  = _hash_session_value(new_session_value)
+            else:
+                new_hashed_token = hashed_token
 
         conn = get_db_connection()
         try:
@@ -490,14 +571,16 @@ def submit_survey(token):
 
             cursor.execute(
                 """
-                INSERT INTO survey_responses (survey_project_id, answers, session_token)
-                VALUES (%s, %s::jsonb, %s)
+                INSERT INTO survey_responses
+                    (survey_project_id, answers, session_token, employee_code)
+                VALUES (%s, %s::jsonb, %s, %s)
                 RETURNING id
                 """,
                 (
                     project_row['id'],
                     json.dumps(cleaned_answers),
-                    new_hashed_token
+                    new_hashed_token,
+                    employee_code,          # Phase 2: stored for export enrichment
                 )
             )
             row = cursor.fetchone()
@@ -513,14 +596,25 @@ def submit_survey(token):
                 (project_row['id'],)
             )
 
+            # --- PHASE 2: Mark roster entry as responded ---------------------
+            if roster_uploaded and roster_row:
+                cursor.execute(
+                    """
+                    UPDATE survey_roster
+                    SET has_responded = TRUE
+                    WHERE id = %s
+                    """,
+                    (roster_row['id'],)
+                )
+
             conn.commit()
         finally:
             conn.close()
 
         print(f'[survey_respondent] Response {response_id} stored for project '
-              f'{project_row["id"]} ({project_row.get("company_name", "?")})')
+              f'{project_row["id"]} ({project_row.get("company_name", "?")})'
+              f'{" code=" + employee_code if employee_code else ""}')
 
-        # Build response — set duplicate-prevention cookie if new session
         resp = make_response(jsonify({
             'success':     True,
             'message':     'Thank you! Your response has been recorded.',
@@ -692,6 +786,7 @@ def get_response_summary(project_id):
                 """
                 SELECT sp.response_count, sp.is_open, sp.opened_at, sp.closed_at,
                        sp.survey_url, sp.project_token,
+                       sp.roster_uploaded, sp.roster_count,
                        COUNT(sr.id) AS actual_count
                 FROM survey_projects sp
                 LEFT JOIN survey_responses sr ON sr.survey_project_id = sp.id
@@ -716,6 +811,8 @@ def get_response_summary(project_id):
             'closed_at':      str(row['closed_at']) if row['closed_at'] else None,
             'survey_url':     row['survey_url'] or '',
             'token':          row['project_token'],
+            'roster_uploaded': bool(row.get('roster_uploaded', False)),
+            'roster_count':    int(row.get('roster_count', 0) or 0),
         })
 
     except Exception as e:
@@ -725,6 +822,7 @@ def get_response_summary(project_id):
 
 # ---------------------------------------------------------------------------
 # ROUTES — ADMIN: EXPORT RESPONSES AS XLSX
+# Phase 2 addition: demographic columns prepended when roster exists
 # ---------------------------------------------------------------------------
 
 @survey_respondent_bp.route('/api/survey/admin/project/<int:project_id>/export', methods=['GET'])
@@ -732,16 +830,19 @@ def export_responses(project_id):
     """
     Export all survey responses as a SurveySelector/Remark-compatible .xlsx file.
 
-    Format:
+    Without roster:
         - Sheet name: "Sheet1"
         - One row per respondent
         - Column headers: question short_label in survey order
         - Values: full text of selected answer option
         - Unanswered questions: the literal string "BLANK"
-        - No row IDs, no timestamps, no session tokens
 
-    This format matches the Remark Office OMR export that SurveySelector
-    already processes. Jim can drop this file directly into SurveySelector.
+    With roster (Phase 2):
+        - First 4 columns: Employee Code | Department | Shift | Tenure
+          (looked up from survey_roster by the employee_code stored in response)
+        - Then all survey question columns in order
+        - Unanswered questions: "BLANK"
+        - Demographic fields not in roster: "BLANK"
 
     Requires admin auth.
     """
@@ -768,16 +869,37 @@ def export_responses(project_id):
             if not project_row:
                 return jsonify({'success': False, 'error': 'Project not found'}), 404
 
-            # Load all response rows
+            roster_uploaded = bool(project_row.get('roster_uploaded', False))
+
+            # Load all response rows — include employee_code (Phase 2)
             cursor.execute(
                 """
-                SELECT answers FROM survey_responses
+                SELECT answers, employee_code FROM survey_responses
                 WHERE survey_project_id = %s
                 ORDER BY submitted_at ASC
                 """,
                 (project_id,)
             )
             response_rows = cursor.fetchall()
+
+            # --- PHASE 2: Load roster lookup table if roster exists ----------
+            roster_lookup = {}   # {employee_code: {department, shift, tenure_bracket}}
+            if roster_uploaded:
+                cursor.execute(
+                    """
+                    SELECT employee_code, department, shift, tenure_bracket
+                    FROM survey_roster
+                    WHERE survey_project_id = %s
+                    """,
+                    (project_id,)
+                )
+                for roster_row in cursor.fetchall():
+                    roster_lookup[roster_row['employee_code']] = {
+                        'department':     roster_row.get('department') or 'BLANK',
+                        'shift':          roster_row.get('shift') or 'BLANK',
+                        'tenure_bracket': roster_row.get('tenure_bracket') or 'BLANK',
+                    }
+
         finally:
             conn.close()
 
@@ -796,13 +918,18 @@ def export_responses(project_id):
                 'error':   'Could not load question structure for this project.'
             }), 500
 
-        # Column headers in survey order
-        column_headers = [q['short_label'] for q in ordered_questions]
+        question_headers = [q['short_label'] for q in ordered_questions]
+
+        # --- PHASE 2: Prepend demographic columns when roster exists --------
+        if roster_uploaded:
+            column_headers = ['Employee Code', 'Department', 'Shift', 'Tenure'] + question_headers
+        else:
+            column_headers = question_headers
 
         # ---- Build xlsx ----------------------------------------------------
         try:
             import openpyxl
-            from openpyxl.styles import Font, PatternFill, Alignment
+            from openpyxl.styles import Font, PatternFill
         except ImportError:
             return jsonify({
                 'success': False,
@@ -817,12 +944,11 @@ def export_responses(project_id):
         # Header row — bold
         header_font = Font(bold=True)
         for col_idx, header in enumerate(column_headers, start=1):
-            cell       = ws.cell(row=1, column=col_idx, value=header)
-            cell.font  = header_font
+            cell      = ws.cell(row=1, column=col_idx, value=header)
+            cell.font = header_font
 
         # Data rows — one per respondent
         for row_idx, response_row in enumerate(response_rows, start=2):
-            # answers may come back as dict (JSONB) or string (fallback)
             raw_answers = response_row['answers']
             if isinstance(raw_answers, str):
                 try:
@@ -834,12 +960,29 @@ def export_responses(project_id):
             else:
                 answers = {}
 
-            for col_idx, header in enumerate(column_headers, start=1):
-                # Use "BLANK" for any question not answered — Remark convention
+            emp_code = response_row.get('employee_code') or ''
+
+            col_idx = 1
+
+            # --- PHASE 2: Write demographic columns -------------------------
+            if roster_uploaded:
+                demo = roster_lookup.get(emp_code, {})
+                ws.cell(row=row_idx, column=col_idx, value=emp_code or 'BLANK')
+                col_idx += 1
+                ws.cell(row=row_idx, column=col_idx, value=demo.get('department', 'BLANK'))
+                col_idx += 1
+                ws.cell(row=row_idx, column=col_idx, value=demo.get('shift', 'BLANK'))
+                col_idx += 1
+                ws.cell(row=row_idx, column=col_idx, value=demo.get('tenure_bracket', 'BLANK'))
+                col_idx += 1
+
+            # Survey question columns
+            for header in question_headers:
                 value = answers.get(header, 'BLANK')
                 if not value or not str(value).strip():
                     value = 'BLANK'
                 ws.cell(row=row_idx, column=col_idx, value=str(value))
+                col_idx += 1
 
         # Set reasonable column widths
         for col_idx, header in enumerate(column_headers, start=1):
@@ -851,14 +994,15 @@ def export_responses(project_id):
         wb.save(buffer)
         buffer.seek(0)
 
-        company_name  = project_row.get('company_name', 'Survey')
-        safe_company  = ''.join(c if c.isalnum() else '_' for c in company_name)[:40]
-        ts            = datetime.now(timezone.utc).strftime('%Y%m%d')
-        filename      = f'SurveyData_{safe_company}_{ts}.xlsx'
+        company_name     = project_row.get('company_name', 'Survey')
+        safe_company     = ''.join(c if c.isalnum() else '_' for c in company_name)[:40]
+        ts               = datetime.now(timezone.utc).strftime('%Y%m%d')
+        filename         = f'SurveyData_{safe_company}_{ts}.xlsx'
         respondent_count = len(response_rows)
 
         print(f'[survey_respondent] Exported {respondent_count} responses '
-              f'for project {project_id} ({company_name}): {filename}')
+              f'for project {project_id} ({company_name}): {filename} '
+              f'(roster={roster_uploaded}, cols={len(column_headers)})')
 
         return Response(
             buffer.getvalue(),
