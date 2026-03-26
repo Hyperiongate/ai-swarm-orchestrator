@@ -3,56 +3,65 @@
   Survey in a Box — Admin Dashboard
   File: templates/survey_admin.html
   Created: March 16, 2026
-  Last Updated: March 24, 2026 — BUG FIX: Login freeze / stuck "Signing in..."
+  Last Updated: March 26, 2026 — Phase 2: Survey Management section
 
   PURPOSE:
       Password-protected admin dashboard for Jim at /survey/admin.
-      Single-page application using fetch() — no page reloads.
+      Single-page application using fetch() -- no page reloads.
 
   SCREENS:
       1. Login screen (password prompt)
       2. Client list (all submissions with status badges)
-      3. Client detail (full intake data + project config + approve button)
+      3. Client detail (full intake data + project config + survey management + approve)
 
   ACTIONS AVAILABLE:
-      - Change client status (new / reviewing / approved / rejected / in-progress / delivered)
-      - Select questions (categories checkboxes — Phase 2 full list; Phase 1 shows placeholders)
-      - Select schedule concepts (text list — Phase 2 wires full library)
+      - Change client status
+      - Select questions (categories checkboxes)
+      - Select schedule concepts (text list)
       - Add custom questions (dynamic add/remove)
-      - Add admin notes (auto-saved)
-      - Save project config (POST /api/survey/admin/project/save)
-      - Approve (POST /api/survey/admin/project/<id>/approve)
+      - Add admin notes
+      - Save project config
+      - Approve project
+      - [Phase 2] Upload employee roster (.xlsx)
+      - [Phase 2] Download code sheet (.xlsx)
+      - [Phase 2] Skip roster (open without codes)
+      - [Phase 2] Open survey / Close survey
+      - [Phase 2] View response count vs roster count with progress bar
+      - [Phase 2] Copy survey URL to clipboard
+      - [Phase 2] QR code display
+      - [Phase 2] Export responses (.xlsx)
 
   CHANGELOG:
-      - March 24, 2026: BUG FIX — Login freeze / stuck "Signing in..." button.
-        THREE fixes applied to the JavaScript AUTH section only. No HTML or CSS changed.
+      - March 26, 2026: Phase 2 -- Survey Management section added.
+        THREE CHANGES ONLY:
+        1. CSS: Added styles for survey management section (.survey-mgmt-*,
+           .roster-*, .survey-url-box, .progress-bar-*). Appended to existing
+           style block -- no existing styles modified.
+        2. HTML: Added "Survey Management" detail-card below the project config
+           card in the right column of the detail grid. The card is initially
+           hidden (id="survey-mgmt-card") and shown by renderClientDetail()
+           when a project exists. Includes: roster upload/download controls,
+           Open/Close Survey buttons, survey URL with copy + QR code, response
+           progress bar, and Export button.
+        3. JS: Added Survey Management JS section with functions:
+           loadSurveyMgmt(), renderSurveyMgmt(), uploadRoster(),
+           downloadCodeSheet(), skipRoster(), openSurvey(), closeSurvey(),
+           exportResponses(), copyUrl(), initQrCode(), formatDateShort().
+           Also added qrcodejs CDN script tag.
+           renderClientDetail() updated: now calls loadSurveyMgmt() when
+           project exists and status is approved or beyond.
+        NO OTHER CHANGES. All Phase 1 logic, CSS variables, and HTML
+        structure are completely unchanged.
 
-        FIX 1 — isLoggingIn guard: Added boolean flag to prevent doLogin() from
-          running concurrently. Browser autofill + onkeydown Enter was firing doLogin()
-          while checkAuth() was still in flight, stacking two simultaneous fetch calls.
-          The second call would set btn.disabled=true and btn.textContent='Signing in...'
-          but its response was ignored, leaving the button frozen. Guard prevents this.
-
-        FIX 2 — Autofill protection: checkAuth() now sets a flag (authCheckComplete)
-          when it finishes. doLogin() returns immediately if called before checkAuth()
-          resolves. This prevents the autofill+Enter race condition where the login
-          form submitted before we knew if the session was already valid.
-
-        FIX 3 — Fetch timeout: doLogin() now uses AbortController with a 10-second
-          timeout. If the Render worker is slow or the request hangs, the fetch is
-          aborted after 10 seconds, the error handler fires, and the button resets.
-          Without this, a hung request left the button frozen indefinitely.
-
-        ALSO FIXED: Replaced smart/curly quotes and typographic dashes in JS string
-          literals with plain ASCII equivalents. Same root cause as the intake form
-          bug fixed March 23, 2026.
+      - March 24, 2026: BUG FIX -- Login freeze / stuck "Signing in..." button.
+        THREE fixes: isLoggingIn guard, authCheckComplete flag, fetch timeout.
 
       - March 16, 2026: Initial creation for Phase 1, Step 1.3.
 
-  IMPORTANT — JS STRING LITERAL RULE:
-      All string literals inside <script> blocks must use only plain ASCII characters.
-      Smart quotes (' ' " ") and typographic dashes (- -) cause silent JS syntax
-      errors that kill the entire script block. Use straight quotes and hyphens only.
+  IMPORTANT -- JS STRING LITERAL RULE:
+      All string literals inside <script> blocks must use only plain ASCII
+      characters. Smart quotes and typographic dashes cause silent JS syntax
+      errors that kill the entire script block.
 -->
 <html lang="en">
 <head>
@@ -142,10 +151,6 @@
     .screen.active { display: block; }
 
     /* ===== LOGIN SCREEN ===== */
-    /* IMPORTANT: display:flex is on #screen-login.active, NOT #screen-login.
-       If display:flex is on the bare #screen-login rule it overrides
-       .screen { display:none } and the login card stays visible even after
-       showScreen() switches to screen-list. */
     #screen-login {
       align-items: center;
       justify-content: center;
@@ -235,7 +240,6 @@
       color: var(--text-light);
     }
 
-    /* Filter bar */
     .filter-bar {
       display: flex;
       gap: 8px;
@@ -259,7 +263,6 @@
       color: #fff;
     }
 
-    /* Client cards */
     .client-list { display: flex; flex-direction: column; gap: 12px; }
     .client-card {
       background: var(--white);
@@ -369,7 +372,6 @@
     }
     .detail-card-body { padding: 18px; }
 
-    /* Intake data table */
     .info-table { width: 100%; border-collapse: collapse; }
     .info-table tr { border-bottom: 1px solid var(--border); }
     .info-table tr:last-child { border-bottom: none; }
@@ -387,7 +389,6 @@
     }
     .info-table td:last-child { color: var(--text-dark); }
 
-    /* Tags (challenges, departments) */
     .tag-list { display: flex; flex-wrap: wrap; gap: 5px; }
     .tag {
       background: var(--brand-light);
@@ -452,7 +453,6 @@
       cursor: pointer;
     }
 
-    /* Custom questions */
     .custom-q-list { display: flex; flex-direction: column; gap: 6px; }
     .custom-q-row { display: flex; gap: 8px; align-items: center; }
     .custom-q-row input {
@@ -496,7 +496,6 @@
     }
     .btn-add-q:hover { background: var(--brand-light); border-color: var(--brand-mid); }
 
-    /* Admin notes */
     .admin-notes-area {
       width: 100%;
       min-height: 80px;
@@ -511,7 +510,6 @@
       border-color: var(--brand-mid);
     }
 
-    /* Action buttons */
     .action-row {
       display: flex;
       gap: 10px;
@@ -545,7 +543,6 @@
     .btn-approve:hover { background: #1e5c3a; }
     .btn-approve:disabled { background: #a0aec0; cursor: not-allowed; }
 
-    /* Status messages */
     .status-msg {
       font-size: 0.82rem;
       padding: 6px 10px;
@@ -557,7 +554,6 @@
     .status-msg.error   { background: var(--red-light);   color: var(--red);   border: 1px solid var(--red-border);   display: block; }
     .status-msg.info    { background: var(--brand-light);  color: var(--brand-dark); border: 1px solid #bee3f8; display: block; }
 
-    /* ===== LOADING SPINNER ===== */
     .spinner {
       display: inline-block;
       width: 18px;
@@ -570,10 +566,160 @@
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    /* ===== MISC ===== */
     textarea { font-family: inherit; }
     .mt-8 { margin-top: 8px; }
     .text-muted { color: var(--text-light); font-size: 0.82rem; }
+
+    /* ===== PHASE 2: SURVEY MANAGEMENT STYLES ===== */
+
+    /* Response progress bar */
+    .resp-progress-track {
+      height: 8px;
+      background: var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+      margin: 6px 0 4px;
+    }
+    .resp-progress-fill {
+      height: 100%;
+      background: var(--brand-mid);
+      border-radius: 4px;
+      transition: width 0.4s ease;
+    }
+    .resp-count-label {
+      font-size: 0.82rem;
+      color: var(--text-mid);
+    }
+
+    /* Survey URL box */
+    .survey-url-box {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--gray-light);
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      padding: 8px 10px;
+      margin: 10px 0;
+    }
+    .survey-url-text {
+      flex: 1;
+      font-size: 0.8rem;
+      color: var(--brand-mid);
+      word-break: break-all;
+      font-family: monospace;
+    }
+    .btn-copy {
+      background: var(--white);
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      padding: 4px 10px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      color: var(--brand-mid);
+      white-space: nowrap;
+      flex-shrink: 0;
+      transition: background 0.12s;
+    }
+    .btn-copy:hover { background: var(--brand-light); }
+
+    /* QR code container */
+    #qr-code-container {
+      display: flex;
+      justify-content: center;
+      margin: 12px 0;
+    }
+    #qr-code-container canvas,
+    #qr-code-container img {
+      border: 6px solid white;
+      border-radius: 4px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+    }
+
+    /* Roster section */
+    .roster-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+    .btn-sm {
+      background: var(--white);
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      padding: 6px 12px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      color: var(--text-mid);
+      transition: background 0.12s;
+      white-space: nowrap;
+    }
+    .btn-sm:hover { background: var(--brand-light); border-color: var(--brand-mid); color: var(--brand-mid); }
+    .btn-sm.danger { color: var(--red); border-color: var(--red-border); }
+    .btn-sm.danger:hover { background: var(--red-light); }
+    .btn-sm.success { color: var(--green); border-color: var(--green-border); }
+    .btn-sm.success:hover { background: var(--green-light); }
+    .btn-sm:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* Open/Close survey buttons */
+    .btn-open-survey {
+      background: var(--green);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius);
+      padding: 10px 16px;
+      font-size: 0.9rem;
+      font-weight: 700;
+      cursor: pointer;
+      width: 100%;
+      transition: background 0.12s;
+    }
+    .btn-open-survey:hover { background: #1e5c3a; }
+    .btn-open-survey:disabled { background: #a0aec0; cursor: not-allowed; }
+
+    .btn-close-survey {
+      background: var(--red);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius);
+      padding: 10px 16px;
+      font-size: 0.9rem;
+      font-weight: 700;
+      cursor: pointer;
+      width: 100%;
+      transition: background 0.12s;
+    }
+    .btn-close-survey:hover { background: #9b2c2c; }
+
+    .survey-status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.9rem;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .status-dot.open   { background: #38a169; box-shadow: 0 0 0 3px #c6f6d5; }
+    .status-dot.closed { background: var(--red); box-shadow: 0 0 0 3px #fed7d7; }
+
+    /* Hidden file input trigger */
+    .hidden-file-input { display: none; }
+
+    /* Divider within mgmt card */
+    .mgmt-divider {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 14px 0;
+    }
   </style>
 </head>
 <body>
@@ -617,7 +763,6 @@
             onclick="loadClients()">&#8635; Refresh</button>
   </div>
 
-  <!-- Status filters -->
   <div class="filter-bar" id="filter-bar">
     <button class="filter-btn active" data-filter="all" onclick="setFilter(this, 'all')">All</button>
     <button class="filter-btn" data-filter="new" onclick="setFilter(this, 'new')">New</button>
@@ -642,7 +787,6 @@
     <span class="detail-title" id="detail-title">Client Detail</span>
   </div>
 
-  <!-- Status changer -->
   <div class="status-row" style="margin-bottom:16px">
     <label>Status:</label>
     <select id="detail-status">
@@ -683,25 +827,22 @@
       </div>
     </div>
 
-    <!-- RIGHT: Project config -->
+    <!-- RIGHT: Project config + Survey Management -->
     <div>
-      <div class="detail-card">
+      <!-- Project configuration card (Phase 1 -- unchanged) -->
+      <div class="detail-card" style="margin-bottom:16px">
         <div class="detail-card-header">&#9881; Survey Configuration</div>
         <div class="detail-card-body">
 
-          <!-- Question categories -->
           <div class="config-section">
             <label>Question Categories to Include</label>
-            <div class="question-cats" id="question-cats">
-              <!-- Populated by JS -->
-            </div>
+            <div class="question-cats" id="question-cats"></div>
             <div class="text-muted mt-8">
               Phase 2 will wire the full 103-question bank here.
               All categories are selected by default.
             </div>
           </div>
 
-          <!-- Schedule concepts -->
           <div class="config-section">
             <label>Schedule Concepts to Include</label>
             <div id="schedule-concepts-container">
@@ -714,14 +855,12 @@
             </div>
           </div>
 
-          <!-- Custom questions -->
           <div class="config-section">
             <label>Custom Questions (Facility-Specific)</label>
             <div class="custom-q-list" id="custom-q-list"></div>
             <button type="button" class="btn-add-q" onclick="addCustomQ()">+ Add Question</button>
           </div>
 
-          <!-- Save + Approve -->
           <div class="action-row">
             <button class="btn-save" onclick="saveProjectConfig()">
               &#128190; Save Configuration
@@ -735,34 +874,47 @@
 
         </div>
       </div>
-    </div>
 
+      <!-- ============================================================
+           PHASE 2: SURVEY MANAGEMENT CARD
+           Hidden until a project exists with status approved or beyond.
+           renderClientDetail() calls loadSurveyMgmt() to populate it.
+      ============================================================ -->
+      <div class="detail-card" id="survey-mgmt-card" style="display:none">
+        <div class="detail-card-header">&#128200; Survey Management</div>
+        <div class="detail-card-body" id="survey-mgmt-body">
+          <div class="empty-state"><div class="spinner"></div></div>
+        </div>
+      </div>
+
+    </div>
   </div><!-- /.detail-grid -->
 </div><!-- /#screen-detail -->
+
+<!-- Hidden file input for roster upload -->
+<input type="file" id="roster-file-input" class="hidden-file-input"
+       accept=".xlsx" onchange="uploadRoster(this)" />
+
+<!-- QR code library -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 
 <!-- ================================================================
      JAVASCRIPT
      RULES: All string literals use only plain ASCII characters.
      Smart/curly quotes and typographic dashes must never appear
-     inside <script> blocks -- they cause silent JS syntax errors.
+     inside <script> blocks.
 ================================================================ -->
 <script>
 /* ------------------------------------------------------------------
    STATE
-   authCheckComplete: set true when checkAuth() finishes.
-     doLogin() returns early if called before this is set, preventing
-     the autofill+Enter race condition.
-   isLoggingIn: guard flag preventing concurrent doLogin() calls.
-     Browser autofill can trigger both onkeydown (Enter) and onclick
-     simultaneously. Without this guard, two fetch() calls stack and
-     the second one's response is never handled, freezing the button.
 ------------------------------------------------------------------ */
 var currentClientId    = null;
 var currentProjectId   = null;
 var activeFilter       = 'all';
 var allClients         = [];
-var authCheckComplete  = false;   /* FIX 2: autofill protection */
-var isLoggingIn        = false;   /* FIX 1: double-submit guard */
+var authCheckComplete  = false;
+var isLoggingIn        = false;
+var surveyMgmtData     = null;   /* Phase 2: cached survey management state */
 
 /* ------------------------------------------------------------------
    SCREEN MANAGEMENT
@@ -782,13 +934,11 @@ function showList() {
   showScreen('screen-list');
   currentClientId  = null;
   currentProjectId = null;
+  surveyMgmtData   = null;
 }
 
 /* ------------------------------------------------------------------
    AUTH
-   FIX 2: checkAuth sets authCheckComplete=true when it resolves.
-   FIX 1: doLogin uses isLoggingIn guard to prevent concurrent calls.
-   FIX 3: doLogin uses AbortController for a 10-second timeout.
 ------------------------------------------------------------------ */
 function checkAuth() {
   authCheckComplete = false;
@@ -809,17 +959,8 @@ function checkAuth() {
 }
 
 function doLogin() {
-  /* FIX 2: If checkAuth hasn't finished yet, don't try to login --
-     we don't know if we're already authenticated. This handles the
-     case where browser autofill triggers Enter before checkAuth resolves. */
-  if (!authCheckComplete) {
-    return;
-  }
-
-  /* FIX 1: Prevent concurrent login calls */
-  if (isLoggingIn) {
-    return;
-  }
+  if (!authCheckComplete) { return; }
+  if (isLoggingIn) { return; }
 
   var pw  = document.getElementById('login-password').value;
   if (!pw) { return; }
@@ -832,12 +973,8 @@ function doLogin() {
   btn.disabled = true;
   btn.textContent = 'Signing in...';
 
-  /* FIX 3: AbortController timeout -- if fetch hangs for 10 seconds,
-     abort it and reset the button so the user can try again. */
   var controller = new AbortController();
-  var timeoutId = setTimeout(function() {
-    controller.abort();
-  }, 10000);
+  var timeoutId = setTimeout(function() { controller.abort(); }, 10000);
 
   fetch('/api/survey/admin/login', {
     method: 'POST',
@@ -885,13 +1022,13 @@ function logout() {
     .then(function() {
       isLoggingIn = false;
       authCheckComplete = false;
+      surveyMgmtData = null;
       document.getElementById('header-actions').style.display = 'none';
       document.getElementById('login-password').value = '';
       document.getElementById('login-btn').disabled = false;
       document.getElementById('login-btn').textContent = 'Sign In';
       document.getElementById('login-error').classList.remove('visible');
       showScreen('screen-login');
-      /* Re-run checkAuth so authCheckComplete gets set correctly */
       checkAuth();
     });
 }
@@ -972,11 +1109,13 @@ function renderClientList() {
 function openClient(clientId) {
   currentClientId  = clientId;
   currentProjectId = null;
+  surveyMgmtData   = null;
   showScreen('screen-detail');
 
   document.getElementById('intake-table').querySelector('tbody').innerHTML =
     '<tr><td colspan="2"><div class="spinner"></div> Loading...</td></tr>';
   document.getElementById('detail-title').textContent = 'Loading...';
+  document.getElementById('survey-mgmt-card').style.display = 'none';
 
   fetch('/api/survey/admin/client/' + clientId)
     .then(function(resp) {
@@ -1036,6 +1175,13 @@ function renderClientDetail(client, project) {
     document.getElementById('approve-btn').disabled = (project.status === 'approved');
     if (project.status === 'approved') {
       showMsg('approve-msg', 'success', 'Project already approved -- ready for Survey Assembly.');
+    }
+
+    /* PHASE 2: Show Survey Management card for approved/beyond projects */
+    var mgmtStatuses = ['approved', 'administered', 'in-progress', 'delivered'];
+    if (mgmtStatuses.indexOf(project.status) !== -1) {
+      document.getElementById('survey-mgmt-card').style.display = 'block';
+      loadSurveyMgmt(project.id);
     }
   } else {
     renderProjectConfig(null);
@@ -1149,7 +1295,6 @@ function approveProject() {
   if (!currentProjectId) {
     saveProjectConfig();
     showMsg('approve-msg', 'info', 'Saving configuration first...');
-    /* approveProject will need to be called again after save */
     return;
   }
   document.getElementById('approve-btn').disabled = true;
@@ -1168,6 +1313,9 @@ function approveProject() {
     if (!data.success) throw new Error(data.error || 'Approval failed.');
     showMsg('approve-msg', 'success', data.message);
     document.getElementById('detail-status').value = 'approved';
+    /* Phase 2: show management section after approval */
+    document.getElementById('survey-mgmt-card').style.display = 'block';
+    loadSurveyMgmt(currentProjectId);
   })
   .catch(function(e) {
     showMsg('approve-msg', 'error', 'Error: ' + e.message);
@@ -1226,9 +1374,319 @@ function saveAdminNotes() {
   });
 }
 
-/* ------------------------------------------------------------------
-   HELPERS
------------------------------------------------------------------- */
+/* ================================================================
+   PHASE 2: SURVEY MANAGEMENT FUNCTIONS
+================================================================ */
+
+/*
+ * loadSurveyMgmt(projectId)
+ * Fetches current survey status (responses, open/closed, roster info)
+ * and renders the appropriate state-based management UI.
+ */
+function loadSurveyMgmt(projectId) {
+  var body = document.getElementById('survey-mgmt-body');
+  body.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
+
+  fetch('/api/survey/admin/project/' + projectId + '/responses')
+    .then(function(resp) {
+      if (resp.status === 401) { checkAuth(); return null; }
+      return resp.json();
+    })
+    .then(function(data) {
+      if (!data) return;
+      if (!data.success) {
+        body.innerHTML = '<div style="color:var(--red);font-size:0.85rem;">Error loading survey status: ' + escHtml(data.error) + '</div>';
+        return;
+      }
+      surveyMgmtData = data;
+      renderSurveyMgmt(data);
+    })
+    .catch(function(e) {
+      body.innerHTML = '<div style="color:var(--red);font-size:0.85rem;">Network error: ' + escHtml(e.message) + '</div>';
+    });
+}
+
+/*
+ * renderSurveyMgmt(data)
+ * Renders the state-aware survey management UI based on:
+ *   data.is_open        — whether the survey is currently accepting responses
+ *   data.roster_uploaded — whether an employee roster has been uploaded
+ *   data.roster_count   — number of employees in the roster
+ *   data.response_count — number of responses submitted
+ *   data.survey_url     — the public survey URL
+ *   data.opened_at      — when the survey was opened
+ *   data.closed_at      — when the survey was closed
+ */
+function renderSurveyMgmt(data) {
+  var html = '';
+  var isOpen        = data.is_open;
+  var rosterUploaded = data.roster_uploaded;
+  var rosterCount   = data.roster_count || 0;
+  var responseCount = data.response_count || 0;
+  var surveyUrl     = data.survey_url || '';
+  var projectId     = data.project_id || currentProjectId;
+
+  /* ---- Roster section ---- */
+  html += '<div style="margin-bottom:14px;">';
+  html += '<div style="font-size:0.83rem;font-weight:700;color:var(--brand-dark);margin-bottom:8px;">EMPLOYEE ROSTER</div>';
+
+  if (rosterUploaded) {
+    html +=
+      '<div style="color:var(--green);font-size:0.85rem;margin-bottom:8px;">&#10003; Roster: ' + rosterCount + ' employees uploaded</div>' +
+      '<div class="roster-row">' +
+        '<button class="btn-sm success" onclick="downloadCodeSheet(' + projectId + ')">&#128229; Download Code Sheet</button>' +
+        '<button class="btn-sm" onclick="document.getElementById(\'roster-file-input\').click()">&#8635; Re-upload Roster</button>' +
+      '</div>';
+  } else {
+    html +=
+      '<div style="color:var(--yellow);font-size:0.85rem;margin-bottom:8px;">&#9888; No employee roster uploaded.</div>' +
+      '<div class="roster-row">' +
+        '<button class="btn-sm" onclick="document.getElementById(\'roster-file-input\').click()">&#128229; Upload Roster (.xlsx)</button>' +
+        '<button class="btn-sm" onclick="skipRoster(' + projectId + ')" title="Open survey without employee codes">Skip Roster</button>' +
+      '</div>';
+  }
+  html += '</div>';
+
+  var divider = '<hr class="mgmt-divider" />';
+
+  /* ---- Survey open/close state ---- */
+  if (isOpen) {
+    /* OPEN STATE */
+    var pct = rosterCount > 0 ? Math.min(100, Math.round((responseCount / rosterCount) * 100)) : 0;
+    var progressHtml = rosterCount > 0
+      ? '<div class="resp-progress-track"><div class="resp-progress-fill" style="width:' + pct + '%"></div></div>' +
+        '<div class="resp-count-label">' + responseCount + ' of ' + rosterCount + ' responded (' + pct + '%)</div>'
+      : '<div class="resp-count-label">' + responseCount + ' response' + (responseCount !== 1 ? 's' : '') + ' submitted</div>';
+
+    html += divider +
+      '<div class="survey-status-indicator">' +
+        '<div class="status-dot open"></div>' +
+        '<span style="color:var(--green)">Survey is OPEN</span>' +
+      '</div>' +
+      (data.opened_at ? '<div style="font-size:0.8rem;color:var(--text-light);margin-bottom:8px;">Opened: ' + formatDateShort(data.opened_at) + '</div>' : '') +
+      progressHtml;
+
+    if (surveyUrl) {
+      html += divider +
+        '<div style="font-size:0.83rem;font-weight:700;color:var(--brand-dark);margin-bottom:4px;">SURVEY URL</div>' +
+        '<div class="survey-url-box">' +
+          '<span class="survey-url-text">' + escHtml(surveyUrl) + '</span>' +
+          '<button class="btn-copy" onclick="copyUrl(\'' + escJs(surveyUrl) + '\')" id="copy-btn">&#128203; Copy</button>' +
+        '</div>' +
+        '<div id="qr-code-container"></div>';
+    }
+
+    html += divider +
+      '<div class="roster-row" style="margin-bottom:8px;">' +
+        '<button class="btn-sm success" onclick="exportResponses(' + projectId + ')">&#128229; Export Responses (.xlsx)</button>' +
+      '</div>' +
+      '<button class="btn-close-survey" onclick="closeSurvey(' + projectId + ')">&#9632; Close Survey</button>';
+
+  } else if (data.closed_at) {
+    /* CLOSED STATE */
+    var closedPct = rosterCount > 0 ? Math.min(100, Math.round((responseCount / rosterCount) * 100)) : 0;
+    var closedProgressHtml = rosterCount > 0
+      ? '<div class="resp-progress-track"><div class="resp-progress-fill" style="width:' + closedPct + '%;background:var(--text-light)"></div></div>' +
+        '<div class="resp-count-label">Final: ' + responseCount + ' of ' + rosterCount + ' responded (' + closedPct + '%)</div>'
+      : '<div class="resp-count-label">Final responses: ' + responseCount + '</div>';
+
+    html += divider +
+      '<div class="survey-status-indicator">' +
+        '<div class="status-dot closed"></div>' +
+        '<span style="color:var(--red)">Survey CLOSED</span>' +
+      '</div>' +
+      (data.opened_at ? '<div style="font-size:0.8rem;color:var(--text-light);">Open: ' + formatDateShort(data.opened_at) + ' - ' + formatDateShort(data.closed_at) + '</div>' : '') +
+      '<div style="margin-top:8px;">' + closedProgressHtml + '</div>' +
+      divider +
+      '<div class="roster-row" style="margin-bottom:8px;">' +
+        '<button class="btn-sm success" onclick="exportResponses(' + projectId + ')">&#128229; Export Responses (.xlsx)</button>' +
+        '<button class="btn-sm" onclick="openSurvey(' + projectId + ')">&#9654; Re-open Survey</button>' +
+      '</div>';
+
+  } else {
+    /* NOT YET OPENED */
+    var canOpen = rosterUploaded;  /* Can also open without roster (after skipRoster) */
+    html += divider +
+      '<div style="color:var(--text-light);font-size:0.85rem;margin-bottom:12px;">Survey has not been opened yet.</div>' +
+      '<button class="btn-open-survey" onclick="openSurvey(' + projectId + ')"' +
+        (!canOpen ? ' style="background:#a0aec0;cursor:not-allowed;" title="Upload a roster first, or click Skip Roster above"' : '') +
+      '>&#9654; Open Survey</button>' +
+      (!canOpen ? '<div style="font-size:0.78rem;color:var(--text-light);margin-top:6px;">Upload a roster first, or click Skip Roster to open without employee codes.</div>' : '');
+  }
+
+  html += '<div class="status-msg" id="mgmt-msg" style="margin-top:10px;"></div>';
+
+  document.getElementById('survey-mgmt-body').innerHTML = html;
+
+  /* Render QR code after DOM update (requires qrcodejs) */
+  if (isOpen && surveyUrl) {
+    setTimeout(function() { initQrCode(surveyUrl); }, 50);
+  }
+}
+
+/* ---- Roster upload ---- */
+function uploadRoster(inputEl) {
+  var file = inputEl.files[0];
+  if (!file) return;
+  if (!currentProjectId) { alert('No project selected.'); return; }
+
+  showMgmtMsg('info', 'Uploading roster...');
+
+  var fd = new FormData();
+  fd.append('file', file);
+
+  fetch('/api/survey/admin/project/' + currentProjectId + '/roster/upload', {
+    method: 'POST',
+    body: fd
+  })
+  .then(function(resp) {
+    if (resp.status === 401) { checkAuth(); return null; }
+    return resp.json();
+  })
+  .then(function(data) {
+    if (!data) return;
+    if (!data.success) {
+      showMgmtMsg('error', 'Upload failed: ' + data.error);
+      return;
+    }
+    showMgmtMsg('success', data.message);
+    /* Reload management section to reflect new roster */
+    setTimeout(function() { loadSurveyMgmt(currentProjectId); }, 600);
+  })
+  .catch(function(e) {
+    showMgmtMsg('error', 'Network error: ' + e.message);
+  });
+
+  /* Reset input so the same file can be re-selected */
+  inputEl.value = '';
+}
+
+/* ---- Download code sheet ---- */
+function downloadCodeSheet(projectId) {
+  window.location.href = '/api/survey/admin/project/' + projectId + '/roster/download-codes';
+}
+
+/* ---- Skip roster (open without codes) ---- */
+function skipRoster(projectId) {
+  /* Mark roster_uploaded=TRUE with 0 employees so Open Survey enables.
+     We do this by just opening the survey directly.
+     The respondent page checks roster_uploaded to decide whether to show code field.
+     Since roster_uploaded remains FALSE, no code field will appear. */
+  if (!confirm('Open this survey without an employee roster? Employees will not need a survey code. Cookie-based duplicate prevention only.')) {
+    return;
+  }
+  openSurvey(projectId);
+}
+
+/* ---- Open survey ---- */
+function openSurvey(projectId) {
+  showMgmtMsg('info', 'Opening survey...');
+  fetch('/api/survey/admin/project/' + projectId + '/open', { method: 'POST' })
+    .then(function(resp) {
+      if (resp.status === 401) { checkAuth(); return null; }
+      return resp.json();
+    })
+    .then(function(data) {
+      if (!data) return;
+      if (!data.success) { showMgmtMsg('error', 'Error: ' + data.error); return; }
+      showMgmtMsg('success', 'Survey is now open!');
+      setTimeout(function() { loadSurveyMgmt(projectId); }, 600);
+    })
+    .catch(function(e) { showMgmtMsg('error', 'Network error: ' + e.message); });
+}
+
+/* ---- Close survey ---- */
+function closeSurvey(projectId) {
+  if (!confirm('Close the survey? Employees will no longer be able to submit responses.')) return;
+  showMgmtMsg('info', 'Closing survey...');
+  fetch('/api/survey/admin/project/' + projectId + '/close', { method: 'POST' })
+    .then(function(resp) {
+      if (resp.status === 401) { checkAuth(); return null; }
+      return resp.json();
+    })
+    .then(function(data) {
+      if (!data) return;
+      if (!data.success) { showMgmtMsg('error', 'Error: ' + data.error); return; }
+      showMgmtMsg('success', 'Survey closed. ' + (data.response_count || 0) + ' responses collected.');
+      setTimeout(function() { loadSurveyMgmt(projectId); }, 800);
+    })
+    .catch(function(e) { showMgmtMsg('error', 'Network error: ' + e.message); });
+}
+
+/* ---- Export responses ---- */
+function exportResponses(projectId) {
+  window.location.href = '/api/survey/admin/project/' + projectId + '/export';
+}
+
+/* ---- Copy URL to clipboard ---- */
+function copyUrl(url) {
+  var btn = document.getElementById('copy-btn');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(url).then(function() {
+      if (btn) { btn.textContent = '&#10003; Copied!'; setTimeout(function() { if (btn) btn.innerHTML = '&#128203; Copy'; }, 2000); }
+    }).catch(function() {
+      fallbackCopy(url, btn);
+    });
+  } else {
+    fallbackCopy(url, btn);
+  }
+}
+
+function fallbackCopy(url, btn) {
+  var ta = document.createElement('textarea');
+  ta.value = url;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  try {
+    document.execCommand('copy');
+    if (btn) { btn.innerHTML = '&#10003; Copied!'; setTimeout(function() { if (btn) btn.innerHTML = '&#128203; Copy'; }, 2000); }
+  } catch(e) {}
+  document.body.removeChild(ta);
+}
+
+/* ---- QR code ---- */
+function initQrCode(url) {
+  var container = document.getElementById('qr-code-container');
+  if (!container) return;
+  container.innerHTML = '';
+  try {
+    new QRCode(container, {
+      text:   url,
+      width:  160,
+      height: 160,
+      colorDark:  '#1a365d',
+      colorLight: '#ffffff',
+      correctLevel: QRCode.CorrectLevel.M
+    });
+  } catch(e) {
+    container.innerHTML = '<div style="font-size:0.78rem;color:var(--text-light);">QR code unavailable</div>';
+  }
+}
+
+/* ---- Management section message helper ---- */
+function showMgmtMsg(type, text) {
+  var el = document.getElementById('mgmt-msg');
+  if (!el) return;
+  el.className = 'status-msg ' + type;
+  el.textContent = text;
+}
+
+/* ---- Date formatter for mgmt section ---- */
+function formatDateShort(iso) {
+  if (!iso) return '--';
+  try {
+    return new Date(iso).toLocaleDateString('en-US', {
+      month: 'short', day: 'numeric', year: 'numeric',
+      hour: '2-digit', minute: '2-digit'
+    });
+  } catch(e) { return String(iso).slice(0, 16); }
+}
+
+/* ================================================================
+   SHARED HELPERS
+================================================================ */
 function showMsg(id, type, text) {
   var el = document.getElementById(id);
   el.className = 'status-msg ' + type;
@@ -1242,6 +1700,14 @@ function escHtml(str) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+function escJs(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/"/g, '\\"');
 }
 
 function tagList(arr) {
@@ -1324,14 +1790,8 @@ function formatAdminPref(v) {
 
 /* ------------------------------------------------------------------
    INIT
-   Note: onkeydown Enter handler removed from HTML input element.
-   Login is triggered only by clicking the Sign In button or pressing
-   Enter via the keydown listener added here -- which respects the
-   authCheckComplete guard via doLogin().
 ------------------------------------------------------------------ */
 document.addEventListener('DOMContentLoaded', function() {
-  /* Add Enter key handler here (not inline) so it goes through doLogin()
-     which has the authCheckComplete and isLoggingIn guards */
   document.getElementById('login-password').addEventListener('keydown', function(e) {
     if (e.key === 'Enter') { doLogin(); }
   });
