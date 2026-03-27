@@ -1,9 +1,18 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: March 26, 2026 — Survey in a Box Phase 2: Roster Upload & Code Generation
+Last Updated: March 27, 2026 — Survey in a Box: Code mode selection (random vs employee ID)
 
 CHANGELOG:
+- March 27, 2026: Code mode selection — TWO CHANGES ONLY:
+  1. MIGRATION: Added migration_005_code_mode.py call in STEP 1,
+     immediately after migration_004_phase2_enhancements.py. Adds
+     code_mode column to survey_projects (DEFAULT 'random').
+     Fully idempotent — safe to run on every startup.
+  2. HEALTH CHECK: Updated survey_in_a_box phase string to include
+     'Code Mode Selection'.
+  NO OTHER CHANGES.
+
 - March 26, 2026: Survey in a Box Phase 2 — TWO CHANGES ONLY:
   1. MIGRATION: Added migration_004_phase2_enhancements.py call in STEP 1,
      immediately after migration_003_survey_responses.py. Creates the
@@ -168,6 +177,28 @@ try:
     print("Phase 2 Enhancements migration (004) complete")
 except Exception as e:
     print(f"Phase 2 Enhancements migration (004) failed: {e}")
+    import traceback
+    traceback.print_exc()
+
+# ----------------------------------------------------------------------------
+# MIGRATION 005: Code Mode column
+# Added: March 27, 2026
+# Adds code_mode column to survey_projects (DEFAULT 'random').
+# Values: 'random' (system-generated 5-digit codes) or 'employee_id'.
+# Fully idempotent — safe to run on every startup.
+# ----------------------------------------------------------------------------
+try:
+    import importlib.util as _ilu5
+    import os as _os5
+    _m005_path = _os5.path.join(_os5.path.dirname(_os5.path.abspath(__file__)),
+                                'migrations', 'migration_005_code_mode.py')
+    _spec005 = _ilu5.spec_from_file_location("migration_005_code_mode", _m005_path)
+    _mod005 = _ilu5.module_from_spec(_spec005)
+    _spec005.loader.exec_module(_mod005)
+    _mod005.run_migration()
+    print("Code Mode migration (005) complete")
+except Exception as e:
+    print(f"Code Mode migration (005) failed: {e}")
     import traceback
     traceback.print_exc()
 
@@ -869,7 +900,7 @@ def health():
             'status': 'enabled',
             'intake_form': '/survey/start',
             'admin_dashboard': '/survey/admin',
-            'phase': '2+3 - Survey Assembly & Online Engine'
+            'phase': '2+3 - Survey Assembly, Code Mode Selection & Online Engine'
         },
         'proactive_agent': {
             'status': 'enabled',
