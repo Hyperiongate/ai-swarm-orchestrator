@@ -2,7 +2,7 @@
 SURVEY IN A BOX — Respondent Routes
 File: routes/survey_respondent.py
 Created: March 13, 2026
-Last Updated: March 26, 2026 — Phase 2: Employee code validation + demographic export
+Last Updated: March 27, 2026 — Phase 2: Code mode support (random vs employee ID)
 
 PURPOSE:
     Employee-facing survey engine for Survey in a Box Phase 3.
@@ -72,6 +72,17 @@ POSTGRESQL RULES:
     - RETURNING id on INSERT
 
 CHANGELOG:
+    - March 27, 2026: Code mode support — TWO CHANGES ONLY:
+      1. get_survey_questions(): added code_mode to JSON response so the
+         frontend can show the correct label and placeholder in the code
+         input field ('5-Digit Survey Code' vs 'Employee ID').
+      2. submit_survey(): added code_mode-aware validation. In random mode,
+         the existing 5-digit check applies. In employee_id mode, the code
+         is validated as 1-20 alphanumeric+hyphen characters (matching the
+         flexible format allowed by survey_admin.py upload). Error messages
+         adapt to the mode. All other logic unchanged.
+      NO OTHER CHANGES.
+
     - March 26, 2026: Phase 2 additions — FOUR CHANGES ONLY:
       1. get_survey_questions(): added roster_uploaded and roster_count to
          JSON response so the frontend knows whether to show the code field.
@@ -102,6 +113,7 @@ CHANGELOG:
 import hashlib
 import json
 import os
+import re
 import traceback
 from datetime import datetime, timezone
 from io import BytesIO
@@ -385,10 +397,15 @@ def get_survey_questions(token):
         company_name = project_row.get('company_name', 'Your Company')
 
         # --- PHASE 2 ADDITION ---
-        # Include roster status so the frontend can conditionally show the
-        # employee code input field. roster_uploaded comes from migration_004.
+        # Include roster status and code_mode so the frontend knows:
+        #   roster_uploaded: whether to show the code entry field at all
+        #   roster_count:    total employees for display
+        #   code_mode:       'random' (5-digit code) or 'employee_id' (existing ID)
+        #                    Controls label, placeholder, and validation on the
+        #                    instructions page.
         roster_uploaded = bool(project_row.get('roster_uploaded', False))
         roster_count    = int(project_row.get('roster_count', 0) or 0)
+        code_mode       = project_row.get('code_mode') or 'random'
 
         return jsonify({
             'success':         True,
@@ -398,6 +415,7 @@ def get_survey_questions(token):
             'sections':        sections,
             'roster_uploaded': roster_uploaded,   # Phase 2: show/hide code field
             'roster_count':    roster_count,      # Phase 2: for display
+            'code_mode':       code_mode,         # Phase 2: 'random' or 'employee_id'
         })
 
     except Exception as e:
@@ -457,24 +475,36 @@ def submit_survey(token):
 
         # ---- PHASE 2: Employee code validation ------------------------------
         roster_uploaded = bool(project_row.get('roster_uploaded', False))
+        code_mode       = project_row.get('code_mode') or 'random'
         roster_row      = None   # Will hold survey_roster record if validated
 
         if roster_uploaded:
             employee_code = str(data.get('employee_code', '') or '').strip()
 
-            # Code format validation
+            # Code format validation — rules depend on code_mode
             if not employee_code:
-                return jsonify({
-                    'success': False,
-                    'error':   'Please enter your 5-digit survey code before submitting.'
-                }), 400
+                if code_mode == 'employee_id':
+                    err_msg = 'Please enter your Employee ID before submitting.'
+                else:
+                    err_msg = 'Please enter your 5-digit survey code before submitting.'
+                return jsonify({'success': False, 'error': err_msg}), 400
 
-            if not employee_code.isdigit() or len(employee_code) != 5:
-                return jsonify({
-                    'success': False,
-                    'error':   'Survey code must be exactly 5 digits. '
-                               'Please check your code and try again.'
-                }), 400
+            if code_mode == 'employee_id':
+                # Employee ID: 1-20 alphanumeric+hyphen characters
+                if not re.match(r'^[A-Za-z0-9\-]+$', employee_code) or len(employee_code) > 20:
+                    return jsonify({
+                        'success': False,
+                        'error':   'Employee ID format is not valid. '
+                                   'Please check your ID and try again.'
+                    }), 400
+            else:
+                # Random mode: exactly 5 digits
+                if not employee_code.isdigit() or len(employee_code) != 5:
+                    return jsonify({
+                        'success': False,
+                        'error':   'Survey code must be exactly 5 digits. '
+                                   'Please check your code and try again.'
+                    }), 400
 
             # Validate code exists in roster and has not been used
             conn = get_db_connection()
@@ -493,18 +523,22 @@ def submit_survey(token):
                 conn.close()
 
             if not roster_row:
-                return jsonify({
-                    'success': False,
-                    'error':   'Survey code not recognized. Please check your code '
-                               'and try again, or contact your supervisor.'
-                }), 404
+                if code_mode == 'employee_id':
+                    not_found_msg = ('Employee ID not recognized. Please check your ID '
+                                     'and try again, or contact your supervisor.')
+                else:
+                    not_found_msg = ('Survey code not recognized. Please check your code '
+                                     'and try again, or contact your supervisor.')
+                return jsonify({'success': False, 'error': not_found_msg}), 404
 
             if roster_row['has_responded']:
-                return jsonify({
-                    'success': False,
-                    'error':   'This survey code has already been used to submit a response. '
-                               'Only one response per employee is allowed. Thank you!'
-                }), 409
+                if code_mode == 'employee_id':
+                    dup_msg = ('This Employee ID has already been used to submit a response. '
+                               'Only one response per employee is allowed. Thank you!')
+                else:
+                    dup_msg = ('This survey code has already been used to submit a response. '
+                               'Only one response per employee is allowed. Thank you!')
+                return jsonify({'success': False, 'error': dup_msg}), 409
 
         else:
             # No roster — use cookie-based duplicate prevention (existing logic)
