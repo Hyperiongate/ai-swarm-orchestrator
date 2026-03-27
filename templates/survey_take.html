@@ -3,7 +3,7 @@
 SURVEY IN A BOX — Employee Survey Page
 File: templates/survey_take.html
 Created: March 13, 2026
-Last Updated: March 26, 2026 — Phase 2: Instructions screen + employee code entry
+Last Updated: March 27, 2026 — Phase 2: Code mode support (random vs employee ID)
 
 PURPOSE:
     Employee-facing survey interface. Displays one section at a time
@@ -18,6 +18,15 @@ DESIGN:
     - Graceful handling of closed surveys and duplicate submissions
 
 CHANGELOG:
+    - March 27, 2026: ONE CHANGE ONLY:
+      showInstructions() updated to read code_mode from surveyData
+      (passed from /questions API). When code_mode='employee_id', the code
+      input section shows label 'Your Employee ID', placeholder 'Your employee ID',
+      and the instruction bullet references 'your Employee ID' instead of
+      '5-digit survey code'. When code_mode='random' (default), behavior is
+      unchanged. beginSurvey() validation adapts: employee_id mode allows
+      1-20 alphanumeric+hyphen chars; random mode requires exactly 5 digits.
+
     - March 26, 2026: Phase 2 — TWO CHANGES ONLY:
       1. showIntro() REPLACED with showInstructions(): The intro card now
          matches the formal CONFIDENTIAL EMPLOYEE SURVEY instructions page
@@ -559,7 +568,7 @@ function init() {
 // ---------------------------------------------------------------------------
 
 /*
- * showInstructions() — Phase 2 replacement for showIntro()
+ * showInstructions() -- Phase 2 replacement for showIntro()
  *
  * Renders the CONFIDENTIAL EMPLOYEE SURVEY instructions page.
  * If the project has a roster (surveyData.roster_uploaded = true),
@@ -575,22 +584,41 @@ function showInstructions() {
     var sections    = surveyData.sections || [];
     var estMins     = Math.ceil(totalQ / 8);
     var hasRoster   = surveyData.roster_uploaded === true;
+    var codeMode    = surveyData.code_mode || 'random';
+    var isEmpId     = (codeMode === 'employee_id');
+
+    // Labels and text adapt to code_mode
+    var codeLabel       = isEmpId ? 'Your Employee ID' : 'Your 5-Digit Survey Code';
+    var codePlaceholder = isEmpId ? 'Employee ID' : '00000';
+    var codeHint        = isEmpId ? 'Enter your employee ID number' : 'Enter the code from your code sheet';
+    var codeInputMode   = isEmpId ? 'text' : 'numeric';
+    var codeMaxLen      = isEmpId ? '20' : '5';
+    var codePattern     = isEmpId ? '' : 'pattern="[0-9]*"';
+    var codeOnInput     = isEmpId
+        ? 'this.value=this.value.replace(/[^A-Za-z0-9\\-]/g,\'\').slice(0,20)'
+        : 'this.value=this.value.replace(/[^0-9]/g,\'\').slice(0,5)';
+    var codeDefaultErr  = isEmpId
+        ? 'Please enter your Employee ID before continuing.'
+        : 'Please enter your 5-digit survey code before continuing.';
+    var codeBullet = isEmpId
+        ? 'Enter your <strong>Employee ID</strong> below. This ID is used only to prevent duplicate submissions. Your individual responses remain anonymous.'
+        : 'Enter your <strong>5-digit survey code</strong> below. This code is used only to prevent duplicate submissions. It cannot be linked to your identity by anyone at ' + escHtml(COMPANY_NAME) + '.';
 
     // Build the employee code section (only when roster exists)
     var codeSectionHtml = '';
     if (hasRoster) {
         codeSectionHtml =
             '<div class="code-section">' +
-                '<label>Your 5-Digit Survey Code</label>' +
+                '<label>' + codeLabel + '</label>' +
                 '<div class="code-input-row">' +
                     '<input type="text" id="employeeCodeInput" class="code-input"' +
-                    '       maxlength="5" inputmode="numeric" pattern="[0-9]*"' +
-                    '       placeholder="00000"' +
-                    '       oninput="this.value=this.value.replace(/[^0-9]/g,\'\').slice(0,5)"' +
+                    '       maxlength="' + codeMaxLen + '" inputmode="' + codeInputMode + '" ' + codePattern +
+                    '       placeholder="' + codePlaceholder + '"' +
+                    '       oninput="' + codeOnInput + '"' +
                     '       onkeydown="if(event.key===\'Enter\')beginSurvey()" />' +
-                    '<span class="code-hint">Enter the code from your<br>code sheet</span>' +
+                    '<span class="code-hint">' + codeHint + '</span>' +
                 '</div>' +
-                '<div class="code-error" id="codeError">Please enter your 5-digit survey code before continuing.</div>' +
+                '<div class="code-error" id="codeError">' + codeDefaultErr + '</div>' +
             '</div>';
     }
 
@@ -608,9 +636,7 @@ function showInstructions() {
                         '<strong>This survey is confidential.</strong> Your individual responses will not be shared with management. Results are reported only in aggregate.' +
                     '</li>' +
                     (hasRoster
-                        ? '<li data-bullet="&#128273;">' +
-                            'Enter your <strong>5-digit survey code</strong> below. This code is used only to prevent duplicate submissions. It cannot be linked to your identity by anyone at ' + escHtml(COMPANY_NAME) + '.' +
-                          '</li>'
+                        ? '<li data-bullet="&#128273;">' + codeBullet + '</li>'
                         : '') +
                     '<li data-bullet="&#9745;">' +
                         '<strong>Most questions are optional.</strong> If you prefer not to answer a question, you may skip it.' +
@@ -638,24 +664,49 @@ function showInstructions() {
 }
 
 /*
- * beginSurvey() — validates employee code (if required) then starts survey
+ * beginSurvey() -- validates employee code (if required) then starts survey
  */
 function beginSurvey() {
     var hasRoster = surveyData && surveyData.roster_uploaded === true;
+    var codeMode  = (surveyData && surveyData.code_mode) || 'random';
+    var isEmpId   = (codeMode === 'employee_id');
 
     if (hasRoster) {
-        var input    = document.getElementById('employeeCodeInput');
-        var errEl    = document.getElementById('codeError');
-        var codeVal  = input ? input.value.trim() : '';
+        var input   = document.getElementById('employeeCodeInput');
+        var errEl   = document.getElementById('codeError');
+        var codeVal = input ? input.value.trim() : '';
 
         // Clear prior error state
-        if (input)  input.classList.remove('error');
-        if (errEl)  errEl.classList.remove('visible');
+        if (input) input.classList.remove('error');
+        if (errEl) errEl.classList.remove('visible');
 
-        if (!codeVal || codeVal.length !== 5 || !/^\d{5}$/.test(codeVal)) {
+        var isValid = false;
+        var errMsg  = '';
+
+        if (!codeVal) {
+            errMsg = isEmpId
+                ? 'Please enter your Employee ID before continuing.'
+                : 'Please enter your 5-digit survey code before continuing.';
+        } else if (isEmpId) {
+            // Employee ID: 1-20 alphanumeric+hyphen chars
+            if (!/^[A-Za-z0-9\-]+$/.test(codeVal) || codeVal.length > 20) {
+                errMsg = 'Employee ID format is not valid. Please check your ID.';
+            } else {
+                isValid = true;
+            }
+        } else {
+            // Random: exactly 5 digits
+            if (!/^\d{5}$/.test(codeVal)) {
+                errMsg = 'Survey code must be exactly 5 digits. Please check your code.';
+            } else {
+                isValid = true;
+            }
+        }
+
+        if (!isValid) {
             if (input) input.classList.add('error');
             if (errEl) {
-                errEl.textContent = 'Please enter your 5-digit survey code before continuing.';
+                errEl.textContent = errMsg;
                 errEl.classList.add('visible');
             }
             return;
