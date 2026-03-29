@@ -1,9 +1,9 @@
 <!DOCTYPE html>
 <!--
-  Survey in a Box — Admin Dashboard
+  Survey in a Box -- Admin Dashboard
   File: templates/survey_admin.html
   Created: March 16, 2026
-  Last Updated: March 26, 2026 — Phase 2: Survey Management section
+  Last Updated: March 29, 2026 -- Deliverable 5: Expandable question selection
 
   PURPOSE:
       Password-protected admin dashboard for Jim at /survey/admin.
@@ -16,7 +16,7 @@
 
   ACTIONS AVAILABLE:
       - Change client status
-      - Select questions (categories checkboxes)
+      - Select questions (expandable categories with individual question checkboxes)
       - Select schedule concepts (text list)
       - Add custom questions (dynamic add/remove)
       - Add admin notes
@@ -32,29 +32,37 @@
       - [Phase 2] Export responses (.xlsx)
 
   CHANGELOG:
-      - March 26, 2026: Phase 2 -- Survey Management section added.
+      - March 29, 2026: Deliverable 5 -- Expandable question selection.
         THREE CHANGES ONLY:
-        1. CSS: Added styles for survey management section (.survey-mgmt-*,
-           .roster-*, .survey-url-box, .progress-bar-*). Appended to existing
-           style block -- no existing styles modified.
-        2. HTML: Added "Survey Management" detail-card below the project config
-           card in the right column of the detail grid. The card is initially
-           hidden (id="survey-mgmt-card") and shown by renderClientDetail()
-           when a project exists. Includes: roster upload/download controls,
-           Open/Close Survey buttons, survey URL with copy + QR code, response
-           progress bar, and Export button.
-        3. JS: Added Survey Management JS section with functions:
-           loadSurveyMgmt(), renderSurveyMgmt(), uploadRoster(),
-           downloadCodeSheet(), skipRoster(), openSurvey(), closeSurvey(),
-           exportResponses(), copyUrl(), initQrCode(), formatDateShort().
-           Also added qrcodejs CDN script tag.
-           renderClientDetail() updated: now calls loadSurveyMgmt() when
-           project exists and status is approved or beyond.
-        NO OTHER CHANGES. All Phase 1 logic, CSS variables, and HTML
-        structure are completely unchanged.
+        1. CSS: Added styles for expandable question bank UI (.qbank-*).
+           Appended to existing style block -- no existing styles modified.
+        2. HTML: Replaced the flat category checkboxes section in Survey
+           Configuration card with a dynamic question bank container
+           (id="question-bank-container"). The static QUESTION_CATEGORIES
+           array and [data-q-cat] checkboxes are removed. The "Phase 2 will
+           wire..." placeholder text is removed.
+        3. JS: Four changes to JavaScript:
+           a) Added state var: questionBankData (caches loaded bank).
+           b) Replaced renderProjectConfig() question-selection block: now
+              calls loadQuestionBank(selectedQuestions) instead of building
+              flat category checkboxes. Schedule and custom question sections
+              are completely unchanged.
+           c) Added loadQuestionBank(selectedQuestions): fetches
+              GET /api/survey/question-bank, calls renderQuestionBank().
+           d) Added renderQuestionBank(bankData, selectedQuestions): builds
+              expandable category/question UI with indeterminate support.
+           e) Added toggleCategory(catId): expand/collapse question list.
+           f) Added updateCategoryHeader(catId): sync header checkbox state.
+           g) Modified saveProjectConfig(): collects .question-checkbox:checked
+              data-question-id values instead of [data-q-cat]:checked values.
+              Stores actual question IDs in selected_questions field.
+        NO OTHER CHANGES. All Phase 1 and Phase 2 logic, CSS variables,
+        HTML structure, auth, client list, survey management, and helper
+        functions are completely unchanged.
+
+      - March 26, 2026: Phase 2 -- Survey Management section added.
 
       - March 24, 2026: BUG FIX -- Login freeze / stuck "Signing in..." button.
-        THREE fixes: isLoggingIn guard, authCheckComplete flag, fetch timeout.
 
       - March 16, 2026: Initial creation for Phase 1, Step 1.3.
 
@@ -437,22 +445,6 @@
       margin-bottom: 8px;
     }
 
-    .question-cats { display: flex; flex-direction: column; gap: 6px; }
-    .q-cat {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 0.85rem;
-      color: var(--text-mid);
-      cursor: pointer;
-    }
-    .q-cat input[type="checkbox"] {
-      width: 16px;
-      height: 16px;
-      accent-color: var(--brand-mid);
-      cursor: pointer;
-    }
-
     .custom-q-list { display: flex; flex-direction: column; gap: 6px; }
     .custom-q-row { display: flex; gap: 8px; align-items: center; }
     .custom-q-row input {
@@ -572,7 +564,6 @@
 
     /* ===== PHASE 2: SURVEY MANAGEMENT STYLES ===== */
 
-    /* Response progress bar */
     .resp-progress-track {
       height: 8px;
       background: var(--border);
@@ -591,7 +582,6 @@
       color: var(--text-mid);
     }
 
-    /* Survey URL box */
     .survey-url-box {
       display: flex;
       align-items: center;
@@ -624,7 +614,6 @@
     }
     .btn-copy:hover { background: var(--brand-light); }
 
-    /* QR code container */
     #qr-code-container {
       display: flex;
       justify-content: center;
@@ -637,7 +626,6 @@
       box-shadow: 0 1px 4px rgba(0,0,0,0.15);
     }
 
-    /* Roster section */
     .roster-row {
       display: flex;
       gap: 8px;
@@ -664,7 +652,6 @@
     .btn-sm.success:hover { background: var(--green-light); }
     .btn-sm:disabled { opacity: 0.5; cursor: not-allowed; }
 
-    /* Open/Close survey buttons */
     .btn-open-survey {
       background: var(--green);
       color: #fff;
@@ -711,14 +698,124 @@
     .status-dot.open   { background: #38a169; box-shadow: 0 0 0 3px #c6f6d5; }
     .status-dot.closed { background: var(--red); box-shadow: 0 0 0 3px #fed7d7; }
 
-    /* Hidden file input trigger */
     .hidden-file-input { display: none; }
 
-    /* Divider within mgmt card */
     .mgmt-divider {
       border: none;
       border-top: 1px solid var(--border);
       margin: 14px 0;
+    }
+
+    /* ===== DELIVERABLE 5: EXPANDABLE QUESTION BANK STYLES ===== */
+    /* Added March 29, 2026 -- appended, no existing styles modified */
+
+    .qbank-loading {
+      font-size: 0.83rem;
+      color: var(--text-light);
+      padding: 8px 0;
+    }
+    .qbank-error {
+      font-size: 0.83rem;
+      color: var(--red);
+      padding: 8px 0;
+    }
+
+    /* Each category block */
+    .qbank-category {
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      margin-bottom: 6px;
+      overflow: hidden;
+    }
+
+    /* Category header row: checkbox + label + count + arrow */
+    .qbank-cat-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      background: var(--gray-light);
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.12s;
+    }
+    .qbank-cat-header:hover {
+      background: var(--brand-light);
+    }
+    .qbank-cat-checkbox {
+      width: 15px;
+      height: 15px;
+      accent-color: var(--brand-mid);
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .qbank-cat-label {
+      flex: 1;
+      font-size: 0.84rem;
+      font-weight: 700;
+      color: var(--brand-dark);
+    }
+    .qbank-cat-count {
+      font-size: 0.77rem;
+      color: var(--text-light);
+      font-weight: 400;
+    }
+    .qbank-cat-arrow {
+      font-size: 0.75rem;
+      color: var(--text-light);
+      transition: transform 0.15s;
+      flex-shrink: 0;
+    }
+    .qbank-cat-arrow.open {
+      transform: rotate(90deg);
+    }
+
+    /* Collapsible question list -- hidden by default */
+    .qbank-cat-questions {
+      display: none;
+      border-top: 1px solid var(--border);
+      background: var(--white);
+      max-height: 260px;
+      overflow-y: auto;
+    }
+    .qbank-cat-questions.expanded {
+      display: block;
+    }
+
+    /* Individual question row */
+    .qbank-question {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 6px 12px 6px 28px;
+      border-bottom: 1px solid #f0f4f8;
+      transition: background 0.1s;
+    }
+    .qbank-question:last-child {
+      border-bottom: none;
+    }
+    .qbank-question:hover {
+      background: #f7fafc;
+    }
+    .question-checkbox {
+      width: 14px;
+      height: 14px;
+      accent-color: var(--brand-mid);
+      cursor: pointer;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+    .qbank-question-text {
+      font-size: 0.81rem;
+      color: var(--text-mid);
+      line-height: 1.4;
+      cursor: pointer;
+    }
+    .qbank-question-type {
+      font-size: 0.7rem;
+      color: var(--text-light);
+      flex-shrink: 0;
+      margin-top: 2px;
     }
   </style>
 </head>
@@ -829,17 +926,16 @@
 
     <!-- RIGHT: Project config + Survey Management -->
     <div>
-      <!-- Project configuration card (Phase 1 -- unchanged) -->
+      <!-- Project configuration card -->
       <div class="detail-card" style="margin-bottom:16px">
         <div class="detail-card-header">&#9881; Survey Configuration</div>
         <div class="detail-card-body">
 
+          <!-- DELIVERABLE 5: Expandable question bank (replaces flat category checkboxes) -->
           <div class="config-section">
-            <label>Question Categories to Include</label>
-            <div class="question-cats" id="question-cats"></div>
-            <div class="text-muted mt-8">
-              Phase 2 will wire the full 103-question bank here.
-              All categories are selected by default.
+            <label>Questions to Include</label>
+            <div id="question-bank-container">
+              <div class="qbank-loading"><div class="spinner"></div> Loading question bank...</div>
             </div>
           </div>
 
@@ -847,11 +943,8 @@
             <label>Schedule Concepts to Include</label>
             <div id="schedule-concepts-container">
               <textarea id="selected-schedules-field" class="admin-notes-area"
-                        placeholder="Enter schedule pattern names or IDs to include (one per line). Phase 2 will add a searchable picker."
+                        placeholder="Enter schedule pattern names or IDs to include (one per line)."
                         style="min-height:70px"></textarea>
-            </div>
-            <div class="text-muted mt-8">
-              Full schedule library picker coming in Phase 2.
             </div>
           </div>
 
@@ -875,11 +968,7 @@
         </div>
       </div>
 
-      <!-- ============================================================
-           PHASE 2: SURVEY MANAGEMENT CARD
-           Hidden until a project exists with status approved or beyond.
-           renderClientDetail() calls loadSurveyMgmt() to populate it.
-      ============================================================ -->
+      <!-- PHASE 2: SURVEY MANAGEMENT CARD -->
       <div class="detail-card" id="survey-mgmt-card" style="display:none">
         <div class="detail-card-header">&#128200; Survey Management</div>
         <div class="detail-card-body" id="survey-mgmt-body">
@@ -914,7 +1003,8 @@ var activeFilter       = 'all';
 var allClients         = [];
 var authCheckComplete  = false;
 var isLoggingIn        = false;
-var surveyMgmtData     = null;   /* Phase 2: cached survey management state */
+var surveyMgmtData     = null;
+var questionBankData   = null;   /* Deliverable 5: cached question bank from API */
 
 /* ------------------------------------------------------------------
    SCREEN MANAGEMENT
@@ -1023,6 +1113,7 @@ function logout() {
       isLoggingIn = false;
       authCheckComplete = false;
       surveyMgmtData = null;
+      questionBankData = null;
       document.getElementById('header-actions').style.display = 'none';
       document.getElementById('login-password').value = '';
       document.getElementById('login-btn').disabled = false;
@@ -1177,7 +1268,6 @@ function renderClientDetail(client, project) {
       showMsg('approve-msg', 'success', 'Project already approved -- ready for Survey Assembly.');
     }
 
-    /* PHASE 2: Show Survey Management card for approved/beyond projects */
     var mgmtStatuses = ['approved', 'administered', 'in-progress', 'delivered'];
     if (mgmtStatuses.indexOf(project.status) !== -1) {
       document.getElementById('survey-mgmt-card').style.display = 'block';
@@ -1197,43 +1287,249 @@ function renderClientDetail(client, project) {
 
 /* ------------------------------------------------------------------
    PROJECT CONFIG
+   Deliverable 5: renderProjectConfig() now calls loadQuestionBank()
+   instead of building flat category checkboxes. Schedule and custom
+   question sections are unchanged.
 ------------------------------------------------------------------ */
-var QUESTION_CATEGORIES = [
-  { id: 'work_life_balance',   label: 'Work-Life Balance & Time Off' },
-  { id: 'schedule_preference', label: 'Schedule Preference & Satisfaction' },
-  { id: 'overtime',            label: 'Overtime & Extra Shifts' },
-  { id: 'fatigue_safety',      label: 'Fatigue & Safety' },
-  { id: 'communication',       label: 'Communication & Management' },
-  { id: 'compensation',        label: 'Compensation & Benefits' },
-  { id: 'commute',             label: 'Commute & Transportation' },
-  { id: 'childcare',           label: 'Family & Childcare' },
-  { id: 'demographics',        label: 'Demographics (Age, Tenure, Dept.)' },
-  { id: 'open_ended',          label: 'Open-Ended / Write-In Questions' }
-];
-
 function renderProjectConfig(project) {
-  var selected = project
-    ? (project.selected_questions || [])
-    : QUESTION_CATEGORIES.map(function(c) { return c.id; });
+  /* ---- Question bank (Deliverable 5) ---- */
+  var selectedQuestions = project ? (project.selected_questions || []) : [];
+  loadQuestionBank(selectedQuestions);
 
-  var catsEl = document.getElementById('question-cats');
-  catsEl.innerHTML = QUESTION_CATEGORIES.map(function(cat) {
-    var isChecked = (selected.indexOf(cat.id) !== -1 || selected.length === 0) ? 'checked' : '';
-    return '<label class="q-cat">' +
-      '<input type="checkbox" value="' + cat.id + '" ' + isChecked + ' data-q-cat />' +
-      escHtml(cat.label) +
-      '</label>';
-  }).join('');
-
+  /* ---- Schedules (unchanged) ---- */
   var schedules = project ? (project.selected_schedules || []) : [];
   document.getElementById('selected-schedules-field').value =
     Array.isArray(schedules) ? schedules.join('\n') : schedules;
 
+  /* ---- Custom questions (unchanged) ---- */
   var customQs = project ? (project.custom_questions || []) : [];
   var listEl = document.getElementById('custom-q-list');
   listEl.innerHTML = '';
   customQs.forEach(function(q) { addCustomQ(q); });
   if (customQs.length === 0) addCustomQ('');
+}
+
+/* ------------------------------------------------------------------
+   DELIVERABLE 5: QUESTION BANK LOADING & RENDERING
+------------------------------------------------------------------ */
+
+/*
+ * loadQuestionBank(selectedQuestions)
+ * Fetches GET /api/survey/question-bank and renders the expandable UI.
+ * selectedQuestions: array of question IDs (new format) or category names
+ *   (legacy format) loaded from project.selected_questions.
+ * Uses cached questionBankData if already loaded this session.
+ */
+function loadQuestionBank(selectedQuestions) {
+  var container = document.getElementById('question-bank-container');
+  if (!container) return;
+
+  /* Use cached data if available */
+  if (questionBankData) {
+    renderQuestionBank(questionBankData, selectedQuestions);
+    return;
+  }
+
+  container.innerHTML = '<div class="qbank-loading"><div class="spinner"></div> Loading question bank...</div>';
+
+  fetch('/api/survey/question-bank')
+    .then(function(resp) {
+      if (resp.status === 401) { checkAuth(); return null; }
+      return resp.json();
+    })
+    .then(function(data) {
+      if (!data) return;
+      if (!data.success) {
+        container.innerHTML = '<div class="qbank-error">Could not load question bank: ' + escHtml(data.error || 'Unknown error') + '</div>';
+        return;
+      }
+      questionBankData = data;
+      renderQuestionBank(data, selectedQuestions);
+    })
+    .catch(function(e) {
+      container.innerHTML = '<div class="qbank-error">Network error loading question bank: ' + escHtml(e.message) + '</div>';
+    });
+}
+
+/*
+ * renderQuestionBank(bankData, selectedQuestions)
+ * Builds the expandable category/question UI.
+ *
+ * selectedQuestions can be:
+ *   - [] or null: all questions selected (new project default)
+ *   - ['dept', 'tenure', ...]: actual question IDs (new format)
+ *   - ['work_life_balance', 'demographics', ...]: legacy category names
+ *
+ * Legacy detection: if first item is not a question ID in the bank,
+ * treat as legacy and check all questions (CATEGORY_MAP fallback applies
+ * server-side; we show all as selected in UI).
+ */
+function renderQuestionBank(bankData, selectedQuestions) {
+  var container = document.getElementById('question-bank-container');
+  if (!container) return;
+
+  var categories     = bankData.categories || [];
+  var questionsBycat = bankData.questions_by_category || {};
+
+  /* Build flat set of all question IDs for legacy detection */
+  var allQuestionIds = {};
+  categories.forEach(function(cat) {
+    var qs = questionsBycat[cat] || [];
+    qs.forEach(function(q) { allQuestionIds[q.id] = true; });
+  });
+
+  /* Detect format: is selectedQuestions question IDs or legacy category names? */
+  var isLegacy = false;
+  var selectedSet = {};
+  if (!selectedQuestions || selectedQuestions.length === 0) {
+    /* Empty: select all */
+    Object.keys(allQuestionIds).forEach(function(id) { selectedSet[id] = true; });
+  } else if (selectedQuestions[0] in allQuestionIds) {
+    /* New format: actual question IDs */
+    selectedQuestions.forEach(function(id) { selectedSet[id] = true; });
+  } else {
+    /* Legacy category name format: check all questions */
+    isLegacy = true;
+    Object.keys(allQuestionIds).forEach(function(id) { selectedSet[id] = true; });
+  }
+
+  /* Human-friendly category labels */
+  var CAT_LABELS = {
+    'demographics':       'Demographics',
+    'sleep_alertness':    'Sleep & Alertness',
+    'working_conditions': 'Working Conditions',
+    'schedule_features':  'Schedule Features',
+    'overtime':           'Overtime',
+    'daycare_eldercare':  'Day Care / Elder Care',
+    'open_ended':         'Open-Ended Questions'
+  };
+
+  /* Type abbreviations for display */
+  var TYPE_ABBR = {
+    'likert':         'Likert',
+    'multiple_choice': 'MC',
+    'checkbox':       'Chk',
+    'text':           'Text'
+  };
+
+  var html = '';
+
+  if (isLegacy) {
+    html += '<div style="font-size:0.77rem;color:var(--text-light);margin-bottom:6px;">Legacy config: all questions selected. Save to store individual choices.</div>';
+  }
+
+  categories.forEach(function(cat) {
+    var qs    = questionsBycat[cat] || [];
+    var label = CAT_LABELS[cat] || cat.replace(/_/g, ' ');
+    var catId = 'qcat-' + cat;
+
+    html += '<div class="qbank-category" data-cat="' + escHtml(cat) + '">';
+
+    /* Category header -- clicking arrow toggles, clicking checkbox toggles all */
+    html += '<div class="qbank-cat-header" onclick="toggleCategory(\'' + escJs(cat) + '\')">' +
+      '<input type="checkbox" class="qbank-cat-checkbox" id="' + catId + '"' +
+        ' onclick="event.stopPropagation(); onCategoryCheckboxClick(\'' + escJs(cat) + '\', this)"' +
+        ' data-cat-cb="' + escHtml(cat) + '">' +
+      '<label class="qbank-cat-label" onclick="event.stopPropagation(); document.getElementById(\'' + catId + '\').click()">' +
+        escHtml(label) +
+      '</label>' +
+      '<span class="qbank-cat-count">' + qs.length + ' questions</span>' +
+      '<span class="qbank-cat-arrow" id="arr-' + escHtml(cat) + '">&#9658;</span>' +
+    '</div>';
+
+    /* Individual question rows -- collapsed by default */
+    html += '<div class="qbank-cat-questions" id="qlist-' + escHtml(cat) + '">';
+    qs.forEach(function(q) {
+      var checked  = selectedSet[q.id] ? ' checked' : '';
+      var typeAbbr = TYPE_ABBR[q.type] || q.type;
+      html +=
+        '<div class="qbank-question">' +
+          '<input type="checkbox" class="question-checkbox" data-question-id="' + escHtml(q.id) + '"' +
+            ' data-cat="' + escHtml(cat) + '"' + checked +
+            ' onchange="updateCategoryHeader(\'' + escJs(cat) + '\')">' +
+          '<span class="qbank-question-text">' + escHtml(q.text) + '</span>' +
+          '<span class="qbank-question-type">' + escHtml(typeAbbr) + '</span>' +
+        '</div>';
+    });
+    html += '</div>';
+
+    html += '</div>';
+  });
+
+  container.innerHTML = html;
+
+  /* Set initial category header states after rendering */
+  categories.forEach(function(cat) {
+    updateCategoryHeader(cat);
+  });
+}
+
+/*
+ * toggleCategory(cat)
+ * Expand or collapse the question list for a category.
+ * The arrow rotates to indicate state.
+ */
+function toggleCategory(cat) {
+  var listEl  = document.getElementById('qlist-' + cat);
+  var arrowEl = document.getElementById('arr-' + cat);
+  if (!listEl) return;
+  var isOpen = listEl.classList.contains('expanded');
+  if (isOpen) {
+    listEl.classList.remove('expanded');
+    if (arrowEl) arrowEl.classList.remove('open');
+  } else {
+    listEl.classList.add('expanded');
+    if (arrowEl) arrowEl.classList.add('open');
+  }
+}
+
+/*
+ * onCategoryCheckboxClick(cat, cbEl)
+ * When the category header checkbox is clicked:
+ *   - If currently unchecked or indeterminate: check all individual questions
+ *   - If currently checked: uncheck all individual questions
+ * Then update the header state.
+ */
+function onCategoryCheckboxClick(cat, cbEl) {
+  var checkAll = cbEl.checked;  /* After click, checked = desired new state */
+  var listEl = document.getElementById('qlist-' + cat);
+  if (!listEl) return;
+  listEl.querySelectorAll('.question-checkbox').forEach(function(cb) {
+    cb.checked = checkAll;
+  });
+  updateCategoryHeader(cat);
+}
+
+/*
+ * updateCategoryHeader(cat)
+ * Computes the correct checked/indeterminate state for the category
+ * header checkbox based on how many individual questions are checked.
+ *
+ * State rules:
+ *   All checked:   checked=true,  indeterminate=false
+ *   None checked:  checked=false, indeterminate=false
+ *   Some checked:  checked=false, indeterminate=true
+ */
+function updateCategoryHeader(cat) {
+  var catCb  = document.querySelector('[data-cat-cb="' + cat + '"]');
+  var listEl = document.getElementById('qlist-' + cat);
+  if (!catCb || !listEl) return;
+
+  var all  = listEl.querySelectorAll('.question-checkbox');
+  var chkd = listEl.querySelectorAll('.question-checkbox:checked');
+  var total   = all.length;
+  var checked = chkd.length;
+
+  if (checked === 0) {
+    catCb.checked       = false;
+    catCb.indeterminate = false;
+  } else if (checked === total) {
+    catCb.checked       = true;
+    catCb.indeterminate = false;
+  } else {
+    catCb.checked       = false;
+    catCb.indeterminate = true;
+  }
 }
 
 function addCustomQ(value) {
@@ -1247,9 +1543,22 @@ function addCustomQ(value) {
   listEl.appendChild(row);
 }
 
+/*
+ * saveProjectConfig()
+ * Deliverable 5: collects individual question IDs from checked .question-checkbox
+ * elements instead of category IDs from [data-q-cat] checkboxes.
+ * All other parts of the payload (schedules, custom questions, admin notes)
+ * are unchanged.
+ */
 function saveProjectConfig() {
-  var selectedCats = Array.from(document.querySelectorAll('[data-q-cat]:checked'))
-    .map(function(el) { return el.value; });
+  /* Collect selected question IDs from expandable bank */
+  var selectedQuestions = [];
+  document.querySelectorAll('.question-checkbox:checked').forEach(function(cb) {
+    if (cb.dataset.questionId) {
+      selectedQuestions.push(cb.dataset.questionId);
+    }
+  });
+
   var customQs = Array.from(document.querySelectorAll('[data-custom-q]'))
     .map(function(el) { return el.value.trim(); })
     .filter(Boolean);
@@ -1259,7 +1568,7 @@ function saveProjectConfig() {
 
   var payload = {
     survey_client_id:   currentClientId,
-    selected_questions: selectedCats,
+    selected_questions: selectedQuestions,
     excluded_questions: [],
     custom_questions:   customQs,
     selected_schedules: schedules,
@@ -1283,7 +1592,8 @@ function saveProjectConfig() {
     if (!currentProjectId && data.project_id) {
       currentProjectId = data.project_id;
     }
-    showMsg('project-msg', 'success', 'Configuration saved (' + data.action + ').');
+    showMsg('project-msg', 'success', 'Configuration saved (' + data.action + '). ' +
+      selectedQuestions.length + ' questions selected.');
     document.getElementById('approve-btn').disabled = false;
   })
   .catch(function(e) {
@@ -1313,7 +1623,6 @@ function approveProject() {
     if (!data.success) throw new Error(data.error || 'Approval failed.');
     showMsg('approve-msg', 'success', data.message);
     document.getElementById('detail-status').value = 'approved';
-    /* Phase 2: show management section after approval */
     document.getElementById('survey-mgmt-card').style.display = 'block';
     loadSurveyMgmt(currentProjectId);
   })
@@ -1375,14 +1684,9 @@ function saveAdminNotes() {
 }
 
 /* ================================================================
-   PHASE 2: SURVEY MANAGEMENT FUNCTIONS
+   PHASE 2: SURVEY MANAGEMENT FUNCTIONS (unchanged)
 ================================================================ */
 
-/*
- * loadSurveyMgmt(projectId)
- * Fetches current survey status (responses, open/closed, roster info)
- * and renders the appropriate state-based management UI.
- */
 function loadSurveyMgmt(projectId) {
   var body = document.getElementById('survey-mgmt-body');
   body.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
@@ -1406,27 +1710,15 @@ function loadSurveyMgmt(projectId) {
     });
 }
 
-/*
- * renderSurveyMgmt(data)
- * Renders the state-aware survey management UI based on:
- *   data.is_open        — whether the survey is currently accepting responses
- *   data.roster_uploaded — whether an employee roster has been uploaded
- *   data.roster_count   — number of employees in the roster
- *   data.response_count — number of responses submitted
- *   data.survey_url     — the public survey URL
- *   data.opened_at      — when the survey was opened
- *   data.closed_at      — when the survey was closed
- */
 function renderSurveyMgmt(data) {
   var html = '';
-  var isOpen        = data.is_open;
+  var isOpen         = data.is_open;
   var rosterUploaded = data.roster_uploaded;
-  var rosterCount   = data.roster_count || 0;
-  var responseCount = data.response_count || 0;
-  var surveyUrl     = data.survey_url || '';
-  var projectId     = data.project_id || currentProjectId;
+  var rosterCount    = data.roster_count || 0;
+  var responseCount  = data.response_count || 0;
+  var surveyUrl      = data.survey_url || '';
+  var projectId      = data.project_id || currentProjectId;
 
-  /* ---- Roster section ---- */
   html += '<div style="margin-bottom:14px;">';
   html += '<div style="font-size:0.83rem;font-weight:700;color:var(--brand-dark);margin-bottom:8px;">EMPLOYEE ROSTER</div>';
 
@@ -1449,9 +1741,7 @@ function renderSurveyMgmt(data) {
 
   var divider = '<hr class="mgmt-divider" />';
 
-  /* ---- Survey open/close state ---- */
   if (isOpen) {
-    /* OPEN STATE */
     var pct = rosterCount > 0 ? Math.min(100, Math.round((responseCount / rosterCount) * 100)) : 0;
     var progressHtml = rosterCount > 0
       ? '<div class="resp-progress-track"><div class="resp-progress-fill" style="width:' + pct + '%"></div></div>' +
@@ -1483,7 +1773,6 @@ function renderSurveyMgmt(data) {
       '<button class="btn-close-survey" onclick="closeSurvey(' + projectId + ')">&#9632; Close Survey</button>';
 
   } else if (data.closed_at) {
-    /* CLOSED STATE */
     var closedPct = rosterCount > 0 ? Math.min(100, Math.round((responseCount / rosterCount) * 100)) : 0;
     var closedProgressHtml = rosterCount > 0
       ? '<div class="resp-progress-track"><div class="resp-progress-fill" style="width:' + closedPct + '%;background:var(--text-light)"></div></div>' +
@@ -1504,8 +1793,7 @@ function renderSurveyMgmt(data) {
       '</div>';
 
   } else {
-    /* NOT YET OPENED */
-    var canOpen = rosterUploaded;  /* Can also open without roster (after skipRoster) */
+    var canOpen = rosterUploaded;
     html += divider +
       '<div style="color:var(--text-light);font-size:0.85rem;margin-bottom:12px;">Survey has not been opened yet.</div>' +
       '<button class="btn-open-survey" onclick="openSurvey(' + projectId + ')"' +
@@ -1518,13 +1806,11 @@ function renderSurveyMgmt(data) {
 
   document.getElementById('survey-mgmt-body').innerHTML = html;
 
-  /* Render QR code after DOM update (requires qrcodejs) */
   if (isOpen && surveyUrl) {
     setTimeout(function() { initQrCode(surveyUrl); }, 50);
   }
 }
 
-/* ---- Roster upload ---- */
 function uploadRoster(inputEl) {
   var file = inputEl.files[0];
   if (!file) return;
@@ -1550,35 +1836,26 @@ function uploadRoster(inputEl) {
       return;
     }
     showMgmtMsg('success', data.message);
-    /* Reload management section to reflect new roster */
     setTimeout(function() { loadSurveyMgmt(currentProjectId); }, 600);
   })
   .catch(function(e) {
     showMgmtMsg('error', 'Network error: ' + e.message);
   });
 
-  /* Reset input so the same file can be re-selected */
   inputEl.value = '';
 }
 
-/* ---- Download code sheet ---- */
 function downloadCodeSheet(projectId) {
   window.location.href = '/api/survey/admin/project/' + projectId + '/roster/download-codes';
 }
 
-/* ---- Skip roster (open without codes) ---- */
 function skipRoster(projectId) {
-  /* Mark roster_uploaded=TRUE with 0 employees so Open Survey enables.
-     We do this by just opening the survey directly.
-     The respondent page checks roster_uploaded to decide whether to show code field.
-     Since roster_uploaded remains FALSE, no code field will appear. */
   if (!confirm('Open this survey without an employee roster? Employees will not need a survey code. Cookie-based duplicate prevention only.')) {
     return;
   }
   openSurvey(projectId);
 }
 
-/* ---- Open survey ---- */
 function openSurvey(projectId) {
   showMgmtMsg('info', 'Opening survey...');
   fetch('/api/survey/admin/project/' + projectId + '/open', { method: 'POST' })
@@ -1595,7 +1872,6 @@ function openSurvey(projectId) {
     .catch(function(e) { showMgmtMsg('error', 'Network error: ' + e.message); });
 }
 
-/* ---- Close survey ---- */
 function closeSurvey(projectId) {
   if (!confirm('Close the survey? Employees will no longer be able to submit responses.')) return;
   showMgmtMsg('info', 'Closing survey...');
@@ -1613,20 +1889,16 @@ function closeSurvey(projectId) {
     .catch(function(e) { showMgmtMsg('error', 'Network error: ' + e.message); });
 }
 
-/* ---- Export responses ---- */
 function exportResponses(projectId) {
   window.location.href = '/api/survey/admin/project/' + projectId + '/export';
 }
 
-/* ---- Copy URL to clipboard ---- */
 function copyUrl(url) {
   var btn = document.getElementById('copy-btn');
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(url).then(function() {
-      if (btn) { btn.textContent = '&#10003; Copied!'; setTimeout(function() { if (btn) btn.innerHTML = '&#128203; Copy'; }, 2000); }
-    }).catch(function() {
-      fallbackCopy(url, btn);
-    });
+      if (btn) { btn.innerHTML = '&#10003; Copied!'; setTimeout(function() { if (btn) btn.innerHTML = '&#128203; Copy'; }, 2000); }
+    }).catch(function() { fallbackCopy(url, btn); });
   } else {
     fallbackCopy(url, btn);
   }
@@ -1646,7 +1918,6 @@ function fallbackCopy(url, btn) {
   document.body.removeChild(ta);
 }
 
-/* ---- QR code ---- */
 function initQrCode(url) {
   var container = document.getElementById('qr-code-container');
   if (!container) return;
@@ -1665,7 +1936,6 @@ function initQrCode(url) {
   }
 }
 
-/* ---- Management section message helper ---- */
 function showMgmtMsg(type, text) {
   var el = document.getElementById('mgmt-msg');
   if (!el) return;
@@ -1673,7 +1943,6 @@ function showMgmtMsg(type, text) {
   el.textContent = text;
 }
 
-/* ---- Date formatter for mgmt section ---- */
 function formatDateShort(iso) {
   if (!iso) return '--';
   try {
@@ -1685,7 +1954,7 @@ function formatDateShort(iso) {
 }
 
 /* ================================================================
-   SHARED HELPERS
+   SHARED HELPERS (unchanged)
 ================================================================ */
 function showMsg(id, type, text) {
   var el = document.getElementById(id);
