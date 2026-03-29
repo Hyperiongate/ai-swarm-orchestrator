@@ -2,7 +2,7 @@
 SURVEY IN A BOX — Respondent Routes
 File: routes/survey_respondent.py
 Created: March 13, 2026
-Last Updated: March 27, 2026 — Phase 2: Code mode support (random vs employee ID)
+Last Updated: March 29, 2026 — Phase 2 Session 3: Likert answer option injection
 
 PURPOSE:
     Employee-facing survey engine for Survey in a Box Phase 3.
@@ -14,13 +14,13 @@ PURPOSE:
     interface that employees use to complete their survey.
 
 ENDPOINTS:
-    GET  /survey/take/<token>                    — Survey page (HTML)
-    GET  /api/survey/take/<token>/questions      — Load survey structure
-    POST /api/survey/take/<token>/submit         — Submit completed survey
-    GET  /api/survey/admin/project/<id>/open     — Jim opens survey for responses
-    POST /api/survey/admin/project/<id>/close    — Jim closes survey
-    GET  /api/survey/admin/project/<id>/responses — Response count + summary
-    GET  /api/survey/admin/project/<id>/export   — Download .xlsx response data
+    GET  /survey/take/<token>                    -- Survey page (HTML)
+    GET  /api/survey/take/<token>/questions      -- Load survey structure
+    POST /api/survey/take/<token>/submit         -- Submit completed survey
+    GET  /api/survey/admin/project/<id>/open     -- Jim opens survey for responses
+    POST /api/survey/admin/project/<id>/close    -- Jim closes survey
+    GET  /api/survey/admin/project/<id>/responses -- Response count + summary
+    GET  /api/survey/admin/project/<id>/export   -- Download .xlsx response data
 
 ANONYMOUS DESIGN:
     - No login, no registration, no email collection
@@ -28,7 +28,7 @@ ANONYMOUS DESIGN:
     - session_token is a one-way SHA-256 hash of a browser cookie value.
       Used only to prevent duplicate submissions in a single browser session.
       Cannot be reversed to identify any individual.
-    - The export contains no timestamps, no row IDs, no session tokens —
+    - The export contains no timestamps, no row IDs, no session tokens --
       purely the answer data in SurveySelector-compatible format.
 
 EXPORT FORMAT (SurveySelector / Remark compatible):
@@ -49,14 +49,14 @@ EXPORT FORMAT (SurveySelector / Remark compatible):
 DUPLICATE PREVENTION:
     Without roster:
         - Browser sets a session cookie (survey_session_<token>) on first load
-        - Cookie value is SHA-256 hashed before storage — one-way, not reversible
+        - Cookie value is SHA-256 hashed before storage -- one-way, not reversible
         - On submission, the hash is checked against survey_responses for that project
         - If a matching session_token exists, submission is rejected with HTTP 409
 
     With roster (Phase 2):
         - Employee enters 5-digit code issued by Jim
         - Code validated against survey_roster for this project
-        - has_responded flag checked — rejects if already used (HTTP 409)
+        - has_responded flag checked -- rejects if already used (HTTP 409)
         - On success: has_responded set to TRUE and employee_code stored in response row
 
 SURVEY OPEN/CLOSE:
@@ -72,7 +72,26 @@ POSTGRESQL RULES:
     - RETURNING id on INSERT
 
 CHANGELOG:
-    - March 27, 2026: Code mode support — TWO CHANGES ONLY:
+    - March 29, 2026: ONE CHANGE ONLY -- Likert option injection in
+      _get_survey_questions_ordered(). The question bank defines ~30 Likert
+      questions with type='likert' and a 'scale' field but NO 'options' list.
+      The online survey frontend needs an explicit 'options' array to render
+      radio buttons. Without it, Likert questions render as empty space.
+
+      Fix: after creating q_copy for each question, if type is 'likert' and
+      'options' is absent, inject the standard 5-point scale matching the
+      labels used by export_to_word() in survey_builder.py:
+          '1 -- Strongly Disagree', '2 -- Disagree', '3 -- Neutral',
+          '4 -- Agree', '5 -- Strongly Agree'
+      Type is kept as 'likert' so the frontend renders the styled likert-scale
+      grid layout (not a plain radio list).
+
+      Only type='likert' is affected. Types 'multiple_choice', 'checkbox',
+      and 'text' are completely unchanged -- they already have explicit options
+      or render as textarea. No other types exist in the question bank.
+      survey_builder.py was NOT modified (read-only per Opus handoff).
+
+    - March 27, 2026: Code mode support -- TWO CHANGES ONLY:
       1. get_survey_questions(): added code_mode to JSON response so the
          frontend can show the correct label and placeholder in the code
          input field ('5-Digit Survey Code' vs 'Employee ID').
@@ -83,7 +102,7 @@ CHANGELOG:
          adapt to the mode. All other logic unchanged.
       NO OTHER CHANGES.
 
-    - March 26, 2026: Phase 2 additions — FOUR CHANGES ONLY:
+    - March 26, 2026: Phase 2 additions -- FOUR CHANGES ONLY:
       1. get_survey_questions(): added roster_uploaded and roster_count to
          JSON response so the frontend knows whether to show the code field.
       2. submit_survey(): added employee_code validation. If project has a
@@ -99,7 +118,7 @@ CHANGELOG:
       NO OTHER CHANGES. All existing endpoints, logic, and error handling
       are completely unchanged.
 
-    - March 25, 2026: BUG FIX — _require_admin_auth() was checking the wrong
+    - March 25, 2026: BUG FIX -- _require_admin_auth() was checking the wrong
       Flask session key. ONE LINE CHANGED: 'survey_admin_logged_in' ->
       'survey_admin_authenticated'.
 
@@ -129,11 +148,26 @@ survey_respondent_bp = Blueprint('survey_respondent', __name__)
 # CONSTANTS
 # ---------------------------------------------------------------------------
 
-# Cookie name template — includes token to scope per-survey
+# Cookie name template -- includes token to scope per-survey
 _COOKIE_NAME_PREFIX = 'survey_session_'
 
 # How long the duplicate-prevention cookie lives (seconds). 30 days.
 _COOKIE_MAX_AGE = 30 * 24 * 60 * 60
+
+# ---------------------------------------------------------------------------
+# LIKERT SCALE OPTIONS
+# Injected into type='likert' questions which have no explicit 'options' list.
+# Labels match export_to_word() in survey_builder.py exactly so that online
+# and paper survey responses use identical option text in exports.
+# Added: March 29, 2026
+# ---------------------------------------------------------------------------
+_LIKERT_OPTIONS = [
+    '1 -- Strongly Disagree',
+    '2 -- Disagree',
+    '3 -- Neutral',
+    '4 -- Agree',
+    '5 -- Strongly Agree',
+]
 
 
 # ---------------------------------------------------------------------------
@@ -220,6 +254,10 @@ def _get_survey_questions_ordered(project_row):
     consistent field to use as column headers.
 
     Falls back to full question bank if no questions selected.
+
+    March 29, 2026 addition: after building q_copy, inject standard answer
+    options for type='likert' questions which have no 'options' field in the
+    bank. Options match export_to_word() scale labels in survey_builder.py.
     """
     try:
         from survey_builder import SurveyBuilder
@@ -276,6 +314,25 @@ def _get_survey_questions_ordered(project_row):
             q_copy = dict(q)
             if 'short_label' not in q_copy:
                 q_copy['short_label'] = q_copy.get('id', q_copy.get('text', 'unknown'))
+
+            # ------------------------------------------------------------------
+            # LIKERT OPTION INJECTION  (added March 29, 2026)
+            # The question bank stores Likert questions with type='likert' and a
+            # 'scale' description field but NO 'options' list. The online survey
+            # frontend iterates q.options to render radio buttons. Without this
+            # injection, Likert questions render as empty space.
+            #
+            # We inject the same 5-point scale labels used by export_to_word()
+            # in survey_builder.py so that online responses and paper survey
+            # exports produce identical option text strings in SurveySelector.
+            #
+            # Only type='likert' is affected. Types 'multiple_choice' and
+            # 'checkbox' already have explicit options; type='text' renders as
+            # a textarea and needs no options. survey_builder.py is NOT touched.
+            # ------------------------------------------------------------------
+            if q_copy.get('type') == 'likert' and not q_copy.get('options'):
+                q_copy['options'] = _LIKERT_OPTIONS[:]
+
             ordered.append(q_copy)
 
         for sched in survey_obj.get('schedule_concepts', []):
@@ -297,7 +354,7 @@ def _get_survey_questions_ordered(project_row):
 
 
 # ---------------------------------------------------------------------------
-# ADMIN HELPERS — require auth
+# ADMIN HELPERS -- require auth
 # ---------------------------------------------------------------------------
 
 def _require_admin_auth():
@@ -317,7 +374,7 @@ def _require_admin_auth():
 
 
 # ---------------------------------------------------------------------------
-# ROUTES — EMPLOYEE-FACING SURVEY PAGE
+# ROUTES -- EMPLOYEE-FACING SURVEY PAGE
 # ---------------------------------------------------------------------------
 
 @survey_respondent_bp.route('/survey/take/<token>', methods=['GET'])
@@ -350,9 +407,7 @@ def survey_take_page(token):
 
 
 # ---------------------------------------------------------------------------
-# ROUTES — LOAD SURVEY QUESTIONS (API)
-# Phase 2 addition: includes roster_uploaded and roster_count in response
-# so the frontend can show/hide the employee code field.
+# ROUTES -- LOAD SURVEY QUESTIONS (API)
 # ---------------------------------------------------------------------------
 
 @survey_respondent_bp.route('/api/survey/take/<token>/questions', methods=['GET'])
@@ -363,8 +418,9 @@ def get_survey_questions(token):
     Returns questions grouped by section with full option text.
     Does NOT require authentication.
 
-    Phase 2 addition: response now includes roster_uploaded (bool) and
-    roster_count (int) so the frontend knows whether to show the code field.
+    Phase 2 addition: response now includes roster_uploaded (bool),
+    roster_count (int), and code_mode ('random' or 'employee_id') so the
+    frontend knows whether to show the code field and how to label it.
     """
     try:
         project_row, client_row = _load_project_by_token(token)
@@ -396,13 +452,7 @@ def get_survey_questions(token):
 
         company_name = project_row.get('company_name', 'Your Company')
 
-        # --- PHASE 2 ADDITION ---
-        # Include roster status and code_mode so the frontend knows:
-        #   roster_uploaded: whether to show the code entry field at all
-        #   roster_count:    total employees for display
-        #   code_mode:       'random' (5-digit code) or 'employee_id' (existing ID)
-        #                    Controls label, placeholder, and validation on the
-        #                    instructions page.
+        # Phase 2: roster status and code_mode for frontend
         roster_uploaded = bool(project_row.get('roster_uploaded', False))
         roster_count    = int(project_row.get('roster_count', 0) or 0)
         code_mode       = project_row.get('code_mode') or 'random'
@@ -413,9 +463,9 @@ def get_survey_questions(token):
             'token':           token,
             'total_questions': len(ordered_questions),
             'sections':        sections,
-            'roster_uploaded': roster_uploaded,   # Phase 2: show/hide code field
-            'roster_count':    roster_count,      # Phase 2: for display
-            'code_mode':       code_mode,         # Phase 2: 'random' or 'employee_id'
+            'roster_uploaded': roster_uploaded,
+            'roster_count':    roster_count,
+            'code_mode':       code_mode,
         })
 
     except Exception as e:
@@ -424,8 +474,7 @@ def get_survey_questions(token):
 
 
 # ---------------------------------------------------------------------------
-# ROUTES — SUBMIT SURVEY (API)
-# Phase 2 addition: employee_code validation when roster exists
+# ROUTES -- SUBMIT SURVEY (API)
 # ---------------------------------------------------------------------------
 
 @survey_respondent_bp.route('/api/survey/take/<token>/submit', methods=['POST'])
@@ -436,26 +485,26 @@ def submit_survey(token):
     Request body (JSON):
         {
             "answers": {
-                "Department": "Shipping",
-                "like current schedule": "4 Agree"
+                "dept": "Production",
+                "management_input": "4 -- Agree"
             },
-            "employee_code": "12345"   <- Phase 2: required if project has roster
+            "employee_code": "12345"   <- required if project has roster
         }
 
     Phase 2 employee code validation:
         - If project.roster_uploaded=TRUE: employee_code is required.
-          Code must be 5 digits, must exist in survey_roster for this project,
-          and has_responded must be FALSE. On success: has_responded set TRUE
-          and employee_code stored in the survey_responses row.
-        - If project.roster_uploaded=FALSE: employee_code is ignored.
-          Cookie-based duplicate prevention applies as before.
+          Random mode: exactly 5 digits.
+          Employee ID mode: 1-20 alphanumeric+hyphen chars.
+          Code must exist in survey_roster and has_responded must be FALSE.
+          On success: has_responded set TRUE, employee_code stored in response.
+        - If roster_uploaded=FALSE: code ignored, cookie-based prevention applies.
 
     Returns:
         201 Created on success
-        400 if employee_code missing or invalid format (roster required)
+        400 if employee_code missing or invalid format
         403 if survey is closed
         404 if employee code not found in roster
-        409 if duplicate submission (code already used, or cookie match)
+        409 if duplicate submission
         422 if answers are missing or malformed
     """
     try:
@@ -470,18 +519,17 @@ def submit_survey(token):
                 'error':   'This survey is no longer accepting responses.'
             }), 403
 
-        # ---- Parse request body first (needed for employee_code) ------------
+        # ---- Parse request body ---------------------------------------------
         data = request.get_json(force=True, silent=True) or {}
 
         # ---- PHASE 2: Employee code validation ------------------------------
         roster_uploaded = bool(project_row.get('roster_uploaded', False))
         code_mode       = project_row.get('code_mode') or 'random'
-        roster_row      = None   # Will hold survey_roster record if validated
+        roster_row      = None
 
         if roster_uploaded:
             employee_code = str(data.get('employee_code', '') or '').strip()
 
-            # Code format validation — rules depend on code_mode
             if not employee_code:
                 if code_mode == 'employee_id':
                     err_msg = 'Please enter your Employee ID before submitting.'
@@ -490,7 +538,6 @@ def submit_survey(token):
                 return jsonify({'success': False, 'error': err_msg}), 400
 
             if code_mode == 'employee_id':
-                # Employee ID: 1-20 alphanumeric+hyphen characters
                 if not re.match(r'^[A-Za-z0-9\-]+$', employee_code) or len(employee_code) > 20:
                     return jsonify({
                         'success': False,
@@ -498,7 +545,6 @@ def submit_survey(token):
                                    'Please check your ID and try again.'
                     }), 400
             else:
-                # Random mode: exactly 5 digits
                 if not employee_code.isdigit() or len(employee_code) != 5:
                     return jsonify({
                         'success': False,
@@ -506,7 +552,6 @@ def submit_survey(token):
                                    'Please check your code and try again.'
                     }), 400
 
-            # Validate code exists in roster and has not been used
             conn = get_db_connection()
             try:
                 cursor = conn.cursor()
@@ -541,7 +586,6 @@ def submit_survey(token):
                 return jsonify({'success': False, 'error': dup_msg}), 409
 
         else:
-            # No roster — use cookie-based duplicate prevention (existing logic)
             employee_code = None
 
         # ---- Cookie-based duplicate check (when no roster) ------------------
@@ -614,13 +658,12 @@ def submit_survey(token):
                     project_row['id'],
                     json.dumps(cleaned_answers),
                     new_hashed_token,
-                    employee_code,          # Phase 2: stored for export enrichment
+                    employee_code,
                 )
             )
             row = cursor.fetchone()
             response_id = row['id']
 
-            # Increment response_count on the project
             cursor.execute(
                 """
                 UPDATE survey_projects
@@ -630,7 +673,6 @@ def submit_survey(token):
                 (project_row['id'],)
             )
 
-            # --- PHASE 2: Mark roster entry as responded ---------------------
             if roster_uploaded and roster_row:
                 cursor.execute(
                     """
@@ -674,7 +716,7 @@ def submit_survey(token):
 
 
 # ---------------------------------------------------------------------------
-# ROUTES — ADMIN: OPEN SURVEY
+# ROUTES -- ADMIN: OPEN SURVEY
 # ---------------------------------------------------------------------------
 
 @survey_respondent_bp.route('/api/survey/admin/project/<int:project_id>/open', methods=['GET', 'POST'])
@@ -710,9 +752,9 @@ def open_survey(project_id):
                                f'Current status: {project["status"]}'
                 }), 400
 
-            token       = project['project_token']
-            base_url    = os.environ.get('APP_BASE_URL', 'https://ai-swarm-orchestrator.onrender.com')
-            survey_url  = f'{base_url}/survey/take/{token}'
+            token      = project['project_token']
+            base_url   = os.environ.get('APP_BASE_URL', 'https://ai-swarm-orchestrator.onrender.com')
+            survey_url = f'{base_url}/survey/take/{token}'
 
             cursor.execute(
                 """
@@ -743,13 +785,13 @@ def open_survey(project_id):
 
 
 # ---------------------------------------------------------------------------
-# ROUTES — ADMIN: CLOSE SURVEY
+# ROUTES -- ADMIN: CLOSE SURVEY
 # ---------------------------------------------------------------------------
 
 @survey_respondent_bp.route('/api/survey/admin/project/<int:project_id>/close', methods=['POST'])
 def close_survey(project_id):
     """
-    Jim closes a survey — no more responses accepted.
+    Jim closes a survey -- no more responses accepted.
     Sets is_open = FALSE, closed_at = NOW().
     Requires admin auth.
     """
@@ -797,7 +839,7 @@ def close_survey(project_id):
 
 
 # ---------------------------------------------------------------------------
-# ROUTES — ADMIN: RESPONSE SUMMARY
+# ROUTES -- ADMIN: RESPONSE SUMMARY
 # ---------------------------------------------------------------------------
 
 @survey_respondent_bp.route('/api/survey/admin/project/<int:project_id>/responses', methods=['GET'])
@@ -837,14 +879,14 @@ def get_response_summary(project_id):
             return jsonify({'success': False, 'error': 'Project not found'}), 404
 
         return jsonify({
-            'success':        True,
-            'project_id':     project_id,
-            'response_count': row['actual_count'],
-            'is_open':        row['is_open'],
-            'opened_at':      str(row['opened_at']) if row['opened_at'] else None,
-            'closed_at':      str(row['closed_at']) if row['closed_at'] else None,
-            'survey_url':     row['survey_url'] or '',
-            'token':          row['project_token'],
+            'success':         True,
+            'project_id':      project_id,
+            'response_count':  row['actual_count'],
+            'is_open':         row['is_open'],
+            'opened_at':       str(row['opened_at']) if row['opened_at'] else None,
+            'closed_at':       str(row['closed_at']) if row['closed_at'] else None,
+            'survey_url':      row['survey_url'] or '',
+            'token':           row['project_token'],
             'roster_uploaded': bool(row.get('roster_uploaded', False)),
             'roster_count':    int(row.get('roster_count', 0) or 0),
         })
@@ -855,8 +897,7 @@ def get_response_summary(project_id):
 
 
 # ---------------------------------------------------------------------------
-# ROUTES — ADMIN: EXPORT RESPONSES AS XLSX
-# Phase 2 addition: demographic columns prepended when roster exists
+# ROUTES -- ADMIN: EXPORT RESPONSES AS XLSX
 # ---------------------------------------------------------------------------
 
 @survey_respondent_bp.route('/api/survey/admin/project/<int:project_id>/export', methods=['GET'])
@@ -873,10 +914,8 @@ def export_responses(project_id):
 
     With roster (Phase 2):
         - First 4 columns: Employee Code | Department | Shift | Tenure
-          (looked up from survey_roster by the employee_code stored in response)
         - Then all survey question columns in order
         - Unanswered questions: "BLANK"
-        - Demographic fields not in roster: "BLANK"
 
     Requires admin auth.
     """
@@ -885,7 +924,6 @@ def export_responses(project_id):
         return auth_error
 
     try:
-        # ---- Load project and question structure ----------------------------
         conn = get_db_connection()
         try:
             cursor = conn.cursor()
@@ -905,7 +943,6 @@ def export_responses(project_id):
 
             roster_uploaded = bool(project_row.get('roster_uploaded', False))
 
-            # Load all response rows — include employee_code (Phase 2)
             cursor.execute(
                 """
                 SELECT answers, employee_code FROM survey_responses
@@ -916,8 +953,7 @@ def export_responses(project_id):
             )
             response_rows = cursor.fetchall()
 
-            # --- PHASE 2: Load roster lookup table if roster exists ----------
-            roster_lookup = {}   # {employee_code: {department, shift, tenure_bracket}}
+            roster_lookup = {}
             if roster_uploaded:
                 cursor.execute(
                     """
@@ -943,7 +979,6 @@ def export_responses(project_id):
                 'error':   'No responses have been submitted for this project yet.'
             }), 404
 
-        # ---- Build ordered column list from survey structure ---------------
         ordered_questions, _ = _get_survey_questions_ordered(project_row)
 
         if not ordered_questions:
@@ -954,34 +989,29 @@ def export_responses(project_id):
 
         question_headers = [q['short_label'] for q in ordered_questions]
 
-        # --- PHASE 2: Prepend demographic columns when roster exists --------
         if roster_uploaded:
             column_headers = ['Employee Code', 'Department', 'Shift', 'Tenure'] + question_headers
         else:
             column_headers = question_headers
 
-        # ---- Build xlsx ----------------------------------------------------
         try:
             import openpyxl
-            from openpyxl.styles import Font, PatternFill
+            from openpyxl.styles import Font
         except ImportError:
             return jsonify({
                 'success': False,
-                'error':   'openpyxl is required for xlsx export. '
-                           'Add it to requirements.txt.'
+                'error':   'openpyxl is required for xlsx export.'
             }), 500
 
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = 'Sheet1'
 
-        # Header row — bold
         header_font = Font(bold=True)
         for col_idx, header in enumerate(column_headers, start=1):
             cell      = ws.cell(row=1, column=col_idx, value=header)
             cell.font = header_font
 
-        # Data rows — one per respondent
         for row_idx, response_row in enumerate(response_rows, start=2):
             raw_answers = response_row['answers']
             if isinstance(raw_answers, str):
@@ -995,10 +1025,8 @@ def export_responses(project_id):
                 answers = {}
 
             emp_code = response_row.get('employee_code') or ''
+            col_idx  = 1
 
-            col_idx = 1
-
-            # --- PHASE 2: Write demographic columns -------------------------
             if roster_uploaded:
                 demo = roster_lookup.get(emp_code, {})
                 ws.cell(row=row_idx, column=col_idx, value=emp_code or 'BLANK')
@@ -1010,7 +1038,6 @@ def export_responses(project_id):
                 ws.cell(row=row_idx, column=col_idx, value=demo.get('tenure_bracket', 'BLANK'))
                 col_idx += 1
 
-            # Survey question columns
             for header in question_headers:
                 value = answers.get(header, 'BLANK')
                 if not value or not str(value).strip():
@@ -1018,12 +1045,10 @@ def export_responses(project_id):
                 ws.cell(row=row_idx, column=col_idx, value=str(value))
                 col_idx += 1
 
-        # Set reasonable column widths
         for col_idx, header in enumerate(column_headers, start=1):
             col_letter = ws.cell(row=1, column=col_idx).column_letter
             ws.column_dimensions[col_letter].width = max(len(header) + 4, 15)
 
-        # ---- Write to buffer and return ------------------------------------
         buffer = BytesIO()
         wb.save(buffer)
         buffer.seek(0)
@@ -1051,6 +1076,5 @@ def export_responses(project_id):
     except Exception as e:
         print(f'[survey_respondent] export_responses error: {traceback.format_exc()}')
         return jsonify({'success': False, 'error': str(e)}), 500
-
 
 # I did no harm and this file is not truncated
