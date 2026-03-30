@@ -1,144 +1,565 @@
 <!DOCTYPE html>
 <!--
-  Survey in a Box — Client Intake Form
+  Survey in a Box — Landing Page & Client Intake
   File: templates/survey_intake.html
   Created: March 16, 2026
-  Last Updated: March 23, 2026 — BUG FIX: Smart quote caused JS syntax error
+  Last Updated: March 30, 2026 — COMPLETE REDESIGN: Selling landing page
 
   PURPOSE:
-      Public-facing intake form at /survey/start.
-      Branded Shiftwork Solutions. Mobile-responsive.
-      Submits via fetch() POST to /api/survey/intake/submit (JSON).
-      Shows confirmation screen on success. No page reload.
+      Public-facing landing page + intake form at /survey/start.
+      Redesigned from plain intake form to full selling experience:
+      - Hero section with Thomas diagnostic avatar (iframe embed)
+      - Value proposition sections with industrial imagery
+      - Sample results preview showing what clients receive
+      - How It Works process steps
+      - Pricing context and call-to-action
+      - Full intake form (all original fields preserved)
+      - Mobile-responsive, visually rich, professional
 
   CHANGELOG:
-      - March 23, 2026: BUG FIX — Smart/curly apostrophe (') in the JS
-        confirmation message string caused a syntax error that silently
-        killed the entire <script> block. With no event listener registered,
-        the browser fell back to native form submission (GET with query params
-        in the URL) instead of the fetch() POST. Also fixed an en-dash (-)
-        in the same string. Both replaced with plain ASCII equivalents.
-        Root cause: copy-paste from a word processor or rich-text editor
-        that auto-corrects straight quotes to curly quotes.
-        ONE LINE CHANGED in the entire file:
-          BEFORE: result.message || 'Thank you! We'll be in touch within 1-2 business days.';
-          AFTER:  result.message || 'Thank you! We\'ll be in touch within 1-2 business days.';
+      - March 30, 2026: COMPLETE REDESIGN — Landing page with Thomas embed,
+        value selling sections, industrial imagery, sample results preview.
+        All original form fields and submission logic preserved exactly.
+        Form endpoint unchanged: POST /api/survey/intake/submit (JSON).
+      - March 23, 2026: BUG FIX — Smart/curly apostrophe in JS string.
       - March 16, 2026: Initial creation for Phase 1, Step 1.2.
+
+  THOMAS INTEGRATION:
+      Thomas diagnostic avatar embedded via iframe from
+      shift-work-diagnostic.onrender.com. Opens in a contained frame
+      so the client can interact without leaving the page.
+
+  FORM SUBMISSION:
+      Unchanged from original — fetch() POST to /api/survey/intake/submit.
+      All field names identical. Confirmation screen on success.
 -->
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Employee Survey Request — Shiftwork Solutions</title>
+  <title>Employee Survey Program — Shiftwork Solutions LLC</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700&family=Playfair+Display:wght@600;700;800&display=swap" rel="stylesheet" />
   <style>
     /* ================================================================
-       RESET & BASE
+       RESET & CUSTOM PROPERTIES
     ================================================================ */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --brand-dark:   #1a3a5c;   /* Shiftwork dark navy */
-      --brand-mid:    #2563a8;   /* Primary blue */
-      --brand-light:  #e8f0fb;   /* Light blue bg */
-      --brand-accent: #f0a500;   /* Amber accent */
-      --text-dark:    #1e2d3d;
-      --text-mid:     #4a5568;
-      --text-light:   #718096;
-      --border:       #cbd5e0;
-      --error:        #c53030;
-      --success:      #276749;
+      --navy:         #0c1f3f;
+      --navy-mid:     #163057;
+      --blue:         #1a6fb5;
+      --blue-light:   #2d8fd4;
+      --blue-pale:    #e4f0fa;
+      --amber:        #e8940a;
+      --amber-light:  #f5a623;
+      --amber-pale:   #fff8eb;
+      --steel:        #3a4a5c;
+      --slate:        #64748b;
+      --smoke:        #f1f4f8;
       --white:        #ffffff;
-      --radius:       6px;
-      --shadow:       0 2px 12px rgba(0,0,0,0.10);
+      --text:         #1e293b;
+      --text-mid:     #475569;
+      --text-light:   #94a3b8;
+      --border:       #cbd5e1;
+      --error:        #dc2626;
+      --success:      #16a34a;
+      --radius:       8px;
+      --radius-lg:    16px;
+      --shadow:       0 4px 24px rgba(12,31,63,0.10);
+      --shadow-lg:    0 8px 40px rgba(12,31,63,0.15);
+
+      --font-display: 'Playfair Display', Georgia, serif;
+      --font-body:    'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
     }
+
+    html { scroll-behavior: smooth; }
 
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-      background: #f4f6fa;
-      color: var(--text-dark);
+      font-family: var(--font-body);
+      color: var(--text);
       line-height: 1.6;
-      min-height: 100vh;
+      background: var(--white);
+      -webkit-font-smoothing: antialiased;
     }
 
+    img { max-width: 100%; display: block; }
+
     /* ================================================================
-       HEADER / BRAND BAR
+       NAVIGATION
     ================================================================ */
-    .site-header {
-      background: var(--brand-dark);
-      color: var(--white);
-      padding: 16px 24px;
+    .nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      background: rgba(12,31,63,0.95);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      padding: 0 32px;
+      height: 64px;
       display: flex;
       align-items: center;
-      gap: 16px;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
     }
-    .site-header .logo-text {
-      font-size: 1.35rem;
+    .nav-brand {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+    }
+    .nav-brand-name {
+      color: var(--white);
+      font-family: var(--font-display);
+      font-size: 1.2rem;
       font-weight: 700;
-      letter-spacing: 0.5px;
+      letter-spacing: 0.3px;
     }
-    .site-header .logo-sub {
-      font-size: 0.78rem;
-      color: #aac4e6;
-      letter-spacing: 1px;
+    .nav-brand-sub {
+      color: var(--text-light);
+      font-size: 0.68rem;
       text-transform: uppercase;
+      letter-spacing: 1.5px;
     }
-    .header-accent {
-      flex: 1;
-      text-align: right;
-      font-size: 0.78rem;
-      color: #aac4e6;
+    .nav-links {
+      display: flex;
+      gap: 24px;
+      align-items: center;
+    }
+    .nav-links a {
+      color: rgba(255,255,255,0.75);
+      text-decoration: none;
+      font-size: 0.85rem;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+    .nav-links a:hover { color: var(--white); }
+    .nav-cta {
+      background: var(--amber) !important;
+      color: var(--navy) !important;
+      font-weight: 700 !important;
+      padding: 8px 20px;
+      border-radius: 6px;
+      transition: background 0.2s !important;
+    }
+    .nav-cta:hover { background: var(--amber-light) !important; }
+
+    @media (max-width: 700px) {
+      .nav-links a:not(.nav-cta) { display: none; }
     }
 
     /* ================================================================
-       HERO BAND
+       HERO
     ================================================================ */
     .hero {
-      background: linear-gradient(135deg, var(--brand-dark) 0%, var(--brand-mid) 100%);
+      margin-top: 64px;
+      background: linear-gradient(165deg, var(--navy) 0%, var(--navy-mid) 55%, var(--blue) 100%);
       color: var(--white);
-      text-align: center;
-      padding: 44px 24px 36px;
+      position: relative;
+      overflow: hidden;
     }
-    .hero h1 {
-      font-size: clamp(1.5rem, 4vw, 2.2rem);
-      font-weight: 700;
-      margin-bottom: 10px;
+    .hero::before {
+      content: '';
+      position: absolute;
+      top: -50%;
+      right: -20%;
+      width: 70%;
+      height: 200%;
+      background: radial-gradient(ellipse, rgba(26,111,181,0.2) 0%, transparent 70%);
+      pointer-events: none;
     }
-    .hero p {
-      font-size: clamp(0.95rem, 2.5vw, 1.1rem);
-      color: #c8ddf5;
-      max-width: 640px;
+    .hero-inner {
+      max-width: 1200px;
       margin: 0 auto;
+      padding: 72px 32px 64px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 48px;
+      align-items: center;
+      position: relative;
+      z-index: 1;
+    }
+    .hero-text h1 {
+      font-family: var(--font-display);
+      font-size: clamp(2rem, 4.5vw, 3.2rem);
+      font-weight: 800;
+      line-height: 1.15;
+      margin-bottom: 20px;
+    }
+    .hero-text h1 .highlight {
+      color: var(--amber);
+    }
+    .hero-text p {
+      font-size: 1.1rem;
+      line-height: 1.7;
+      color: rgba(255,255,255,0.8);
+      margin-bottom: 28px;
+      max-width: 520px;
+    }
+    .hero-stats {
+      display: flex;
+      gap: 32px;
+      margin-top: 32px;
+    }
+    .hero-stat {
+      text-align: center;
+    }
+    .hero-stat-num {
+      font-family: var(--font-display);
+      font-size: 2.2rem;
+      font-weight: 800;
+      color: var(--amber);
+      line-height: 1;
+    }
+    .hero-stat-label {
+      font-size: 0.78rem;
+      color: rgba(255,255,255,0.6);
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      margin-top: 4px;
+    }
+    .hero-ctas {
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+    .btn-primary {
+      background: var(--amber);
+      color: var(--navy);
+      border: none;
+      padding: 14px 32px;
+      font-size: 1rem;
+      font-weight: 700;
+      border-radius: var(--radius);
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: background 0.2s, transform 0.1s;
+    }
+    .btn-primary:hover { background: var(--amber-light); }
+    .btn-secondary {
+      background: rgba(255,255,255,0.1);
+      color: var(--white);
+      border: 1.5px solid rgba(255,255,255,0.25);
+      padding: 13px 28px;
+      font-size: 1rem;
+      font-weight: 600;
+      border-radius: var(--radius);
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: background 0.2s;
+    }
+    .btn-secondary:hover { background: rgba(255,255,255,0.18); }
+
+    /* Thomas iframe container */
+    .hero-thomas {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      box-shadow: 0 12px 48px rgba(0,0,0,0.3);
+      aspect-ratio: 4/3;
+      max-height: 460px;
+    }
+    .hero-thomas iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
+    .hero-thomas-label {
+      background: rgba(12,31,63,0.85);
+      color: rgba(255,255,255,0.7);
+      text-align: center;
+      padding: 8px;
+      font-size: 0.75rem;
+      letter-spacing: 0.5px;
+    }
+
+    @media (max-width: 900px) {
+      .hero-inner { grid-template-columns: 1fr; text-align: center; }
+      .hero-text p { margin-left: auto; margin-right: auto; }
+      .hero-ctas { justify-content: center; }
+      .hero-stats { justify-content: center; }
+      .hero-thomas { max-height: 380px; }
     }
 
     /* ================================================================
-       FORM CARD
+       SECTION SHARED
     ================================================================ */
-    .form-outer {
-      max-width: 860px;
-      margin: 36px auto 60px;
-      padding: 0 16px;
+    .section { padding: 80px 32px; }
+    .section-inner { max-width: 1100px; margin: 0 auto; }
+    .section-label {
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: var(--blue);
+      margin-bottom: 8px;
+    }
+    .section-heading {
+      font-family: var(--font-display);
+      font-size: clamp(1.6rem, 3.5vw, 2.4rem);
+      font-weight: 700;
+      color: var(--navy);
+      margin-bottom: 16px;
+      line-height: 1.2;
+    }
+    .section-subheading {
+      font-size: 1.05rem;
+      color: var(--text-mid);
+      max-width: 640px;
+      line-height: 1.7;
     }
 
+    /* ================================================================
+       WHY SURVEY — SPLIT LAYOUT
+    ================================================================ */
+    .why-section { background: var(--white); }
+    .why-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 56px;
+      align-items: center;
+      margin-top: 48px;
+    }
+    .why-image {
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      box-shadow: var(--shadow-lg);
+      position: relative;
+    }
+    .why-image img {
+      width: 100%;
+      height: 360px;
+      object-fit: cover;
+    }
+    .why-image-overlay {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: linear-gradient(transparent, rgba(12,31,63,0.85));
+      padding: 20px 24px 16px;
+      color: var(--white);
+      font-size: 0.88rem;
+      font-style: italic;
+    }
+    .why-points {
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+    .why-point {
+      display: flex;
+      gap: 16px;
+      align-items: flex-start;
+    }
+    .why-point-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      background: var(--blue-pale);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.3rem;
+      flex-shrink: 0;
+    }
+    .why-point h3 {
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: var(--navy);
+      margin-bottom: 4px;
+    }
+    .why-point p {
+      font-size: 0.92rem;
+      color: var(--text-mid);
+      line-height: 1.6;
+    }
+    @media (max-width: 800px) {
+      .why-grid { grid-template-columns: 1fr; }
+      .why-image img { height: 240px; }
+    }
+
+    /* ================================================================
+       WHAT YOU GET — RESULTS PREVIEW
+    ================================================================ */
+    .results-section { background: var(--smoke); }
+    .results-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 28px;
+      margin-top: 48px;
+    }
+    .result-card {
+      background: var(--white);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      box-shadow: var(--shadow);
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+    .result-card:hover {
+      transform: translateY(-4px);
+      box-shadow: var(--shadow-lg);
+    }
+    .result-card-img {
+      height: 180px;
+      background: var(--navy);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      overflow: hidden;
+    }
+    .result-card-img svg { width: 80%; height: 80%; opacity: 0.9; }
+    .result-card-body {
+      padding: 24px;
+    }
+    .result-card-body h3 {
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: var(--navy);
+      margin-bottom: 8px;
+    }
+    .result-card-body p {
+      font-size: 0.88rem;
+      color: var(--text-mid);
+      line-height: 1.6;
+    }
+    @media (max-width: 800px) {
+      .results-grid { grid-template-columns: 1fr; }
+    }
+
+    /* ================================================================
+       HOW IT WORKS — PROCESS STEPS
+    ================================================================ */
+    .process-section { background: var(--white); }
+    .process-steps {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 32px;
+      margin-top: 48px;
+      position: relative;
+    }
+    .process-steps::before {
+      content: '';
+      position: absolute;
+      top: 36px;
+      left: 10%;
+      right: 10%;
+      height: 2px;
+      background: var(--border);
+      z-index: 0;
+    }
+    .process-step {
+      text-align: center;
+      position: relative;
+      z-index: 1;
+    }
+    .process-step-num {
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      background: var(--navy);
+      color: var(--amber);
+      font-family: var(--font-display);
+      font-size: 1.8rem;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 16px;
+      box-shadow: 0 4px 16px rgba(12,31,63,0.2);
+    }
+    .process-step h3 {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: var(--navy);
+      margin-bottom: 6px;
+    }
+    .process-step p {
+      font-size: 0.84rem;
+      color: var(--text-mid);
+      line-height: 1.5;
+    }
+    @media (max-width: 800px) {
+      .process-steps { grid-template-columns: 1fr 1fr; }
+      .process-steps::before { display: none; }
+    }
+    @media (max-width: 500px) {
+      .process-steps { grid-template-columns: 1fr; }
+    }
+
+    /* ================================================================
+       SOCIAL PROOF / INDUSTRIES BAND
+    ================================================================ */
+    .industries-band {
+      background: var(--navy);
+      color: var(--white);
+      padding: 40px 32px;
+      text-align: center;
+    }
+    .industries-band p {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 20px;
+      color: rgba(255,255,255,0.85);
+    }
+    .industries-list {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 12px;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+    .industry-tag {
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.15);
+      padding: 8px 18px;
+      border-radius: 24px;
+      font-size: 0.82rem;
+      color: rgba(255,255,255,0.75);
+      font-weight: 500;
+    }
+
+    /* ================================================================
+       INTAKE FORM SECTION
+    ================================================================ */
+    .form-section-wrapper {
+      background: var(--smoke);
+      padding: 80px 32px;
+    }
+    .form-outer {
+      max-width: 860px;
+      margin: 0 auto;
+    }
     .form-card {
       background: var(--white);
-      border-radius: 10px;
-      box-shadow: var(--shadow);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-lg);
       overflow: hidden;
     }
 
-    /* ================================================================
-       SECTION HEADERS
-    ================================================================ */
+    /* Section headers inside form */
     .form-section {
       padding: 28px 32px 24px;
       border-bottom: 1px solid #edf2f7;
     }
     .form-section:last-of-type { border-bottom: none; }
 
-    .section-title {
-      font-size: 1rem;
+    .section-title-form {
+      font-size: 0.95rem;
       font-weight: 700;
-      color: var(--brand-dark);
+      color: var(--navy);
       text-transform: uppercase;
       letter-spacing: 0.8px;
       margin-bottom: 4px;
@@ -146,8 +567,8 @@
       align-items: center;
       gap: 8px;
     }
-    .section-title .badge {
-      background: var(--brand-mid);
+    .section-title-form .badge {
+      background: var(--blue);
       color: var(--white);
       border-radius: 50%;
       width: 24px;
@@ -159,14 +580,14 @@
       font-weight: 700;
       flex-shrink: 0;
     }
-    .section-desc {
-      font-size: 0.87rem;
+    .section-desc-form {
+      font-size: 0.85rem;
       color: var(--text-light);
       margin-bottom: 20px;
     }
 
     /* ================================================================
-       FIELD GROUPS
+       FORM FIELDS
     ================================================================ */
     .field-grid {
       display: grid;
@@ -183,13 +604,13 @@
     }
     .field-group.full { grid-column: 1 / -1; }
 
-    label {
+    .form-card label {
       font-size: 0.85rem;
       font-weight: 600;
       color: var(--text-mid);
     }
-    label .req {
-      color: var(--brand-accent);
+    .form-card label .req {
+      color: var(--amber);
       margin-left: 2px;
     }
 
@@ -201,32 +622,31 @@
     select,
     textarea {
       width: 100%;
-      padding: 9px 12px;
+      padding: 10px 14px;
       border: 1.5px solid var(--border);
       border-radius: var(--radius);
       font-size: 0.93rem;
-      color: var(--text-dark);
-      background: #fff;
+      font-family: var(--font-body);
+      color: var(--text);
+      background: var(--white);
       transition: border-color 0.15s, box-shadow 0.15s;
       appearance: none;
       -webkit-appearance: none;
     }
     input:focus, select:focus, textarea:focus {
       outline: none;
-      border-color: var(--brand-mid);
-      box-shadow: 0 0 0 3px rgba(37,99,168,0.15);
+      border-color: var(--blue);
+      box-shadow: 0 0 0 3px rgba(26,111,181,0.12);
     }
     select {
-      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%234a5568' stroke-width='1.8' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2364748b' stroke-width='1.8' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
       background-repeat: no-repeat;
       background-position: right 12px center;
       padding-right: 32px;
     }
     textarea { resize: vertical; min-height: 80px; }
 
-    /* ================================================================
-       CHECKBOXES — PILL STYLE
-    ================================================================ */
+    /* Checkbox pills */
     .checkbox-group {
       display: flex;
       flex-wrap: wrap;
@@ -238,26 +658,24 @@
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      padding: 6px 14px;
+      padding: 7px 16px;
       border: 1.5px solid var(--border);
-      border-radius: 20px;
+      border-radius: 24px;
       font-size: 0.84rem;
       font-weight: 500;
       color: var(--text-mid);
       cursor: pointer;
-      transition: background 0.12s, border-color 0.12s, color 0.12s;
+      transition: all 0.15s;
       user-select: none;
     }
     .checkbox-pill input[type="checkbox"]:checked + label {
-      background: var(--brand-light);
-      border-color: var(--brand-mid);
-      color: var(--brand-dark);
+      background: var(--blue-pale);
+      border-color: var(--blue);
+      color: var(--navy);
       font-weight: 600;
     }
 
-    /* ================================================================
-       RADIO — INLINE
-    ================================================================ */
+    /* Radio inline */
     .radio-group {
       display: flex;
       flex-wrap: wrap;
@@ -271,9 +689,8 @@
       cursor: pointer;
     }
     .radio-option input[type="radio"] {
-      width: 16px;
-      height: 16px;
-      accent-color: var(--brand-mid);
+      width: 16px; height: 16px;
+      accent-color: var(--blue);
       cursor: pointer;
     }
     .radio-option span {
@@ -281,18 +698,11 @@
       color: var(--text-mid);
     }
 
-    /* ================================================================
-       CONDITIONAL REVEAL
-    ================================================================ */
-    .conditional-row {
-      display: none;
-      margin-top: 12px;
-    }
+    /* Conditional reveal */
+    .conditional-row { display: none; margin-top: 12px; }
     .conditional-row.visible { display: block; }
 
-    /* ================================================================
-       DYNAMIC DEPARTMENTS
-    ================================================================ */
+    /* Dynamic departments */
     .dept-list { display: flex; flex-direction: column; gap: 8px; }
     .dept-row  { display: flex; gap: 8px; align-items: center; }
     .dept-row input { flex: 1; }
@@ -302,8 +712,8 @@
       border-radius: var(--radius);
       color: var(--error);
       font-size: 1rem;
-      width: 32px;
-      height: 34px;
+      width: 34px;
+      height: 36px;
       cursor: pointer;
       display: flex;
       align-items: center;
@@ -320,22 +730,20 @@
       background: none;
       border: 1.5px dashed var(--border);
       border-radius: var(--radius);
-      color: var(--brand-mid);
+      color: var(--blue);
       font-size: 0.85rem;
       font-weight: 600;
-      padding: 7px 14px;
+      padding: 8px 16px;
       cursor: pointer;
       transition: background 0.12s, border-color 0.12s;
     }
-    .btn-add-dept:hover { background: var(--brand-light); border-color: var(--brand-mid); }
+    .btn-add-dept:hover { background: var(--blue-pale); border-color: var(--blue); }
 
-    /* ================================================================
-       SUBMIT AREA
-    ================================================================ */
+    /* Submit area */
     .submit-section {
-      background: var(--brand-light);
+      background: var(--blue-pale);
       padding: 28px 32px;
-      border-top: 1px solid #d1dff0;
+      border-top: 1px solid #c7ddf0;
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -343,30 +751,29 @@
       text-align: center;
     }
     .submit-notice {
-      font-size: 0.84rem;
+      font-size: 0.82rem;
       color: var(--text-light);
       max-width: 500px;
     }
     .btn-submit {
-      background: var(--brand-mid);
-      color: var(--white);
+      background: var(--amber);
+      color: var(--navy);
       border: none;
       border-radius: var(--radius);
-      padding: 14px 44px;
-      font-size: 1rem;
+      padding: 15px 48px;
+      font-size: 1.05rem;
       font-weight: 700;
+      font-family: var(--font-body);
       cursor: pointer;
       letter-spacing: 0.3px;
       transition: background 0.15s, transform 0.1s;
-      min-width: 220px;
+      min-width: 240px;
     }
-    .btn-submit:hover:not(:disabled) { background: #1a4e8a; }
+    .btn-submit:hover:not(:disabled) { background: var(--amber-light); }
     .btn-submit:active:not(:disabled) { transform: scale(0.98); }
     .btn-submit:disabled { background: #a0aec0; cursor: not-allowed; }
 
-    /* ================================================================
-       VALIDATION
-    ================================================================ */
+    /* Validation */
     .field-error {
       font-size: 0.78rem;
       color: var(--error);
@@ -377,13 +784,11 @@
     .field-group.has-error select,
     .field-group.has-error textarea {
       border-color: var(--error);
-      box-shadow: 0 0 0 3px rgba(197,48,48,0.10);
+      box-shadow: 0 0 0 3px rgba(220,38,38,0.10);
     }
     .field-group.has-error .field-error { display: block; }
 
-    /* ================================================================
-       STATUS BANNER
-    ================================================================ */
+    /* Status banner */
     .form-status {
       display: none;
       padding: 12px 20px;
@@ -397,11 +802,9 @@
     }
     .form-status.error   { background: #fff5f5; border: 1px solid #feb2b2; color: var(--error); display: block; }
     .form-status.success { background: #f0fff4; border: 1px solid #9ae6b4; color: var(--success); display: block; }
-    .form-status.loading { background: var(--brand-light); border: 1px solid #bee3f8; color: var(--brand-dark); display: block; }
+    .form-status.loading { background: var(--blue-pale); border: 1px solid #bee3f8; color: var(--navy); display: block; }
 
-    /* ================================================================
-       CONFIRMATION SCREEN
-    ================================================================ */
+    /* Confirmation screen */
     #confirmation-screen {
       display: none;
       text-align: center;
@@ -411,17 +814,19 @@
       font-size: 4rem;
       line-height: 1;
       margin-bottom: 20px;
+      color: var(--success);
     }
     .confirm-title {
-      font-size: 1.6rem;
+      font-family: var(--font-display);
+      font-size: 1.8rem;
       font-weight: 700;
-      color: var(--brand-dark);
+      color: var(--navy);
       margin-bottom: 12px;
     }
     .confirm-body {
-      font-size: 1rem;
+      font-size: 1.05rem;
       color: var(--text-mid);
-      max-width: 480px;
+      max-width: 500px;
       margin: 0 auto 28px;
       line-height: 1.7;
     }
@@ -429,19 +834,63 @@
       font-size: 0.88rem;
       color: var(--text-light);
     }
-    .confirm-contact a { color: var(--brand-mid); text-decoration: none; }
+    .confirm-contact a { color: var(--blue); text-decoration: none; }
 
     /* ================================================================
        FOOTER
     ================================================================ */
     .site-footer {
-      background: var(--brand-dark);
-      color: #aac4e6;
-      text-align: center;
-      padding: 20px;
-      font-size: 0.82rem;
+      background: var(--navy);
+      color: rgba(255,255,255,0.6);
+      padding: 40px 32px;
     }
-    .site-footer a { color: #c8ddf5; text-decoration: none; }
+    .footer-inner {
+      max-width: 1100px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 2fr 1fr 1fr;
+      gap: 40px;
+    }
+    .footer-brand {
+      font-family: var(--font-display);
+      font-size: 1.1rem;
+      color: var(--white);
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .footer-desc {
+      font-size: 0.85rem;
+      line-height: 1.6;
+      max-width: 320px;
+    }
+    .footer-heading {
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: rgba(255,255,255,0.4);
+      margin-bottom: 12px;
+    }
+    .footer-link {
+      display: block;
+      color: rgba(255,255,255,0.65);
+      text-decoration: none;
+      font-size: 0.88rem;
+      margin-bottom: 8px;
+      transition: color 0.2s;
+    }
+    .footer-link:hover { color: var(--white); }
+    .footer-bottom {
+      max-width: 1100px;
+      margin: 24px auto 0;
+      padding-top: 20px;
+      border-top: 1px solid rgba(255,255,255,0.08);
+      font-size: 0.78rem;
+      text-align: center;
+    }
+    @media (max-width: 700px) {
+      .footer-inner { grid-template-columns: 1fr; }
+    }
 
     /* ================================================================
        RESPONSIVE
@@ -450,316 +899,533 @@
       .form-section { padding: 20px 16px 16px; }
       .submit-section { padding: 20px 16px; }
       .field-grid { grid-template-columns: 1fr; }
+      .section { padding: 56px 20px; }
     }
+
+    /* ================================================================
+       ANIMATIONS
+    ================================================================ */
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(24px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .animate-in {
+      animation: fadeInUp 0.6s ease-out both;
+    }
+    .delay-1 { animation-delay: 0.1s; }
+    .delay-2 { animation-delay: 0.2s; }
+    .delay-3 { animation-delay: 0.3s; }
+    .delay-4 { animation-delay: 0.4s; }
   </style>
 </head>
 <body>
 
-<!-- HEADER -->
-<header class="site-header">
-  <div>
-    <div class="logo-text">Shiftwork Solutions</div>
-    <div class="logo-sub">Employee Survey Program</div>
+<!-- ============================================================
+     NAVIGATION
+============================================================ -->
+<nav class="nav">
+  <div class="nav-brand">
+    <div class="nav-brand-name">Shiftwork Solutions</div>
+    <div class="nav-brand-sub">Employee Survey Program</div>
   </div>
-  <div class="header-accent">shift-work.com</div>
-</header>
+  <div class="nav-links">
+    <a href="#why-survey">Why Survey</a>
+    <a href="#results">What You Get</a>
+    <a href="#how-it-works">How It Works</a>
+    <a href="#start-form" class="nav-cta">Get Started &#8594;</a>
+  </div>
+</nav>
 
-<!-- HERO -->
-<div class="hero">
-  <h1>Request Your Employee Survey</h1>
-  <p>Tell us about your operation and we'll design a survey tailored to your workforce. 
-     Takes about 5 minutes. We'll follow up within 1-2 business days.</p>
-</div>
-
-<!-- FORM WRAPPER -->
-<div class="form-outer">
-  <div class="form-card">
-
-    <!-- === CONFIRMATION (hidden until submission) === -->
-    <div id="confirmation-screen">
-      <div class="confirm-icon">&#10003;</div>
-      <div class="confirm-title">Request Received!</div>
-      <div class="confirm-body" id="confirm-message">
-        Thank you! We received your survey request and will be in touch within 1-2 business days.
+<!-- ============================================================
+     HERO
+============================================================ -->
+<section class="hero">
+  <div class="hero-inner">
+    <div class="hero-text animate-in">
+      <h1>Your Workforce Has<br/><span class="highlight">Answers.</span><br/>Let Them Speak.</h1>
+      <p>A comprehensive employee survey program built on data from hundreds of 24/7 operations across 16 industries. Understand what your workforce really thinks about their schedules, overtime, safety, and working conditions — with expert analysis that turns data into action.</p>
+      <div class="hero-ctas">
+        <a href="#start-form" class="btn-primary">Start Your Survey &#8594;</a>
+        <a href="#why-survey" class="btn-secondary">Learn More</a>
       </div>
-      <div class="confirm-contact">
-        Questions? Email <a href="mailto:jim@shift-work.com">jim@shift-work.com</a> 
-        or visit <a href="https://www.shift-work.com" target="_blank">shift-work.com</a>.
+      <div class="hero-stats">
+        <div class="hero-stat">
+          <div class="hero-stat-num">103</div>
+          <div class="hero-stat-label">Proven Questions</div>
+        </div>
+        <div class="hero-stat">
+          <div class="hero-stat-num">16+</div>
+          <div class="hero-stat-label">Industries Served</div>
+        </div>
+        <div class="hero-stat">
+          <div class="hero-stat-num">30+</div>
+          <div class="hero-stat-label">Years Experience</div>
+        </div>
       </div>
     </div>
+    <div class="hero-thomas animate-in delay-2">
+      <iframe src="https://shift-work-diagnostic.onrender.com" 
+              title="Talk to our AI diagnostic consultant"
+              loading="lazy"
+              allow="microphone; autoplay"></iframe>
+      <div class="hero-thomas-label">&#128172; Talk to Thomas — our AI shift operations diagnostic</div>
+    </div>
+  </div>
+</section>
 
-    <!-- === INTAKE FORM === -->
-    <form id="intake-form" novalidate>
+<!-- ============================================================
+     WHY SURVEY YOUR WORKFORCE
+============================================================ -->
+<section class="section why-section" id="why-survey">
+  <div class="section-inner">
+    <div class="section-label">Why Survey</div>
+    <div class="section-heading">Because Assumptions Cost Money</div>
+    <div class="section-subheading">Most operations leaders think they know what their workforce wants. The data tells a different story — every time.</div>
 
-      <!-- SECTION 1: Company & Contact -->
-      <div class="form-section">
-        <div class="section-title"><span class="badge">1</span>Company &amp; Contact Information</div>
-        <div class="section-desc">Who are we speaking with and where are you located?</div>
-
-        <div class="field-grid">
-          <div class="field-group" id="fg-company_name">
-            <label for="company_name">Company Name <span class="req">*</span></label>
-            <input type="text" id="company_name" name="company_name" placeholder="Acme Manufacturing Inc." autocomplete="organization" />
-            <div class="field-error" id="err-company_name">Company name is required.</div>
+    <div class="why-grid">
+      <div class="why-image">
+        <img src="https://images.unsplash.com/photo-1581091226825-a6a2a5aee158?w=600&h=400&fit=crop&q=80" 
+             alt="Industrial manufacturing operation with workers" 
+             onerror="this.style.background='var(--navy)';this.style.height='360px';" />
+        <div class="why-image-overlay">"We assumed everyone hated 12-hour shifts. The survey showed 68% preferred them." — Plant Manager, Pharmaceutical Manufacturing</div>
+      </div>
+      <div class="why-points">
+        <div class="why-point">
+          <div class="why-point-icon">&#128200;</div>
+          <div>
+            <h3>Benchmark Against Your Industry</h3>
+            <p>Compare every answer to normative data from hundreds of similar operations. Know instantly whether your overtime fairness score, schedule satisfaction, or safety perception is above or below average.</p>
           </div>
-          <div class="field-group" id="fg-contact_name">
-            <label for="contact_name">Your Name <span class="req">*</span></label>
-            <input type="text" id="contact_name" name="contact_name" placeholder="Jane Smith" autocomplete="name" />
-            <div class="field-error" id="err-contact_name">Contact name is required.</div>
+        </div>
+        <div class="why-point">
+          <div class="why-point-icon">&#127919;</div>
+          <div>
+            <h3>Identify What Actually Drives Turnover</h3>
+            <p>It's rarely pay alone. Our survey isolates the specific schedule features, management practices, and working conditions that push your best people out the door — or keep them.</p>
           </div>
-          <div class="field-group" id="fg-email">
-            <label for="email">Email Address <span class="req">*</span></label>
-            <input type="email" id="email" name="email" placeholder="jane@acmemfg.com" autocomplete="email" />
-            <div class="field-error" id="err-email">A valid email address is required.</div>
+        </div>
+        <div class="why-point">
+          <div class="why-point-icon">&#129309;</div>
+          <div>
+            <h3>Give Employees a Voice Before Change</h3>
+            <p>The most successful schedule changes involve employees early. A survey builds buy-in before the first shift rotates. Employees who feel heard resist change less.</p>
           </div>
-          <div class="field-group">
-            <label for="phone">Phone Number</label>
-            <input type="tel" id="phone" name="phone" placeholder="(555) 123-4567" autocomplete="tel" />
+        </div>
+        <div class="why-point">
+          <div class="why-point-icon">&#128202;</div>
+          <div>
+            <h3>Data-Driven Decisions, Not Politics</h3>
+            <p>When 73% of your workforce says overtime distribution is unfair, that's not a feeling — it's a fact. Survey data replaces opinion with evidence and makes every stakeholder conversation easier.</p>
           </div>
         </div>
       </div>
+    </div>
+  </div>
+</section>
 
-      <!-- SECTION 2: Operation Overview -->
-      <div class="form-section">
-        <div class="section-title"><span class="badge">2</span>Operation Overview</div>
-        <div class="section-desc">Help us understand the size and structure of your shiftwork operation.</div>
+<!-- ============================================================
+     WHAT YOU GET — RESULTS PREVIEW
+============================================================ -->
+<section class="section results-section" id="results">
+  <div class="section-inner">
+    <div class="section-label">What You Receive</div>
+    <div class="section-heading">Professional Analysis, Not Just a Spreadsheet</div>
+    <div class="section-subheading">Every survey produces a comprehensive deliverable package — benchmarked, analyzed, and ready for leadership presentation.</div>
 
-        <div class="field-grid">
-          <div class="field-group">
-            <label for="industry">Industry</label>
-            <select id="industry" name="industry">
-              <option value="">-- Select Industry --</option>
-              <option value="manufacturing">Manufacturing</option>
-              <option value="pharmaceutical">Pharmaceutical</option>
-              <option value="food_processing">Food Processing</option>
-              <option value="mining">Mining</option>
-              <option value="distribution">Distribution / Warehouse</option>
-              <option value="chemical">Chemical</option>
-              <option value="utilities">Utilities / Power</option>
-              <option value="paper_pulp">Paper / Pulp</option>
-              <option value="oil_gas">Oil &amp; Gas</option>
-              <option value="healthcare">Healthcare</option>
-              <option value="transportation">Transportation / Logistics</option>
-              <option value="other">Other</option>
-            </select>
-          </div>
-          <div class="field-group">
-            <label for="employee_count">Number of Employees in Shiftwork Operations</label>
-            <input type="number" id="employee_count" name="employee_count" placeholder="e.g. 250" min="1" />
-          </div>
-          <div class="field-group">
-            <label for="department_count">Number of Departments / Work Areas</label>
-            <input type="number" id="department_count" name="department_count" placeholder="e.g. 4" min="1" 
-                   oninput="syncDeptCount(this.value)" />
-          </div>
+    <div class="results-grid">
+      <!-- Card 1: Normative Comparison -->
+      <div class="result-card">
+        <div class="result-card-img" style="background: linear-gradient(135deg, #0c1f3f, #1a6fb5);">
+          <svg viewBox="0 0 200 120" xmlns="http://www.w3.org/2000/svg">
+            <rect x="20" y="80" width="24" height="30" rx="3" fill="#e8940a" opacity="0.9"/>
+            <rect x="52" y="50" width="24" height="60" rx="3" fill="#2d8fd4" opacity="0.9"/>
+            <rect x="84" y="65" width="24" height="45" rx="3" fill="#e8940a" opacity="0.9"/>
+            <rect x="116" y="35" width="24" height="75" rx="3" fill="#2d8fd4" opacity="0.9"/>
+            <rect x="148" y="55" width="24" height="55" rx="3" fill="#e8940a" opacity="0.9"/>
+            <line x1="15" y1="60" x2="185" y2="60" stroke="rgba(255,255,255,0.3)" stroke-width="1" stroke-dasharray="4"/>
+            <text x="190" y="63" fill="rgba(255,255,255,0.5)" font-size="8" font-family="sans-serif">norm</text>
+          </svg>
         </div>
+        <div class="result-card-body">
+          <h3>Normative Benchmarking</h3>
+          <p>Every question compared against data from hundreds of operations. Your scores in green (above norm), red (below norm), or gray (at norm). Instantly see where you lead and where you lag.</p>
+        </div>
+      </div>
 
-        <!-- Dynamic Department Names -->
-        <div class="field-group full" style="margin-top:18px;">
-          <label>Department / Work Area Names <span style="font-weight:400;color:var(--text-light)">(optional -- add as many as you like)</span></label>
-          <div class="dept-list" id="dept-list">
-            <div class="dept-row">
-              <input type="text" name="department_names" placeholder="e.g. Assembly" />
-              <button type="button" class="btn-remove-dept" onclick="removeDept(this)" title="Remove">&#10005;</button>
+      <!-- Card 2: Demographic Breakouts -->
+      <div class="result-card">
+        <div class="result-card-img" style="background: linear-gradient(135deg, #163057, #0c1f3f);">
+          <svg viewBox="0 0 200 120" xmlns="http://www.w3.org/2000/svg">
+            <rect x="20" y="25" width="160" height="18" rx="3" fill="rgba(255,255,255,0.08)"/>
+            <rect x="20" y="25" width="120" height="18" rx="3" fill="#2d8fd4" opacity="0.8"/>
+            <text x="25" y="37" fill="white" font-size="8" font-family="sans-serif">1st Shift — 74%</text>
+            <rect x="20" y="48" width="160" height="18" rx="3" fill="rgba(255,255,255,0.08)"/>
+            <rect x="20" y="48" width="95" height="18" rx="3" fill="#e8940a" opacity="0.8"/>
+            <text x="25" y="60" fill="white" font-size="8" font-family="sans-serif">2nd Shift — 58%</text>
+            <rect x="20" y="71" width="160" height="18" rx="3" fill="rgba(255,255,255,0.08)"/>
+            <rect x="20" y="71" width="68" height="18" rx="3" fill="#dc2626" opacity="0.7"/>
+            <text x="25" y="83" fill="white" font-size="8" font-family="sans-serif">3rd Shift — 41%</text>
+            <text x="20" y="105" fill="rgba(255,255,255,0.4)" font-size="7" font-family="sans-serif">Schedule satisfaction by shift</text>
+          </svg>
+        </div>
+        <div class="result-card-body">
+          <h3>Breakout by Department, Shift &amp; Tenure</h3>
+          <p>Results sliced by every demographic group. See how 3rd shift feels about overtime versus 1st shift. Compare veteran attitudes to new hires. Find the pockets that need attention.</p>
+        </div>
+      </div>
+
+      <!-- Card 3: Actionable Recommendations -->
+      <div class="result-card">
+        <div class="result-card-img" style="background: linear-gradient(135deg, #1a6fb5, #0c1f3f);">
+          <svg viewBox="0 0 200 120" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="60" cy="60" r="40" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="8"/>
+            <circle cx="60" cy="60" r="40" fill="none" stroke="#16a34a" stroke-width="8" stroke-dasharray="175 251" stroke-dashoffset="0" transform="rotate(-90 60 60)"/>
+            <text x="60" y="56" text-anchor="middle" fill="white" font-size="16" font-weight="bold" font-family="sans-serif">70</text>
+            <text x="60" y="70" text-anchor="middle" fill="rgba(255,255,255,0.5)" font-size="7" font-family="sans-serif">percentile</text>
+            <rect x="120" y="25" width="65" height="10" rx="2" fill="#16a34a" opacity="0.7"/>
+            <text x="125" y="33" fill="white" font-size="6" font-family="sans-serif">5 Strengths</text>
+            <rect x="120" y="42" width="65" height="10" rx="2" fill="#dc2626" opacity="0.7"/>
+            <text x="125" y="50" fill="white" font-size="6" font-family="sans-serif">3 Concerns</text>
+            <rect x="120" y="59" width="65" height="10" rx="2" fill="#e8940a" opacity="0.7"/>
+            <text x="125" y="67" fill="white" font-size="6" font-family="sans-serif">Action Items</text>
+            <rect x="120" y="80" width="65" height="24" rx="4" fill="rgba(255,255,255,0.1)"/>
+            <text x="152" y="95" text-anchor="middle" fill="rgba(255,255,255,0.6)" font-size="7" font-family="sans-serif">Expert narrative</text>
+          </svg>
+        </div>
+        <div class="result-card-body">
+          <h3>Expert Recommendations</h3>
+          <p>Not just numbers — a written analysis of your top strengths, primary concerns, and specific action items. Built from 30+ years of knowing what the data means in operations like yours.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     HOW IT WORKS
+============================================================ -->
+<section class="section process-section" id="how-it-works">
+  <div class="section-inner">
+    <div class="section-label">How It Works</div>
+    <div class="section-heading">Four Steps to Workforce Clarity</div>
+    <div class="section-subheading">From first contact to finished report in approximately six weeks.</div>
+
+    <div class="process-steps">
+      <div class="process-step">
+        <div class="process-step-num">1</div>
+        <h3>Tell Us About You</h3>
+        <p>Fill out the intake form below. Five minutes about your operation, schedules, and challenges.</p>
+      </div>
+      <div class="process-step">
+        <div class="process-step-num">2</div>
+        <h3>We Design Your Survey</h3>
+        <p>We customize the 103-question bank for your industry, schedule type, and specific concerns. You review and approve.</p>
+      </div>
+      <div class="process-step">
+        <div class="process-step-num">3</div>
+        <h3>Employees Respond</h3>
+        <p>Online or paper — your choice. Anonymous, confidential, accessible on any device. Typically 2-3 weeks open.</p>
+      </div>
+      <div class="process-step">
+        <div class="process-step-num">4</div>
+        <h3>You Get Answers</h3>
+        <p>Comprehensive report with normative benchmarks, demographic breakouts, and expert recommendations. Ready for leadership.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     INDUSTRIES BAND
+============================================================ -->
+<div class="industries-band">
+  <p>Trusted by operations leaders across these industries and more</p>
+  <div class="industries-list">
+    <span class="industry-tag">Manufacturing</span>
+    <span class="industry-tag">Pharmaceutical</span>
+    <span class="industry-tag">Food Processing</span>
+    <span class="industry-tag">Mining</span>
+    <span class="industry-tag">Distribution</span>
+    <span class="industry-tag">Chemical</span>
+    <span class="industry-tag">Utilities &amp; Power</span>
+    <span class="industry-tag">Paper &amp; Pulp</span>
+    <span class="industry-tag">Oil &amp; Gas</span>
+    <span class="industry-tag">Healthcare</span>
+    <span class="industry-tag">Transportation</span>
+  </div>
+</div>
+
+<!-- ============================================================
+     INTAKE FORM
+============================================================ -->
+<div class="form-section-wrapper" id="start-form">
+  <div class="section-inner" style="max-width:860px; margin:0 auto; margin-bottom:32px; text-align:center;">
+    <div class="section-label">Get Started</div>
+    <div class="section-heading">Request Your Customized Survey</div>
+    <div class="section-subheading" style="margin:0 auto;">Takes about five minutes. We will follow up within 1-2 business days to discuss your goals, answer questions, and finalize pricing.</div>
+  </div>
+
+  <div class="form-outer">
+    <div class="form-card">
+
+      <!-- CONFIRMATION (hidden until submission) -->
+      <div id="confirmation-screen">
+        <div class="confirm-icon">&#10003;</div>
+        <div class="confirm-title">Request Received!</div>
+        <div class="confirm-body" id="confirm-message">
+          Thank you! We received your survey request and will be in touch within 1-2 business days to discuss your goals and next steps.
+        </div>
+        <div class="confirm-contact">
+          Questions? Email <a href="mailto:Contact@shift-work.com">Contact@shift-work.com</a>
+          or call <a href="tel:+14152651621">(415) 265-1621</a>
+        </div>
+      </div>
+
+      <!-- INTAKE FORM -->
+      <form id="intake-form" novalidate>
+
+        <!-- Section 1: Company & Contact -->
+        <div class="form-section">
+          <div class="section-title-form"><span class="badge">1</span>Company &amp; Contact Information</div>
+          <div class="section-desc-form">Who are we speaking with and where are you located?</div>
+          <div class="field-grid">
+            <div class="field-group" id="fg-company_name">
+              <label for="company_name">Company Name <span class="req">*</span></label>
+              <input type="text" id="company_name" name="company_name" placeholder="Acme Manufacturing Inc." autocomplete="organization" />
+              <div class="field-error" id="err-company_name">Company name is required.</div>
+            </div>
+            <div class="field-group" id="fg-contact_name">
+              <label for="contact_name">Your Name <span class="req">*</span></label>
+              <input type="text" id="contact_name" name="contact_name" placeholder="Jane Smith" autocomplete="name" />
+              <div class="field-error" id="err-contact_name">Contact name is required.</div>
+            </div>
+            <div class="field-group" id="fg-email">
+              <label for="email">Email Address <span class="req">*</span></label>
+              <input type="email" id="email" name="email" placeholder="jane@acmemfg.com" autocomplete="email" />
+              <div class="field-error" id="err-email">A valid email address is required.</div>
+            </div>
+            <div class="field-group">
+              <label for="phone">Phone Number</label>
+              <input type="tel" id="phone" name="phone" placeholder="(555) 123-4567" autocomplete="tel" />
             </div>
           </div>
-          <button type="button" class="btn-add-dept" onclick="addDept()">
-            + Add Another Department
-          </button>
-        </div>
-      </div>
-
-      <!-- SECTION 3: Schedule Structure -->
-      <div class="form-section">
-        <div class="section-title"><span class="badge">3</span>Current Schedule Structure</div>
-        <div class="section-desc">Tell us about how your operation runs today.</div>
-
-        <div class="field-grid triple">
-          <div class="field-group">
-            <label for="current_schedule_type">Current Schedule Type</label>
-            <select id="current_schedule_type" name="current_schedule_type">
-              <option value="">-- Select --</option>
-              <option value="8-hour-fixed">8-Hour Fixed</option>
-              <option value="8-hour-rotating">8-Hour Rotating</option>
-              <option value="10-hour">10-Hour Shifts</option>
-              <option value="12-hour-fixed">12-Hour Fixed</option>
-              <option value="12-hour-rotating">12-Hour Rotating</option>
-              <option value="mixed">Mixed / Multiple Schedules</option>
-              <option value="other">Other</option>
-            </select>
-          </div>
-          <div class="field-group">
-            <label for="crew_count">Number of Crews / Shift Teams</label>
-            <input type="number" id="crew_count" name="crew_count" placeholder="e.g. 4" min="1" />
-          </div>
-          <div class="field-group">
-            <label for="union_status">Union Status</label>
-            <select id="union_status" name="union_status">
-              <option value="non-union">Non-Union</option>
-              <option value="union">Union</option>
-              <option value="mixed">Mixed (Some Unionized)</option>
-              <option value="unknown">Unknown / Not Sure</option>
-            </select>
-          </div>
         </div>
 
-        <div class="field-group full" style="margin-top:16px;">
-          <label for="shift_start_times">Shift Start Times Currently in Use</label>
-          <input type="text" id="shift_start_times" name="shift_start_times" 
-                 placeholder="e.g. 6:00 AM, 2:00 PM, 10:00 PM" />
-        </div>
-      </div>
-
-      <!-- SECTION 4: Challenges & Goals -->
-      <div class="form-section">
-        <div class="section-title"><span class="badge">4</span>Biggest Challenges</div>
-        <div class="section-desc">Select all that apply. This helps us prioritize the right survey questions.</div>
-
-        <div class="checkbox-group">
-          <div class="checkbox-pill">
-            <input type="checkbox" id="ch-recruiting" name="biggest_challenges" value="recruiting" />
-            <label for="ch-recruiting">Recruiting</label>
+        <!-- Section 2: Operation Overview -->
+        <div class="form-section">
+          <div class="section-title-form"><span class="badge">2</span>Operation Overview</div>
+          <div class="section-desc-form">Help us understand the size and structure of your shiftwork operation.</div>
+          <div class="field-grid">
+            <div class="field-group">
+              <label for="industry">Industry</label>
+              <select id="industry" name="industry">
+                <option value="">-- Select Industry --</option>
+                <option value="manufacturing">Manufacturing</option>
+                <option value="pharmaceutical">Pharmaceutical</option>
+                <option value="food_processing">Food Processing</option>
+                <option value="mining">Mining</option>
+                <option value="distribution">Distribution / Warehouse</option>
+                <option value="chemical">Chemical</option>
+                <option value="utilities">Utilities / Power</option>
+                <option value="paper_pulp">Paper / Pulp</option>
+                <option value="oil_gas">Oil &amp; Gas</option>
+                <option value="healthcare">Healthcare</option>
+                <option value="transportation">Transportation / Logistics</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div class="field-group">
+              <label for="employee_count">Number of Employees in Shiftwork Operations</label>
+              <input type="number" id="employee_count" name="employee_count" placeholder="e.g. 250" min="1" />
+            </div>
+            <div class="field-group">
+              <label for="department_count">Number of Departments / Work Areas</label>
+              <input type="number" id="department_count" name="department_count" placeholder="e.g. 4" min="1"
+                     oninput="syncDeptCount(this.value)" />
+            </div>
           </div>
-          <div class="checkbox-pill">
-            <input type="checkbox" id="ch-retention" name="biggest_challenges" value="retention" />
-            <label for="ch-retention">Retention</label>
-          </div>
-          <div class="checkbox-pill">
-            <input type="checkbox" id="ch-overtime" name="biggest_challenges" value="overtime" />
-            <label for="ch-overtime">Overtime / Cost</label>
-          </div>
-          <div class="checkbox-pill">
-            <input type="checkbox" id="ch-wlb" name="biggest_challenges" value="work-life balance" />
-            <label for="ch-wlb">Work-Life Balance</label>
-          </div>
-          <div class="checkbox-pill">
-            <input type="checkbox" id="ch-schedule-design" name="biggest_challenges" value="schedule design" />
-            <label for="ch-schedule-design">Schedule Design</label>
-          </div>
-          <div class="checkbox-pill">
-            <input type="checkbox" id="ch-coverage" name="biggest_challenges" value="coverage and absenteeism" />
-            <label for="ch-coverage">Coverage / Absenteeism</label>
-          </div>
-          <div class="checkbox-pill">
-            <input type="checkbox" id="ch-communication" name="biggest_challenges" value="communication" />
-            <label for="ch-communication">Communication</label>
-          </div>
-          <div class="checkbox-pill">
-            <input type="checkbox" id="ch-safety" name="biggest_challenges" value="safety and fatigue" />
-            <label for="ch-safety">Safety / Fatigue</label>
-          </div>
-          <div class="checkbox-pill">
-            <input type="checkbox" id="ch-morale" name="biggest_challenges" value="morale" />
-            <label for="ch-morale">Morale</label>
-          </div>
-          <div class="checkbox-pill">
-            <input type="checkbox" id="ch-other" name="biggest_challenges" value="other" />
-            <label for="ch-other">Other</label>
+          <div class="field-group full" style="margin-top:18px;">
+            <label>Department / Work Area Names <span style="font-weight:400;color:var(--text-light)">(optional)</span></label>
+            <div class="dept-list" id="dept-list">
+              <div class="dept-row">
+                <input type="text" name="department_names" placeholder="e.g. Assembly" />
+                <button type="button" class="btn-remove-dept" onclick="removeDept(this)" title="Remove">&#10005;</button>
+              </div>
+            </div>
+            <button type="button" class="btn-add-dept" onclick="addDept()">+ Add Another Department</button>
           </div>
         </div>
-      </div>
 
-      <!-- SECTION 5: Survey History -->
-      <div class="form-section">
-        <div class="section-title"><span class="badge">5</span>Previous Survey History</div>
-        <div class="section-desc">Have you surveyed your shiftwork employees before?</div>
-
-        <div class="radio-group">
-          <label class="radio-option">
-            <input type="radio" name="previously_surveyed" value="no" checked onchange="togglePriorSurvey(this)" />
-            <span>No -- this is our first employee survey</span>
-          </label>
-          <label class="radio-option">
-            <input type="radio" name="previously_surveyed" value="yes" onchange="togglePriorSurvey(this)" />
-            <span>Yes -- we've surveyed before</span>
-          </label>
-        </div>
-
-        <div class="conditional-row" id="prior-survey-row">
-          <div class="field-group" style="max-width:280px; margin-top:4px;">
-            <label for="last_survey_date">When was your last survey?</label>
-            <input type="text" id="last_survey_date" name="last_survey_date" placeholder="e.g. 2023, Fall 2022" />
+        <!-- Section 3: Schedule Structure -->
+        <div class="form-section">
+          <div class="section-title-form"><span class="badge">3</span>Current Schedule Structure</div>
+          <div class="section-desc-form">Tell us about how your operation runs today.</div>
+          <div class="field-grid triple">
+            <div class="field-group">
+              <label for="current_schedule_type">Current Schedule Type</label>
+              <select id="current_schedule_type" name="current_schedule_type">
+                <option value="">-- Select --</option>
+                <option value="8-hour-fixed">8-Hour Fixed</option>
+                <option value="8-hour-rotating">8-Hour Rotating</option>
+                <option value="10-hour">10-Hour Shifts</option>
+                <option value="12-hour-fixed">12-Hour Fixed</option>
+                <option value="12-hour-rotating">12-Hour Rotating</option>
+                <option value="mixed">Mixed / Multiple Schedules</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div class="field-group">
+              <label for="crew_count">Number of Crews / Shift Teams</label>
+              <input type="number" id="crew_count" name="crew_count" placeholder="e.g. 4" min="1" />
+            </div>
+            <div class="field-group">
+              <label for="union_status">Union Status</label>
+              <select id="union_status" name="union_status">
+                <option value="non-union">Non-Union</option>
+                <option value="union">Union</option>
+                <option value="mixed">Mixed (Some Unionized)</option>
+                <option value="unknown">Unknown / Not Sure</option>
+              </select>
+            </div>
+          </div>
+          <div class="field-group full" style="margin-top:16px;">
+            <label for="shift_start_times">Shift Start Times Currently in Use</label>
+            <input type="text" id="shift_start_times" name="shift_start_times"
+                   placeholder="e.g. 6:00 AM, 2:00 PM, 10:00 PM" />
           </div>
         </div>
-      </div>
 
-      <!-- SECTION 6: Administration Preferences -->
-      <div class="form-section">
-        <div class="section-title"><span class="badge">6</span>Administration Preferences</div>
-        <div class="section-desc">How would you like the survey delivered to employees?</div>
-
-        <div class="field-grid">
-          <div class="field-group">
-            <label for="preferred_administration">Preferred Survey Format</label>
-            <select id="preferred_administration" name="preferred_administration">
-              <option value="online">Online (link sent to employees)</option>
-              <option value="paper">Paper Bubble Sheets (we print &amp; scan)</option>
-              <option value="unsure">Not Sure -- I'd like guidance</option>
-            </select>
-          </div>
-          <div class="field-group">
-            <label for="preferred_delivery_date">Preferred Survey Delivery Date</label>
-            <input type="date" id="preferred_delivery_date" name="preferred_delivery_date" />
+        <!-- Section 4: Challenges -->
+        <div class="form-section">
+          <div class="section-title-form"><span class="badge">4</span>Biggest Challenges</div>
+          <div class="section-desc-form">Select all that apply. This helps us prioritize the right survey questions.</div>
+          <div class="checkbox-group">
+            <div class="checkbox-pill"><input type="checkbox" id="ch-recruiting" name="biggest_challenges" value="recruiting" /><label for="ch-recruiting">Recruiting</label></div>
+            <div class="checkbox-pill"><input type="checkbox" id="ch-retention" name="biggest_challenges" value="retention" /><label for="ch-retention">Retention</label></div>
+            <div class="checkbox-pill"><input type="checkbox" id="ch-overtime" name="biggest_challenges" value="overtime" /><label for="ch-overtime">Overtime / Cost</label></div>
+            <div class="checkbox-pill"><input type="checkbox" id="ch-wlb" name="biggest_challenges" value="work-life balance" /><label for="ch-wlb">Work-Life Balance</label></div>
+            <div class="checkbox-pill"><input type="checkbox" id="ch-schedule-design" name="biggest_challenges" value="schedule design" /><label for="ch-schedule-design">Schedule Design</label></div>
+            <div class="checkbox-pill"><input type="checkbox" id="ch-coverage" name="biggest_challenges" value="coverage and absenteeism" /><label for="ch-coverage">Coverage / Absenteeism</label></div>
+            <div class="checkbox-pill"><input type="checkbox" id="ch-communication" name="biggest_challenges" value="communication" /><label for="ch-communication">Communication</label></div>
+            <div class="checkbox-pill"><input type="checkbox" id="ch-safety" name="biggest_challenges" value="safety and fatigue" /><label for="ch-safety">Safety / Fatigue</label></div>
+            <div class="checkbox-pill"><input type="checkbox" id="ch-morale" name="biggest_challenges" value="morale" /><label for="ch-morale">Morale</label></div>
+            <div class="checkbox-pill"><input type="checkbox" id="ch-other" name="biggest_challenges" value="other" /><label for="ch-other">Other</label></div>
           </div>
         </div>
-      </div>
 
-      <!-- SECTION 7: Final Details -->
-      <div class="form-section">
-        <div class="section-title"><span class="badge">7</span>A Little More</div>
-        <div class="section-desc">Last few questions to help us prepare.</div>
-
-        <div class="field-grid single">
-          <div class="field-group">
-            <label for="referral_source">How did you hear about Shiftwork Solutions?</label>
-            <select id="referral_source" name="referral_source">
-              <option value="">-- Select --</option>
-              <option value="google">Google / Search Engine</option>
-              <option value="linkedin">LinkedIn</option>
-              <option value="referral">Referred by a Colleague</option>
-              <option value="conference">Conference / Industry Event</option>
-              <option value="existing-client">Existing Shiftwork Solutions Client</option>
-              <option value="article">Article / Publication</option>
-              <option value="other">Other</option>
-            </select>
+        <!-- Section 5: Survey History -->
+        <div class="form-section">
+          <div class="section-title-form"><span class="badge">5</span>Previous Survey History</div>
+          <div class="section-desc-form">Have you surveyed your shiftwork employees before?</div>
+          <div class="radio-group">
+            <label class="radio-option">
+              <input type="radio" name="previously_surveyed" value="no" checked onchange="togglePriorSurvey(this)" />
+              <span>No -- this is our first employee survey</span>
+            </label>
+            <label class="radio-option">
+              <input type="radio" name="previously_surveyed" value="yes" onchange="togglePriorSurvey(this)" />
+              <span>Yes -- we have surveyed before</span>
+            </label>
           </div>
-          <div class="field-group">
-            <label for="additional_notes">Additional Notes or Questions</label>
-            <textarea id="additional_notes" name="additional_notes" 
-                      placeholder="Anything else we should know about your situation or goals?"></textarea>
+          <div class="conditional-row" id="prior-survey-row">
+            <div class="field-group" style="max-width:280px; margin-top:4px;">
+              <label for="last_survey_date">When was your last survey?</label>
+              <input type="text" id="last_survey_date" name="last_survey_date" placeholder="e.g. 2023, Fall 2022" />
+            </div>
           </div>
         </div>
-      </div>
 
-      <!-- SUBMIT -->
-      <div class="submit-section">
-        <p class="submit-notice">
-          By submitting this form you agree to be contacted by Shiftwork Solutions LLC 
-          regarding your survey request. We never share your information with third parties.
-        </p>
-        <button type="submit" class="btn-submit" id="submit-btn">
-          Submit Survey Request &#8594;
-        </button>
-        <div class="form-status" id="form-status"></div>
-      </div>
+        <!-- Section 6: Administration Preferences -->
+        <div class="form-section">
+          <div class="section-title-form"><span class="badge">6</span>Administration Preferences</div>
+          <div class="section-desc-form">How would you like the survey delivered to employees?</div>
+          <div class="field-grid">
+            <div class="field-group">
+              <label for="preferred_administration">Preferred Survey Format</label>
+              <select id="preferred_administration" name="preferred_administration">
+                <option value="online">Online (link sent to employees)</option>
+                <option value="paper">Paper Bubble Sheets (we print &amp; scan)</option>
+                <option value="unsure">Not Sure -- I would like guidance</option>
+              </select>
+            </div>
+            <div class="field-group">
+              <label for="preferred_delivery_date">Preferred Survey Delivery Date</label>
+              <input type="date" id="preferred_delivery_date" name="preferred_delivery_date" />
+            </div>
+          </div>
+        </div>
 
-    </form><!-- /#intake-form -->
-  </div><!-- /.form-card -->
-</div><!-- /.form-outer -->
+        <!-- Section 7: Final Details -->
+        <div class="form-section">
+          <div class="section-title-form"><span class="badge">7</span>A Little More</div>
+          <div class="section-desc-form">Last few questions to help us prepare.</div>
+          <div class="field-grid single">
+            <div class="field-group">
+              <label for="referral_source">How did you hear about Shiftwork Solutions?</label>
+              <select id="referral_source" name="referral_source">
+                <option value="">-- Select --</option>
+                <option value="google">Google / Search Engine</option>
+                <option value="linkedin">LinkedIn</option>
+                <option value="referral">Referred by a Colleague</option>
+                <option value="conference">Conference / Industry Event</option>
+                <option value="existing-client">Existing Shiftwork Solutions Client</option>
+                <option value="article">Article / Publication</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div class="field-group">
+              <label for="additional_notes">Additional Notes or Questions</label>
+              <textarea id="additional_notes" name="additional_notes"
+                        placeholder="Anything else we should know about your situation or goals?"></textarea>
+            </div>
+          </div>
+        </div>
 
-<!-- FOOTER -->
+        <!-- Submit -->
+        <div class="submit-section">
+          <p class="submit-notice">
+            By submitting this form you agree to be contacted by Shiftwork Solutions LLC
+            regarding your survey request. We never share your information with third parties.
+          </p>
+          <button type="submit" class="btn-submit" id="submit-btn">Submit Survey Request &#8594;</button>
+          <div class="form-status" id="form-status"></div>
+        </div>
+
+      </form>
+    </div><!-- /.form-card -->
+  </div><!-- /.form-outer -->
+</div><!-- /.form-section-wrapper -->
+
+<!-- ============================================================
+     FOOTER
+============================================================ -->
 <footer class="site-footer">
-  &copy; 2026 Shiftwork Solutions LLC --
-  <a href="https://www.shift-work.com" target="_blank">shift-work.com</a> --
-  Hundreds of clients, 16+ industries, 30+ years experience.
+  <div class="footer-inner">
+    <div>
+      <div class="footer-brand">Shiftwork Solutions LLC</div>
+      <p class="footer-desc">Over three decades helping hundreds of facilities across 16+ industries optimize shift operations through employee-centered data analysis and change management.</p>
+    </div>
+    <div>
+      <div class="footer-heading">Contact</div>
+      <a href="tel:+14152651621" class="footer-link">(415) 265-1621</a>
+      <a href="mailto:Contact@shift-work.com" class="footer-link">Contact@shift-work.com</a>
+      <a href="https://www.shift-work.com" target="_blank" class="footer-link">shift-work.com</a>
+    </div>
+    <div>
+      <div class="footer-heading">Resources</div>
+      <a href="https://www.shift-work.com" target="_blank" class="footer-link">Knowledge Base</a>
+      <a href="https://shift-work-diagnostic.onrender.com" target="_blank" class="footer-link">AI Diagnostic Tool</a>
+      <a href="https://outlook.office365.com/book/ShiftworkSolutionsLLC2@shift-work.com" target="_blank" class="footer-link">Book a Consultation</a>
+    </div>
+  </div>
+  <div class="footer-bottom">
+    &copy; 2026 Shiftwork Solutions LLC. All rights reserved. Hundreds of clients. 16+ industries. 30+ years experience.
+  </div>
 </footer>
 
 <!-- ===================================================================
-     JAVASCRIPT
+     JAVASCRIPT — All submission logic preserved from original.
      NOTE: All string literals use only plain ASCII characters.
-     Smart/curly quotes ('  '  "  ") and typographic dashes (- -) must
-     never appear inside <script> blocks -- they cause silent JS syntax
-     errors that kill the entire script block.
 =================================================================== -->
 <script>
 /* ------------------------------------------------------------------
@@ -802,6 +1468,31 @@ function togglePriorSurvey(radio) {
     row.classList.remove('visible');
   }
 }
+
+/* ------------------------------------------------------------------
+   SMOOTH SCROLL FOR NAV LINKS
+------------------------------------------------------------------ */
+document.querySelectorAll('a[href^="#"]').forEach(function(link) {
+  link.addEventListener('click', function(e) {
+    var target = document.querySelector(this.getAttribute('href'));
+    if (target) {
+      e.preventDefault();
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  });
+});
+
+/* ------------------------------------------------------------------
+   NAV BACKGROUND ON SCROLL
+------------------------------------------------------------------ */
+window.addEventListener('scroll', function() {
+  var nav = document.querySelector('.nav');
+  if (window.scrollY > 40) {
+    nav.style.background = 'rgba(12,31,63,0.98)';
+  } else {
+    nav.style.background = 'rgba(12,31,63,0.95)';
+  }
+});
 
 /* ------------------------------------------------------------------
    FORM VALIDATION
