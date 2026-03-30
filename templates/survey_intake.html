@@ -259,36 +259,98 @@
     }
     .btn-secondary:hover { background: rgba(255,255,255,0.18); }
 
-    /* Thomas iframe container */
-    .hero-thomas {
-      background: rgba(255,255,255,0.06);
-      border: 1px solid rgba(255,255,255,0.12);
+    /* Video + Thomas container */
+    .hero-video-wrap {
+      position: relative;
       border-radius: var(--radius-lg);
       overflow: hidden;
       box-shadow: 0 12px 48px rgba(0,0,0,0.3);
-      aspect-ratio: 4/3;
-      max-height: 460px;
+      background: #000;
+      max-width: 340px;
+      margin: 0 auto;
     }
-    .hero-thomas iframe {
+    .hero-video-wrap video {
       width: 100%;
-      height: 100%;
-      border: none;
+      display: block;
+      border-radius: var(--radius-lg);
     }
-    .hero-thomas-label {
-      background: rgba(12,31,63,0.85);
-      color: rgba(255,255,255,0.7);
+    .hero-video-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(12,31,63,0.88);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.6s ease;
+      border-radius: var(--radius-lg);
+      padding: 24px;
       text-align: center;
-      padding: 8px;
-      font-size: 0.75rem;
-      letter-spacing: 0.5px;
     }
+    .hero-video-overlay.visible {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .hero-video-overlay h3 {
+      font-family: var(--font-display);
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: var(--white);
+      line-height: 1.3;
+    }
+    .hero-video-overlay p {
+      font-size: 0.9rem;
+      color: rgba(255,255,255,0.7);
+      line-height: 1.5;
+      max-width: 280px;
+    }
+    .btn-thomas {
+      background: var(--amber);
+      color: var(--navy);
+      border: none;
+      padding: 14px 28px;
+      font-size: 1rem;
+      font-weight: 700;
+      font-family: var(--font-body);
+      border-radius: var(--radius);
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: background 0.2s, transform 0.1s;
+    }
+    .btn-thomas:hover { background: var(--amber-light); }
+    .btn-thomas:active { transform: scale(0.97); }
+    .hero-video-label {
+      text-align: center;
+      margin-top: 10px;
+      font-size: 0.78rem;
+      color: rgba(255,255,255,0.5);
+      letter-spacing: 0.3px;
+    }
+    .btn-replay {
+      background: none;
+      border: 1px solid rgba(255,255,255,0.3);
+      color: rgba(255,255,255,0.6);
+      padding: 8px 16px;
+      font-size: 0.8rem;
+      font-family: var(--font-body);
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-replay:hover { border-color: rgba(255,255,255,0.6); color: var(--white); }
 
     @media (max-width: 900px) {
       .hero-inner { grid-template-columns: 1fr; text-align: center; }
       .hero-text p { margin-left: auto; margin-right: auto; }
       .hero-ctas { justify-content: center; }
       .hero-stats { justify-content: center; }
-      .hero-thomas { max-height: 380px; }
+      .hero-video-wrap { max-width: 280px; }
     }
 
     /* ================================================================
@@ -963,12 +1025,19 @@
         </div>
       </div>
     </div>
-    <div class="hero-thomas animate-in delay-2">
-      <iframe src="https://shift-work-diagnostic.onrender.com" 
-              title="Talk to our AI diagnostic consultant"
-              loading="lazy"
-              allow="microphone; autoplay"></iframe>
-      <div class="hero-thomas-label">&#128172; Talk to Thomas — our AI shift operations diagnostic</div>
+    <div class="animate-in delay-2">
+      <div class="hero-video-wrap">
+        <video id="hero-video" autoplay muted playsinline>
+          <source src="/static/intro-video.mp4" type="video/mp4" />
+        </video>
+        <div class="hero-video-overlay" id="video-overlay">
+          <h3>Have Questions?<br/>Talk to Thomas.</h3>
+          <p>Our AI diagnostic consultant can answer your questions about workforce surveys, scheduling, and how we work.</p>
+          <a href="https://shift-work-diagnostic.onrender.com" target="_blank" class="btn-thomas">Talk to Thomas &#8594;</a>
+          <button class="btn-replay" onclick="replayVideo()">&#9654; Replay Video</button>
+        </div>
+      </div>
+      <div class="hero-video-label">Click to unmute</div>
     </div>
   </div>
 </section>
@@ -1176,7 +1245,7 @@
           Thank you! We received your survey request and will be in touch within 1-2 business days to discuss your goals and next steps.
         </div>
         <div class="confirm-contact">
-          Questions? Email <a href="mailto:Contact@shift-work.com">Contact@shift-work.com</a>
+          Questions? Email <a href="/cdn-cgi/l/email-protection#195a76776d787a6d596a71707f6d346e766b72377a7674"><span class="__cf_email__" data-cfemail="377458594356544377445f5e51431a4058455c1954585a">[email&#160;protected]</span></a>
           or call <a href="tel:+14152651621">(415) 265-1621</a>
         </div>
       </div>
@@ -1408,7 +1477,7 @@
     <div>
       <div class="footer-heading">Contact</div>
       <a href="tel:+14152651621" class="footer-link">(415) 265-1621</a>
-      <a href="mailto:Contact@shift-work.com" class="footer-link">Contact@shift-work.com</a>
+      <a href="/cdn-cgi/l/email-protection#c182aeafb5a0a2b581b2a9a8a7b5ecb6aeb3aaefa2aeac" class="footer-link"><span class="__cf_email__" data-cfemail="71321e1f051012053102191817055c061e031a5f121e1c">[email&#160;protected]</span></a>
       <a href="https://www.shift-work.com" target="_blank" class="footer-link">shift-work.com</a>
     </div>
     <div>
@@ -1427,7 +1496,7 @@
      JAVASCRIPT — All submission logic preserved from original.
      NOTE: All string literals use only plain ASCII characters.
 =================================================================== -->
-<script>
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
 /* ------------------------------------------------------------------
    DEPARTMENT MANAGEMENT
 ------------------------------------------------------------------ */
@@ -1606,6 +1675,50 @@ document.getElementById('intake-form').addEventListener('submit', function(e) {
     submitBtn.textContent = 'Submit Survey Request';
   });
 });
+
+/* ------------------------------------------------------------------
+   HERO VIDEO — PLAY, END, OVERLAY, REPLAY, UNMUTE
+------------------------------------------------------------------ */
+(function() {
+  var video = document.getElementById('hero-video');
+  var overlay = document.getElementById('video-overlay');
+  var label = document.querySelector('.hero-video-label');
+
+  if (!video) return;
+
+  // Show Thomas overlay when video ends
+  video.addEventListener('ended', function() {
+    overlay.classList.add('visible');
+    if (label) label.style.display = 'none';
+  });
+
+  // Click video to unmute/mute
+  video.addEventListener('click', function() {
+    video.muted = !video.muted;
+    if (label) {
+      label.textContent = video.muted ? 'Click to unmute' : 'Click to mute';
+    }
+  });
+
+  // Update label style as hint
+  if (label) {
+    label.style.cursor = 'pointer';
+    label.addEventListener('click', function() {
+      video.muted = !video.muted;
+      label.textContent = video.muted ? 'Click to unmute' : 'Click to mute';
+    });
+  }
+})();
+
+function replayVideo() {
+  var video = document.getElementById('hero-video');
+  var overlay = document.getElementById('video-overlay');
+  if (video && overlay) {
+    overlay.classList.remove('visible');
+    video.currentTime = 0;
+    video.play();
+  }
+}
 </script>
 
 </body>
