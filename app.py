@@ -688,6 +688,10 @@ def get_user_patterns():
         print(f"Error fetching patterns: {traceback.format_exc()}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@app.route('/homepage')
+def homepage():
+    return render_template('homepage.html')
+
 @app.route('/health')
 def health():
     """Health check endpoint"""
