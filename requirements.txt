@@ -63,6 +63,7 @@ psycopg2-binary>=2.9.9      # PostgreSQL adapter (Added March 02, 2026)
 # ==========================================
 # UTILITIES
 # ==========================================
+flask-cors>=4.0.0           # CORS support — newsletter API cross-origin from shift-work.com (April 2, 2026)
 python-dateutil>=2.8.2
 tabulate
 apscheduler>=3.10           # Background job scheduler — Phase 6 Proactive Agent (March 12, 2026)
