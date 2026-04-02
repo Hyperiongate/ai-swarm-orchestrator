@@ -201,7 +201,26 @@ except Exception as e:
     print(f"Code Mode migration (005) failed: {e}")
     import traceback
     traceback.print_exc()
-
+# ----------------------------------------------------------------------------
+# MIGRATION 006: Newsletter Subscribers table
+# Added: April 2, 2026
+# Creates newsletter_subscribers table for shift-work.com signups.
+# Fully idempotent — safe to run on every startup.
+# ----------------------------------------------------------------------------
+try:
+    import importlib.util as _ilu6
+    import os as _os6
+    _m006_path = _os6.path.join(_os6.path.dirname(_os6.path.abspath(__file__)),
+                                'migrations', 'migration_006_newsletter.py')
+    _spec006 = _ilu6.spec_from_file_location("migration_006_newsletter", _m006_path)
+    _mod006 = _ilu6.module_from_spec(_spec006)
+    _spec006.loader.exec_module(_mod006)
+    _mod006.run_migration()
+    print("Newsletter Subscribers migration (006) complete")
+except Exception as e:
+    print(f"Newsletter Subscribers migration (006) failed: {e}")
+    import traceback
+    traceback.print_exc()
 print("=" * 60)
 
 # ============================================================================
@@ -1200,6 +1219,22 @@ try:
     from routes.proactive import proactive_bp
     app.register_blueprint(proactive_bp)
     print("Phase 6 Proactive Agent API registered")
+
+# ----------------------------------------------------------------------------
+# Newsletter Subscription API
+# Provides POST /api/newsletter/subscribe and GET /api/newsletter/stats.
+# Cross-origin enabled for shift-work.com.
+# Added: April 2, 2026
+# ----------------------------------------------------------------------------
+try:
+    from routes.newsletter import newsletter_bp
+    app.register_blueprint(newsletter_bp)
+    print("Newsletter Subscription API registered")
+except ImportError as e:
+    print(f"Newsletter routes not found: {e}")
+except Exception as e:
+    print(f"Newsletter registration failed: {e}")
+
 except ImportError as e:
     print(f"Proactive Agent routes not found: {e}")
 except Exception as e:
