@@ -1,9 +1,20 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: March 27, 2026 — Survey in a Box: Code mode selection (random vs employee ID)
+Last Updated: April 2, 2026 — Newsletter Subscription API + deploy fix
 
 CHANGELOG:
+- April 2, 2026: Newsletter Subscription API — THREE CHANGES ONLY:
+  1. MIGRATION: Added migration_006_newsletter.py call in STEP 1,
+     immediately after migration_005_code_mode.py. Creates
+     newsletter_subscribers table. Fully idempotent.
+  2. BLUEPRINT: Registered newsletter_bp from routes/newsletter.py.
+     Placed AFTER the proactive agent blueprint block (not inside it).
+  3. DEPLOY FIX: Corrected placement of newsletter blueprint registration
+     that was accidentally nested inside the proactive agent try block,
+     causing a syntax error on startup.
+  NO OTHER CHANGES.
+
 - March 27, 2026: Code mode selection — TWO CHANGES ONLY:
   1. MIGRATION: Added migration_005_code_mode.py call in STEP 1,
      immediately after migration_004_phase2_enhancements.py. Adds
@@ -201,6 +212,7 @@ except Exception as e:
     print(f"Code Mode migration (005) failed: {e}")
     import traceback
     traceback.print_exc()
+
 # ----------------------------------------------------------------------------
 # MIGRATION 006: Newsletter Subscribers table
 # Added: April 2, 2026
@@ -221,6 +233,7 @@ except Exception as e:
     print(f"Newsletter Subscribers migration (006) failed: {e}")
     import traceback
     traceback.print_exc()
+
 print("=" * 60)
 
 # ============================================================================
@@ -858,7 +871,7 @@ def health():
 
     return jsonify({
         'status': 'healthy',
-        'version': 'Survey in a Box Phase 2 Mar26 + Phase 3 Mar13 + Phase 6 Proactive Agent Mar12 + Phase 2 Survey Assembly Mar12 + Phase 1 Onboarding Mar10 + Phase 3 Capabilities Manifest Mar08 + Phase 2A Memory Mar05 + PostgreSQL Migration Mar02',
+        'version': 'Newsletter API Apr02 + Survey in a Box Phase 2 Mar26 + Phase 3 Mar13 + Phase 6 Proactive Agent Mar12 + Phase 2 Survey Assembly Mar12 + Phase 1 Onboarding Mar10 + Phase 3 Capabilities Manifest Mar08 + Phase 2A Memory Mar05 + PostgreSQL Migration Mar02',
         'database': {
             'type': get_db_type(),
             'backend': 'PostgreSQL (persistent)' if get_db_type() == 'postgresql' else 'SQLite (local dev)'
@@ -931,6 +944,11 @@ def health():
             'tasks_url': '/api/tasks',
             'status_url': '/api/proactive/status',
             'phase': '6 - Proactive Agent (Deliverables 1-7 active)',
+        },
+        'newsletter': {
+            'status': 'enabled',
+            'subscribe_url': '/api/newsletter/subscribe',
+            'stats_url': '/api/newsletter/stats',
         },
     })
 
@@ -1219,6 +1237,10 @@ try:
     from routes.proactive import proactive_bp
     app.register_blueprint(proactive_bp)
     print("Phase 6 Proactive Agent API registered")
+except ImportError as e:
+    print(f"Proactive Agent routes not found: {e}")
+except Exception as e:
+    print(f"Proactive Agent registration failed: {e}")
 
 # ----------------------------------------------------------------------------
 # Newsletter Subscription API
@@ -1234,11 +1256,6 @@ except ImportError as e:
     print(f"Newsletter routes not found: {e}")
 except Exception as e:
     print(f"Newsletter registration failed: {e}")
-
-except ImportError as e:
-    print(f"Proactive Agent routes not found: {e}")
-except Exception as e:
-    print(f"Proactive Agent registration failed: {e}")
 
 try:
     from routes.background_jobs import background_jobs_bp
