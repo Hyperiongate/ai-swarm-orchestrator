@@ -1,9 +1,22 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: April 2, 2026 — Newsletter Subscription API + deploy fix
+Last Updated: April 7, 2026 — Security Hardening + Contact Form API
 
 CHANGELOG:
+- April 7, 2026: Security Hardening — THREE CHANGES ONLY:
+  1. MIGRATION: Added migration_007_security.py call in STEP 1,
+     immediately after migration_006_newsletter.py. Creates
+     ip_blocklist table, contact_submissions table. Adds user_agent
+     and email_domain columns to newsletter_subscribers.
+     Fully idempotent.
+  2. BLUEPRINT: Registered contact_api_bp from routes/contact_api.py.
+     Placed immediately AFTER the newsletter blueprint block.
+     Provides POST /api/contact/submit (logs + forwards to Formspree)
+     and GET /api/contact/submissions (admin view).
+  3. HEALTH CHECK: Updated version string. Added 'security' section.
+  NO OTHER CHANGES.
+
 - April 2, 2026: Newsletter Subscription API — THREE CHANGES ONLY:
   1. MIGRATION: Added migration_006_newsletter.py call in STEP 1,
      immediately after migration_005_code_mode.py. Creates
@@ -231,6 +244,28 @@ try:
     print("Newsletter Subscribers migration (006) complete")
 except Exception as e:
     print(f"Newsletter Subscribers migration (006) failed: {e}")
+    import traceback
+    traceback.print_exc()
+
+# ----------------------------------------------------------------------------
+# MIGRATION 007: Security Enhancements
+# Added: April 7, 2026
+# Creates ip_blocklist table, contact_submissions table.
+# Adds user_agent and email_domain columns to newsletter_subscribers.
+# Fully idempotent — safe to run on every startup.
+# ----------------------------------------------------------------------------
+try:
+    import importlib.util as _ilu7
+    import os as _os7
+    _m007_path = _os7.path.join(_os7.path.dirname(_os7.path.abspath(__file__)),
+                                'migrations', 'migration_007_security.py')
+    _spec007 = _ilu7.spec_from_file_location("migration_007_security", _m007_path)
+    _mod007 = _ilu7.module_from_spec(_spec007)
+    _spec007.loader.exec_module(_mod007)
+    _mod007.run_migration()
+    print("Security Enhancements migration (007) complete")
+except Exception as e:
+    print(f"Security Enhancements migration (007) failed: {e}")
     import traceback
     traceback.print_exc()
 
@@ -871,7 +906,7 @@ def health():
 
     return jsonify({
         'status': 'healthy',
-        'version': 'Newsletter API Apr02 + Survey in a Box Phase 2 Mar26 + Phase 3 Mar13 + Phase 6 Proactive Agent Mar12 + Phase 2 Survey Assembly Mar12 + Phase 1 Onboarding Mar10 + Phase 3 Capabilities Manifest Mar08 + Phase 2A Memory Mar05 + PostgreSQL Migration Mar02',
+        'version': 'Security Hardening Apr07 + Newsletter API Apr02 + Survey in a Box Phase 2 Mar26 + Phase 3 Mar13 + Phase 6 Proactive Agent Mar12 + Phase 2 Survey Assembly Mar12 + Phase 1 Onboarding Mar10 + Phase 3 Capabilities Manifest Mar08 + Phase 2A Memory Mar05 + PostgreSQL Migration Mar02',
         'database': {
             'type': get_db_type(),
             'backend': 'PostgreSQL (persistent)' if get_db_type() == 'postgresql' else 'SQLite (local dev)'
@@ -949,6 +984,14 @@ def health():
             'status': 'enabled',
             'subscribe_url': '/api/newsletter/subscribe',
             'stats_url': '/api/newsletter/stats',
+        },
+        'security': {
+            'status': 'enabled',
+            'ip_blocklist': '/api/newsletter/blocked-ips',
+            'contact_submissions': '/api/contact/submissions',
+            'newsletter_subscribers': '/api/newsletter/subscribers',
+            'block_ip': '/api/newsletter/block-ip',
+            'unblock_ip': '/api/newsletter/unblock-ip',
         },
     })
 
@@ -1245,8 +1288,10 @@ except Exception as e:
 # ----------------------------------------------------------------------------
 # Newsletter Subscription API
 # Provides POST /api/newsletter/subscribe and GET /api/newsletter/stats.
+# Also provides admin endpoints: subscribers list, IP lookup, domain lookup,
+# block/unblock IP, force unsubscribe.
 # Cross-origin enabled for shift-work.com.
-# Added: April 2, 2026
+# Added: April 2, 2026 | Security hardened: April 7, 2026
 # ----------------------------------------------------------------------------
 try:
     from routes.newsletter import newsletter_bp
@@ -1256,6 +1301,22 @@ except ImportError as e:
     print(f"Newsletter routes not found: {e}")
 except Exception as e:
     print(f"Newsletter registration failed: {e}")
+
+# ----------------------------------------------------------------------------
+# Contact Form API (Security Layer)
+# Provides POST /api/contact/submit (logs + forwards to Formspree)
+# and GET /api/contact/submissions (admin view).
+# Cross-origin enabled for shift-work.com.
+# Added: April 7, 2026
+# ----------------------------------------------------------------------------
+try:
+    from routes.contact_api import contact_api_bp
+    app.register_blueprint(contact_api_bp)
+    print("Contact Form API registered")
+except ImportError as e:
+    print(f"Contact Form API routes not found: {e}")
+except Exception as e:
+    print(f"Contact Form API registration failed: {e}")
 
 try:
     from routes.background_jobs import background_jobs_bp
