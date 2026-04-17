@@ -74,5 +74,7 @@ apscheduler>=3.10           # Background job scheduler — Phase 6 Proactive Age
 Pillow>=10.2.0
 matplotlib>=3.8.2
 plotly>=5.18.0
+gspread>=6.0.0
+google-auth>=2.0.0
 
 # I did no harm and this file is not truncated
