@@ -1,9 +1,19 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: April 7, 2026 — Security Hardening + Contact Form API
+Last Updated: April 17, 2026 — Assessment Google Sheets API
 
 CHANGELOG:
+- April 17, 2026: Assessment Google Sheets API — ONE CHANGE ONLY:
+  1. BLUEPRINT: Registered assessment_bp from routes/assessment.py.
+     Placed immediately AFTER the contact_api blueprint block.
+     Provides POST /api/assessment/lead and
+     POST /api/assessment/update-scores.
+     Writes shift assessment contact form data and AI scores
+     directly to the Shift Assessment Data Google Sheet.
+     Requires GOOGLE_SERVICE_ACCOUNT_JSON env var in Render.
+  NO OTHER CHANGES.
+
 - April 7, 2026: Security Hardening — THREE CHANGES ONLY:
   1. MIGRATION: Added migration_007_security.py call in STEP 1,
      immediately after migration_006_newsletter.py. Creates
@@ -906,7 +916,7 @@ def health():
 
     return jsonify({
         'status': 'healthy',
-        'version': 'Security Hardening Apr07 + Newsletter API Apr02 + Survey in a Box Phase 2 Mar26 + Phase 3 Mar13 + Phase 6 Proactive Agent Mar12 + Phase 2 Survey Assembly Mar12 + Phase 1 Onboarding Mar10 + Phase 3 Capabilities Manifest Mar08 + Phase 2A Memory Mar05 + PostgreSQL Migration Mar02',
+        'version': 'Assessment Sheets Apr17 + Security Hardening Apr07 + Newsletter API Apr02 + Survey in a Box Phase 2 Mar26 + Phase 3 Mar13 + Phase 6 Proactive Agent Mar12 + Phase 2 Survey Assembly Mar12 + Phase 1 Onboarding Mar10 + Phase 3 Capabilities Manifest Mar08 + Phase 2A Memory Mar05 + PostgreSQL Migration Mar02',
         'database': {
             'type': get_db_type(),
             'backend': 'PostgreSQL (persistent)' if get_db_type() == 'postgresql' else 'SQLite (local dev)'
@@ -992,6 +1002,12 @@ def health():
             'newsletter_subscribers': '/api/newsletter/subscribers',
             'block_ip': '/api/newsletter/block-ip',
             'unblock_ip': '/api/newsletter/unblock-ip',
+        },
+        'assessment': {
+            'status': 'enabled',
+            'lead_url': '/api/assessment/lead',
+            'scores_url': '/api/assessment/update-scores',
+            'sheet': 'Shift Assessment Data',
         },
     })
 
@@ -1317,6 +1333,23 @@ except ImportError as e:
     print(f"Contact Form API routes not found: {e}")
 except Exception as e:
     print(f"Contact Form API registration failed: {e}")
+
+# ----------------------------------------------------------------------------
+# Assessment Google Sheets API
+# Provides POST /api/assessment/lead and POST /api/assessment/update-scores.
+# Writes shift assessment contact form data and AI scores directly to the
+# Shift Assessment Data Google Sheet.
+# Requires GOOGLE_SERVICE_ACCOUNT_JSON env var in Render.
+# Added: April 17, 2026
+# ----------------------------------------------------------------------------
+try:
+    from routes.assessment import assessment_bp
+    app.register_blueprint(assessment_bp)
+    print("Assessment Google Sheets API registered")
+except ImportError as e:
+    print(f"Assessment API routes not found: {e}")
+except Exception as e:
+    print(f"Assessment API registration failed: {e}")
 
 try:
     from routes.background_jobs import background_jobs_bp
