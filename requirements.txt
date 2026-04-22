@@ -1,7 +1,15 @@
 # AI SWARM ORCHESTRATOR - Requirements
-# Last Updated: March 12, 2026
+# Last Updated: April 21, 2026
 #
 # CHANGES:
+# - April 21, 2026: ASSESSMENT PDF GENERATOR
+#   * Added reportlab>=4.0.0 (ReportLab PDF generation for the
+#     Shiftwork Operations Assessment download endpoint)
+#   * Added resend>=0.7.0 (Resend email SDK — sends a copy of
+#     each downloaded assessment PDF to Contact@shift-work.com
+#     with user contact info in the body, using the existing
+#     RESEND_API_KEY env var)
+#   * Supports routes/assessment_pdf.py
 # - March 12, 2026: PHASE 6 PROACTIVE AGENT
 #   * Added apscheduler>=3.10 (background job scheduler for daily briefing,
 #     lead scan, task generation, and service health checks)
@@ -76,5 +84,10 @@ matplotlib>=3.8.2
 plotly>=5.18.0
 gspread>=6.0.0
 google-auth>=2.0.0
-
+# ==========================================
+# ASSESSMENT PDF GENERATOR (Added April 21, 2026)
+# Supports routes/assessment_pdf.py — POST /api/assessment/generate-pdf
+# ==========================================
+reportlab>=4.0.0            # PDF generation for downloadable Shiftwork Operations Assessment
+resend>=0.7.0               # Resend email SDK — emails a copy of each PDF to Contact@shift-work.com
 # I did no harm and this file is not truncated
