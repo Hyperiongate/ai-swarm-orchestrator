@@ -4,9 +4,23 @@ AI Swarm Orchestrator — Shiftwork Operations Assessment PDF
 Shiftwork Solutions LLC
 
 Created:      2026-04-21
-Last Updated: 2026-04-21
+Last Updated: 2026-04-22
 
 CHANGE LOG:
+  2026-04-22 — CORS HOTFIX.
+    Initial 2026-04-21 build relied on flask_cors's @cross_origin()
+    decorator. In production behind Render's proxy, preflight
+    OPTIONS requests from shift-work.com were being blocked:
+      "No 'Access-Control-Allow-Origin' header is present on the
+       requested resource."
+    Root cause: the decorator's defaults don't reliably attach
+    headers to every response through Render's proxy. The rest
+    of the Swarm (newsletter_bp, contact_api_bp) uses a manual
+    after_request pattern with an explicit allow-list of origins
+    and that pattern has been proven in production for months.
+    This file now uses that exact same pattern. No functional
+    behavior changed — just the CORS handling mechanics.
+
   2026-04-21 — INITIAL BUILD.
     Creates POST /api/assessment/generate-pdf endpoint for the
     Shiftwork Operations Reality Check + Detailed Analysis flow.
@@ -57,7 +71,6 @@ import traceback
 from datetime import datetime
 
 from flask import Blueprint, request, jsonify, send_file
-from flask_cors import cross_origin
 
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.units import inch
@@ -73,6 +86,47 @@ assessment_pdf_bp = Blueprint(
     __name__,
     url_prefix="/api/assessment",
 )
+
+
+# =============================================================================
+# CORS — matches the proven pattern used by routes/newsletter.py
+# Allow-listed origins only. Manual after_request handler so Render's proxy
+# reliably returns the Access-Control-Allow-Origin header.
+# =============================================================================
+
+ALLOWED_ORIGINS = [
+    'https://shift-work.com',
+    'https://www.shift-work.com',
+    'http://localhost:3000',
+    'http://localhost:5000',
+    'http://127.0.0.1:5500',
+    'null',
+]
+
+
+def _cors_headers(origin=None):
+    """Return CORS headers dict for the given origin."""
+    headers = {
+        'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Accept',
+        'Access-Control-Max-Age': '86400',
+    }
+    if origin in ALLOWED_ORIGINS:
+        headers['Access-Control-Allow-Origin'] = origin
+    elif origin and (origin.endswith('.shift-work.com') or origin.endswith('.onrender.com')):
+        headers['Access-Control-Allow-Origin'] = origin
+    else:
+        headers['Access-Control-Allow-Origin'] = 'https://shift-work.com'
+    return headers
+
+
+@assessment_pdf_bp.after_request
+def add_cors_headers(response):
+    """Add CORS headers to every response from this blueprint."""
+    origin = request.headers.get('Origin', '')
+    for key, value in _cors_headers(origin).items():
+        response.headers[key] = value
+    return response
 
 
 # =============================================================================
@@ -952,7 +1006,6 @@ def _send_notification_email(pdf_bytes, payload):
 # ROUTE — POST /api/assessment/generate-pdf
 # =============================================================================
 @assessment_pdf_bp.route("/generate-pdf", methods=["POST", "OPTIONS"])
-@cross_origin()
 def generate_pdf():
     """
     Generate the assessment PDF from the results payload and return it as
@@ -961,8 +1014,9 @@ def generate_pdf():
     Request: JSON body with shape described in build_assessment_pdf().
     Response: application/pdf stream, Content-Disposition: attachment.
     """
+    # Handle CORS preflight — after_request handler will add the headers
     if request.method == "OPTIONS":
-        return ("", 204)
+        return jsonify({'status': 'ok'}), 200
 
     payload = request.get_json(silent=True) or {}
 
