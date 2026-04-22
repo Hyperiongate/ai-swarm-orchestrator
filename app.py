@@ -1,9 +1,22 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: April 17, 2026 — Assessment Google Sheets API
+Last Updated: April 21, 2026 — Assessment PDF Generator
 
 CHANGELOG:
+- April 21, 2026: Assessment PDF Generator — ONE CHANGE ONLY:
+  1. BLUEPRINT: Registered assessment_pdf_bp from routes/assessment_pdf.py.
+     Placed immediately AFTER the assessment_bp registration block.
+     Provides POST /api/assessment/generate-pdf. Generates a branded
+     multi-section PDF (cover, Reality Check recap, executive summary,
+     dimensional scorecard, About Shiftwork Solutions) using ReportLab,
+     returns it as a direct download to the user's browser, and emails
+     a copy to Contact@shift-work.com via Resend with the user's
+     contact info and assessment summary in the body. Uses the existing
+     RESEND_API_KEY env var.
+  2. HEALTH CHECK: Updated version string to mention "Assessment PDF Apr21".
+  NO OTHER CHANGES. Rule 1 (do no harm) preserved.
+
 - April 17, 2026: Assessment Google Sheets API — ONE CHANGE ONLY:
   1. BLUEPRINT: Registered assessment_bp from routes/assessment.py.
      Placed immediately AFTER the contact_api blueprint block.
@@ -916,7 +929,7 @@ def health():
 
     return jsonify({
         'status': 'healthy',
-        'version': 'Assessment Sheets Apr17 + Security Hardening Apr07 + Newsletter API Apr02 + Survey in a Box Phase 2 Mar26 + Phase 3 Mar13 + Phase 6 Proactive Agent Mar12 + Phase 2 Survey Assembly Mar12 + Phase 1 Onboarding Mar10 + Phase 3 Capabilities Manifest Mar08 + Phase 2A Memory Mar05 + PostgreSQL Migration Mar02',
+        'version': 'Assessment PDF Apr21 + Assessment Sheets Apr17 + Security Hardening Apr07 + Newsletter API Apr02 + Survey in a Box Phase 2 Mar26 + Phase 3 Mar13 + Phase 6 Proactive Agent Mar12 + Phase 2 Survey Assembly Mar12 + Phase 1 Onboarding Mar10 + Phase 3 Capabilities Manifest Mar08 + Phase 2A Memory Mar05 + PostgreSQL Migration Mar02',
         'database': {
             'type': get_db_type(),
             'backend': 'PostgreSQL (persistent)' if get_db_type() == 'postgresql' else 'SQLite (local dev)'
@@ -1007,6 +1020,7 @@ def health():
             'status': 'enabled',
             'lead_url': '/api/assessment/lead',
             'scores_url': '/api/assessment/update-scores',
+            'pdf_url': '/api/assessment/generate-pdf',
             'sheet': 'Shift Assessment Data',
         },
     })
@@ -1350,6 +1364,27 @@ except ImportError as e:
     print(f"Assessment API routes not found: {e}")
 except Exception as e:
     print(f"Assessment API registration failed: {e}")
+
+# ----------------------------------------------------------------------------
+# Assessment PDF Generator API
+# Provides POST /api/assessment/generate-pdf.
+# Generates a branded multi-section PDF using ReportLab (cover, Reality Check
+# recap, executive summary, dimensional scorecard, About Shiftwork Solutions),
+# returns it as a direct download to the user's browser, and simultaneously
+# sends a copy to Contact@shift-work.com via Resend with the user's contact
+# info and assessment summary in the email body.
+# Fully self-contained — does not modify routes/assessment.py.
+# Requires RESEND_API_KEY env var in Render (already set for Thomas).
+# Added: April 21, 2026
+# ----------------------------------------------------------------------------
+try:
+    from routes.assessment_pdf import assessment_pdf_bp
+    app.register_blueprint(assessment_pdf_bp)
+    print("Assessment PDF Generator API registered")
+except ImportError as e:
+    print(f"Assessment PDF routes not found: {e}")
+except Exception as e:
+    print(f"Assessment PDF registration failed: {e}")
 
 try:
     from routes.background_jobs import background_jobs_bp
