@@ -28,7 +28,7 @@ CHANGELOG:
   NO OTHER CHANGES.
 
 - April 7, 2026: Security Hardening — THREE CHANGES ONLY:
-  1. MIGRATION: Added migration_007_security.py call in STEP 1,
+  1. MIGRATION: Add migration_008 after migration_007_security.py call in STEP 1,
      immediately after migration_006_newsletter.py. Creates
      ip_blocklist table, contact_submissions table. Adds user_agent
      and email_domain columns to newsletter_subscribers.
