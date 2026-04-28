@@ -1,9 +1,22 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: April 21, 2026 — Assessment PDF Generator
+Last Updated: April 28, 2026 — Site Events Tracking
 
 CHANGELOG:
+- April 28, 2026: Site Events Tracking — TWO CHANGES ONLY:
+  1. MIGRATION: Added migration_008_site_events.py call in STEP 1,
+     immediately after migration_007_security.py. Creates site_events
+     table for shift-work.com visitor event tracking. Stores all 10
+     event types captured by /js/event-tracker.js. Fully idempotent.
+  2. BLUEPRINT: Registered site_events_bp from routes/site_events.py.
+     Placed immediately AFTER the assessment_pdf_bp registration block.
+     Provides POST /api/events/log (CORS-enabled for shift-work.com),
+     GET /api/events/summary, GET /api/events/recent,
+     GET /api/events/sessions.
+  3. HEALTH CHECK: Updated version string to mention "Site Events Apr28".
+  NO OTHER CHANGES. Rule 1 (do no harm) preserved.
+
 - April 21, 2026: Assessment PDF Generator — ONE CHANGE ONLY:
   1. BLUEPRINT: Registered assessment_pdf_bp from routes/assessment_pdf.py.
      Placed immediately AFTER the assessment_bp registration block.
@@ -28,7 +41,7 @@ CHANGELOG:
   NO OTHER CHANGES.
 
 - April 7, 2026: Security Hardening — THREE CHANGES ONLY:
-  1. MIGRATION: Add migration_008 after migration_007_security.py call in STEP 1,
+  1. MIGRATION: Added migration_007_security.py call in STEP 1,
      immediately after migration_006_newsletter.py. Creates
      ip_blocklist table, contact_submissions table. Adds user_agent
      and email_domain columns to newsletter_subscribers.
@@ -289,6 +302,28 @@ try:
     print("Security Enhancements migration (007) complete")
 except Exception as e:
     print(f"Security Enhancements migration (007) failed: {e}")
+    import traceback
+    traceback.print_exc()
+
+# ----------------------------------------------------------------------------
+# MIGRATION 008: Site Events Tracking
+# Added: April 28, 2026
+# Creates site_events table for shift-work.com visitor event tracking.
+# Stores all 10 event types from /js/event-tracker.js on the static site.
+# Fully idempotent — safe to run on every startup.
+# ----------------------------------------------------------------------------
+try:
+    import importlib.util as _ilu8
+    import os as _os8
+    _m008_path = _os8.path.join(_os8.path.dirname(_os8.path.abspath(__file__)),
+                                'migrations', 'migration_008_site_events.py')
+    _spec008 = _ilu8.spec_from_file_location("migration_008_site_events", _m008_path)
+    _mod008 = _ilu8.module_from_spec(_spec008)
+    _spec008.loader.exec_module(_mod008)
+    _mod008.run_migration()
+    print("Site Events Tracking migration (008) complete")
+except Exception as e:
+    print(f"Site Events Tracking migration (008) failed: {e}")
     import traceback
     traceback.print_exc()
 
@@ -929,7 +964,7 @@ def health():
 
     return jsonify({
         'status': 'healthy',
-        'version': 'Assessment PDF Apr21 + Assessment Sheets Apr17 + Security Hardening Apr07 + Newsletter API Apr02 + Survey in a Box Phase 2 Mar26 + Phase 3 Mar13 + Phase 6 Proactive Agent Mar12 + Phase 2 Survey Assembly Mar12 + Phase 1 Onboarding Mar10 + Phase 3 Capabilities Manifest Mar08 + Phase 2A Memory Mar05 + PostgreSQL Migration Mar02',
+        'version': 'Site Events Apr28 + Assessment PDF Apr21 + Assessment Sheets Apr17 + Security Hardening Apr07 + Newsletter API Apr02 + Survey in a Box Phase 2 Mar26 + Phase 3 Mar13 + Phase 6 Proactive Agent Mar12 + Phase 2 Survey Assembly Mar12 + Phase 1 Onboarding Mar10 + Phase 3 Capabilities Manifest Mar08 + Phase 2A Memory Mar05 + PostgreSQL Migration Mar02',
         'database': {
             'type': get_db_type(),
             'backend': 'PostgreSQL (persistent)' if get_db_type() == 'postgresql' else 'SQLite (local dev)'
@@ -1022,6 +1057,13 @@ def health():
             'scores_url': '/api/assessment/update-scores',
             'pdf_url': '/api/assessment/generate-pdf',
             'sheet': 'Shift Assessment Data',
+        },
+        'site_events': {
+            'status': 'enabled',
+            'log_url': '/api/events/log',
+            'summary_url': '/api/events/summary',
+            'recent_url': '/api/events/recent',
+            'sessions_url': '/api/events/sessions',
         },
     })
 
@@ -1385,6 +1427,23 @@ except ImportError as e:
     print(f"Assessment PDF routes not found: {e}")
 except Exception as e:
     print(f"Assessment PDF registration failed: {e}")
+
+# ----------------------------------------------------------------------------
+# Site Events Tracking API
+# Provides POST /api/events/log (CORS-enabled for shift-work.com),
+# GET /api/events/summary, GET /api/events/recent, GET /api/events/sessions.
+# Receives events from /js/event-tracker.js on the static site and stores
+# them in the site_events PostgreSQL table for monthly analytics review.
+# Added: April 28, 2026
+# ----------------------------------------------------------------------------
+try:
+    from routes.site_events import site_events_bp
+    app.register_blueprint(site_events_bp)
+    print("Site Events Tracking API registered")
+except ImportError as e:
+    print(f"Site Events routes not found: {e}")
+except Exception as e:
+    print(f"Site Events registration failed: {e}")
 
 try:
     from routes.background_jobs import background_jobs_bp
