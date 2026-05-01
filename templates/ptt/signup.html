@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<!--
+  templates/ptt/signup.html
+  Part Time Tracker Lite — HR Admin Signup Page
+  Shiftwork Solutions LLC
+
+  Created:      2026-05-01
+  Last Updated: 2026-05-01
+
+  CHANGELOG:
+    2026-05-01 — INITIAL BUILD (Phase 1).
+      HR company signup form. Posts to /api/ptt/lead.
+      Shows success message with instructions on form submit.
+      Also renders ?error= query param for auth failures.
+      Has a link to /ptt/login for returning users.
+      Mobile-first responsive. No external CSS frameworks.
+      Brand: navy #1F3D5C, orange #E8610A, Arial/Helvetica.
+
+  I did no harm and this file is not truncated.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Part Time Tracker — Get Started | Shiftwork Solutions</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: Arial, Helvetica, sans-serif;
+      background: #F4F6F8;
+      color: #1A1A1A;
+      min-height: 100vh;
+    }
+
+    /* ── NAV ── */
+    nav {
+      background: #1F3D5C;
+      padding: 0 24px;
+      height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .nav-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+    }
+    .nav-logo-mark {
+      width: 32px; height: 32px;
+      background: #E8610A;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      color: #fff; font-size: 18px; font-weight: 700;
+      flex-shrink: 0;
+    }
+    .nav-title {
+      color: #EEAE26;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: .03em;
+    }
+    .nav-sub {
+      color: rgba(255,255,255,.55);
+      font-size: 11px;
+    }
+    .nav-link {
+      color: rgba(255,255,255,.7);
+      font-size: 13px;
+      text-decoration: none;
+    }
+    .nav-link:hover { color: #fff; }
+
+    /* ── HERO ── */
+    .hero {
+      background: linear-gradient(135deg, #1F3D5C 0%, #0D2438 100%);
+      padding: 48px 24px 40px;
+      text-align: center;
+    }
+    .hero-badge {
+      display: inline-block;
+      background: rgba(232,97,10,.15);
+      border: 1px solid rgba(232,97,10,.35);
+      color: #E8610A;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      padding: 4px 12px;
+      border-radius: 20px;
+      margin-bottom: 16px;
+    }
+    .hero h1 {
+      color: #fff;
+      font-size: clamp(22px, 5vw, 32px);
+      font-weight: 700;
+      line-height: 1.25;
+      margin-bottom: 12px;
+    }
+    .hero h1 span { color: #E8610A; }
+    .hero p {
+      color: rgba(255,255,255,.7);
+      font-size: 15px;
+      max-width: 520px;
+      margin: 0 auto;
+      line-height: 1.6;
+    }
+
+    /* ── MAIN LAYOUT ── */
+    .main {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 32px 16px 64px;
+    }
+
+    /* ── ERROR BANNER ── */
+    .error-banner {
+      background: #FFF0EE;
+      border-left: 4px solid #E8610A;
+      padding: 14px 18px;
+      border-radius: 0 4px 4px 0;
+      margin-bottom: 24px;
+      font-size: 14px;
+      color: #7A2A00;
+      display: none;
+    }
+    .error-banner.visible { display: block; }
+
+    /* ── CARD ── */
+    .card {
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 2px 12px rgba(31,61,92,.08);
+      overflow: hidden;
+    }
+    .card-header {
+      background: #1F3D5C;
+      padding: 20px 28px;
+    }
+    .card-header h2 {
+      color: #fff;
+      font-size: 18px;
+      font-weight: 700;
+    }
+    .card-header p {
+      color: rgba(255,255,255,.65);
+      font-size: 13px;
+      margin-top: 4px;
+    }
+    .card-body { padding: 28px; }
+
+    /* ── FORM ── */
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    @media (max-width: 560px) {
+      .form-row { grid-template-columns: 1fr; }
+    }
+    .form-group { display: flex; flex-direction: column; gap: 6px; }
+    .form-group.full { grid-column: 1 / -1; }
+
+    label {
+      font-size: 13px;
+      font-weight: 700;
+      color: #1F3D5C;
+      letter-spacing: .02em;
+    }
+    label .req { color: #E8610A; margin-left: 2px; }
+
+    input[type="text"],
+    input[type="email"],
+    select {
+      height: 42px;
+      padding: 0 12px;
+      border: 1.5px solid #D0D7DE;
+      border-radius: 4px;
+      font-size: 14px;
+      font-family: Arial, Helvetica, sans-serif;
+      color: #1A1A1A;
+      background: #fff;
+      transition: border-color .15s;
+      width: 100%;
+      appearance: none;
+    }
+    select {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%231F3D5C' stroke-width='1.5' fill='none'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      padding-right: 32px;
+      cursor: pointer;
+    }
+    input:focus, select:focus {
+      outline: none;
+      border-color: #E8610A;
+      box-shadow: 0 0 0 3px rgba(232,97,10,.12);
+    }
+    input.invalid, select.invalid { border-color: #C62828; }
+
+    .field-error {
+      font-size: 12px;
+      color: #C62828;
+      display: none;
+    }
+    .field-error.visible { display: block; }
+
+    /* ── DIVIDER ── */
+    .section-divider {
+      border: none;
+      border-top: 1px solid #E8EDF2;
+      margin: 24px 0;
+    }
+    .section-label {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: #888;
+      margin-bottom: 16px;
+    }
+
+    /* ── SUBMIT BUTTON ── */
+    .btn-primary {
+      background: #E8610A;
+      color: #fff;
+      border: none;
+      padding: 0 32px;
+      height: 46px;
+      border-radius: 4px;
+      font-size: 15px;
+      font-weight: 700;
+      font-family: Arial, Helvetica, sans-serif;
+      cursor: pointer;
+      width: 100%;
+      transition: background .15s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .btn-primary:hover:not(:disabled) { background: #C85208; }
+    .btn-primary:disabled { opacity: .65; cursor: not-allowed; }
+
+    /* ── SUCCESS STATE ── */
+    .success-panel {
+      display: none;
+      text-align: center;
+      padding: 40px 28px;
+    }
+    .success-panel.visible { display: block; }
+    .form-panel.hidden { display: none; }
+
+    .success-icon {
+      width: 64px; height: 64px;
+      background: rgba(29,158,117,.1);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 20px;
+      font-size: 32px;
+    }
+    .success-panel h3 {
+      font-size: 22px;
+      color: #1F3D5C;
+      margin-bottom: 12px;
+    }
+    .success-panel p {
+      font-size: 14px;
+      color: #555;
+      line-height: 1.6;
+      max-width: 420px;
+      margin: 0 auto 8px;
+    }
+
+    /* ── RETURNING USER LINK ── */
+    .returning-link {
+      text-align: center;
+      margin-top: 20px;
+      font-size: 13px;
+      color: #666;
+    }
+    .returning-link a { color: #1F3D5C; font-weight: 700; }
+
+    /* ── FEATURE LIST ── */
+    .features {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-top: 32px;
+    }
+    .feature-item {
+      background: #EEF3F8;
+      border-radius: 6px;
+      padding: 16px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .feature-item strong {
+      display: block;
+      color: #1F3D5C;
+      font-size: 14px;
+      margin-bottom: 4px;
+    }
+    .feature-icon { font-size: 20px; margin-bottom: 8px; }
+
+    /* ── SPINNER ── */
+    .spinner {
+      width: 18px; height: 18px;
+      border: 2.5px solid rgba(255,255,255,.4);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      display: none;
+    }
+    .btn-primary.loading .spinner { display: block; }
+    .btn-primary.loading .btn-label { display: none; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+  <!-- NAV -->
+  <nav>
+    <a href="/ptt/" class="nav-brand">
+      <div class="nav-logo-mark">S</div>
+      <div>
+        <div class="nav-title">Part Time Tracker</div>
+        <div class="nav-sub">by Shiftwork Solutions</div>
+      </div>
+    </a>
+    <a href="/ptt/login" class="nav-link">Already have an account?</a>
+  </nav>
+
+  <!-- HERO -->
+  <div class="hero">
+    <div class="hero-badge">Free — Lite Edition</div>
+    <h1>Your part-time pool,<br><span>organized.</span></h1>
+    <p>
+      Manage a pre-vetted roster of on-call workers, post open shifts,
+      and confirm coverage — all in one place, built for 24/7 industrial
+      operations.
+    </p>
+  </div>
+
+  <!-- MAIN -->
+  <div class="main">
+
+    {% set error_param = request.args.get('error', '') %}
+    {% if error_param %}
+    <div class="error-banner visible" id="topError">
+      {% if error_param == 'invalid_or_expired_token' %}
+        That login link has expired or is no longer valid. Please
+        <a href="/ptt/login">request a new one</a>.
+      {% elif error_param == 'missing_token' %}
+        No login token was found. Please
+        <a href="/ptt/login">request a new login link</a>.
+      {% else %}
+        Something went wrong. Please try again or
+        <a href="/ptt/login">request a new login link</a>.
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- SIGNUP CARD -->
+    <div class="card">
+      <div class="card-header">
+        <h2>Create your account</h2>
+        <p>Free for HR managers at industrial operations. Work email required.</p>
+      </div>
+
+      <div class="card-body">
+
+        <!-- API error banner -->
+        <div class="error-banner" id="apiError"></div>
+
+        <!-- FORM PANEL -->
+        <div id="formPanel" class="form-panel">
+          <div class="section-label">Your information</div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="name">Your name <span class="req">*</span></label>
+              <input type="text" id="name" placeholder="Jane Smith" autocomplete="name">
+              <span class="field-error" id="nameError">Please enter your name.</span>
+            </div>
+            <div class="form-group">
+              <label for="email">Work email <span class="req">*</span></label>
+              <input type="email" id="email" placeholder="jane@yourcompany.com" autocomplete="email">
+              <span class="field-error" id="emailError">Please enter your work email address.</span>
+            </div>
+          </div>
+
+          <hr class="section-divider">
+          <div class="section-label">Company information</div>
+
+          <div class="form-row">
+            <div class="form-group full">
+              <label for="company_name">Company name <span class="req">*</span></label>
+              <input type="text" id="company_name" placeholder="Acme Manufacturing" autocomplete="organization">
+              <span class="field-error" id="companyError">Please enter your company name.</span>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="industry">Industry</label>
+              <select id="industry">
+                <option value="">Select your industry</option>
+                {% for opt in industry_options %}
+                <option value="{{ opt }}">{{ opt }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="facility_size">Facility size</label>
+              <select id="facility_size">
+                <option value="">Select facility size</option>
+                {% for opt in facility_size_options %}
+                <option value="{{ opt }}">{{ opt }}</option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+
+          <hr class="section-divider">
+
+          <button class="btn-primary" id="submitBtn" onclick="submitSignup()">
+            <div class="spinner" id="btnSpinner"></div>
+            <span class="btn-label">Create Account &amp; Get Login Link</span>
+          </button>
+
+          <p style="font-size:12px; color:#888; text-align:center; margin-top:12px; line-height:1.5;">
+            By creating an account you agree to use this tool for workforce management
+            at your facility. Free mail services (Gmail, Yahoo, etc.) are not accepted.
+          </p>
+        </div>
+
+        <!-- SUCCESS PANEL -->
+        <div id="successPanel" class="success-panel">
+          <div class="success-icon">✓</div>
+          <h3>Check your email</h3>
+          <p>
+            We've sent a login link to <strong id="successEmail"></strong>.
+            Click the link in that email to access your Part Time Tracker dashboard.
+          </p>
+          <p style="color:#888; font-size:13px; margin-top:8px;">
+            The link expires in 30 minutes. Check your spam folder if you don't see it.
+          </p>
+        </div>
+
+      </div><!-- /card-body -->
+    </div><!-- /card -->
+
+    <!-- RETURNING USER LINK -->
+    <div class="returning-link">
+      Already have an account? <a href="/ptt/login">Request a login link</a>
+    </div>
+
+    <!-- FEATURE HIGHLIGHTS -->
+    <div class="features">
+      <div class="feature-item">
+        <div class="feature-icon">👥</div>
+        <strong>Manage your pool</strong>
+        Approve part-time applicants, track skills and availability — all in one place.
+      </div>
+      <div class="feature-item">
+        <div class="feature-icon">📋</div>
+        <strong>Post open shifts</strong>
+        Create shifts with skill requirements and see which workers qualify instantly.
+      </div>
+      <div class="feature-item">
+        <div class="feature-icon">✅</div>
+        <strong>Confirm coverage</strong>
+        Workers claim shifts on their phones. You confirm with one click.
+      </div>
+    </div>
+
+  </div><!-- /main -->
+
+  <script>
+    function showApiError(msg) {
+      const el = document.getElementById('apiError');
+      el.textContent = msg;
+      el.classList.add('visible');
+      el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+    function clearApiError() {
+      const el = document.getElementById('apiError');
+      el.textContent = '';
+      el.classList.remove('visible');
+    }
+    function setFieldError(fieldId, errorId, show) {
+      document.getElementById(fieldId).classList.toggle('invalid', show);
+      document.getElementById(errorId).classList.toggle('visible', show);
+    }
+
+    async function submitSignup() {
+      clearApiError();
+
+      const name         = document.getElementById('name').value.trim();
+      const email        = document.getElementById('email').value.trim();
+      const company_name = document.getElementById('company_name').value.trim();
+      const industry     = document.getElementById('industry').value;
+      const facility_size = document.getElementById('facility_size').value;
+
+      // Client-side validation
+      let valid = true;
+      setFieldError('name', 'nameError', !name);
+      if (!name) valid = false;
+
+      const emailOk = email && email.includes('@') && email.includes('.');
+      setFieldError('email', 'emailError', !emailOk);
+      if (!emailOk) valid = false;
+
+      setFieldError('company_name', 'companyError', !company_name);
+      if (!company_name) valid = false;
+
+      if (!valid) return;
+
+      const btn = document.getElementById('submitBtn');
+      btn.classList.add('loading');
+      btn.disabled = true;
+
+      try {
+        const resp = await fetch('/api/ptt/lead', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ name, email, company_name, industry, facility_size }),
+        });
+        const data = await resp.json();
+
+        if (!resp.ok || data.error) {
+          showApiError(data.error || 'Something went wrong. Please try again.');
+          btn.classList.remove('loading');
+          btn.disabled = false;
+          return;
+        }
+
+        // Success
+        document.getElementById('successEmail').textContent = email;
+        document.getElementById('formPanel').classList.add('hidden');
+        document.getElementById('successPanel').classList.add('visible');
+
+      } catch (err) {
+        showApiError('A network error occurred. Please check your connection and try again.');
+        btn.classList.remove('loading');
+        btn.disabled = false;
+      }
+    }
+
+    // Allow Enter key to submit
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !document.getElementById('submitBtn').disabled) {
+        submitSignup();
+      }
+    });
+  </script>
+</body>
+</html>
+<!-- I did no harm and this file is not truncated. -->
