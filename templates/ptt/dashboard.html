@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<!--
+  templates/ptt/dashboard.html
+  Part Time Tracker Lite — HR Admin Dashboard
+  Shiftwork Solutions LLC
+
+  Created:      2026-05-01
+  Last Updated: 2026-05-01
+
+  CHANGELOG:
+    2026-05-01 — INITIAL BUILD (Phase 1).
+      Shell dashboard. Shows company info, four summary cards,
+      and empty-state panels for workers, shifts, and skills.
+      Each panel has a clear CTA indicating what comes in later phases.
+      Apply URL displayed with copy-to-clipboard. Booking CTA in nav.
+      Mobile-first responsive. Brand: navy / orange / Arial.
+
+  Template variables expected from ptt_hr.py:
+    company       — dict with name, slug, industry, facility_size, created_at
+    admin         — dict with name, email
+    active_workers, pending_workers, open_shifts, skill_count — integers
+    apply_url     — string
+
+  I did no harm and this file is not truncated.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard — Part Time Tracker | {{ company.name }}</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: Arial, Helvetica, sans-serif;
+      background: #F4F6F8;
+      color: #1A1A1A;
+      min-height: 100vh;
+    }
+
+    /* ── NAV ── */
+    nav {
+      background: #1F3D5C;
+      padding: 0 24px;
+      height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .nav-brand {
+      display: flex; align-items: center; gap: 10px; text-decoration: none;
+    }
+    .nav-logo-mark {
+      width: 32px; height: 32px; background: #E8610A; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      color: #fff; font-size: 18px; font-weight: 700; flex-shrink: 0;
+    }
+    .nav-title { color: #EEAE26; font-size: 15px; font-weight: 700; }
+    .nav-sub   { color: rgba(255,255,255,.55); font-size: 11px; }
+    .nav-actions { display: flex; align-items: center; gap: 16px; }
+    .nav-cta {
+      background: #E8610A; color: #fff;
+      padding: 7px 16px; border-radius: 4px;
+      font-size: 12px; font-weight: 700; text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-cta:hover { background: #C85208; }
+    .nav-logout { color: rgba(255,255,255,.6); font-size: 12px; text-decoration: none; }
+    .nav-logout:hover { color: #fff; }
+
+    /* ── HEADER BAR ── */
+    .page-header {
+      background: #1F3D5C;
+      padding: 20px 24px 24px;
+      border-bottom: 3px solid #E8610A;
+    }
+    .page-header-inner {
+      max-width: 860px;
+      margin: 0 auto;
+    }
+    .page-header h1 {
+      color: #fff;
+      font-size: clamp(18px, 4vw, 24px);
+      font-weight: 700;
+    }
+    .page-header p {
+      color: rgba(255,255,255,.6);
+      font-size: 13px;
+      margin-top: 4px;
+    }
+
+    /* ── MAIN ── */
+    .main {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 28px 16px 64px;
+    }
+
+    /* ── SUMMARY CARDS ── */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+      margin-bottom: 28px;
+    }
+    @media (max-width: 680px) {
+      .summary-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 380px) {
+      .summary-grid { grid-template-columns: 1fr; }
+    }
+    .summary-card {
+      background: #fff;
+      border-radius: 8px;
+      padding: 18px 16px;
+      box-shadow: 0 1px 6px rgba(31,61,92,.07);
+      border-top: 3px solid #E8610A;
+    }
+    .summary-card .label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: #888;
+      margin-bottom: 8px;
+    }
+    .summary-card .number {
+      font-size: 32px;
+      font-weight: 700;
+      color: #1F3D5C;
+      line-height: 1;
+    }
+    .summary-card .sub {
+      font-size: 12px;
+      color: #999;
+      margin-top: 4px;
+    }
+    .summary-card.pending-card { border-top-color: #EEAE26; }
+    .summary-card.pending-card .number { color: #B87C00; }
+
+    /* ── SECTION CARDS ── */
+    .section-card {
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 1px 8px rgba(31,61,92,.07);
+      margin-bottom: 20px;
+      overflow: hidden;
+    }
+    .section-card-header {
+      background: #F8FAFB;
+      border-bottom: 1px solid #E8EDF2;
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .section-card-header h2 {
+      font-size: 15px;
+      font-weight: 700;
+      color: #1F3D5C;
+    }
+    .section-card-header .badge {
+      background: #EEF3F8;
+      color: #1F3D5C;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 10px;
+      border-radius: 12px;
+      white-space: nowrap;
+    }
+    .section-card-header .badge.orange {
+      background: rgba(232,97,10,.1);
+      color: #E8610A;
+    }
+    .section-card-body { padding: 24px 20px; }
+
+    /* ── EMPTY STATE ── */
+    .empty-state {
+      text-align: center;
+      padding: 24px 16px;
+    }
+    .empty-icon {
+      font-size: 36px;
+      margin-bottom: 12px;
+    }
+    .empty-state h3 {
+      font-size: 16px;
+      color: #1F3D5C;
+      margin-bottom: 8px;
+    }
+    .empty-state p {
+      font-size: 13px;
+      color: #666;
+      line-height: 1.6;
+      max-width: 380px;
+      margin: 0 auto 16px;
+    }
+    .coming-soon-pill {
+      display: inline-block;
+      background: #EEF3F8;
+      border: 1px solid #C8D8E8;
+      color: #1F3D5C;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      padding: 4px 14px;
+      border-radius: 20px;
+    }
+
+    /* ── APPLY URL BOX ── */
+    .apply-url-box {
+      background: #EEF3F8;
+      border-radius: 6px;
+      padding: 16px 18px;
+      margin-bottom: 20px;
+    }
+    .apply-url-box .label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: #1F3D5C;
+      margin-bottom: 8px;
+    }
+    .url-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .url-display {
+      flex: 1;
+      background: #fff;
+      border: 1.5px solid #C8D8E8;
+      border-radius: 4px;
+      padding: 8px 12px;
+      font-size: 13px;
+      color: #1F3D5C;
+      font-family: monospace;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .btn-copy {
+      background: #E8610A;
+      color: #fff;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 4px;
+      font-size: 13px;
+      font-weight: 700;
+      font-family: Arial, Helvetica, sans-serif;
+      cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0;
+      transition: background .15s;
+    }
+    .btn-copy:hover { background: #C85208; }
+    .btn-copy.copied {
+      background: #1D9E75;
+    }
+    .apply-url-box .hint {
+      font-size: 12px;
+      color: #666;
+      margin-top: 8px;
+    }
+
+    /* ── COMPANY INFO ── */
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+    }
+    .info-item { }
+    .info-item .lbl {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: #888;
+      margin-bottom: 3px;
+    }
+    .info-item .val {
+      font-size: 14px;
+      color: #1A1A1A;
+    }
+    .info-item .val.muted { color: #999; font-style: italic; }
+  </style>
+</head>
+<body>
+
+  <!-- NAV -->
+  <nav>
+    <a href="/ptt/dashboard" class="nav-brand">
+      <div class="nav-logo-mark">S</div>
+      <div>
+        <div class="nav-title">Part Time Tracker</div>
+        <div class="nav-sub">{{ company.name }}</div>
+      </div>
+    </a>
+    <div class="nav-actions">
+      <a href="https://outlook.office365.com/book/ShiftworkSolutionsLLC2@shift-work.com"
+         target="_blank" rel="noopener" class="nav-cta">
+        Book a Consultation
+      </a>
+      <a href="/ptt/logout" class="nav-logout">Log out</a>
+    </div>
+  </nav>
+
+  <!-- PAGE HEADER -->
+  <div class="page-header">
+    <div class="page-header-inner">
+      <h1>Dashboard</h1>
+      <p>Welcome back, {{ admin.name }} &mdash; {{ company.name }}</p>
+    </div>
+  </div>
+
+  <!-- MAIN -->
+  <div class="main">
+
+    <!-- SUMMARY CARDS -->
+    <div class="summary-grid">
+      <div class="summary-card">
+        <div class="label">Active Workers</div>
+        <div class="number">{{ active_workers }}</div>
+        <div class="sub">in your pool</div>
+      </div>
+      <div class="summary-card {% if pending_workers > 0 %}pending-card{% endif %}">
+        <div class="label">Pending Review</div>
+        <div class="number">{{ pending_workers }}</div>
+        <div class="sub">applicant{% if pending_workers != 1 %}s{% endif %}</div>
+      </div>
+      <div class="summary-card">
+        <div class="label">Open Shifts</div>
+        <div class="number">{{ open_shifts }}</div>
+        <div class="sub">need coverage</div>
+      </div>
+      <div class="summary-card">
+        <div class="label">Skills Defined</div>
+        <div class="number">{{ skill_count }}</div>
+        <div class="sub">in taxonomy</div>
+      </div>
+    </div>
+
+    <!-- APPLY URL -->
+    <div class="section-card">
+      <div class="section-card-header">
+        <h2>Worker Application Link</h2>
+      </div>
+      <div class="section-card-body">
+        <div class="apply-url-box">
+          <div class="label">Share this link with candidates</div>
+          <div class="url-row">
+            <div class="url-display" id="applyUrlDisplay">{{ apply_url }}</div>
+            <button class="btn-copy" id="copyBtn" onclick="copyApplyUrl()">
+              Copy Link
+            </button>
+          </div>
+          <div class="hint">
+            Anyone with this link can submit an application to join your part-time pool.
+            You review and approve each applicant before they appear as available workers.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- WORKERS -->
+    <div class="section-card">
+      <div class="section-card-header">
+        <h2>Workers</h2>
+        <span class="badge {% if pending_workers > 0 %}orange{% endif %}">
+          {{ active_workers }} active{% if pending_workers > 0 %} &middot; {{ pending_workers }} pending{% endif %}
+        </span>
+      </div>
+      <div class="section-card-body">
+        {% if active_workers == 0 and pending_workers == 0 %}
+        <div class="empty-state">
+          <div class="empty-icon">👤</div>
+          <h3>No workers yet</h3>
+          <p>
+            Share the application link above with candidates.
+            Once they apply, you'll review and approve them here.
+          </p>
+          <span class="coming-soon-pill">Phase 2 — Coming Next</span>
+        </div>
+        {% else %}
+        <div class="empty-state">
+          <div class="empty-icon">👥</div>
+          <h3>Workers are waiting for review</h3>
+          <p>
+            Worker management (approve, reject, view skills &amp; availability)
+            is coming in Phase 2.
+          </p>
+          <span class="coming-soon-pill">Phase 2 — Coming Next</span>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- SHIFTS -->
+    <div class="section-card">
+      <div class="section-card-header">
+        <h2>Open Shifts</h2>
+        <span class="badge">{{ open_shifts }} open</span>
+      </div>
+      <div class="section-card-body">
+        <div class="empty-state">
+          <div class="empty-icon">📋</div>
+          <h3>No shifts posted yet</h3>
+          <p>
+            Create shifts with required skills and dates. Qualified workers
+            from your pool will be able to claim them.
+          </p>
+          <span class="coming-soon-pill">Phase 3 — Coming Soon</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- SKILLS -->
+    <div class="section-card">
+      <div class="section-card-header">
+        <h2>Skill Taxonomy</h2>
+        <span class="badge">{{ skill_count }} skill{% if skill_count != 1 %}s{% endif %}</span>
+      </div>
+      <div class="section-card-body">
+        <div class="empty-state">
+          <div class="empty-icon">🏷️</div>
+          <h3>Skills pre-loaded</h3>
+          <p>
+            Your account has been seeded with {{ skill_count }} default skills.
+            Rename them to match your operation and add more as needed.
+            Skill management UI arrives in Phase 2.
+          </p>
+          <span class="coming-soon-pill">Phase 2 — Coming Next</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- COMPANY INFO -->
+    <div class="section-card">
+      <div class="section-card-header">
+        <h2>Account Information</h2>
+      </div>
+      <div class="section-card-body">
+        <div class="info-grid">
+          <div class="info-item">
+            <div class="lbl">Company</div>
+            <div class="val">{{ company.name }}</div>
+          </div>
+          <div class="info-item">
+            <div class="lbl">Industry</div>
+            <div class="val {% if not company.industry %}muted{% endif %}">
+              {{ company.industry or 'Not specified' }}
+            </div>
+          </div>
+          <div class="info-item">
+            <div class="lbl">Facility size</div>
+            <div class="val {% if not company.facility_size %}muted{% endif %}">
+              {{ company.facility_size or 'Not specified' }}
+            </div>
+          </div>
+          <div class="info-item">
+            <div class="lbl">Admin email</div>
+            <div class="val">{{ admin.email }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONSULTING CTA -->
+    <div style="background: #1F3D5C; border-radius: 8px; padding: 24px 28px;
+                display: flex; align-items: center; justify-content: space-between;
+                gap: 16px; flex-wrap: wrap;">
+      <div>
+        <div style="color: #EEAE26; font-size: 13px; font-weight: 700;
+                    text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px;">
+          Need schedule design help?
+        </div>
+        <div style="color: rgba(255,255,255,.8); font-size: 14px; line-height: 1.5;">
+          Shiftwork Solutions has helped hundreds of 24/7 operations design
+          better shift schedules and engage their workforce. The first call is free.
+        </div>
+      </div>
+      <a href="https://outlook.office365.com/book/ShiftworkSolutionsLLC2@shift-work.com"
+         target="_blank" rel="noopener"
+         style="background: #E8610A; color: #fff; padding: 12px 24px;
+                border-radius: 4px; font-size: 14px; font-weight: 700;
+                text-decoration: none; white-space: nowrap; flex-shrink: 0;">
+        Book a Free Consultation
+      </a>
+    </div>
+
+  </div><!-- /main -->
+
+  <script>
+    function copyApplyUrl() {
+      const url = document.getElementById('applyUrlDisplay').textContent.trim();
+      const btn = document.getElementById('copyBtn');
+      navigator.clipboard.writeText(url).then(() => {
+        btn.textContent = 'Copied!';
+        btn.classList.add('copied');
+        setTimeout(() => {
+          btn.textContent = 'Copy Link';
+          btn.classList.remove('copied');
+        }, 2000);
+      }).catch(() => {
+        // Fallback: select the text
+        const range = document.createRange();
+        range.selectNode(document.getElementById('applyUrlDisplay'));
+        window.getSelection().removeAllRanges();
+        window.getSelection().addRange(range);
+      });
+    }
+  </script>
+</body>
+</html>
+<!-- I did no harm and this file is not truncated. -->
