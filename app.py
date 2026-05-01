@@ -1,9 +1,25 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: April 28, 2026 — Site Events Tracking
+Last Updated: May 01, 2026 — Part Time Tracker Lite (Phase 1)
 
 CHANGELOG:
+- May 01, 2026: Part Time Tracker Lite — Phase 1 — TWO CHANGES ONLY:
+  1. MIGRATION: Added migration_009_ptt.py call in STEP 1,
+     immediately after migration_008_site_events.py. Creates all
+     ptt_* tables for the Part Time Tracker Lite product:
+     ptt_company, ptt_admin_user, ptt_skill, ptt_worker,
+     ptt_worker_skill, ptt_availability, ptt_blackout, ptt_shift,
+     ptt_shift_skill, ptt_shift_outreach, ptt_shift_claim,
+     ptt_magic_token, ptt_session. Fully idempotent.
+  2. BLUEPRINT: Registered ptt_hr_bp from routes/ptt_hr.py.
+     Placed immediately AFTER the site_events_bp registration block.
+     Provides GET /ptt/, GET /ptt/login, GET /ptt/auth,
+     GET /ptt/dashboard, GET /ptt/logout,
+     POST /api/ptt/lead, POST /api/ptt/login-request,
+     GET /api/ptt/admin/dashboard-summary.
+  NO OTHER CHANGES. Rule 1 (do no harm) preserved.
+
 - April 28, 2026: Site Events Tracking — TWO CHANGES ONLY:
   1. MIGRATION: Added migration_008_site_events.py call in STEP 1,
      immediately after migration_007_security.py. Creates site_events
@@ -324,6 +340,30 @@ try:
     print("Site Events Tracking migration (008) complete")
 except Exception as e:
     print(f"Site Events Tracking migration (008) failed: {e}")
+    import traceback
+    traceback.print_exc()
+
+# ----------------------------------------------------------------------------
+# MIGRATION 009: Part Time Tracker Lite
+# Added: May 01, 2026
+# Creates all ptt_* tables: ptt_company, ptt_admin_user, ptt_skill,
+# ptt_worker, ptt_worker_skill, ptt_availability, ptt_blackout,
+# ptt_shift, ptt_shift_skill, ptt_shift_outreach, ptt_shift_claim,
+# ptt_magic_token, ptt_session.
+# No existing Swarm tables modified. Fully idempotent.
+# ----------------------------------------------------------------------------
+try:
+    import importlib.util as _ilu9
+    import os as _os9
+    _m009_path = _os9.path.join(_os9.path.dirname(_os9.path.abspath(__file__)),
+                                'migrations', 'migration_009_ptt.py')
+    _spec009 = _ilu9.spec_from_file_location("migration_009_ptt", _m009_path)
+    _mod009 = _ilu9.module_from_spec(_spec009)
+    _spec009.loader.exec_module(_mod009)
+    _mod009.run_migration()
+    print("Part Time Tracker migration (009) complete")
+except Exception as e:
+    print(f"Part Time Tracker migration (009) failed: {e}")
     import traceback
     traceback.print_exc()
 
@@ -964,7 +1004,7 @@ def health():
 
     return jsonify({
         'status': 'healthy',
-        'version': 'Site Events Apr28 + Assessment PDF Apr21 + Assessment Sheets Apr17 + Security Hardening Apr07 + Newsletter API Apr02 + Survey in a Box Phase 2 Mar26 + Phase 3 Mar13 + Phase 6 Proactive Agent Mar12 + Phase 2 Survey Assembly Mar12 + Phase 1 Onboarding Mar10 + Phase 3 Capabilities Manifest Mar08 + Phase 2A Memory Mar05 + PostgreSQL Migration Mar02',
+        'version': 'PTT Lite Phase1 May01 + Site Events Apr28 + Assessment PDF Apr21 + Assessment Sheets Apr17 + Security Hardening Apr07 + Newsletter API Apr02 + Survey in a Box Phase 2 Mar26 + Phase 3 Mar13 + Phase 6 Proactive Agent Mar12 + Phase 2 Survey Assembly Mar12 + Phase 1 Onboarding Mar10 + Phase 3 Capabilities Manifest Mar08 + Phase 2A Memory Mar05 + PostgreSQL Migration Mar02',
         'database': {
             'type': get_db_type(),
             'backend': 'PostgreSQL (persistent)' if get_db_type() == 'postgresql' else 'SQLite (local dev)'
@@ -1064,6 +1104,15 @@ def health():
             'summary_url': '/api/events/summary',
             'recent_url': '/api/events/recent',
             'sessions_url': '/api/events/sessions',
+        },
+        'part_time_tracker': {
+            'status': 'enabled',
+            'phase': 'Lite Phase 1 — Foundation',
+            'signup_url': '/ptt/',
+            'login_url': '/ptt/login',
+            'dashboard_url': '/ptt/dashboard',
+            'api_lead': '/api/ptt/lead',
+            'api_login_request': '/api/ptt/login-request',
         },
     })
 
@@ -1445,6 +1494,24 @@ except ImportError as e:
 except Exception as e:
     print(f"Site Events registration failed: {e}")
 
+# ----------------------------------------------------------------------------
+# Part Time Tracker Lite — HR Admin Routes
+# Provides GET /ptt/ (signup page), GET /ptt/login, GET /ptt/auth (token
+# redemption), GET /ptt/dashboard (requires session), GET /ptt/logout,
+# POST /api/ptt/lead (HR signup), POST /api/ptt/login-request (magic link),
+# GET /api/ptt/admin/dashboard-summary.
+# Self-contained — does not modify any existing Swarm routes.
+# Added: May 01, 2026
+# ----------------------------------------------------------------------------
+try:
+    from routes.ptt_hr import ptt_hr_bp
+    app.register_blueprint(ptt_hr_bp)
+    print("Part Time Tracker HR Routes registered")
+except ImportError as e:
+    print(f"Part Time Tracker HR routes not found: {e}")
+except Exception as e:
+    print(f"Part Time Tracker HR registration failed: {e}")
+
 try:
     from routes.background_jobs import background_jobs_bp
     app.register_blueprint(background_jobs_bp)
@@ -1646,4 +1713,4 @@ if __name__ == '__main__':
     debug = os.environ.get('FLASK_ENV') == 'development'
     app.run(host='0.0.0.0', port=port, debug=debug)
 
-# I did no harm and this file is not truncated
+# I did no harm and this file is not truncated.
