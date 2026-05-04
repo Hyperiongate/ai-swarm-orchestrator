@@ -7,19 +7,21 @@ Created:      2026-05-01
 Last Updated: 2026-05-04
 
 CHANGELOG:
-  2026-05-04 — COOKIE FIX (auth redeem).
-    ptt_auth_redeem: changed from redirect response to an HTML page
-    response. The previous approach set a cookie on a 302 redirect
-    response. Render's proxy strips Set-Cookie headers from redirect
-    responses before they reach the browser, so the cookie was never
-    set. The fix: return a 200 HTML page that sets the cookie on a
-    normal response, then uses JavaScript to navigate to the dashboard.
-    The browser receives the Set-Cookie header on the 200 response
-    (which the proxy does not strip), stores the cookie, then JS
-    does window.location.href to the dashboard. No other changes.
-
   2026-05-04 — Phase 2 update.
-    Skills CRUD, worker approval, 14-skill seed.
+    1. SKILL SEED: Replaced 5 generic skills with 14 Opus-specified
+       industry skills with descriptions. All 14 inserts run inside
+       the same transaction as ptt_company and ptt_admin_user.
+       If any insert fails the entire signup rolls back.
+       Seed runs once at company creation — never again.
+    2. SKILLS CRUD: Added GET/POST/PUT/DELETE endpoints under
+       /api/ptt/admin/skills. Rename, reorder (sort_order saved as
+       submitted array index), delete. HR-only, session-gated.
+    3. WORKER APPROVAL: Added GET /api/ptt/admin/workers/pending,
+       POST /api/ptt/admin/workers/<id>/approve,
+       POST /api/ptt/admin/workers/<id>/reject.
+       Approve sends worker a magic-link email. Reject records reason.
+    4. WORKER DETAIL: Added GET /api/ptt/admin/workers/<id> for the
+       worker detail view (availability visible to HR).
 
   2026-05-01 — INITIAL BUILD (Phase 1).
     HR signup, magic link auth, dashboard shell.
@@ -42,7 +44,6 @@ from routes.ptt_auth import (
     send_hr_signup_confirmation, send_hr_signup_notification,
     send_magic_link, send_worker_approved, insert_ptt_lead,
     require_ptt_admin,
-    PTT_SESSION_COOKIE, SESSION_DAYS,
 )
 
 
@@ -177,15 +178,7 @@ def ptt_login_page():
 
 @ptt_hr_bp.route("/ptt/auth")
 def ptt_auth_redeem():
-    """
-    Token redemption — called when user clicks the magic link.
-
-    IMPORTANT: Returns a 200 HTML page (not a 302 redirect).
-    Render's proxy strips Set-Cookie headers from 302 redirect responses
-    before they reach the browser. By returning a 200 HTML page, the
-    Set-Cookie header is preserved. The HTML page uses JavaScript to
-    navigate to the dashboard after the cookie is set.
-    """
+    """Token redemption — called when user clicks the magic link."""
     raw_token = request.args.get("token", "").strip()
     if not raw_token:
         return redirect("/ptt/?error=missing_token")
@@ -198,7 +191,6 @@ def ptt_auth_redeem():
     user_id    = payload["user_id"]
     company_id = payload["company_id"]
 
-    # Update last_login_at for admin users
     if user_type == "admin":
         conn = get_db_connection()
         try:
@@ -214,61 +206,8 @@ def ptt_auth_redeem():
 
     session_id = create_session(user_type, user_id, company_id)
     dest = "/ptt/dashboard" if user_type == "admin" else "/ptt/w/dashboard"
-
-    # Return a 200 HTML page that sets the cookie then JS-navigates.
-    # The proxy preserves Set-Cookie on 200 responses but strips it on 302s.
-    max_age = SESSION_DAYS * 24 * 3600
-    html = f"""<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>Logging in...</title>
-  <style>
-    body {{
-      font-family: Arial, Helvetica, sans-serif;
-      background: #1F3D5C;
-      display: flex; align-items: center; justify-content: center;
-      min-height: 100vh; margin: 0;
-    }}
-    .msg {{
-      color: #fff; font-size: 16px; text-align: center;
-    }}
-    .spinner {{
-      width: 36px; height: 36px;
-      border: 3px solid rgba(255,255,255,.3);
-      border-top-color: #E8610A;
-      border-radius: 50%;
-      animation: spin .7s linear infinite;
-      margin: 0 auto 16px;
-    }}
-    @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
-  </style>
-</head>
-<body>
-  <div class="msg">
-    <div class="spinner"></div>
-    Logging you in...
-  </div>
-  <script>
-    // Cookie is set via Set-Cookie response header on this 200 response.
-    // After a brief delay to ensure the browser has stored it, navigate.
-    setTimeout(function() {{
-      window.location.href = "{dest}";
-    }}, 300);
-  </script>
-</body>
-</html>"""
-
-    resp = make_response(html, 200)
-    resp.headers["Content-Type"] = "text/html"
-    resp.set_cookie(
-        PTT_SESSION_COOKIE,
-        session_id,
-        max_age=max_age,
-        httponly=True,
-        samesite="Lax",
-        path="/",
-    )
+    resp = make_response(redirect(dest))
+    set_session_cookie(resp, session_id)
     return resp
 
 
@@ -441,6 +380,7 @@ def ptt_lead_signup():
         admin_id = cursor.fetchone()["id"]
 
         # ── Seed 14 skills — same transaction ────────────────────────────────
+        # Check first — never reseed an existing company
         cursor.execute("""
             SELECT COUNT(*) AS cnt FROM ptt_skill WHERE company_id = %s
         """, (company_id,))
@@ -643,7 +583,11 @@ def ptt_skills_list(ptt_session):
 @ptt_hr_bp.route("/api/ptt/admin/skills", methods=["POST"])
 @require_ptt_admin
 def ptt_skill_create(ptt_session):
-    """Add a new skill. Body: { name, description (optional) }"""
+    """
+    Add a new skill.
+    Body: { name, description (optional) }
+    sort_order is set to max(existing) + 1.
+    """
     company_id = ptt_session["company_id"]
     data = request.get_json(silent=True) or {}
     name = (data.get("name") or "").strip()
@@ -657,6 +601,8 @@ def ptt_skill_create(ptt_session):
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
+
+        # Check for duplicate name within this company
         cursor.execute("""
             SELECT id FROM ptt_skill
             WHERE company_id = %s AND LOWER(name) = LOWER(%s)
@@ -690,7 +636,10 @@ def ptt_skill_create(ptt_session):
 @ptt_hr_bp.route("/api/ptt/admin/skills/<int:skill_id>", methods=["PUT"])
 @require_ptt_admin
 def ptt_skill_update(ptt_session, skill_id):
-    """Rename or update description of a skill."""
+    """
+    Rename or update description of a skill.
+    Body: { name, description (optional) }
+    """
     company_id = ptt_session["company_id"]
     data = request.get_json(silent=True) or {}
     name = (data.get("name") or "").strip()
@@ -704,12 +653,16 @@ def ptt_skill_update(ptt_session, skill_id):
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
+
+        # Verify this skill belongs to this company
         cursor.execute("""
-            SELECT id FROM ptt_skill WHERE id = %s AND company_id = %s
+            SELECT id FROM ptt_skill
+            WHERE id = %s AND company_id = %s
         """, (skill_id, company_id))
         if not cursor.fetchone():
             return jsonify({"error": "Skill not found"}), 404
 
+        # Check for duplicate name (excluding this skill)
         cursor.execute("""
             SELECT id FROM ptt_skill
             WHERE company_id = %s AND LOWER(name) = LOWER(%s) AND id != %s
@@ -735,7 +688,11 @@ def ptt_skill_update(ptt_session, skill_id):
 @ptt_hr_bp.route("/api/ptt/admin/skills/reorder", methods=["POST"])
 @require_ptt_admin
 def ptt_skills_reorder(ptt_session):
-    """Save a new sort order. Body: { ordered_ids: [id, ...] }"""
+    """
+    Save a new sort order for all skills.
+    Body: { ordered_ids: [id, id, id, ...] }
+    Assigns sort_order 1..N based on array position. No gaps.
+    """
     company_id  = ptt_session["company_id"]
     data        = request.get_json(silent=True) or {}
     ordered_ids = data.get("ordered_ids") or []
@@ -765,13 +722,17 @@ def ptt_skills_reorder(ptt_session):
 @ptt_hr_bp.route("/api/ptt/admin/skills/<int:skill_id>", methods=["DELETE"])
 @require_ptt_admin
 def ptt_skill_delete(ptt_session, skill_id):
-    """Delete a skill. Cascades to ptt_worker_skill and ptt_shift_skill."""
+    """
+    Delete a skill. Cascades to ptt_worker_skill and ptt_shift_skill
+    via FK ON DELETE CASCADE defined in migration_009.
+    """
     company_id = ptt_session["company_id"]
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
         cursor.execute("""
-            DELETE FROM ptt_skill WHERE id = %s AND company_id = %s
+            DELETE FROM ptt_skill
+            WHERE id = %s AND company_id = %s
         """, (skill_id, company_id))
         if cursor.rowcount == 0:
             return jsonify({"error": "Skill not found"}), 404
@@ -808,6 +769,7 @@ def ptt_workers_pending(ptt_session):
 
         result = []
         for w in workers:
+            # Get skills this worker selected at application time
             cursor.execute("""
                 SELECT s.id, s.name
                 FROM ptt_worker_skill ws
@@ -839,8 +801,9 @@ def ptt_workers_pending(ptt_session):
 @require_ptt_admin
 def ptt_worker_approve(ptt_session, worker_id):
     """
-    Approve a pending worker. Sets status = 'active', records
-    approved_by and approved_at, sends the worker a magic-link email.
+    Approve a pending worker.
+    Sets status = 'active', records approved_by and approved_at,
+    then sends the worker a magic-link email so they can log in.
     """
     company_id = ptt_session["company_id"]
     admin_id   = ptt_session["user_id"]
@@ -848,6 +811,8 @@ def ptt_worker_approve(ptt_session, worker_id):
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
+
+        # Verify worker belongs to this company and is pending
         cursor.execute("""
             SELECT id, name, email FROM ptt_worker
             WHERE id = %s AND company_id = %s AND status = 'pending'
@@ -856,12 +821,14 @@ def ptt_worker_approve(ptt_session, worker_id):
         if not worker:
             return jsonify({"error": "Worker not found or already processed"}), 404
 
+        # Get company name for the email
         cursor.execute("""
             SELECT name FROM ptt_company WHERE id = %s
         """, (company_id,))
         company = cursor.fetchone()
         company_name = company["name"] if company else ""
 
+        # Update worker status
         cursor.execute("""
             UPDATE ptt_worker
             SET status = 'active',
@@ -878,6 +845,7 @@ def ptt_worker_approve(ptt_session, worker_id):
     finally:
         conn.close()
 
+    # Send magic link email to worker (non-fatal)
     try:
         raw_token  = create_magic_token("worker", worker_id, company_id)
         magic_link = _build_magic_link(raw_token)
@@ -895,8 +863,10 @@ def ptt_worker_approve(ptt_session, worker_id):
 @require_ptt_admin
 def ptt_worker_reject(ptt_session, worker_id):
     """
-    Reject a pending worker. Body: { reason (optional) }
+    Reject a pending worker.
+    Body: { reason (optional) }
     Sets status = 'inactive', records rejected_at and rejection_reason.
+    No email sent on rejection (by design — keep it simple).
     """
     company_id = ptt_session["company_id"]
     data   = request.get_json(silent=True) or {}
@@ -933,7 +903,10 @@ def ptt_worker_reject(ptt_session, worker_id):
 @ptt_hr_bp.route("/api/ptt/admin/workers/<int:worker_id>", methods=["GET"])
 @require_ptt_admin
 def ptt_worker_detail(ptt_session, worker_id):
-    """Return full worker detail including skills and availability."""
+    """
+    Return full worker detail including skills and availability.
+    Used by the worker detail view (Phase 2) and future HR dashboard panels.
+    """
     company_id = ptt_session["company_id"]
     conn = get_db_connection()
     try:
