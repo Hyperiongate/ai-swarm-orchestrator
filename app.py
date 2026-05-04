@@ -149,7 +149,7 @@ CHANGELOG:
 - February 5, 2026: INCREASED FILE UPLOAD LIMIT TO 100MB
 - January 30, 2026: ADDED BULLETPROOF PROJECT MANAGEMENT
 
-AUTHOR: Jim @ Shiftwork Solutions LLC
+AUTHOR: Jim @ Shiftwork Solutions LLC 
 """
 
 from flask import Flask, render_template, jsonify, request
