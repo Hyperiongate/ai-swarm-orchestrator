@@ -4,9 +4,14 @@ AI Swarm Orchestrator — Part Time Tracker: Auth Utilities
 Shiftwork Solutions LLC
 
 Created:      2026-05-01
-Last Updated: 2026-05-01
+Last Updated: 2026-05-04
 
 CHANGELOG:
+  2026-05-04 — Phase 2 update.
+    Removed DEFAULT_SKILLS list. Skill seeding now lives entirely in
+    ptt_hr.py inside the signup transaction where it belongs. Auth
+    module should not contain business content. No other changes.
+
   2026-05-01 — INITIAL BUILD (Phase 1).
     Magic link token generation and redemption.
     Server-side session cookie management.
@@ -19,11 +24,11 @@ PURPOSE:
     and helper functions without duplicating code.
 
 DESIGN DECISIONS:
-    - Tokens are stored as SHA-256 hash, never plaintext (brief requirement)
+    - Tokens are stored as SHA-256 hash, never plaintext
     - Session stored server-side in ptt_session table; cookie holds UUID only
     - Cookie: HttpOnly, Secure, SameSite=Lax, 30-day rolling expiry
     - Token expiry: 30 minutes
-    - Email sent via Resend using existing RESEND_API_KEY (same as assessment PDF)
+    - Email sent via Resend using existing RESEND_API_KEY
     - Email failures never block user flow — logged and silently skipped
     - Free-mail domain blocklist enforced server-side (15 domains)
 
@@ -123,7 +128,6 @@ def redeem_magic_token(raw_token: str):
         if not row:
             return None
 
-        # expires_at may come back as a datetime or a string depending on driver
         expires_at = row["expires_at"]
         if isinstance(expires_at, str):
             expires_at = datetime.fromisoformat(expires_at)
@@ -131,7 +135,6 @@ def redeem_magic_token(raw_token: str):
             expires_at = expires_at.replace(tzinfo=timezone.utc)
 
         if now > expires_at:
-            # Token expired — delete it and return None
             cursor.execute("DELETE FROM ptt_magic_token WHERE id = %s", (row["id"],))
             conn.commit()
             return None
@@ -290,7 +293,6 @@ def require_ptt_admin(f):
     def decorated(*args, **kwargs):
         session = get_current_session()
         if not session or session.get("user_type") != "admin":
-            # Detect API vs HTML request
             if request.path.startswith("/api/ptt/"):
                 return jsonify({"error": "Authentication required"}), 401
             return redirect("/ptt/")
@@ -344,13 +346,13 @@ def extract_domain(email: str) -> str:
 def generate_slug(company_name: str) -> str:
     """
     Convert a company name into a URL-safe slug.
-    E.g. 'Acme Corp.' -> 'acme-corp'
+    E.g. 'Acme Corp.' -> 'acme-corp-a1b2c3'
     Appends a random suffix to guarantee uniqueness.
     """
     import re
     base = re.sub(r"[^a-z0-9]+", "-", company_name.lower()).strip("-")
-    base = base[:40]  # max 40 chars before suffix
-    suffix = secrets.token_hex(3)  # 6-char hex suffix
+    base = base[:40]
+    suffix = secrets.token_hex(3)
     return f"{base}-{suffix}"
 
 
@@ -658,6 +660,7 @@ def insert_ptt_lead(company_name: str, admin_name: str, admin_email: str,
     source = 'ptt-lite-signup'. Returns the new lead id.
     Does not modify the leads table schema.
     """
+    import json as _json
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
@@ -677,7 +680,7 @@ def insert_ptt_lead(company_name: str, admin_name: str, admin_email: str,
             "ptt-lite-signup",
             "detected",
             0,
-            json.dumps({"product": "ptt-lite"}),
+            _json.dumps({"product": "ptt-lite"}),
         ))
         row = cursor.fetchone()
         conn.commit()
