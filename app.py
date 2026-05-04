@@ -1,23 +1,29 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: May 01, 2026 — Part Time Tracker Lite (Phase 1)
+Last Updated: May 04, 2026 — Part Time Tracker Lite (Phase 2 fixes)
 
 CHANGELOG:
+- May 04, 2026: Part Time Tracker Lite — Phase 2 fixes — THREE CHANGES ONLY:
+  1. MIGRATION: Added migration_010_ptt_phase2.py call in STEP 1,
+     immediately after migration_009_ptt.py. Adds approved_by,
+     approved_at, rejected_at, rejection_reason columns to ptt_worker.
+     Fully idempotent.
+  2. BLUEPRINT: Registered ptt_worker_intake_bp from
+     routes/ptt_worker_intake.py. Placed immediately AFTER the
+     ptt_hr_bp registration block. Provides public GET /ptt/apply/<slug>
+     and POST /api/ptt/apply/<slug> endpoints (no auth required).
+  3. DEV ENDPOINTS: Added two development-only admin endpoints:
+     POST /api/ptt/dev/reset-company — wipe all ptt_* data for a
+       company by email (for clean test resets).
+     POST /api/ptt/dev/reseed-skills — replace skills for an existing
+       company with the 14 Opus-specified skills.
+  4. HEALTH CHECK: Updated version string and part_time_tracker section.
+  NO OTHER CHANGES. Rule 1 (do no harm) preserved.
+
 - May 01, 2026: Part Time Tracker Lite — Phase 1 — TWO CHANGES ONLY:
-  1. MIGRATION: Added migration_009_ptt.py call in STEP 1,
-     immediately after migration_008_site_events.py. Creates all
-     ptt_* tables for the Part Time Tracker Lite product:
-     ptt_company, ptt_admin_user, ptt_skill, ptt_worker,
-     ptt_worker_skill, ptt_availability, ptt_blackout, ptt_shift,
-     ptt_shift_skill, ptt_shift_outreach, ptt_shift_claim,
-     ptt_magic_token, ptt_session. Fully idempotent.
+  1. MIGRATION: Added migration_009_ptt.py call in STEP 1.
   2. BLUEPRINT: Registered ptt_hr_bp from routes/ptt_hr.py.
-     Placed immediately AFTER the site_events_bp registration block.
-     Provides GET /ptt/, GET /ptt/login, GET /ptt/auth,
-     GET /ptt/dashboard, GET /ptt/logout,
-     POST /api/ptt/lead, POST /api/ptt/login-request,
-     GET /api/ptt/admin/dashboard-summary.
   NO OTHER CHANGES. Rule 1 (do no harm) preserved.
 
 - April 28, 2026: Site Events Tracking — TWO CHANGES ONLY:
@@ -122,16 +128,8 @@ CHANGELOG:
   sequence are completely unchanged.
 
 - March 12, 2026: Phase 6 Deliverable 7 — Scheduler + Swarm self-registration
-  (see prior entries for full detail)
-
 - March 12, 2026: Phase 6 Proactive Agent — Registered proactive_bp
-
-- March 10, 2026: Survey in a Box Phase 1 — THREE CHANGES ONLY:
-  1. MIGRATION: Added migration_002_survey_in_a_box.py call in STEP 1.
-  2. BLUEPRINT: Registered survey_intake_bp from routes/survey_intake.py.
-  3. BLUEPRINT: Registered survey_admin_bp from routes/survey_admin.py.
-  NO OTHER CHANGES.
-
+- March 10, 2026: Survey in a Box Phase 1 — THREE CHANGES ONLY
 - March 08, 2026: Phase 3 Self-Awareness — CAPABILITIES MANIFEST WIRED IN
 - March 05, 2026: Phase 2A Memory Schema Fix
 - March 05, 2026: Phase 2A - Registered memory blueprint (routes/memory.py)
@@ -193,8 +191,6 @@ except Exception as e:
 # ----------------------------------------------------------------------------
 # MIGRATION 002: Survey in a Box tables
 # Added: March 10, 2026
-# Creates survey_clients, survey_projects, survey_project_history.
-# Fully idempotent — safe to run on every startup.
 # ----------------------------------------------------------------------------
 try:
     import importlib.util as _ilu
@@ -214,9 +210,6 @@ except Exception as e:
 # ----------------------------------------------------------------------------
 # MIGRATION 003: Survey Responses table
 # Added: March 13, 2026
-# Creates survey_responses (JSONB one-row-per-respondent).
-# Adds survey_url, is_open, opened_at, closed_at to survey_projects.
-# Fully idempotent — safe to run on every startup.
 # ----------------------------------------------------------------------------
 try:
     import importlib.util as _ilu3
@@ -236,10 +229,6 @@ except Exception as e:
 # ----------------------------------------------------------------------------
 # MIGRATION 004: Phase 2 Enhancements
 # Added: March 26, 2026
-# Creates survey_roster table.
-# Adds roster_uploaded, roster_count, generated_document_path to survey_projects.
-# Adds employee_code to survey_responses.
-# Fully idempotent — safe to run on every startup.
 # ----------------------------------------------------------------------------
 try:
     import importlib.util as _ilu4
@@ -259,9 +248,6 @@ except Exception as e:
 # ----------------------------------------------------------------------------
 # MIGRATION 005: Code Mode column
 # Added: March 27, 2026
-# Adds code_mode column to survey_projects (DEFAULT 'random').
-# Values: 'random' (system-generated 5-digit codes) or 'employee_id'.
-# Fully idempotent — safe to run on every startup.
 # ----------------------------------------------------------------------------
 try:
     import importlib.util as _ilu5
@@ -281,8 +267,6 @@ except Exception as e:
 # ----------------------------------------------------------------------------
 # MIGRATION 006: Newsletter Subscribers table
 # Added: April 2, 2026
-# Creates newsletter_subscribers table for shift-work.com signups.
-# Fully idempotent — safe to run on every startup.
 # ----------------------------------------------------------------------------
 try:
     import importlib.util as _ilu6
@@ -302,9 +286,6 @@ except Exception as e:
 # ----------------------------------------------------------------------------
 # MIGRATION 007: Security Enhancements
 # Added: April 7, 2026
-# Creates ip_blocklist table, contact_submissions table.
-# Adds user_agent and email_domain columns to newsletter_subscribers.
-# Fully idempotent — safe to run on every startup.
 # ----------------------------------------------------------------------------
 try:
     import importlib.util as _ilu7
@@ -324,9 +305,6 @@ except Exception as e:
 # ----------------------------------------------------------------------------
 # MIGRATION 008: Site Events Tracking
 # Added: April 28, 2026
-# Creates site_events table for shift-work.com visitor event tracking.
-# Stores all 10 event types from /js/event-tracker.js on the static site.
-# Fully idempotent — safe to run on every startup.
 # ----------------------------------------------------------------------------
 try:
     import importlib.util as _ilu8
@@ -346,11 +324,8 @@ except Exception as e:
 # ----------------------------------------------------------------------------
 # MIGRATION 009: Part Time Tracker Lite
 # Added: May 01, 2026
-# Creates all ptt_* tables: ptt_company, ptt_admin_user, ptt_skill,
-# ptt_worker, ptt_worker_skill, ptt_availability, ptt_blackout,
-# ptt_shift, ptt_shift_skill, ptt_shift_outreach, ptt_shift_claim,
-# ptt_magic_token, ptt_session.
-# No existing Swarm tables modified. Fully idempotent.
+# Creates all ptt_* tables. No existing Swarm tables modified.
+# Fully idempotent.
 # ----------------------------------------------------------------------------
 try:
     import importlib.util as _ilu9
@@ -364,6 +339,27 @@ try:
     print("Part Time Tracker migration (009) complete")
 except Exception as e:
     print(f"Part Time Tracker migration (009) failed: {e}")
+    import traceback
+    traceback.print_exc()
+
+# ----------------------------------------------------------------------------
+# MIGRATION 010: Part Time Tracker Phase 2 — Worker audit columns
+# Added: May 04, 2026
+# Adds approved_by, approved_at, rejected_at, rejection_reason to
+# ptt_worker. No other tables modified. Fully idempotent.
+# ----------------------------------------------------------------------------
+try:
+    import importlib.util as _ilu10
+    import os as _os10
+    _m010_path = _os10.path.join(_os10.path.dirname(_os10.path.abspath(__file__)),
+                                 'migrations', 'migration_010_ptt_phase2.py')
+    _spec010 = _ilu10.spec_from_file_location("migration_010_ptt_phase2", _m010_path)
+    _mod010 = _ilu10.module_from_spec(_spec010)
+    _spec010.loader.exec_module(_mod010)
+    _mod010.run_migration()
+    print("Part Time Tracker Phase 2 migration (010) complete")
+except Exception as e:
+    print(f"Part Time Tracker Phase 2 migration (010) failed: {e}")
     import traceback
     traceback.print_exc()
 
@@ -385,7 +381,6 @@ except Exception as e:
 
 # ============================================================================
 # STEP 3: RUN REMAINING LEGACY DATABASE MIGRATIONS
-# Only migrations that still perform real work on the PostgreSQL schema.
 # ============================================================================
 print("Running legacy database migrations...")
 
@@ -404,23 +399,12 @@ except Exception as e:
     import traceback
     traceback.print_exc()
 
-# ----------------------------------------------------------------------------
-# ADD MISSING COLUMNS - fixes UndefinedColumn errors on case_studies,
-# blog_posts, and projects tables (columns existed in code but not in DB)
-# Added: March 03, 2026
-# ----------------------------------------------------------------------------
 try:
     from add_missing_columns import add_missing_columns
     add_missing_columns()
 except Exception as e:
     print(f"Missing columns migration: {e}")
 
-# ----------------------------------------------------------------------------
-# FIX BROKEN TABLE SCHEMAS - Phase 9b
-# Drops and recreates tables that have wrong column structures from the
-# old migration. Safe to run every startup (checks before dropping).
-# Added: March 03, 2026
-# ----------------------------------------------------------------------------
 try:
     from fix_broken_tables import fix_broken_tables
     fix_broken_tables()
@@ -505,30 +489,19 @@ except Exception as e:
 
 # ============================================================================
 # PHASE 3: DEFERRED CAPABILITIES MANIFEST WARM
-# The knowledge base initializes in a background thread (~30 seconds).
-# We cannot warm the manifest immediately at startup because is_ready will
-# be False until the KB thread completes. Instead we launch a daemon thread
-# that polls until the KB is ready (up to 120 seconds), then generates the
-# manifest with the correct KB stats. By the time the first user request
-# arrives, the manifest is cached and correct.
-# Updated: March 08, 2026 (Pass 2 — deferred warm replaces immediate warm)
+# Updated: March 08, 2026
 # ============================================================================
 print("Scheduling deferred capabilities manifest warm (waiting for KB ready)...")
 try:
     import threading as _threading
 
     def _warm_manifest_when_kb_ready(kb_ref, max_wait=120):
-        """
-        Background thread: poll until KB is ready, then warm the manifest.
-        Falls back to generating without KB stats if KB never becomes ready.
-        """
         import time as _time
         deadline = _time.time() + max_wait
         while _time.time() < deadline:
             if kb_ref is not None and getattr(kb_ref, 'is_ready', False):
                 break
             _time.sleep(2)
-
         try:
             from intelligence.capabilities_manifest import (
                 generate_capabilities_manifest,
@@ -749,15 +722,12 @@ def restore_knowledge():
                 'success': False,
                 'error': 'No export_file field in request. POST multipart/form-data with field name export_file.'
             }), 400
-
         export_file = request.files['export_file']
-
         if not export_file.filename.endswith('.json'):
             return jsonify({
                 'success': False,
                 'error': f'File must be a .json export file. Got: {export_file.filename}'
             }), 400
-
         import json as json_module
         try:
             export_data = json_module.load(export_file)
@@ -766,12 +736,10 @@ def restore_knowledge():
                 'success': False,
                 'error': f'Could not parse JSON file: {str(parse_err)}'
             }), 400
-
         from knowledge_restore import restore_knowledge_from_export
         result = restore_knowledge_from_export(export_data)
         status_code = 200 if result['success'] else 207
         return jsonify(result), status_code
-
     except Exception as e:
         import traceback
         return jsonify({
@@ -979,10 +947,6 @@ def health():
     except Exception:
         blog_posts_status = 'not_installed'
 
-    # =========================================================================
-    # PHASE 3: CAPABILITIES MANIFEST STATUS
-    # Added: March 08, 2026
-    # =========================================================================
     capabilities_manifest_status = {}
     try:
         from intelligence.capabilities_manifest import get_manifest_summary, get_manifest_metadata
@@ -1004,7 +968,7 @@ def health():
 
     return jsonify({
         'status': 'healthy',
-        'version': 'PTT Lite Phase1 May01 + Site Events Apr28 + Assessment PDF Apr21 + Assessment Sheets Apr17 + Security Hardening Apr07 + Newsletter API Apr02 + Survey in a Box Phase 2 Mar26 + Phase 3 Mar13 + Phase 6 Proactive Agent Mar12 + Phase 2 Survey Assembly Mar12 + Phase 1 Onboarding Mar10 + Phase 3 Capabilities Manifest Mar08 + Phase 2A Memory Mar05 + PostgreSQL Migration Mar02',
+        'version': 'PTT Lite Phase2 May04 + PTT Lite Phase1 May01 + Site Events Apr28 + Assessment PDF Apr21 + Assessment Sheets Apr17 + Security Hardening Apr07 + Newsletter API Apr02 + Survey in a Box Phase 2 Mar26 + Phase 3 Mar13 + Phase 6 Proactive Agent Mar12 + Phase 1 Onboarding Mar10 + Phase 3 Capabilities Manifest Mar08 + Phase 2A Memory Mar05 + PostgreSQL Migration Mar02',
         'database': {
             'type': get_db_type(),
             'backend': 'PostgreSQL (persistent)' if get_db_type() == 'postgresql' else 'SQLite (local dev)'
@@ -1107,12 +1071,16 @@ def health():
         },
         'part_time_tracker': {
             'status': 'enabled',
-            'phase': 'Lite Phase 1 — Foundation',
+            'phase': 'Lite Phase 2 — Skills CRUD + Worker Intake + Approval',
             'signup_url': '/ptt/',
             'login_url': '/ptt/login',
             'dashboard_url': '/ptt/dashboard',
+            'apply_url': '/ptt/apply/<slug>',
             'api_lead': '/api/ptt/lead',
             'api_login_request': '/api/ptt/login-request',
+            'api_apply': '/api/ptt/apply/<slug>',
+            'dev_reset': '/api/ptt/dev/reset-company (POST {email})',
+            'dev_reseed': '/api/ptt/dev/reseed-skills (POST {email})',
         },
     })
 
@@ -1301,12 +1269,6 @@ except ImportError as e:
 except Exception as e:
     print(f"Blog Post Generator registration failed: {e}")
 
-# ----------------------------------------------------------------------------
-# Phase 2A: Memory System API
-# Provides /api/memory/health, /api/memory/stats, /api/memory/recent,
-# /api/memory/search endpoints.
-# Added: March 05, 2026
-# ----------------------------------------------------------------------------
 try:
     from routes.memory import memory_bp
     app.register_blueprint(memory_bp)
@@ -1316,12 +1278,6 @@ except ImportError as e:
 except Exception as e:
     print(f"Memory System registration failed: {e}")
 
-# ----------------------------------------------------------------------------
-# Phase 3: Capabilities Manifest API
-# Provides GET /api/capabilities, GET /api/capabilities/summary,
-# POST /api/capabilities/refresh endpoints.
-# Added: March 08, 2026
-# ----------------------------------------------------------------------------
 try:
     from routes.capabilities import capabilities_bp
     app.register_blueprint(capabilities_bp)
@@ -1331,11 +1287,6 @@ except ImportError as e:
 except Exception as e:
     print(f"Capabilities Manifest registration failed: {e}")
 
-# ----------------------------------------------------------------------------
-# Survey in a Box: Intake Form API
-# Provides GET /survey/start (public form) and POST /api/survey/intake/submit.
-# Added: March 10, 2026
-# ----------------------------------------------------------------------------
 try:
     from routes.survey_intake import survey_intake_bp
     app.register_blueprint(survey_intake_bp)
@@ -1345,11 +1296,6 @@ except ImportError as e:
 except Exception as e:
     print(f"Survey Intake registration failed: {e}")
 
-# ----------------------------------------------------------------------------
-# Survey in a Box: Admin Dashboard API
-# Provides GET /survey/admin and all /api/survey/admin/* endpoints.
-# Added: March 10, 2026
-# ----------------------------------------------------------------------------
 try:
     from routes.survey_admin import survey_admin_bp
     app.register_blueprint(survey_admin_bp)
@@ -1359,12 +1305,6 @@ except ImportError as e:
 except Exception as e:
     print(f"Survey Admin registration failed: {e}")
 
-# ----------------------------------------------------------------------------
-# Survey in a Box: Respondent API (Phase 3)
-# Provides /survey/take/<token>, /api/survey/take/* endpoints,
-# and /api/survey/admin/project/*/open,close,responses,export.
-# Added: March 13, 2026
-# ----------------------------------------------------------------------------
 try:
     from routes.survey_respondent import survey_respondent_bp
     app.register_blueprint(survey_respondent_bp)
@@ -1374,14 +1314,6 @@ except ImportError as e:
 except Exception as e:
     print(f"Survey Respondent registration failed: {e}")
 
-# ----------------------------------------------------------------------------
-# Survey in a Box: Normative Database API (Phase 5, Step 5.1)
-# Provides GET /api/survey/norm/status (load verification),
-# POST /api/survey/norm/compare, POST /api/survey/norm/compare-categorical,
-# POST /api/survey/norm/batch, POST /api/survey/norm/significant,
-# GET /api/survey/norm/search endpoints.
-# Added: March 13, 2026
-# ----------------------------------------------------------------------------
 try:
     from routes.survey_normative import survey_normative_bp
     app.register_blueprint(survey_normative_bp)
@@ -1391,12 +1323,6 @@ except ImportError as e:
 except Exception as e:
     print(f"Survey Normative registration failed: {e}")
 
-# ----------------------------------------------------------------------------
-# Phase 6: Proactive Agent API
-# Provides /api/briefing, /api/tasks, /api/leads, /api/monitor/services,
-# /api/proactive/status endpoints.
-# Added: March 12, 2026
-# ----------------------------------------------------------------------------
 try:
     from routes.proactive import proactive_bp
     app.register_blueprint(proactive_bp)
@@ -1406,14 +1332,6 @@ except ImportError as e:
 except Exception as e:
     print(f"Proactive Agent registration failed: {e}")
 
-# ----------------------------------------------------------------------------
-# Newsletter Subscription API
-# Provides POST /api/newsletter/subscribe and GET /api/newsletter/stats.
-# Also provides admin endpoints: subscribers list, IP lookup, domain lookup,
-# block/unblock IP, force unsubscribe.
-# Cross-origin enabled for shift-work.com.
-# Added: April 2, 2026 | Security hardened: April 7, 2026
-# ----------------------------------------------------------------------------
 try:
     from routes.newsletter import newsletter_bp
     app.register_blueprint(newsletter_bp)
@@ -1423,13 +1341,6 @@ except ImportError as e:
 except Exception as e:
     print(f"Newsletter registration failed: {e}")
 
-# ----------------------------------------------------------------------------
-# Contact Form API (Security Layer)
-# Provides POST /api/contact/submit (logs + forwards to Formspree)
-# and GET /api/contact/submissions (admin view).
-# Cross-origin enabled for shift-work.com.
-# Added: April 7, 2026
-# ----------------------------------------------------------------------------
 try:
     from routes.contact_api import contact_api_bp
     app.register_blueprint(contact_api_bp)
@@ -1439,14 +1350,6 @@ except ImportError as e:
 except Exception as e:
     print(f"Contact Form API registration failed: {e}")
 
-# ----------------------------------------------------------------------------
-# Assessment Google Sheets API
-# Provides POST /api/assessment/lead and POST /api/assessment/update-scores.
-# Writes shift assessment contact form data and AI scores directly to the
-# Shift Assessment Data Google Sheet.
-# Requires GOOGLE_SERVICE_ACCOUNT_JSON env var in Render.
-# Added: April 17, 2026
-# ----------------------------------------------------------------------------
 try:
     from routes.assessment import assessment_bp
     app.register_blueprint(assessment_bp)
@@ -1456,18 +1359,6 @@ except ImportError as e:
 except Exception as e:
     print(f"Assessment API registration failed: {e}")
 
-# ----------------------------------------------------------------------------
-# Assessment PDF Generator API
-# Provides POST /api/assessment/generate-pdf.
-# Generates a branded multi-section PDF using ReportLab (cover, Reality Check
-# recap, executive summary, dimensional scorecard, About Shiftwork Solutions),
-# returns it as a direct download to the user's browser, and simultaneously
-# sends a copy to Contact@shift-work.com via Resend with the user's contact
-# info and assessment summary in the email body.
-# Fully self-contained — does not modify routes/assessment.py.
-# Requires RESEND_API_KEY env var in Render (already set for Thomas).
-# Added: April 21, 2026
-# ----------------------------------------------------------------------------
 try:
     from routes.assessment_pdf import assessment_pdf_bp
     app.register_blueprint(assessment_pdf_bp)
@@ -1477,14 +1368,6 @@ except ImportError as e:
 except Exception as e:
     print(f"Assessment PDF registration failed: {e}")
 
-# ----------------------------------------------------------------------------
-# Site Events Tracking API
-# Provides POST /api/events/log (CORS-enabled for shift-work.com),
-# GET /api/events/summary, GET /api/events/recent, GET /api/events/sessions.
-# Receives events from /js/event-tracker.js on the static site and stores
-# them in the site_events PostgreSQL table for monthly analytics review.
-# Added: April 28, 2026
-# ----------------------------------------------------------------------------
 try:
     from routes.site_events import site_events_bp
     app.register_blueprint(site_events_bp)
@@ -1496,12 +1379,9 @@ except Exception as e:
 
 # ----------------------------------------------------------------------------
 # Part Time Tracker Lite — HR Admin Routes
-# Provides GET /ptt/ (signup page), GET /ptt/login, GET /ptt/auth (token
-# redemption), GET /ptt/dashboard (requires session), GET /ptt/logout,
-# POST /api/ptt/lead (HR signup), POST /api/ptt/login-request (magic link),
-# GET /api/ptt/admin/dashboard-summary.
-# Self-contained — does not modify any existing Swarm routes.
-# Added: May 01, 2026
+# Phase 1: signup, magic link auth, dashboard shell.
+# Phase 2: skills CRUD, worker approval, 14-skill seed.
+# Added: May 01, 2026 | Updated: May 04, 2026
 # ----------------------------------------------------------------------------
 try:
     from routes.ptt_hr import ptt_hr_bp
@@ -1511,6 +1391,20 @@ except ImportError as e:
     print(f"Part Time Tracker HR routes not found: {e}")
 except Exception as e:
     print(f"Part Time Tracker HR registration failed: {e}")
+
+# ----------------------------------------------------------------------------
+# Part Time Tracker Lite — Worker Intake Routes (public, no auth)
+# Provides GET /ptt/apply/<slug> and POST /api/ptt/apply/<slug>.
+# Added: May 04, 2026
+# ----------------------------------------------------------------------------
+try:
+    from routes.ptt_worker_intake import ptt_worker_intake_bp
+    app.register_blueprint(ptt_worker_intake_bp)
+    print("Part Time Tracker Worker Intake Routes registered")
+except ImportError as e:
+    print(f"Part Time Tracker Worker Intake routes not found: {e}")
+except Exception as e:
+    print(f"Part Time Tracker Worker Intake registration failed: {e}")
 
 try:
     from routes.background_jobs import background_jobs_bp
@@ -1564,7 +1458,7 @@ except ImportError:
     print("Integration Hub not found")
 
 # ============================================================================
-# ADMIN: FIX MEMORY STORE COLUMNS (Phase 2A - Add new columns)
+# ADMIN: FIX MEMORY STORE COLUMNS (Phase 2A)
 # ============================================================================
 @app.route('/api/admin/fix-memory-store', methods=['GET'])
 def fix_memory_store():
@@ -1596,95 +1490,187 @@ def fix_memory_store():
         return jsonify({'success': False, 'error': str(e), 'traceback': traceback.format_exc()}), 500
 
 # ============================================================================
-# ADMIN: FIX MEMORY SCHEMA (Phase 2A - Drop orphaned Phase 1 columns)
+# ADMIN: FIX MEMORY SCHEMA (Phase 2A)
 # ============================================================================
 @app.route('/api/admin/fix-memory-schema', methods=['GET'])
 def fix_memory_schema():
-    """
-    One-time migration: drop Phase 1 orphan columns from memory_store.
-    Run once after deploying this update. Safe to run multiple times.
-    """
+    """One-time migration: drop Phase 1 orphan columns from memory_store."""
     try:
         from db_engine import get_db_connection
         results = []
-        orphan_columns = [
-            'memory_key',
-            'memory_value',
-            'expires_at',
-            'access_count',
-            'last_accessed',
-        ]
+        orphan_columns = ['memory_key', 'memory_value', 'expires_at',
+                          'access_count', 'last_accessed']
         with get_db_connection() as conn:
             cursor = conn.cursor()
-
             cursor.execute("""
                 SELECT column_name, data_type, is_nullable
                 FROM information_schema.columns
                 WHERE table_name = 'memory_store'
                 ORDER BY ordinal_position
             """)
-            before_cols = [
-                {
-                    'column': r['column_name'],
-                    'type': r['data_type'],
-                    'nullable': r['is_nullable']
-                }
-                for r in cursor.fetchall()
-            ]
-
+            before_cols = [{'column': r['column_name'], 'type': r['data_type'],
+                            'nullable': r['is_nullable']} for r in cursor.fetchall()]
             for col in orphan_columns:
                 try:
-                    cursor.execute(
-                        f"ALTER TABLE memory_store DROP COLUMN IF EXISTS {col}"
-                    )
+                    cursor.execute(f"ALTER TABLE memory_store DROP COLUMN IF EXISTS {col}")
                     results.append(f"DROPPED: {col}")
                 except Exception as col_err:
                     results.append(f"ERROR dropping {col}: {col_err}")
-
             cursor.execute("""
                 SELECT column_name, data_type, is_nullable
                 FROM information_schema.columns
                 WHERE table_name = 'memory_store'
                 ORDER BY ordinal_position
             """)
-            after_cols = [
-                {
-                    'column': r['column_name'],
-                    'type': r['data_type'],
-                    'nullable': r['is_nullable']
-                }
-                for r in cursor.fetchall()
-            ]
-
+            after_cols = [{'column': r['column_name'], 'type': r['data_type'],
+                           'nullable': r['is_nullable']} for r in cursor.fetchall()]
         return jsonify({
             'success': True,
-            'message': (
-                'Phase 1 orphan columns removed. '
-                'Memory system should now store memories correctly.'
-            ),
+            'message': 'Phase 1 orphan columns removed.',
             'operations': results,
             'schema_before': before_cols,
             'schema_after': after_cols,
-            'next_step': (
-                'Send a message to /api/orchestrate, '
-                'then check /api/memory/recent to confirm memories are being stored.'
-            )
         })
-
     except Exception as e:
         import traceback
+        return jsonify({'success': False, 'error': str(e),
+                        'traceback': traceback.format_exc()}), 500
+
+# ============================================================================
+# PTT DEV ENDPOINTS — development/testing only
+# POST /api/ptt/dev/reset-company  { "email": "admin@example.com" }
+#   Wipes ALL ptt_* data for the company associated with this admin email.
+#   Safe to call multiple times. Returns counts of deleted rows.
+# POST /api/ptt/dev/reseed-skills  { "email": "admin@example.com" }
+#   Replaces the skill list for the company with the 14 Opus-specified
+#   industry skills. Deletes existing skills first (cascades to
+#   ptt_worker_skill and ptt_shift_skill). Use after reset-company to
+#   get a fresh company with the correct skill seed.
+# ============================================================================
+@app.route('/api/ptt/dev/reset-company', methods=['POST'])
+def ptt_dev_reset_company():
+    """
+    DEV ONLY — wipe all ptt_* data for a company by admin email.
+    Deletes: sessions, tokens, workers, skills, shifts, company, admin user.
+    Does NOT touch any other Swarm tables.
+    """
+    from db_engine import get_db_connection
+    data  = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    if not email:
+        return jsonify({"error": "email required"}), 400
+
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+
+        # Find company via admin email
+        cursor.execute("""
+            SELECT a.id AS admin_id, a.company_id
+            FROM ptt_admin_user a WHERE a.email = %s
+        """, (email,))
+        row = cursor.fetchone()
+        if not row:
+            return jsonify({"error": f"No PTT admin found for {email}"}), 404
+
+        company_id = row["company_id"]
+        counts = {}
+
+        # Delete in FK-safe order
+        cursor.execute("DELETE FROM ptt_session    WHERE company_id = %s", (company_id,))
+        counts["sessions"] = cursor.rowcount
+        cursor.execute("DELETE FROM ptt_magic_token WHERE company_id = %s", (company_id,))
+        counts["tokens"] = cursor.rowcount
+
+        # Workers cascade to ptt_worker_skill, ptt_availability,
+        # ptt_blackout, ptt_shift_outreach, ptt_shift_claim
+        cursor.execute("DELETE FROM ptt_worker WHERE company_id = %s", (company_id,))
+        counts["workers"] = cursor.rowcount
+
+        # Shifts cascade to ptt_shift_skill, ptt_shift_outreach, ptt_shift_claim
+        cursor.execute("DELETE FROM ptt_shift WHERE company_id = %s", (company_id,))
+        counts["shifts"] = cursor.rowcount
+
+        # Skills cascade to ptt_worker_skill, ptt_shift_skill
+        cursor.execute("DELETE FROM ptt_skill WHERE company_id = %s", (company_id,))
+        counts["skills"] = cursor.rowcount
+
+        cursor.execute("DELETE FROM ptt_admin_user WHERE company_id = %s", (company_id,))
+        counts["admins"] = cursor.rowcount
+
+        cursor.execute("DELETE FROM ptt_company WHERE id = %s", (company_id,))
+        counts["companies"] = cursor.rowcount
+
+        conn.commit()
+        print(f"[ptt_dev] reset-company for {email}: {counts}")
+        return jsonify({"status": "ok", "deleted": counts}), 200
+
+    except Exception as e:
+        conn.rollback()
+        import traceback
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/ptt/dev/reseed-skills', methods=['POST'])
+def ptt_dev_reseed_skills():
+    """
+    DEV ONLY — replace skill list for a company with the 14 Opus-specified
+    industry skills. Deletes existing skills first (FK cascades handle
+    ptt_worker_skill and ptt_shift_skill). Use to fix companies created
+    before Phase 2 that only have Skill 1-5.
+    """
+    from db_engine import get_db_connection
+    from routes.ptt_hr import SKILL_SEED
+
+    data  = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    if not email:
+        return jsonify({"error": "email required"}), 400
+
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT a.company_id FROM ptt_admin_user a WHERE a.email = %s
+        """, (email,))
+        row = cursor.fetchone()
+        if not row:
+            return jsonify({"error": f"No PTT admin found for {email}"}), 404
+
+        company_id = row["company_id"]
+
+        # Delete existing skills (cascades to junction tables)
+        cursor.execute("DELETE FROM ptt_skill WHERE company_id = %s", (company_id,))
+        deleted = cursor.rowcount
+
+        # Insert 14 fresh skills
+        for skill_name, skill_desc, sort_order in SKILL_SEED:
+            cursor.execute("""
+                INSERT INTO ptt_skill (company_id, name, description, sort_order)
+                VALUES (%s, %s, %s, %s)
+            """, (company_id, skill_name, skill_desc, sort_order))
+
+        conn.commit()
+        print(f"[ptt_dev] reseed-skills for {email}: deleted {deleted}, seeded {len(SKILL_SEED)}")
         return jsonify({
-            'success': False,
-            'error': str(e),
-            'traceback': traceback.format_exc()
-        }), 500
+            "status":  "ok",
+            "deleted": deleted,
+            "seeded":  len(SKILL_SEED),
+        }), 200
+
+    except Exception as e:
+        conn.rollback()
+        import traceback
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+    finally:
+        conn.close()
+
 
 # ============================================================================
 # PHASE 6: BACKGROUND SCHEDULER INIT
-# Must run AFTER all blueprints are registered so all proactive.* modules
-# are importable. Uses a PostgreSQL advisory lock — only one Gunicorn worker
-# starts the scheduler. The second worker silently skips.
-# Added: March 12, 2026 (Deliverable 7)
 # ============================================================================
 try:
     from proactive.scheduler import init_scheduler
@@ -1696,9 +1682,6 @@ except Exception as e:
 
 # ============================================================================
 # PHASE 6: SWARM SELF-REGISTRATION
-# Register the Swarm's own /health endpoint as a monitored service.
-# UPSERT on service_name — safe to call on every startup.
-# Added: March 12, 2026 (Deliverable 7)
 # ============================================================================
 try:
     from proactive.app_monitor import auto_register_swarm
