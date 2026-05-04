@@ -5,21 +5,32 @@
   Shiftwork Solutions LLC
 
   Created:      2026-05-01
-  Last Updated: 2026-05-01
+  Last Updated: 2026-05-04
 
   CHANGELOG:
-    2026-05-01 — INITIAL BUILD (Phase 1).
-      Shell dashboard. Shows company info, four summary cards,
-      and empty-state panels for workers, shifts, and skills.
-      Each panel has a clear CTA indicating what comes in later phases.
-      Apply URL displayed with copy-to-clipboard. Booking CTA in nav.
-      Mobile-first responsive. Brand: navy / orange / Arial.
+    2026-05-04 — Phase 2 update.
+      1. Pending workers panel now shows real applicants with
+         approve/reject buttons. Approve sends magic link email.
+         Reject records optional reason.
+      2. Skills panel now shows editable list: rename inline,
+         up/down reorder buttons, delete button, add new skill form.
+         All changes call the /api/ptt/admin/skills/* endpoints.
+      3. Dashboard receives pending_list and skills template vars
+         from ptt_hr.py.
 
-  Template variables expected from ptt_hr.py:
-    company       — dict with name, slug, industry, facility_size, created_at
-    admin         — dict with name, email
-    active_workers, pending_workers, open_shifts, skill_count — integers
-    apply_url     — string
+    2026-05-01 — INITIAL BUILD (Phase 1).
+      Shell dashboard. Summary cards, empty-state panels.
+
+  Template variables:
+    company         — dict: name, slug, industry, facility_size, created_at
+    admin           — dict: name, email
+    active_workers  — int
+    pending_workers — int
+    open_shifts     — int
+    skill_count     — int
+    apply_url       — string
+    pending_list    — list of dicts: id, name, email, phone, created_at
+    skills          — list of dicts: id, name, description, sort_order
 
   I did no harm and this file is not truncated.
 -->
@@ -32,26 +43,16 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: Arial, Helvetica, sans-serif;
-      background: #F4F6F8;
-      color: #1A1A1A;
-      min-height: 100vh;
+      background: #F4F6F8; color: #1A1A1A; min-height: 100vh;
     }
 
     /* ── NAV ── */
     nav {
-      background: #1F3D5C;
-      padding: 0 24px;
-      height: 56px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      position: sticky;
-      top: 0;
-      z-index: 100;
+      background: #1F3D5C; padding: 0 24px; height: 56px;
+      display: flex; align-items: center; justify-content: space-between;
+      position: sticky; top: 0; z-index: 100;
     }
-    .nav-brand {
-      display: flex; align-items: center; gap: 10px; text-decoration: none;
-    }
+    .nav-brand { display: flex; align-items: center; gap: 10px; text-decoration: none; }
     .nav-logo-mark {
       width: 32px; height: 32px; background: #E8610A; border-radius: 50%;
       display: flex; align-items: center; justify-content: center;
@@ -61,238 +62,221 @@
     .nav-sub   { color: rgba(255,255,255,.55); font-size: 11px; }
     .nav-actions { display: flex; align-items: center; gap: 16px; }
     .nav-cta {
-      background: #E8610A; color: #fff;
-      padding: 7px 16px; border-radius: 4px;
-      font-size: 12px; font-weight: 700; text-decoration: none;
-      white-space: nowrap;
+      background: #E8610A; color: #fff; padding: 7px 16px; border-radius: 4px;
+      font-size: 12px; font-weight: 700; text-decoration: none; white-space: nowrap;
     }
     .nav-cta:hover { background: #C85208; }
     .nav-logout { color: rgba(255,255,255,.6); font-size: 12px; text-decoration: none; }
     .nav-logout:hover { color: #fff; }
 
-    /* ── HEADER BAR ── */
+    /* ── HEADER ── */
     .page-header {
-      background: #1F3D5C;
-      padding: 20px 24px 24px;
+      background: #1F3D5C; padding: 20px 24px 24px;
       border-bottom: 3px solid #E8610A;
     }
-    .page-header-inner {
-      max-width: 860px;
-      margin: 0 auto;
-    }
-    .page-header h1 {
-      color: #fff;
-      font-size: clamp(18px, 4vw, 24px);
-      font-weight: 700;
-    }
-    .page-header p {
-      color: rgba(255,255,255,.6);
-      font-size: 13px;
-      margin-top: 4px;
-    }
+    .page-header-inner { max-width: 860px; margin: 0 auto; }
+    .page-header h1 { color: #fff; font-size: clamp(18px, 4vw, 24px); font-weight: 700; }
+    .page-header p  { color: rgba(255,255,255,.6); font-size: 13px; margin-top: 4px; }
 
     /* ── MAIN ── */
-    .main {
-      max-width: 860px;
-      margin: 0 auto;
-      padding: 28px 16px 64px;
-    }
+    .main { max-width: 860px; margin: 0 auto; padding: 28px 16px 64px; }
 
     /* ── SUMMARY CARDS ── */
     .summary-grid {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 14px;
-      margin-bottom: 28px;
+      display: grid; grid-template-columns: repeat(4, 1fr);
+      gap: 14px; margin-bottom: 28px;
     }
-    @media (max-width: 680px) {
-      .summary-grid { grid-template-columns: repeat(2, 1fr); }
-    }
-    @media (max-width: 380px) {
-      .summary-grid { grid-template-columns: 1fr; }
-    }
+    @media (max-width: 680px) { .summary-grid { grid-template-columns: repeat(2, 1fr); } }
     .summary-card {
-      background: #fff;
-      border-radius: 8px;
-      padding: 18px 16px;
-      box-shadow: 0 1px 6px rgba(31,61,92,.07);
-      border-top: 3px solid #E8610A;
+      background: #fff; border-radius: 8px; padding: 18px 16px;
+      box-shadow: 0 1px 6px rgba(31,61,92,.07); border-top: 3px solid #E8610A;
     }
     .summary-card .label {
-      font-size: 11px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: .08em;
-      color: #888;
-      margin-bottom: 8px;
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .08em; color: #888; margin-bottom: 8px;
     }
-    .summary-card .number {
-      font-size: 32px;
-      font-weight: 700;
-      color: #1F3D5C;
-      line-height: 1;
-    }
-    .summary-card .sub {
-      font-size: 12px;
-      color: #999;
-      margin-top: 4px;
-    }
+    .summary-card .number { font-size: 32px; font-weight: 700; color: #1F3D5C; line-height: 1; }
+    .summary-card .sub    { font-size: 12px; color: #999; margin-top: 4px; }
     .summary-card.pending-card { border-top-color: #EEAE26; }
     .summary-card.pending-card .number { color: #B87C00; }
 
     /* ── SECTION CARDS ── */
     .section-card {
-      background: #fff;
-      border-radius: 8px;
+      background: #fff; border-radius: 8px;
       box-shadow: 0 1px 8px rgba(31,61,92,.07);
-      margin-bottom: 20px;
-      overflow: hidden;
+      margin-bottom: 20px; overflow: hidden;
     }
     .section-card-header {
-      background: #F8FAFB;
-      border-bottom: 1px solid #E8EDF2;
+      background: #F8FAFB; border-bottom: 1px solid #E8EDF2;
       padding: 14px 20px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
     }
-    .section-card-header h2 {
-      font-size: 15px;
-      font-weight: 700;
-      color: #1F3D5C;
+    .section-card-header h2 { font-size: 15px; font-weight: 700; color: #1F3D5C; }
+    .badge {
+      background: #EEF3F8; color: #1F3D5C; font-size: 11px; font-weight: 700;
+      padding: 3px 10px; border-radius: 12px; white-space: nowrap;
     }
-    .section-card-header .badge {
-      background: #EEF3F8;
-      color: #1F3D5C;
-      font-size: 11px;
-      font-weight: 700;
-      padding: 3px 10px;
-      border-radius: 12px;
-      white-space: nowrap;
-    }
-    .section-card-header .badge.orange {
-      background: rgba(232,97,10,.1);
-      color: #E8610A;
-    }
-    .section-card-body { padding: 24px 20px; }
+    .badge.orange { background: rgba(232,97,10,.1); color: #E8610A; }
+    .section-card-body { padding: 20px; }
 
-    /* ── EMPTY STATE ── */
-    .empty-state {
-      text-align: center;
-      padding: 24px 16px;
-    }
-    .empty-icon {
-      font-size: 36px;
-      margin-bottom: 12px;
-    }
-    .empty-state h3 {
-      font-size: 16px;
-      color: #1F3D5C;
-      margin-bottom: 8px;
-    }
-    .empty-state p {
-      font-size: 13px;
-      color: #666;
-      line-height: 1.6;
-      max-width: 380px;
-      margin: 0 auto 16px;
-    }
-    .coming-soon-pill {
-      display: inline-block;
-      background: #EEF3F8;
-      border: 1px solid #C8D8E8;
-      color: #1F3D5C;
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: .06em;
-      text-transform: uppercase;
-      padding: 4px 14px;
-      border-radius: 20px;
-    }
-
-    /* ── APPLY URL BOX ── */
+    /* ── APPLY URL ── */
     .apply-url-box {
-      background: #EEF3F8;
-      border-radius: 6px;
-      padding: 16px 18px;
-      margin-bottom: 20px;
+      background: #EEF3F8; border-radius: 6px; padding: 14px 16px; margin-bottom: 20px;
     }
     .apply-url-box .label {
-      font-size: 11px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: .08em;
-      color: #1F3D5C;
-      margin-bottom: 8px;
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .08em; color: #1F3D5C; margin-bottom: 8px;
     }
-    .url-row {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-    }
+    .url-row { display: flex; gap: 8px; align-items: center; }
     .url-display {
-      flex: 1;
-      background: #fff;
-      border: 1.5px solid #C8D8E8;
-      border-radius: 4px;
-      padding: 8px 12px;
-      font-size: 13px;
-      color: #1F3D5C;
-      font-family: monospace;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      flex: 1; background: #fff; border: 1.5px solid #C8D8E8; border-radius: 4px;
+      padding: 7px 10px; font-size: 12px; color: #1F3D5C; font-family: monospace;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     .btn-copy {
-      background: #E8610A;
-      color: #fff;
-      border: none;
-      padding: 8px 16px;
-      border-radius: 4px;
-      font-size: 13px;
-      font-weight: 700;
-      font-family: Arial, Helvetica, sans-serif;
-      cursor: pointer;
-      white-space: nowrap;
-      flex-shrink: 0;
-      transition: background .15s;
+      background: #E8610A; color: #fff; border: none; padding: 7px 14px;
+      border-radius: 4px; font-size: 12px; font-weight: 700;
+      font-family: Arial, Helvetica, sans-serif; cursor: pointer;
+      white-space: nowrap; flex-shrink: 0; transition: background .15s;
     }
     .btn-copy:hover { background: #C85208; }
-    .btn-copy.copied {
-      background: #1D9E75;
+    .btn-copy.copied { background: #1D9E75; }
+    .apply-url-box .hint { font-size: 12px; color: #666; margin-top: 8px; }
+
+    /* ── PENDING WORKERS ── */
+    .worker-row {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      padding: 14px 0; border-bottom: 1px solid #F0F4F8; gap: 12px;
     }
-    .apply-url-box .hint {
-      font-size: 12px;
-      color: #666;
-      margin-top: 8px;
+    .worker-row:last-child { border-bottom: none; padding-bottom: 0; }
+    .worker-info { flex: 1; min-width: 0; }
+    .worker-name { font-size: 14px; font-weight: 700; color: #1F3D5C; }
+    .worker-email { font-size: 12px; color: #666; margin-top: 2px; }
+    .worker-skills { font-size: 11px; color: #888; margin-top: 4px; }
+    .worker-skills .skill-tag {
+      display: inline-block; background: #EEF3F8; border-radius: 10px;
+      padding: 1px 8px; margin: 2px 2px 0 0; color: #1F3D5C; font-size: 11px;
+    }
+    .worker-actions { display: flex; gap: 8px; flex-shrink: 0; }
+    .btn-approve {
+      background: #1D9E75; color: #fff; border: none;
+      padding: 6px 14px; border-radius: 4px; font-size: 12px; font-weight: 700;
+      font-family: Arial, Helvetica, sans-serif; cursor: pointer; transition: background .15s;
+    }
+    .btn-approve:hover { background: #167A5A; }
+    .btn-approve:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-reject {
+      background: #fff; color: #C62828; border: 1.5px solid #C62828;
+      padding: 6px 14px; border-radius: 4px; font-size: 12px; font-weight: 700;
+      font-family: Arial, Helvetica, sans-serif; cursor: pointer; transition: background .15s;
+    }
+    .btn-reject:hover { background: #FFF0EE; }
+    .btn-reject:disabled { opacity: .5; cursor: not-allowed; }
+
+    /* ── SKILLS LIST ── */
+    .skills-list { list-style: none; }
+    .skill-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 0; border-bottom: 1px solid #F0F4F8;
+    }
+    .skill-item:last-child { border-bottom: none; }
+    .skill-order-btns {
+      display: flex; flex-direction: column; gap: 2px; flex-shrink: 0;
+    }
+    .btn-order {
+      background: #EEF3F8; border: none; width: 22px; height: 18px;
+      border-radius: 3px; font-size: 10px; cursor: pointer; color: #1F3D5C;
+      display: flex; align-items: center; justify-content: center;
+      transition: background .1s;
+    }
+    .btn-order:hover { background: #C8D8E8; }
+    .btn-order:disabled { opacity: .3; cursor: not-allowed; }
+    .skill-name-field {
+      flex: 1; min-width: 0;
+    }
+    .skill-name-display {
+      font-size: 14px; font-weight: 700; color: #1F3D5C; cursor: pointer;
+    }
+    .skill-name-display:hover { text-decoration: underline; color: #E8610A; }
+    .skill-name-input {
+      width: 100%; padding: 5px 8px; border: 1.5px solid #E8610A;
+      border-radius: 4px; font-size: 13px; font-family: Arial, Helvetica, sans-serif;
+      display: none;
+    }
+    .skill-name-input:focus { outline: none; box-shadow: 0 0 0 2px rgba(232,97,10,.15); }
+    .skill-desc-text { font-size: 11px; color: #888; margin-top: 2px; }
+    .btn-skill-delete {
+      background: none; border: none; color: #C62828; cursor: pointer;
+      font-size: 16px; padding: 0 4px; line-height: 1; opacity: .55;
+      transition: opacity .15s; flex-shrink: 0;
+    }
+    .btn-skill-delete:hover { opacity: 1; }
+    .skill-save-row { display: none; gap: 6px; margin-top: 4px; }
+    .skill-save-row.visible { display: flex; }
+    .btn-save-skill, .btn-cancel-skill {
+      padding: 4px 12px; border-radius: 4px; font-size: 12px; font-weight: 700;
+      font-family: Arial, Helvetica, sans-serif; cursor: pointer; border: none;
+    }
+    .btn-save-skill   { background: #E8610A; color: #fff; }
+    .btn-cancel-skill { background: #E8EDF2; color: #555; }
+
+    /* ADD SKILL FORM */
+    .add-skill-row {
+      display: flex; gap: 8px; align-items: center; margin-top: 16px;
+    }
+    .add-skill-input {
+      flex: 1; padding: 8px 12px; border: 1.5px solid #D0D7DE; border-radius: 4px;
+      font-size: 13px; font-family: Arial, Helvetica, sans-serif; color: #1A1A1A;
+    }
+    .add-skill-input:focus {
+      outline: none; border-color: #E8610A;
+      box-shadow: 0 0 0 3px rgba(232,97,10,.1);
+    }
+    .btn-add-skill {
+      background: #1F3D5C; color: #fff; border: none; padding: 8px 18px;
+      border-radius: 4px; font-size: 13px; font-weight: 700;
+      font-family: Arial, Helvetica, sans-serif; cursor: pointer; white-space: nowrap;
+      transition: background .15s;
+    }
+    .btn-add-skill:hover { background: #0D2438; }
+
+    /* TOAST */
+    .toast {
+      position: fixed; bottom: 20px; right: 20px;
+      background: #1D9E75; color: #fff;
+      padding: 10px 18px; border-radius: 6px; font-size: 13px; font-weight: 700;
+      box-shadow: 0 4px 16px rgba(0,0,0,.2);
+      transform: translateY(80px); opacity: 0;
+      transition: transform .25s, opacity .25s;
+      z-index: 9999;
+    }
+    .toast.visible { transform: translateY(0); opacity: 1; }
+    .toast.error   { background: #C62828; }
+
+    /* EMPTY STATE */
+    .empty-state { text-align: center; padding: 24px 16px; }
+    .empty-icon  { font-size: 36px; margin-bottom: 12px; }
+    .empty-state h3 { font-size: 16px; color: #1F3D5C; margin-bottom: 8px; }
+    .empty-state p  { font-size: 13px; color: #666; line-height: 1.6; max-width: 380px; margin: 0 auto; }
+    .coming-soon-pill {
+      display: inline-block; background: #EEF3F8; border: 1px solid #C8D8E8;
+      color: #1F3D5C; font-size: 11px; font-weight: 700; letter-spacing: .06em;
+      text-transform: uppercase; padding: 4px 14px; border-radius: 20px; margin-top: 12px;
     }
 
-    /* ── COMPANY INFO ── */
-    .info-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 12px;
-    }
-    .info-item { }
+    /* INFO GRID */
+    .info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
     .info-item .lbl {
-      font-size: 11px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: .08em;
-      color: #888;
-      margin-bottom: 3px;
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .08em; color: #888; margin-bottom: 3px;
     }
-    .info-item .val {
-      font-size: 14px;
-      color: #1A1A1A;
-    }
+    .info-item .val { font-size: 14px; color: #1A1A1A; }
     .info-item .val.muted { color: #999; font-style: italic; }
   </style>
 </head>
 <body>
+  <div class="toast" id="toast"></div>
 
-  <!-- NAV -->
   <nav>
     <a href="/ptt/dashboard" class="nav-brand">
       <div class="nav-logo-mark">S</div>
@@ -310,7 +294,6 @@
     </div>
   </nav>
 
-  <!-- PAGE HEADER -->
   <div class="page-header">
     <div class="page-header-inner">
       <h1>Dashboard</h1>
@@ -318,7 +301,6 @@
     </div>
   </div>
 
-  <!-- MAIN -->
   <div class="main">
 
     <!-- SUMMARY CARDS -->
@@ -330,7 +312,7 @@
       </div>
       <div class="summary-card {% if pending_workers > 0 %}pending-card{% endif %}">
         <div class="label">Pending Review</div>
-        <div class="number">{{ pending_workers }}</div>
+        <div class="number" id="pendingCount">{{ pending_workers }}</div>
         <div class="sub">applicant{% if pending_workers != 1 %}s{% endif %}</div>
       </div>
       <div class="summary-card">
@@ -340,67 +322,134 @@
       </div>
       <div class="summary-card">
         <div class="label">Skills Defined</div>
-        <div class="number">{{ skill_count }}</div>
+        <div class="number" id="skillCountCard">{{ skill_count }}</div>
         <div class="sub">in taxonomy</div>
       </div>
     </div>
 
     <!-- APPLY URL -->
     <div class="section-card">
-      <div class="section-card-header">
-        <h2>Worker Application Link</h2>
-      </div>
+      <div class="section-card-header"><h2>Worker Application Link</h2></div>
       <div class="section-card-body">
         <div class="apply-url-box">
           <div class="label">Share this link with candidates</div>
           <div class="url-row">
             <div class="url-display" id="applyUrlDisplay">{{ apply_url }}</div>
-            <button class="btn-copy" id="copyBtn" onclick="copyApplyUrl()">
-              Copy Link
-            </button>
+            <button class="btn-copy" id="copyBtn" onclick="copyApplyUrl()">Copy Link</button>
           </div>
           <div class="hint">
-            Anyone with this link can submit an application to join your part-time pool.
-            You review and approve each applicant before they appear as available workers.
+            Anyone with this link can apply to your part-time pool.
+            You review and approve each applicant before they become active.
           </div>
         </div>
       </div>
     </div>
 
-    <!-- WORKERS -->
+    <!-- PENDING WORKERS -->
     <div class="section-card">
       <div class="section-card-header">
-        <h2>Workers</h2>
-        <span class="badge {% if pending_workers > 0 %}orange{% endif %}">
-          {{ active_workers }} active{% if pending_workers > 0 %} &middot; {{ pending_workers }} pending{% endif %}
+        <h2>Pending Applications</h2>
+        <span class="badge {% if pending_workers > 0 %}orange{% endif %}" id="pendingBadge">
+          {{ pending_workers }} pending
         </span>
       </div>
-      <div class="section-card-body">
-        {% if active_workers == 0 and pending_workers == 0 %}
-        <div class="empty-state">
-          <div class="empty-icon">👤</div>
-          <h3>No workers yet</h3>
-          <p>
-            Share the application link above with candidates.
-            Once they apply, you'll review and approve them here.
-          </p>
-          <span class="coming-soon-pill">Phase 2 — Coming Next</span>
+      <div class="section-card-body" id="pendingPanel">
+        {% if pending_list %}
+        <div id="workerList">
+          {% for w in pending_list %}
+          <div class="worker-row" id="workerRow{{ w.id }}">
+            <div class="worker-info">
+              <div class="worker-name">{{ w.name }}</div>
+              <div class="worker-email">{{ w.email }}{% if w.phone %} &nbsp;&middot;&nbsp; {{ w.phone }}{% endif %}</div>
+            </div>
+            <div class="worker-actions">
+              <button class="btn-approve" onclick="approveWorker({{ w.id }}, this)">Approve</button>
+              <button class="btn-reject"  onclick="rejectWorker({{ w.id }}, this)">Reject</button>
+            </div>
+          </div>
+          {% endfor %}
         </div>
         {% else %}
-        <div class="empty-state">
-          <div class="empty-icon">👥</div>
-          <h3>Workers are waiting for review</h3>
-          <p>
-            Worker management (approve, reject, view skills &amp; availability)
-            is coming in Phase 2.
-          </p>
-          <span class="coming-soon-pill">Phase 2 — Coming Next</span>
+        <div class="empty-state" id="pendingEmptyState">
+          <div class="empty-icon">👤</div>
+          <h3>No pending applications</h3>
+          <p>Share the application link above. New applicants will appear here for review.</p>
         </div>
         {% endif %}
       </div>
     </div>
 
-    <!-- SHIFTS -->
+    <!-- SKILLS -->
+    <div class="section-card">
+      <div class="section-card-header">
+        <h2>Skill Taxonomy</h2>
+        <span class="badge" id="skillBadge">{{ skill_count }} skill{% if skill_count != 1 %}s{% endif %}</span>
+      </div>
+      <div class="section-card-body">
+        <p style="font-size:13px; color:#666; margin-bottom:16px; line-height:1.5;">
+          These skills appear as checkboxes on worker applications.
+          Click a skill name to rename it. Use the arrows to reorder.
+        </p>
+
+        <ul class="skills-list" id="skillsList">
+          {% for skill in skills %}
+          <li class="skill-item" data-id="{{ skill.id }}" id="skillItem{{ skill.id }}">
+            <div class="skill-order-btns">
+              <button class="btn-order" title="Move up"
+                      onclick="moveSkill({{ skill.id }}, 'up')">▲</button>
+              <button class="btn-order" title="Move down"
+                      onclick="moveSkill({{ skill.id }}, 'down')">▼</button>
+            </div>
+            <div class="skill-name-field">
+              <div class="skill-name-display"
+                   onclick="startEditSkill({{ skill.id }})"
+                   id="skillDisplay{{ skill.id }}">{{ skill.name }}</div>
+              <input type="text"
+                     class="skill-name-input"
+                     id="skillInput{{ skill.id }}"
+                     value="{{ skill.name }}"
+                     onkeydown="skillKeydown(event, {{ skill.id }})"
+                     placeholder="Skill name">
+              <div class="skill-save-row" id="skillSaveRow{{ skill.id }}">
+                <button class="btn-save-skill"   onclick="saveSkill({{ skill.id }})">Save</button>
+                <button class="btn-cancel-skill" onclick="cancelEditSkill({{ skill.id }})">Cancel</button>
+              </div>
+              {% if skill.description %}
+              <div class="skill-desc-text" id="skillDesc{{ skill.id }}">{{ skill.description }}</div>
+              {% endif %}
+            </div>
+            <button class="btn-skill-delete" title="Delete skill"
+                    onclick="deleteSkill({{ skill.id }}, '{{ skill.name | e }}')">✕</button>
+          </li>
+          {% endfor %}
+        </ul>
+
+        <div class="add-skill-row">
+          <input type="text" class="add-skill-input" id="newSkillName"
+                 placeholder="New skill name…"
+                 onkeydown="if(event.key==='Enter') addSkill()">
+          <button class="btn-add-skill" onclick="addSkill()">+ Add Skill</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ACTIVE WORKERS (placeholder, Phase 3) -->
+    <div class="section-card">
+      <div class="section-card-header">
+        <h2>Active Workers</h2>
+        <span class="badge">{{ active_workers }} active</span>
+      </div>
+      <div class="section-card-body">
+        <div class="empty-state">
+          <div class="empty-icon">👥</div>
+          <h3>Worker profiles and availability</h3>
+          <p>Full worker profiles, availability calendars, and shift history arrive in Phase 3.</p>
+          <span class="coming-soon-pill">Phase 3 — Coming Next</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- SHIFTS (placeholder, Phase 3) -->
     <div class="section-card">
       <div class="section-card-header">
         <h2>Open Shifts</h2>
@@ -409,41 +458,16 @@
       <div class="section-card-body">
         <div class="empty-state">
           <div class="empty-icon">📋</div>
-          <h3>No shifts posted yet</h3>
-          <p>
-            Create shifts with required skills and dates. Qualified workers
-            from your pool will be able to claim them.
-          </p>
-          <span class="coming-soon-pill">Phase 3 — Coming Soon</span>
+          <h3>Shift posting coming in Phase 3</h3>
+          <p>Create shifts with skill requirements, see which workers qualify, and confirm coverage.</p>
+          <span class="coming-soon-pill">Phase 3 — Coming Next</span>
         </div>
       </div>
     </div>
 
-    <!-- SKILLS -->
+    <!-- ACCOUNT INFO -->
     <div class="section-card">
-      <div class="section-card-header">
-        <h2>Skill Taxonomy</h2>
-        <span class="badge">{{ skill_count }} skill{% if skill_count != 1 %}s{% endif %}</span>
-      </div>
-      <div class="section-card-body">
-        <div class="empty-state">
-          <div class="empty-icon">🏷️</div>
-          <h3>Skills pre-loaded</h3>
-          <p>
-            Your account has been seeded with {{ skill_count }} default skills.
-            Rename them to match your operation and add more as needed.
-            Skill management UI arrives in Phase 2.
-          </p>
-          <span class="coming-soon-pill">Phase 2 — Coming Next</span>
-        </div>
-      </div>
-    </div>
-
-    <!-- COMPANY INFO -->
-    <div class="section-card">
-      <div class="section-card-header">
-        <h2>Account Information</h2>
-      </div>
+      <div class="section-card-header"><h2>Account Information</h2></div>
       <div class="section-card-body">
         <div class="info-grid">
           <div class="info-item">
@@ -471,24 +495,23 @@
     </div>
 
     <!-- CONSULTING CTA -->
-    <div style="background: #1F3D5C; border-radius: 8px; padding: 24px 28px;
-                display: flex; align-items: center; justify-content: space-between;
-                gap: 16px; flex-wrap: wrap;">
+    <div style="background:#1F3D5C; border-radius:8px; padding:24px 28px;
+                display:flex; align-items:center; justify-content:space-between;
+                gap:16px; flex-wrap:wrap;">
       <div>
-        <div style="color: #EEAE26; font-size: 13px; font-weight: 700;
-                    text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px;">
+        <div style="color:#EEAE26; font-size:13px; font-weight:700;
+                    text-transform:uppercase; letter-spacing:.06em; margin-bottom:6px;">
           Need schedule design help?
         </div>
-        <div style="color: rgba(255,255,255,.8); font-size: 14px; line-height: 1.5;">
+        <div style="color:rgba(255,255,255,.8); font-size:14px; line-height:1.5;">
           Shiftwork Solutions has helped hundreds of 24/7 operations design
-          better shift schedules and engage their workforce. The first call is free.
+          better shift schedules. The first call is free.
         </div>
       </div>
       <a href="https://outlook.office365.com/book/ShiftworkSolutionsLLC2@shift-work.com"
          target="_blank" rel="noopener"
-         style="background: #E8610A; color: #fff; padding: 12px 24px;
-                border-radius: 4px; font-size: 14px; font-weight: 700;
-                text-decoration: none; white-space: nowrap; flex-shrink: 0;">
+         style="background:#E8610A; color:#fff; padding:12px 24px; border-radius:4px;
+                font-size:14px; font-weight:700; text-decoration:none; white-space:nowrap; flex-shrink:0;">
         Book a Free Consultation
       </a>
     </div>
@@ -496,23 +519,291 @@
   </div><!-- /main -->
 
   <script>
+    // ── TOAST ──────────────────────────────────────────────────────────────
+    function showToast(msg, isError = false) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.toggle('error', isError);
+      t.classList.add('visible');
+      setTimeout(() => t.classList.remove('visible'), 2800);
+    }
+
+    // ── COPY APPLY URL ─────────────────────────────────────────────────────
     function copyApplyUrl() {
       const url = document.getElementById('applyUrlDisplay').textContent.trim();
       const btn = document.getElementById('copyBtn');
       navigator.clipboard.writeText(url).then(() => {
         btn.textContent = 'Copied!';
         btn.classList.add('copied');
-        setTimeout(() => {
-          btn.textContent = 'Copy Link';
-          btn.classList.remove('copied');
-        }, 2000);
+        setTimeout(() => { btn.textContent = 'Copy Link'; btn.classList.remove('copied'); }, 2000);
       }).catch(() => {
-        // Fallback: select the text
         const range = document.createRange();
         range.selectNode(document.getElementById('applyUrlDisplay'));
         window.getSelection().removeAllRanges();
         window.getSelection().addRange(range);
       });
+    }
+
+    // ── APPROVE WORKER ─────────────────────────────────────────────────────
+    async function approveWorker(workerId, btn) {
+      const row = document.getElementById('workerRow' + workerId);
+      btn.disabled = true;
+      row.querySelectorAll('button').forEach(b => b.disabled = true);
+
+      try {
+        const resp = await fetch(`/api/ptt/admin/workers/${workerId}/approve`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await resp.json();
+        if (!resp.ok || data.error) {
+          showToast(data.error || 'Failed to approve.', true);
+          row.querySelectorAll('button').forEach(b => b.disabled = false);
+          return;
+        }
+        row.style.opacity = '0';
+        row.style.transition = 'opacity .3s';
+        setTimeout(() => {
+          row.remove();
+          updatePendingCount(-1);
+          checkEmptyPending();
+        }, 320);
+        showToast('Worker approved — login link sent.');
+      } catch (err) {
+        showToast('Network error. Please try again.', true);
+        row.querySelectorAll('button').forEach(b => b.disabled = false);
+      }
+    }
+
+    // ── REJECT WORKER ──────────────────────────────────────────────────────
+    async function rejectWorker(workerId, btn) {
+      const reason = prompt('Optional: enter a reason for rejection (not sent to worker)');
+      if (reason === null) return; // cancelled
+
+      const row = document.getElementById('workerRow' + workerId);
+      btn.disabled = true;
+      row.querySelectorAll('button').forEach(b => b.disabled = true);
+
+      try {
+        const resp = await fetch(`/api/ptt/admin/workers/${workerId}/reject`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason }),
+        });
+        const data = await resp.json();
+        if (!resp.ok || data.error) {
+          showToast(data.error || 'Failed to reject.', true);
+          row.querySelectorAll('button').forEach(b => b.disabled = false);
+          return;
+        }
+        row.style.opacity = '0';
+        row.style.transition = 'opacity .3s';
+        setTimeout(() => {
+          row.remove();
+          updatePendingCount(-1);
+          checkEmptyPending();
+        }, 320);
+        showToast('Application rejected.');
+      } catch (err) {
+        showToast('Network error. Please try again.', true);
+        row.querySelectorAll('button').forEach(b => b.disabled = false);
+      }
+    }
+
+    function updatePendingCount(delta) {
+      const el = document.getElementById('pendingCount');
+      const badge = document.getElementById('pendingBadge');
+      const current = parseInt(el.textContent) || 0;
+      const next = Math.max(0, current + delta);
+      el.textContent = next;
+      badge.textContent = next + ' pending';
+      badge.classList.toggle('orange', next > 0);
+    }
+
+    function checkEmptyPending() {
+      const list = document.getElementById('workerList');
+      if (list && list.querySelectorAll('.worker-row').length === 0) {
+        list.innerHTML = '';
+        const panel = document.getElementById('pendingPanel');
+        panel.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-icon">👤</div>
+            <h3>No pending applications</h3>
+            <p>Share the application link above. New applicants will appear here for review.</p>
+          </div>`;
+      }
+    }
+
+    // ── SKILLS CRUD ────────────────────────────────────────────────────────
+
+    function startEditSkill(skillId) {
+      document.getElementById('skillDisplay' + skillId).style.display = 'none';
+      const input = document.getElementById('skillInput' + skillId);
+      input.style.display = 'block';
+      input.focus();
+      input.select();
+      document.getElementById('skillSaveRow' + skillId).classList.add('visible');
+    }
+
+    function cancelEditSkill(skillId) {
+      const display = document.getElementById('skillDisplay' + skillId);
+      document.getElementById('skillInput' + skillId).value = display.textContent.trim();
+      document.getElementById('skillInput' + skillId).style.display = 'none';
+      display.style.display = 'block';
+      document.getElementById('skillSaveRow' + skillId).classList.remove('visible');
+    }
+
+    function skillKeydown(event, skillId) {
+      if (event.key === 'Enter')  saveSkill(skillId);
+      if (event.key === 'Escape') cancelEditSkill(skillId);
+    }
+
+    async function saveSkill(skillId) {
+      const input = document.getElementById('skillInput' + skillId);
+      const name  = input.value.trim();
+      if (!name) { showToast('Skill name cannot be empty.', true); return; }
+
+      try {
+        const resp = await fetch(`/api/ptt/admin/skills/${skillId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+        });
+        const data = await resp.json();
+        if (!resp.ok || data.error) {
+          showToast(data.error || 'Failed to save.', true); return;
+        }
+        const display = document.getElementById('skillDisplay' + skillId);
+        display.textContent = name;
+        cancelEditSkill(skillId);
+        showToast('Skill updated.');
+      } catch (err) {
+        showToast('Network error. Please try again.', true);
+      }
+    }
+
+    async function deleteSkill(skillId, skillName) {
+      if (!confirm(`Delete skill "${skillName}"? This cannot be undone.`)) return;
+      try {
+        const resp = await fetch(`/api/ptt/admin/skills/${skillId}`, {
+          method: 'DELETE'
+        });
+        const data = await resp.json();
+        if (!resp.ok || data.error) {
+          showToast(data.error || 'Failed to delete.', true); return;
+        }
+        const item = document.getElementById('skillItem' + skillId);
+        item.style.opacity = '0';
+        item.style.transition = 'opacity .25s';
+        setTimeout(() => {
+          item.remove();
+          updateSkillCount(-1);
+        }, 260);
+        showToast(`"${skillName}" deleted.`);
+      } catch (err) {
+        showToast('Network error. Please try again.', true);
+      }
+    }
+
+    async function addSkill() {
+      const input = document.getElementById('newSkillName');
+      const name  = input.value.trim();
+      if (!name) { input.focus(); return; }
+
+      try {
+        const resp = await fetch('/api/ptt/admin/skills', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+        });
+        const data = await resp.json();
+        if (!resp.ok || data.error) {
+          showToast(data.error || 'Failed to add skill.', true); return;
+        }
+        // Append new item to the list
+        const list = document.getElementById('skillsList');
+        const newId = data.id;
+        const li = document.createElement('li');
+        li.className = 'skill-item';
+        li.id = 'skillItem' + newId;
+        li.dataset.id = newId;
+        li.innerHTML = `
+          <div class="skill-order-btns">
+            <button class="btn-order" title="Move up"   onclick="moveSkill(${newId}, 'up')">▲</button>
+            <button class="btn-order" title="Move down" onclick="moveSkill(${newId}, 'down')">▼</button>
+          </div>
+          <div class="skill-name-field">
+            <div class="skill-name-display"
+                 onclick="startEditSkill(${newId})"
+                 id="skillDisplay${newId}">${_esc(name)}</div>
+            <input type="text" class="skill-name-input" id="skillInput${newId}"
+                   value="${_esc(name)}"
+                   onkeydown="skillKeydown(event, ${newId})"
+                   placeholder="Skill name">
+            <div class="skill-save-row" id="skillSaveRow${newId}">
+              <button class="btn-save-skill"   onclick="saveSkill(${newId})">Save</button>
+              <button class="btn-cancel-skill" onclick="cancelEditSkill(${newId})">Cancel</button>
+            </div>
+          </div>
+          <button class="btn-skill-delete" title="Delete skill"
+                  onclick="deleteSkill(${newId}, '${_esc(name)}')">✕</button>
+        `;
+        list.appendChild(li);
+        input.value = '';
+        input.focus();
+        updateSkillCount(1);
+        showToast(`"${name}" added.`);
+      } catch (err) {
+        showToast('Network error. Please try again.', true);
+      }
+    }
+
+    function _esc(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function updateSkillCount(delta) {
+      const el    = document.getElementById('skillCountCard');
+      const badge = document.getElementById('skillBadge');
+      const next  = Math.max(0, (parseInt(el.textContent) || 0) + delta);
+      el.textContent = next;
+      badge.textContent = next + ' skill' + (next !== 1 ? 's' : '');
+    }
+
+    // ── REORDER ────────────────────────────────────────────────────────────
+    async function moveSkill(skillId, direction) {
+      const list  = document.getElementById('skillsList');
+      const items = Array.from(list.querySelectorAll('.skill-item'));
+      const idx   = items.findIndex(el => parseInt(el.dataset.id) === skillId);
+      if (idx === -1) return;
+
+      const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+      if (swapIdx < 0 || swapIdx >= items.length) return;
+
+      // Swap in DOM
+      if (direction === 'up') {
+        list.insertBefore(items[idx], items[swapIdx]);
+      } else {
+        list.insertBefore(items[swapIdx], items[idx]);
+      }
+
+      // Send new order to server
+      const orderedIds = Array.from(list.querySelectorAll('.skill-item'))
+                              .map(el => parseInt(el.dataset.id));
+      try {
+        const resp = await fetch('/api/ptt/admin/skills/reorder', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ordered_ids: orderedIds }),
+        });
+        if (!resp.ok) showToast('Failed to save order.', true);
+      } catch (err) {
+        showToast('Network error saving order.', true);
+      }
     }
   </script>
 </body>
