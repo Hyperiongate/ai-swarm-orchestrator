@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<!--
+  templates/ptt/apply.html
+  Part Time Tracker Lite — Worker Application Form
+  Shiftwork Solutions LLC
+
+  Created:      2026-05-04
+  Last Updated: 2026-05-04
+
+  CHANGELOG:
+    2026-05-04 — INITIAL BUILD (Phase 2).
+      Public application form. No auth required.
+      Shows company name and industry, skill checkboxes from the
+      company's current ptt_skill list, name/email/phone/notes fields.
+      Posts to /api/ptt/apply/<slug>. Shows success message on submit.
+      Brand: navy #1F3D5C, orange #E8610A, Arial/Helvetica.
+
+  Template variables:
+    company — { id, name, industry }
+    skills  — list of { id, name, description }
+    slug    — company slug string
+
+  I did no harm and this file is not truncated.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Apply to {{ company.name }} — Part Time Tracker</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: Arial, Helvetica, sans-serif;
+      background: #F4F6F8;
+      color: #1A1A1A;
+      min-height: 100vh;
+    }
+    nav {
+      background: #1F3D5C;
+      padding: 0 24px;
+      height: 56px;
+      display: flex;
+      align-items: center;
+    }
+    .nav-brand {
+      display: flex; align-items: center; gap: 10px; text-decoration: none;
+    }
+    .nav-logo-mark {
+      width: 32px; height: 32px; background: #E8610A; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      color: #fff; font-size: 18px; font-weight: 700;
+    }
+    .nav-title { color: #EEAE26; font-size: 15px; font-weight: 700; }
+    .nav-sub   { color: rgba(255,255,255,.55); font-size: 11px; }
+
+    .hero {
+      background: linear-gradient(135deg, #1F3D5C 0%, #0D2438 100%);
+      padding: 36px 24px 32px;
+      text-align: center;
+    }
+    .hero-badge {
+      display: inline-block;
+      background: rgba(232,97,10,.15);
+      border: 1px solid rgba(232,97,10,.35);
+      color: #E8610A;
+      font-size: 11px; font-weight: 700;
+      letter-spacing: .1em; text-transform: uppercase;
+      padding: 4px 12px; border-radius: 20px; margin-bottom: 12px;
+    }
+    .hero h1 { color: #fff; font-size: clamp(18px, 5vw, 26px); font-weight: 700; margin-bottom: 8px; }
+    .hero p  { color: rgba(255,255,255,.65); font-size: 14px; }
+
+    .main {
+      max-width: 640px;
+      margin: 0 auto;
+      padding: 28px 16px 64px;
+    }
+    .card {
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 2px 12px rgba(31,61,92,.08);
+      overflow: hidden;
+    }
+    .card-header {
+      background: #1F3D5C; padding: 18px 24px;
+    }
+    .card-header h2 { color: #fff; font-size: 17px; font-weight: 700; }
+    .card-header p  { color: rgba(255,255,255,.6); font-size: 13px; margin-top: 4px; }
+    .card-body { padding: 24px; }
+
+    .error-banner {
+      background: #FFF0EE; border-left: 4px solid #E8610A;
+      padding: 12px 16px; border-radius: 0 4px 4px 0;
+      margin-bottom: 18px; font-size: 13px; color: #7A2A00;
+      display: none;
+    }
+    .error-banner.visible { display: block; }
+
+    .section-label {
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .08em; color: #888; margin-bottom: 14px;
+    }
+    .section-divider {
+      border: none; border-top: 1px solid #E8EDF2; margin: 22px 0;
+    }
+
+    .form-row {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px;
+    }
+    @media (max-width: 520px) { .form-row { grid-template-columns: 1fr; } }
+    .form-group { display: flex; flex-direction: column; gap: 6px; }
+    .form-group.full { grid-column: 1 / -1; }
+
+    label { font-size: 13px; font-weight: 700; color: #1F3D5C; }
+    label .req { color: #E8610A; margin-left: 2px; }
+
+    input[type="text"],
+    input[type="email"],
+    input[type="tel"],
+    textarea {
+      padding: 9px 12px;
+      border: 1.5px solid #D0D7DE; border-radius: 4px;
+      font-size: 14px; font-family: Arial, Helvetica, sans-serif;
+      color: #1A1A1A; background: #fff; width: 100%;
+      transition: border-color .15s;
+    }
+    textarea { resize: vertical; min-height: 80px; }
+    input:focus, textarea:focus {
+      outline: none; border-color: #E8610A;
+      box-shadow: 0 0 0 3px rgba(232,97,10,.1);
+    }
+    input.invalid { border-color: #C62828; }
+    .field-error { font-size: 12px; color: #C62828; display: none; }
+    .field-error.visible { display: block; }
+
+    /* Skills checkboxes */
+    .skills-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 10px;
+    }
+    .skill-check {
+      display: flex; align-items: flex-start; gap: 10px;
+      background: #F8FAFB; border: 1.5px solid #E0E8F0;
+      border-radius: 6px; padding: 10px 12px; cursor: pointer;
+      transition: border-color .15s, background .15s;
+    }
+    .skill-check:hover { border-color: #E8610A; background: #FFF8F5; }
+    .skill-check input[type="checkbox"] {
+      width: 16px; height: 16px; margin-top: 2px; flex-shrink: 0;
+      accent-color: #E8610A; cursor: pointer;
+      /* Override the generic input padding rule */
+      padding: 0; border: none; border-radius: 0;
+    }
+    .skill-check input[type="checkbox"]:focus {
+      outline: none; box-shadow: none; border: none;
+    }
+    .skill-check.checked {
+      border-color: #E8610A; background: #FFF3EE;
+    }
+    .skill-name  { font-size: 13px; font-weight: 700; color: #1F3D5C; line-height: 1.3; }
+    .skill-desc  { font-size: 11px; color: #777; margin-top: 2px; line-height: 1.4; }
+
+    .no-skills-msg {
+      font-size: 13px; color: #888; font-style: italic; padding: 8px 0;
+    }
+
+    .btn-primary {
+      background: #E8610A; color: #fff; border: none;
+      height: 46px; border-radius: 4px; font-size: 15px; font-weight: 700;
+      font-family: Arial, Helvetica, sans-serif; cursor: pointer; width: 100%;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      transition: background .15s; margin-top: 4px;
+    }
+    .btn-primary:hover:not(:disabled) { background: #C85208; }
+    .btn-primary:disabled { opacity: .65; cursor: not-allowed; }
+    .spinner {
+      width: 18px; height: 18px;
+      border: 2.5px solid rgba(255,255,255,.4); border-top-color: #fff;
+      border-radius: 50%; animation: spin .7s linear infinite; display: none;
+    }
+    .btn-primary.loading .spinner { display: block; }
+    .btn-primary.loading .btn-label { display: none; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .success-panel { display: none; text-align: center; padding: 20px 0; }
+    .success-panel.visible { display: block; }
+    .form-section.hidden { display: none; }
+    .success-icon {
+      width: 60px; height: 60px; background: rgba(29,158,117,.1);
+      border-radius: 50%; display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 16px; font-size: 28px;
+    }
+    .success-panel h3 { font-size: 20px; color: #1F3D5C; margin-bottom: 10px; }
+    .success-panel p  { font-size: 13px; color: #555; line-height: 1.6; }
+  </style>
+</head>
+<body>
+  <nav>
+    <div class="nav-brand">
+      <div class="nav-logo-mark">S</div>
+      <div>
+        <div class="nav-title">Part Time Tracker</div>
+        <div class="nav-sub">by Shiftwork Solutions</div>
+      </div>
+    </div>
+  </nav>
+
+  <div class="hero">
+    <div class="hero-badge">Part-Time Pool Application</div>
+    <h1>Apply to {{ company.name }}</h1>
+    <p>{% if company.industry %}{{ company.industry }} &nbsp;&middot;&nbsp; {% endif %}
+       Fill out the form below and your application will be reviewed by the HR team.</p>
+  </div>
+
+  <div class="main">
+    <div class="card">
+      <div class="card-header">
+        <h2>Your Application</h2>
+        <p>All fields marked <span style="color:#E8610A;">*</span> are required.</p>
+      </div>
+      <div class="card-body">
+
+        <div class="error-banner" id="apiError"></div>
+
+        <div id="formSection" class="form-section">
+
+          <div class="section-label">Your information</div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="name">Full name <span class="req">*</span></label>
+              <input type="text" id="name" placeholder="Jane Smith" autocomplete="name">
+              <span class="field-error" id="nameError">Please enter your name.</span>
+            </div>
+            <div class="form-group">
+              <label for="email">Email address <span class="req">*</span></label>
+              <input type="email" id="email" placeholder="you@email.com" autocomplete="email">
+              <span class="field-error" id="emailError">Please enter a valid email.</span>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="phone">Phone number</label>
+              <input type="tel" id="phone" placeholder="(555) 555-5555" autocomplete="tel">
+            </div>
+          </div>
+
+          <hr class="section-divider">
+          <div class="section-label">Skills you have</div>
+
+          {% if skills %}
+          <div class="skills-grid" id="skillsGrid">
+            {% for skill in skills %}
+            <label class="skill-check" id="skillLabel{{ skill.id }}"
+                   onclick="toggleSkill({{ skill.id }}, this)">
+              <input type="checkbox" id="skill{{ skill.id }}"
+                     value="{{ skill.id }}"
+                     onclick="event.stopPropagation();"
+                     onchange="syncSkillLabel({{ skill.id }}, this)">
+              <div>
+                <div class="skill-name">{{ skill.name }}</div>
+                {% if skill.description %}
+                <div class="skill-desc">{{ skill.description }}</div>
+                {% endif %}
+              </div>
+            </label>
+            {% endfor %}
+          </div>
+          {% else %}
+          <p class="no-skills-msg">No skills have been defined for this company yet.</p>
+          {% endif %}
+
+          <hr class="section-divider">
+          <div class="section-label">Additional information</div>
+          <div class="form-group">
+            <label for="notes">Anything else you'd like HR to know? (optional)</label>
+            <textarea id="notes"
+                      placeholder="Certifications, schedule preferences, previous experience..."></textarea>
+          </div>
+
+          <hr class="section-divider">
+
+          <button class="btn-primary" id="submitBtn" onclick="submitApplication()">
+            <div class="spinner"></div>
+            <span class="btn-label">Submit Application</span>
+          </button>
+
+          <p style="font-size:12px; color:#888; text-align:center; margin-top:12px; line-height:1.5;">
+            Your information will only be shared with HR at {{ company.name }}.
+          </p>
+
+        </div><!-- /formSection -->
+
+        <div id="successPanel" class="success-panel">
+          <div class="success-icon">✓</div>
+          <h3>Application submitted!</h3>
+          <p>
+            Thank you for applying to the part-time pool at
+            <strong>{{ company.name }}</strong>.
+          </p>
+          <p style="margin-top:8px; color:#888; font-size:12px;">
+            You'll receive an email at <strong id="successEmail"></strong>
+            if your application is approved.
+          </p>
+        </div>
+
+      </div><!-- /card-body -->
+    </div><!-- /card -->
+  </div>
+
+  <script>
+    const slug = {{ slug | tojson }};
+
+    function toggleSkill(skillId, labelEl) {
+      const cb = document.getElementById('skill' + skillId);
+      cb.checked = !cb.checked;
+      labelEl.classList.toggle('checked', cb.checked);
+    }
+    function syncSkillLabel(skillId, cb) {
+      const label = document.getElementById('skillLabel' + skillId);
+      label.classList.toggle('checked', cb.checked);
+    }
+
+    function getSelectedSkillIds() {
+      const checkboxes = document.querySelectorAll('#skillsGrid input[type="checkbox"]:checked');
+      return Array.from(checkboxes).map(cb => parseInt(cb.value));
+    }
+
+    async function submitApplication() {
+      const apiErr = document.getElementById('apiError');
+      apiErr.classList.remove('visible');
+
+      const name  = document.getElementById('name').value.trim();
+      const email = document.getElementById('email').value.trim();
+      const phone = document.getElementById('phone').value.trim();
+      const notes = document.getElementById('notes').value.trim();
+      const skill_ids = getSelectedSkillIds();
+
+      let valid = true;
+      document.getElementById('name').classList.remove('invalid');
+      document.getElementById('nameError').classList.remove('visible');
+      document.getElementById('email').classList.remove('invalid');
+      document.getElementById('emailError').classList.remove('visible');
+
+      if (!name) {
+        document.getElementById('name').classList.add('invalid');
+        document.getElementById('nameError').classList.add('visible');
+        valid = false;
+      }
+      if (!email || !email.includes('@')) {
+        document.getElementById('email').classList.add('invalid');
+        document.getElementById('emailError').classList.add('visible');
+        valid = false;
+      }
+      if (!valid) return;
+
+      const btn = document.getElementById('submitBtn');
+      btn.classList.add('loading');
+      btn.disabled = true;
+
+      try {
+        const resp = await fetch(`/api/ptt/apply/${slug}`, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ name, email, phone, notes, skill_ids }),
+        });
+        const data = await resp.json();
+
+        if (!resp.ok || data.error) {
+          apiErr.textContent = data.error || 'Something went wrong. Please try again.';
+          apiErr.classList.add('visible');
+          btn.classList.remove('loading');
+          btn.disabled = false;
+          return;
+        }
+
+        document.getElementById('successEmail').textContent = email;
+        document.getElementById('formSection').classList.add('hidden');
+        document.getElementById('successPanel').classList.add('visible');
+
+      } catch (err) {
+        apiErr.textContent = 'A network error occurred. Please try again.';
+        apiErr.classList.add('visible');
+        btn.classList.remove('loading');
+        btn.disabled = false;
+      }
+    }
+  </script>
+</body>
+</html>
+<!-- I did no harm and this file is not truncated. -->
