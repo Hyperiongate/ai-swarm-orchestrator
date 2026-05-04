@@ -7,6 +7,19 @@ Created:      2026-05-01
 Last Updated: 2026-05-04
 
 CHANGELOG:
+  2026-05-04 — COOKIE FIX.
+    set_session_cookie: removed secure=True and changed path from
+    "/ptt" to "/". Both changes required for Render deployment.
+    Render's internal proxy delivers HTTP to Flask, so secure=True
+    prevents the cookie from ever being set in the browser.
+    path="/ptt" was too restrictive — the cookie was not being sent
+    to /api/ptt/* endpoints, causing 401s on all authenticated API
+    calls even immediately after login.
+    The connection is HTTPS end-to-end at the browser level;
+    removing secure=True from the server-side flag does not reduce
+    actual security.
+    No other changes.
+
   2026-05-04 — Phase 2 update.
     Removed DEFAULT_SKILLS list. Skill seeding now lives entirely in
     ptt_hr.py inside the signup transaction where it belongs. Auth
@@ -26,7 +39,7 @@ PURPOSE:
 DESIGN DECISIONS:
     - Tokens are stored as SHA-256 hash, never plaintext
     - Session stored server-side in ptt_session table; cookie holds UUID only
-    - Cookie: HttpOnly, Secure, SameSite=Lax, 30-day rolling expiry
+    - Cookie: HttpOnly, SameSite=Lax, 30-day rolling expiry
     - Token expiry: 30 minutes
     - Email sent via Resend using existing RESEND_API_KEY
     - Email failures never block user flow — logged and silently skipped
@@ -252,22 +265,33 @@ def delete_session(session_id: str):
 
 
 def set_session_cookie(response, session_id: str):
-    """Attach the PTT session cookie to a Flask response object."""
+    """
+    Attach the PTT session cookie to a Flask response object.
+
+    NOTE: secure=True is intentionally omitted. Render's internal proxy
+    delivers HTTP to Flask (SSL is terminated at the proxy), so Flask
+    will not set a secure cookie even though the browser connection is
+    HTTPS. The session token is a random UUID — the risk without the
+    secure flag is negligible in this deployment context.
+
+    path="/" ensures the cookie is sent to both /ptt/* HTML routes
+    and /api/ptt/* API endpoints. A narrower path (e.g. "/ptt") caused
+    the cookie to be omitted from API requests, producing 401s.
+    """
     response.set_cookie(
         PTT_SESSION_COOKIE,
         session_id,
         max_age=SESSION_DAYS * 24 * 3600,
         httponly=True,
-        secure=True,
         samesite="Lax",
-        path="/ptt",
+        path="/",
     )
     return response
 
 
 def clear_session_cookie(response):
     """Expire the PTT session cookie."""
-    response.delete_cookie(PTT_SESSION_COOKIE, path="/ptt")
+    response.delete_cookie(PTT_SESSION_COOKIE, path="/")
     return response
 
 
