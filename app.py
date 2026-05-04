@@ -155,9 +155,11 @@ AUTHOR: Jim @ Shiftwork Solutions LLC
 from flask import Flask, render_template, jsonify, request
 import os
 from flask import send_from_directory
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 # Initialize Flask
 app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
 # ============================================================================
 # CRITICAL FILE UPLOAD CONFIGURATION
