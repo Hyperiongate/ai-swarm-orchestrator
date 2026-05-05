@@ -4,13 +4,18 @@ Shiftwork Solutions LLC
 Created: 2026-05-01  |  Last Updated: 2026-05-04
 
 CHANGELOG:
-  2026-05-04 — COOKIE FIX. ONE CHANGE ONLY.
-    ptt_auth_redeem now returns a 200 HTML page instead of a 302 redirect.
-    Render's proxy strips Set-Cookie headers from 302 responses.
-    A 200 response preserves Set-Cookie. JS then navigates to dashboard.
-    Two local constants (PTT_COOKIE_NAME, PTT_COOKIE_MAX_AGE) defined
-    inline — no import dependency on ptt_auth module-level names.
-    All other functions identical to the previously working version.
+  2026-05-04 — EMAIL SCANNER FIX. ONE CHANGE ONLY.
+    Split /ptt/auth into GET + POST to defeat email security scanners.
+    GET  /ptt/auth?token=... uses peek_magic_token (does NOT consume the
+         token) and shows a "Log In" button page.
+    POST /ptt/auth uses redeem_magic_token (consumes token), sets the
+         session cookie on a 200 response, JS navigates to dashboard.
+    Email scanners (Outlook Safe Links, Google etc.) only do GET requests
+    so they can no longer consume the token before the human clicks.
+
+  2026-05-04 — COOKIE FIX. Inline PTT_COOKIE_NAME / PTT_COOKIE_MAX_AGE
+    constants. Auth redeem returns 200 HTML (not 302) to preserve
+    Set-Cookie through Render's proxy.
 
   2026-05-04 — Phase 2 update. Skills CRUD, worker approval, 14-skill seed.
   2026-05-01 — INITIAL BUILD.
@@ -27,7 +32,7 @@ from flask import (Blueprint, request, jsonify, render_template,
 from db_engine import get_db_connection
 from routes.ptt_auth import (
     is_free_mail, extract_domain, generate_slug,
-    create_magic_token, redeem_magic_token,
+    create_magic_token, peek_magic_token, redeem_magic_token,
     create_session, delete_session, get_current_session,
     set_session_cookie, clear_session_cookie,
     send_hr_signup_confirmation, send_hr_signup_notification,
@@ -124,14 +129,96 @@ def ptt_login_page():
     return render_template("ptt/login.html")
 
 
-@ptt_hr_bp.route("/ptt/auth")
-def ptt_auth_redeem():
+@ptt_hr_bp.route("/ptt/auth", methods=["GET"])
+def ptt_auth_show():
     """
-    Token redemption. Returns 200 HTML so Render's proxy preserves
-    the Set-Cookie header (proxy strips it on 302 redirects).
-    JS navigates to the dashboard after cookie is stored.
+    GET /ptt/auth?token=...
+
+    Validates the token WITHOUT consuming it, then shows a confirmation
+    page with a single "Log In" button that POSTs the token.
+
+    Two-step design: email security scanners auto-fetch URLs in emails
+    (GET only). This page lets them hit the URL without consuming the
+    token. Only a human clicking the button (POST) redeems it.
     """
     raw_token = request.args.get("token", "").strip()
+    if not raw_token:
+        return redirect("/ptt/?error=missing_token")
+
+    payload = peek_magic_token(raw_token)
+    if not payload:
+        return redirect("/ptt/?error=invalid_or_expired_token")
+
+    import html as _html
+    safe_token = _html.escape(raw_token)
+
+    page = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Log In — Part Time Tracker</title>
+  <style>
+    *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{
+      font-family: Arial, Helvetica, sans-serif;
+      background: #1F3D5C;
+      display: flex; align-items: center; justify-content: center;
+      min-height: 100vh;
+    }}
+    .card {{
+      background: #fff; border-radius: 8px; padding: 40px 36px;
+      text-align: center; max-width: 360px; width: 90%;
+      box-shadow: 0 8px 32px rgba(0,0,0,.25);
+    }}
+    .logo {{
+      width: 48px; height: 48px; background: #E8610A; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      color: #fff; font-size: 26px; font-weight: 700; margin: 0 auto 20px;
+    }}
+    h1 {{ font-size: 20px; color: #1F3D5C; margin-bottom: 8px; }}
+    p  {{ font-size: 14px; color: #666; line-height: 1.5; margin-bottom: 28px; }}
+    .btn {{
+      background: #E8610A; color: #fff; border: none;
+      width: 100%; height: 48px; border-radius: 4px;
+      font-size: 16px; font-weight: 700; font-family: Arial, sans-serif;
+      cursor: pointer; transition: background .15s;
+    }}
+    .btn:hover {{ background: #C85208; }}
+    .btn:disabled {{ opacity: .6; cursor: not-allowed; }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">S</div>
+    <h1>Part Time Tracker</h1>
+    <p>Click the button below to log in to your account.</p>
+    <form method="POST" action="/ptt/auth" id="loginForm">
+      <input type="hidden" name="token" value="{safe_token}">
+      <button type="submit" class="btn" id="loginBtn">Log In</button>
+    </form>
+  </div>
+  <script>
+    document.getElementById('loginForm').addEventListener('submit', function() {{
+      document.getElementById('loginBtn').disabled = true;
+      document.getElementById('loginBtn').textContent = 'Logging in...';
+    }});
+  </script>
+</body>
+</html>"""
+
+    return make_response(page, 200)
+
+
+@ptt_hr_bp.route("/ptt/auth", methods=["POST"])
+def ptt_auth_redeem():
+    """
+    POST /ptt/auth  (token in form body)
+
+    Consumes the token, creates the session, sets the cookie.
+    Returns 200 HTML that JS-navigates to the dashboard.
+    Only reached when the human clicks the button on the GET page.
+    """
+    raw_token = (request.form.get("token") or "").strip()
     if not raw_token:
         return redirect("/ptt/?error=missing_token")
 
