@@ -30,6 +30,7 @@
     apply_url       — string
     pending_list    — list of dicts: id, name, email, phone, notes, skills (list), created_at
     skills          — list of dicts: id, name, description, sort_order
+    active_list     — list of dicts: id, name, email, phone, approved_at, skills (list)
 
   I did no harm and this file is not truncated.
 -->
@@ -509,19 +510,80 @@
       </div>
     </div>
 
-    <!-- ACTIVE WORKERS (placeholder, Phase 3) -->
+    <!-- ACTIVE WORKERS -->
     <div class="section-card">
       <div class="section-card-header">
         <h2>Active Workers</h2>
         <span class="badge">{{ active_workers }} active</span>
       </div>
       <div class="section-card-body">
+        {% if active_list %}
+        <p style="font-size:13px; color:#666; margin-bottom:16px; line-height:1.5;">
+          These workers are approved and active in your part-time pool.
+        </p>
+        <div id="activeWorkerList">
+          {% for w in active_list %}
+          <div class="worker-row" id="activeWorkerRow{{ w.id }}">
+            <div class="worker-row-header">
+              <div class="worker-info">
+                <div class="worker-name">{{ w.name }}</div>
+                <div class="worker-meta">
+                  {{ w.email }}{% if w.phone %} &nbsp;&middot;&nbsp; {{ w.phone }}{% endif %}
+                  {% if w.approved_at %}
+                  &nbsp;&middot;&nbsp;
+                  <span style="color:#1D9E75; font-size:11px; font-weight:700;">
+                    Approved
+                  </span>
+                  {% endif %}
+                </div>
+                <div class="worker-skills-preview">
+                  {% if w.skills %}
+                    {% for s in w.skills %}
+                    <span class="skill-tag">{{ s }}</span>
+                    {% endfor %}
+                  {% else %}
+                    <span class="no-skills-tag">No skills on record</span>
+                  {% endif %}
+                </div>
+              </div>
+              <div class="worker-right">
+                <button class="btn-view-detail"
+                        onclick="toggleActiveDetail({{ w.id }}, this)"
+                        id="activeViewBtn{{ w.id }}">
+                  View details ▼
+                </button>
+              </div>
+            </div>
+            <div class="worker-detail" id="activeWorkerDetail{{ w.id }}">
+              <div class="detail-section">
+                <div class="detail-label">Skills</div>
+                <div class="detail-skills">
+                  {% if w.skills %}
+                    {% for s in w.skills %}
+                    <span class="skill-tag">{{ s }}</span>
+                    {% endfor %}
+                  {% else %}
+                    <span class="no-skills-tag">No skills on record</span>
+                  {% endif %}
+                </div>
+              </div>
+              <div class="detail-section">
+                <div class="detail-label">Contact</div>
+                <div class="detail-notes">
+                  {{ w.email }}{% if w.phone %}<br>{{ w.phone }}{% endif %}
+                </div>
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
         <div class="empty-state">
           <div class="empty-icon">👥</div>
-          <h3>Worker profiles and availability</h3>
-          <p>Full worker profiles, availability calendars, and shift history arrive in Phase 3.</p>
-          <span class="coming-soon-pill">Phase 3 — Coming Next</span>
+          <h3>No active workers yet</h3>
+          <p>Approve applicants from the Pending Applications panel above to build your pool.</p>
         </div>
+        {% endif %}
       </div>
     </div>
 
@@ -623,6 +685,12 @@
     // ── TOGGLE WORKER DETAIL ───────────────────────────────────────────────
     function toggleDetail(workerId, btn) {
       const detail = document.getElementById('workerDetail' + workerId);
+      const isOpen = detail.classList.toggle('open');
+      btn.textContent = isOpen ? 'Hide details ▲' : 'View details ▼';
+    }
+
+    function toggleActiveDetail(workerId, btn) {
+      const detail = document.getElementById('activeWorkerDetail' + workerId);
       const isOpen = detail.classList.toggle('open');
       btn.textContent = isOpen ? 'Hide details ▲' : 'View details ▼';
     }
