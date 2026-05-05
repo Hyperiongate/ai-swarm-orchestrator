@@ -33,7 +33,7 @@ from db_engine import get_db_connection
 from routes.ptt_auth import (
     is_free_mail, extract_domain, generate_slug,
     create_magic_token, peek_magic_token, redeem_magic_token,
-    create_session, delete_session, get_current_session,
+    create_session, get_session, delete_session, get_current_session,
     set_session_cookie, clear_session_cookie,
     send_hr_signup_confirmation, send_hr_signup_notification,
     send_magic_link, send_worker_approved, insert_ptt_lead,
@@ -245,33 +245,40 @@ def ptt_auth_redeem():
     session_id = create_session(user_type, user_id, company_id)
     dest = "/ptt/dashboard" if user_type == "admin" else "/ptt/w/dashboard"
 
-    html = f"""<!DOCTYPE html>
-<html>
-<head><meta charset="UTF-8"><title>Logging in...</title>
-<style>
-body{{font-family:Arial,sans-serif;background:#1F3D5C;display:flex;
-     align-items:center;justify-content:center;min-height:100vh;margin:0}}
-.msg{{color:#fff;font-size:16px;text-align:center}}
-.spinner{{width:36px;height:36px;border:3px solid rgba(255,255,255,.3);
-          border-top-color:#E8610A;border-radius:50%;
-          animation:spin .7s linear infinite;margin:0 auto 16px}}
-@keyframes spin{{to{{transform:rotate(360deg)}}}}
-</style></head>
-<body><div class="msg"><div class="spinner"></div>Logging you in...</div>
-<script>setTimeout(function(){{window.location.href="{dest}";}},400);</script>
-</body></html>"""
-
-    resp = make_response(html, 200)
-    resp.headers["Content-Type"] = "text/html"
-    resp.set_cookie(PTT_COOKIE_NAME, session_id,
-                    max_age=PTT_COOKIE_MAX_AGE,
-                    httponly=True, samesite="Lax", path="/")
-    return resp
+    # Pass session_id in URL. Dashboard reads ?sid=, validates, sets
+    # cookie on the 200 page response — bypasses proxy stripping.
+    return redirect(f"{dest}?sid={session_id}")
 
 
 @ptt_hr_bp.route("/ptt/dashboard")
-@require_ptt_admin
-def ptt_dashboard(ptt_session):
+def ptt_dashboard():
+    """
+    HR Admin dashboard.
+
+    Auth handled manually (not via decorator) so we can bootstrap a
+    session from the ?sid= URL param on first login. When ?sid= is
+    present the session_id comes from the URL (set by POST /ptt/auth),
+    we validate it, and set the cookie on this 200 response. All
+    subsequent page loads use the cookie as normal.
+
+    This pattern avoids all proxy Set-Cookie stripping issues because
+    the cookie is set on the same 200 response that delivers the page.
+    """
+    # --- Auth: cookie first, then ?sid= fallback ---
+    session_id  = request.cookies.get(PTT_COOKIE_NAME)
+    sid_from_url = False
+
+    if not session_id:
+        session_id   = request.args.get("sid", "").strip()
+        sid_from_url = bool(session_id)
+
+    if not session_id:
+        return redirect("/ptt/")
+
+    ptt_session = get_session(session_id)
+    if not ptt_session or ptt_session.get("user_type") != "admin":
+        return redirect("/ptt/")
+
     company_id = ptt_session["company_id"]
     admin_id   = ptt_session["user_id"]
 
@@ -315,15 +322,25 @@ def ptt_dashboard(ptt_session):
         conn.close()
 
     apply_url = f"{request.host_url.rstrip('/')}/ptt/apply/{company['slug']}"
-    return render_template("ptt/dashboard.html",
-                           company=company, admin=admin,
-                           active_workers=active_workers,
-                           pending_workers=pending_workers,
-                           open_shifts=open_shifts,
-                           skill_count=skill_count,
-                           apply_url=apply_url,
-                           pending_list=pending_list,
-                           skills=skills)
+    resp = make_response(render_template(
+        "ptt/dashboard.html",
+        company=company, admin=admin,
+        active_workers=active_workers,
+        pending_workers=pending_workers,
+        open_shifts=open_shifts,
+        skill_count=skill_count,
+        apply_url=apply_url,
+        pending_list=pending_list,
+        skills=skills,
+    ))
+
+    # If session came from URL param, set the cookie now on this 200 response.
+    # Proxy preserves Set-Cookie on 200 page responses.
+    if sid_from_url:
+        resp.set_cookie(PTT_COOKIE_NAME, session_id,
+                        max_age=PTT_COOKIE_MAX_AGE,
+                        httponly=True, samesite="Lax", path="/")
+    return resp
 
 
 @ptt_hr_bp.route("/ptt/logout")
