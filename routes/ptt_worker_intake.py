@@ -4,29 +4,27 @@ AI Swarm Orchestrator — Part Time Tracker: Worker Intake Routes
 Shiftwork Solutions LLC
 
 Created:      2026-05-04
-Last Updated: 2026-05-04
+Last Updated: 2026-05-05
 
 CHANGELOG:
+  2026-05-05 — DUPLICATE CHECK FIX.
+    Changed duplicate application check from email-only to name+email
+    combination. The same email can appear with different names (e.g.,
+    two people sharing an email address). Only the exact name+email
+    pair is treated as a duplicate for a given company.
+
+    Previous behaviour: any re-use of an email triggered "already
+    under review" even if it was a different person with a different name.
+
+    New behaviour:
+      - Same name + same email + pending   -> "already under review"
+      - Same name + same email + active    -> "already an active member"
+      - Same name + same email + inactive  -> re-application allowed
+      - Different name + same email        -> new application created
+      - Same name + different email        -> new application created
+
   2026-05-04 — INITIAL BUILD (Phase 2).
-    Public-facing worker application flow:
-      GET  /ptt/apply/<slug>       — application form (no auth required)
-      POST /api/ptt/apply/<slug>   — submit application
-
-PURPOSE:
-    A part-time worker visits the apply URL shared by HR, sees the
-    company's current skill list as checkboxes, fills in their info,
-    and submits. The application lands in ptt_worker with
-    status = 'pending'. The HR admin receives a notification email.
-
-MULTI-TENANCY:
-    The slug in the URL resolves to a company_id. All inserts are
-    scoped to that company. A worker cannot apply to a company that
-    does not exist or whose slug is invalid — the form returns 404.
-
-NO AUTH REQUIRED:
-    The apply page and submit endpoint are intentionally public.
-    The worker only gains a session after the HR admin approves them
-    and they redeem the approval magic link.
+    Public-facing worker application flow.
 
 I did no harm and this file is not truncated.
 """
@@ -96,6 +94,12 @@ def ptt_apply_submit(slug):
     Accept and store a worker application.
     Body: { name, email, phone (optional), skill_ids (list), notes (optional) }
     Returns: { status: "ok" } or { error: "..." }
+
+    DUPLICATE LOGIC:
+    Duplicates are detected on name+email combination per company, NOT
+    email alone. Two people sharing an email address are allowed to apply
+    as long as their names differ. Only the exact name+email pair is
+    considered a duplicate.
     """
     data = request.get_json(silent=True) or {}
 
@@ -112,7 +116,6 @@ def ptt_apply_submit(slug):
         return jsonify({"error": "A valid email address is required"}), 400
     if not isinstance(skill_ids, list):
         skill_ids = []
-    # Sanitise skill_ids to integers only
     skill_ids = [int(s) for s in skill_ids if str(s).strip().isdigit()]
 
     conn = get_db_connection()
@@ -130,32 +133,36 @@ def ptt_apply_submit(slug):
         company_id   = company["id"]
         company_name = company["name"]
 
-        # Check for duplicate application (same email, same company)
+        # Check for duplicate: same name AND same email for this company.
+        # Email alone is NOT a duplicate — two people may share an email.
         cursor.execute("""
             SELECT id, status FROM ptt_worker
-            WHERE company_id = %s AND email = %s
-        """, (company_id, email))
+            WHERE company_id = %s
+              AND LOWER(email) = %s
+              AND LOWER(name)  = LOWER(%s)
+        """, (company_id, email, name))
         existing = cursor.fetchone()
+
         if existing:
             if existing["status"] == "active":
                 return jsonify({
-                    "error": "You are already an active member of this pool."
+                    "error": "An active pool member with this name and email already exists."
                 }), 409
             if existing["status"] == "pending":
                 return jsonify({
-                    "error": "Your application is already under review."
+                    "error": "An application with this name and email is already under review."
                 }), 409
             # inactive (rejected) — allow re-application by updating the row
             cursor.execute("""
                 UPDATE ptt_worker
-                SET name = %s, phone = %s, notes = %s,
+                SET phone = %s, notes = %s,
                     status = 'pending',
                     rejected_at = NULL, rejection_reason = NULL,
                     approved_by = NULL, approved_at = NULL,
                     created_at = NOW()
                 WHERE id = %s AND company_id = %s
                 RETURNING id
-            """, (name, phone or None, notes or None,
+            """, (phone or None, notes or None,
                   existing["id"], company_id))
             worker_id = cursor.fetchone()["id"]
 
@@ -164,7 +171,7 @@ def ptt_apply_submit(slug):
                 DELETE FROM ptt_worker_skill WHERE worker_id = %s
             """, (worker_id,))
         else:
-            # New worker
+            # New worker row
             cursor.execute("""
                 INSERT INTO ptt_worker
                     (company_id, name, email, phone, notes, status)
@@ -199,7 +206,6 @@ def ptt_apply_submit(slug):
 
     # Notify HR admin (non-fatal)
     try:
-        # Get the primary admin email for this company
         conn2 = get_db_connection()
         try:
             c2 = conn2.cursor()
