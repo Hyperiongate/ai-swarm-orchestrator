@@ -5,21 +5,20 @@
   Shiftwork Solutions LLC
 
   Created:      2026-05-01
-  Last Updated: 2026-05-04
+  Last Updated: 2026-05-05
 
   CHANGELOG:
+    2026-05-05 — Worker detail view.
+      Pending worker rows now show skills as tags and notes.
+      Added expandable "View Details" toggle per worker row.
+      pending_list now receives skills (list of names) and notes
+      from ptt_hr.py dashboard route.
+
     2026-05-04 — Phase 2 update.
-      1. Pending workers panel now shows real applicants with
-         approve/reject buttons. Approve sends magic link email.
-         Reject records optional reason.
-      2. Skills panel now shows editable list: rename inline,
-         up/down reorder buttons, delete button, add new skill form.
-         All changes call the /api/ptt/admin/skills/* endpoints.
-      3. Dashboard receives pending_list and skills template vars
-         from ptt_hr.py.
+      Pending workers panel with approve/reject buttons.
+      Skills panel with inline rename, reorder, delete, add.
 
     2026-05-01 — INITIAL BUILD (Phase 1).
-      Shell dashboard. Summary cards, empty-state panels.
 
   Template variables:
     company         — dict: name, slug, industry, facility_size, created_at
@@ -29,7 +28,7 @@
     open_shifts     — int
     skill_count     — int
     apply_url       — string
-    pending_list    — list of dicts: id, name, email, phone, created_at
+    pending_list    — list of dicts: id, name, email, phone, notes, skills (list), created_at
     skills          — list of dicts: id, name, description, sort_order
 
   I did no harm and this file is not truncated.
@@ -145,19 +144,55 @@
 
     /* ── PENDING WORKERS ── */
     .worker-row {
-      display: flex; align-items: flex-start; justify-content: space-between;
-      padding: 14px 0; border-bottom: 1px solid #F0F4F8; gap: 12px;
+      border-bottom: 1px solid #F0F4F8;
     }
-    .worker-row:last-child { border-bottom: none; padding-bottom: 0; }
+    .worker-row:last-child { border-bottom: none; }
+
+    .worker-row-header {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      padding: 14px 0; gap: 12px;
+    }
     .worker-info { flex: 1; min-width: 0; }
     .worker-name { font-size: 14px; font-weight: 700; color: #1F3D5C; }
-    .worker-email { font-size: 12px; color: #666; margin-top: 2px; }
-    .worker-skills { font-size: 11px; color: #888; margin-top: 4px; }
-    .worker-skills .skill-tag {
+    .worker-meta { font-size: 12px; color: #666; margin-top: 2px; }
+    .worker-skills-preview { margin-top: 6px; }
+    .skill-tag {
       display: inline-block; background: #EEF3F8; border-radius: 10px;
-      padding: 1px 8px; margin: 2px 2px 0 0; color: #1F3D5C; font-size: 11px;
+      padding: 2px 9px; margin: 2px 2px 0 0; color: #1F3D5C; font-size: 11px;
+      font-weight: 600;
     }
-    .worker-actions { display: flex; gap: 8px; flex-shrink: 0; }
+    .no-skills-tag {
+      font-size: 11px; color: #aaa; font-style: italic;
+    }
+    .worker-right { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; flex-shrink: 0; }
+    .worker-actions { display: flex; gap: 8px; }
+    .btn-view-detail {
+      background: none; border: none; color: #1F3D5C; font-size: 11px;
+      font-weight: 700; cursor: pointer; padding: 0; text-decoration: underline;
+      font-family: Arial, Helvetica, sans-serif; opacity: .6;
+    }
+    .btn-view-detail:hover { opacity: 1; }
+
+    .worker-detail {
+      display: none;
+      background: #F8FAFB; border-radius: 6px; padding: 14px 16px;
+      margin-bottom: 14px; border: 1px solid #E8EDF2;
+    }
+    .worker-detail.open { display: block; }
+    .detail-section { margin-bottom: 12px; }
+    .detail-section:last-child { margin-bottom: 0; }
+    .detail-label {
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .07em; color: #888; margin-bottom: 5px;
+    }
+    .detail-skills { display: flex; flex-wrap: wrap; gap: 4px; }
+    .detail-notes {
+      font-size: 13px; color: #444; line-height: 1.6;
+      background: #fff; border-radius: 4px; padding: 8px 12px;
+      border: 1px solid #E8EDF2;
+    }
+    .detail-notes.empty { color: #aaa; font-style: italic; }
+
     .btn-approve {
       background: #1D9E75; color: #fff; border: none;
       padding: 6px 14px; border-radius: 4px; font-size: 12px; font-weight: 700;
@@ -191,9 +226,7 @@
     }
     .btn-order:hover { background: #C8D8E8; }
     .btn-order:disabled { opacity: .3; cursor: not-allowed; }
-    .skill-name-field {
-      flex: 1; min-width: 0;
-    }
+    .skill-name-field { flex: 1; min-width: 0; }
     .skill-name-display {
       font-size: 14px; font-weight: 700; color: #1F3D5C; cursor: pointer;
     }
@@ -220,7 +253,6 @@
     .btn-save-skill   { background: #E8610A; color: #fff; }
     .btn-cancel-skill { background: #E8EDF2; color: #555; }
 
-    /* ADD SKILL FORM */
     .add-skill-row {
       display: flex; gap: 8px; align-items: center; margin-top: 16px;
     }
@@ -358,15 +390,59 @@
         <div id="workerList">
           {% for w in pending_list %}
           <div class="worker-row" id="workerRow{{ w.id }}">
-            <div class="worker-info">
-              <div class="worker-name">{{ w.name }}</div>
-              <div class="worker-email">{{ w.email }}{% if w.phone %} &nbsp;&middot;&nbsp; {{ w.phone }}{% endif %}</div>
+
+            <div class="worker-row-header">
+              <div class="worker-info">
+                <div class="worker-name">{{ w.name }}</div>
+                <div class="worker-meta">
+                  {{ w.email }}{% if w.phone %} &nbsp;&middot;&nbsp; {{ w.phone }}{% endif %}
+                </div>
+                <div class="worker-skills-preview">
+                  {% if w.skills %}
+                    {% for s in w.skills %}
+                    <span class="skill-tag">{{ s }}</span>
+                    {% endfor %}
+                  {% else %}
+                    <span class="no-skills-tag">No skills selected</span>
+                  {% endif %}
+                </div>
+              </div>
+              <div class="worker-right">
+                <div class="worker-actions">
+                  <button class="btn-approve" onclick="approveWorker({{ w.id }}, this)">Approve</button>
+                  <button class="btn-reject"  onclick="rejectWorker({{ w.id }}, this)">Reject</button>
+                </div>
+                <button class="btn-view-detail"
+                        onclick="toggleDetail({{ w.id }}, this)"
+                        id="viewBtn{{ w.id }}">
+                  View details ▼
+                </button>
+              </div>
             </div>
-            <div class="worker-actions">
-              <button class="btn-approve" onclick="approveWorker({{ w.id }}, this)">Approve</button>
-              <button class="btn-reject"  onclick="rejectWorker({{ w.id }}, this)">Reject</button>
+
+            <!-- Expandable detail section -->
+            <div class="worker-detail" id="workerDetail{{ w.id }}">
+              <div class="detail-section">
+                <div class="detail-label">Skills</div>
+                <div class="detail-skills">
+                  {% if w.skills %}
+                    {% for s in w.skills %}
+                    <span class="skill-tag">{{ s }}</span>
+                    {% endfor %}
+                  {% else %}
+                    <span class="no-skills-tag">No skills selected</span>
+                  {% endif %}
+                </div>
+              </div>
+              <div class="detail-section">
+                <div class="detail-label">Notes from applicant</div>
+                <div class="detail-notes {% if not w.notes %}empty{% endif %}">
+                  {{ w.notes if w.notes else 'No notes provided.' }}
+                </div>
+              </div>
             </div>
-          </div>
+
+          </div><!-- /worker-row -->
           {% endfor %}
         </div>
         {% else %}
@@ -544,6 +620,13 @@
       });
     }
 
+    // ── TOGGLE WORKER DETAIL ───────────────────────────────────────────────
+    function toggleDetail(workerId, btn) {
+      const detail = document.getElementById('workerDetail' + workerId);
+      const isOpen = detail.classList.toggle('open');
+      btn.textContent = isOpen ? 'Hide details ▲' : 'View details ▼';
+    }
+
     // ── APPROVE WORKER ─────────────────────────────────────────────────────
     async function approveWorker(workerId, btn) {
       const row = document.getElementById('workerRow' + workerId);
@@ -577,7 +660,7 @@
     // ── REJECT WORKER ──────────────────────────────────────────────────────
     async function rejectWorker(workerId, btn) {
       const reason = prompt('Optional: enter a reason for rejection (not sent to worker)');
-      if (reason === null) return; // cancelled
+      if (reason === null) return;
 
       const row = document.getElementById('workerRow' + workerId);
       btn.disabled = true;
@@ -719,7 +802,6 @@
         if (!resp.ok || data.error) {
           showToast(data.error || 'Failed to add skill.', true); return;
         }
-        // Append new item to the list
         const list = document.getElementById('skillsList');
         const newId = data.id;
         const li = document.createElement('li');
@@ -784,14 +866,12 @@
       const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
       if (swapIdx < 0 || swapIdx >= items.length) return;
 
-      // Swap in DOM
       if (direction === 'up') {
         list.insertBefore(items[idx], items[swapIdx]);
       } else {
         list.insertBefore(items[swapIdx], items[idx]);
       }
 
-      // Send new order to server
       const orderedIds = Array.from(list.querySelectorAll('.skill-item'))
                               .map(el => parseInt(el.dataset.id));
       try {
