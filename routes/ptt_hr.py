@@ -264,13 +264,17 @@ def ptt_dashboard():
     This pattern avoids all proxy Set-Cookie stripping issues because
     the cookie is set on the same 200 response that delivers the page.
     """
-    # --- Auth: cookie first, then ?sid= fallback ---
-    session_id  = request.cookies.get(PTT_COOKIE_NAME)
+    # --- Auth: ?sid= URL param takes priority over cookie ---
+    # If ?sid= is present we just came from POST /ptt/auth with a fresh
+    # session. Always use it — the cookie may hold a stale session_id.
     sid_from_url = False
+    url_sid = request.args.get("sid", "").strip()
 
-    if not session_id:
-        session_id   = request.args.get("sid", "").strip()
-        sid_from_url = bool(session_id)
+    if url_sid:
+        session_id   = url_sid
+        sid_from_url = True
+    else:
+        session_id = request.cookies.get(PTT_COOKIE_NAME, "").strip()
 
     if not session_id:
         return redirect("/ptt/")
