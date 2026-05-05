@@ -1,8 +1,18 @@
 """
 AI SWARM ORCHESTRATOR — Route: Site Events API
 Created: April 28, 2026
-Last Updated: April 28, 2026
+Last Updated: May 05, 2026
 Author: Claude Sonnet 4.6 for Jim @ Shiftwork Solutions LLC
+
+CHANGE LOG:
+    2026-04-28  (v1) Initial build — POST /api/events/log with CORS.
+                     GET /api/events/summary, /recent, /sessions added
+                     as admin endpoints WITHOUT CORS headers (oversight).
+    2026-05-05  (v2) CORS FIX — all GET endpoints (summary, recent,
+                     sessions) now return _cors_headers() so the
+                     Performance Dashboard at shift-work.com/performance/
+                     can fetch them from the browser without being blocked.
+                     No logic changes — CORS headers only.
 
 PURPOSE:
     Flask blueprint providing the event logging endpoint consumed by
@@ -18,15 +28,18 @@ PURPOSE:
     GET /api/events/summary
         Admin endpoint — monthly summary grouped by event_type.
         Returns counts, first/last occurrence, top pages per event type.
+        CORS-enabled (fixed v2).
 
     GET /api/events/recent
         Admin endpoint — last N events in reverse chronological order.
         Query param: limit (default 50, max 500)
+        CORS-enabled (fixed v2).
 
     GET /api/events/sessions
         Admin endpoint — session journey view.
         Query param: session_id — returns all events for that session
         in chronological order to reconstruct a user journey.
+        CORS-enabled (fixed v2).
 
 ALLOWED EVENT TYPES:
     landing_page, contact_form, newsletter_signup, booking_click,
@@ -162,9 +175,15 @@ def log_event():
 
 
 # ── GET /api/events/summary ────────────────────────────────────────────
-@site_events_bp.route('/api/events/summary', methods=['GET'])
+@site_events_bp.route('/api/events/summary', methods=['GET', 'OPTIONS'])
 def events_summary():
     """Monthly summary grouped by event_type."""
+    origin = request.headers.get('Origin', '')
+    headers = _cors_headers(origin)
+
+    if request.method == 'OPTIONS':
+        return ('', 204, headers)
+
     try:
         days = min(int(request.args.get('days', 30)), 365)
         conn = get_db_connection()
@@ -208,18 +227,24 @@ def events_summary():
         finally:
             conn.close()
 
-        return jsonify({'success': True, 'days': days, 'summary': summary})
+        return (jsonify({'success': True, 'days': days, 'summary': summary}), 200, headers)
 
     except Exception as e:
         import traceback
-        return jsonify({'success': False, 'error': str(e),
-                        'traceback': traceback.format_exc()}), 500
+        return (jsonify({'success': False, 'error': str(e),
+                         'traceback': traceback.format_exc()}), 500, headers)
 
 
 # ── GET /api/events/recent ─────────────────────────────────────────────
-@site_events_bp.route('/api/events/recent', methods=['GET'])
+@site_events_bp.route('/api/events/recent', methods=['GET', 'OPTIONS'])
 def events_recent():
     """Recent events in reverse chronological order."""
+    origin = request.headers.get('Origin', '')
+    headers = _cors_headers(origin)
+
+    if request.method == 'OPTIONS':
+        return ('', 204, headers)
+
     try:
         limit = min(int(request.args.get('limit', 50)), 500)
         event_type = request.args.get('type', None)
@@ -265,22 +290,28 @@ def events_recent():
         finally:
             conn.close()
 
-        return jsonify({'success': True, 'count': len(events), 'events': events})
+        return (jsonify({'success': True, 'count': len(events), 'events': events}), 200, headers)
 
     except Exception as e:
         import traceback
-        return jsonify({'success': False, 'error': str(e),
-                        'traceback': traceback.format_exc()}), 500
+        return (jsonify({'success': False, 'error': str(e),
+                         'traceback': traceback.format_exc()}), 500, headers)
 
 
 # ── GET /api/events/sessions ───────────────────────────────────────────
-@site_events_bp.route('/api/events/sessions', methods=['GET'])
+@site_events_bp.route('/api/events/sessions', methods=['GET', 'OPTIONS'])
 def events_session():
     """Reconstruct a full user journey for a given session_id."""
+    origin = request.headers.get('Origin', '')
+    headers = _cors_headers(origin)
+
+    if request.method == 'OPTIONS':
+        return ('', 204, headers)
+
     try:
         session_id = (request.args.get('session_id') or '').strip()
         if not session_id:
-            return jsonify({'success': False, 'error': 'session_id required'}), 400
+            return (jsonify({'success': False, 'error': 'session_id required'}), 400, headers)
 
         conn = get_db_connection()
         try:
@@ -314,13 +345,13 @@ def events_session():
         finally:
             conn.close()
 
-        return jsonify({'success': True, 'session_id': session_id,
-                        'event_count': len(events), 'journey': events})
+        return (jsonify({'success': True, 'session_id': session_id,
+                          'event_count': len(events), 'journey': events}), 200, headers)
 
     except Exception as e:
         import traceback
-        return jsonify({'success': False, 'error': str(e),
-                        'traceback': traceback.format_exc()}), 500
+        return (jsonify({'success': False, 'error': str(e),
+                          'traceback': traceback.format_exc()}), 500, headers)
 
 
 # I did no harm and this file is not truncated
