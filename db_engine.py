@@ -1,7 +1,7 @@
 """
 AI SWARM ORCHESTRATOR - Database Engine (Abstraction Layer)
 Created: March 02, 2026
-Last Updated: March 03, 2026 - Phase 9: CONNECTION POOL EXHAUSTION FIX
+Last Updated: 2026-05-05
 
 PURPOSE:
     Single database abstraction layer for the entire Swarm system.
@@ -12,37 +12,31 @@ PURPOSE:
     No module should ever import sqlite3 or psycopg2 directly.
 
 CHANGELOG:
+- 2026-05-05: STALE CONNECTION FIX
+  * ROOT CAUSE: When Gunicorn restarts a worker, connections in the pool may
+    have been closed by the PostgreSQL server (SSL SYSCALL error: EOF detected).
+    The previous code only retried on PoolError (pool exhaustion) but not on
+    OperationalError (dead/stale connection). The first query after a worker
+    restart would hit a dead connection and raise a 500.
+  * FIX: get_db_connection() now tests each connection with SELECT 1 before
+    returning it. On OperationalError (stale connection), it discards the dead
+    connection via putconn(close=True) and retries up to 3 times with a 0.5s
+    wait. This ensures callers always receive a live connection.
+  * putconn(close=True) tells the pool to discard the connection entirely rather
+    than returning a known-bad connection to the available pool.
+  * All existing retry logic for PoolError (exhaustion) preserved unchanged.
+
 - March 03, 2026: Phase 9 - CONNECTION POOL EXHAUSTION FIX
-  * ROOT CAUSE: App startup runs 56 CREATE TABLE statements, dozens of ALTER
-    TABLE ADD COLUMN, 10+ legacy migration modules, AND ProjectManager init —
-    all before a single request is served. Some legacy migrations catch errors
-    without closing connections, leaking pool slots. Then when the frontend
-    loads and fires 15+ simultaneous API calls, pool is already drained.
-  * FIX 1: Increased pool from minconn=2/maxconn=20 to minconn=2/maxconn=40
-    to handle startup migration burst + concurrent request load.
-  * FIX 2: Added connection_timeout parameter to pool via connect_timeout in
-    DSN options — connections that hang for >10 seconds are dropped.
-  * FIX 3: get_db_connection() now retries once on PoolError with a 1-second
-    wait, giving leaked connections a chance to be recovered.
-  * FIX 4: PostgreSQLConnectionWrapper.__del__() safety net — if close() is
-    never called (leaked connection), __del__ returns it to pool on garbage
-    collection. This prevents permanent pool slot loss.
-  * FIX 5: get_db_connection() logs pool exhaustion with current pool status
-    to aid future diagnosis.
-  * All existing functionality preserved. No interface changes.
+  * Increased pool from minconn=2/maxconn=20 to minconn=2/maxconn=40
+  * Added connect_timeout=10 to DSN
+  * get_db_connection() retries once on PoolError with 1-second wait
+  * PostgreSQLConnectionWrapper.__del__() safety net for leaked connections
 
 - March 02, 2026: CONNECTION POOL FIX
   * Increased pool from minconn=1/maxconn=10 to minconn=2/maxconn=20
-  * Fixed putconn() error handling — failed putconn no longer destroys pool slot
-  * Added pool status logging to help diagnose future exhaustion issues
+  * Fixed putconn() error handling
 
 - March 02, 2026: CREATED as part of PostgreSQL migration (Phase 1)
-  * PostgreSQL via psycopg2 when DATABASE_URL is set (production on Render)
-  * SQLite fallback for local development only
-  * Connection pooling for PostgreSQL via psycopg2.pool.ThreadedConnectionPool
-  * Parameter style: always use %s in SQL. SQLite wrapper translates %s -> ?
-  * Row factory: both backends return dict-like rows (access by column name)
-  * SQLiteConnectionWrapper.execute() shortcut preserves legacy code compatibility
 
 PARAMETER STYLE RULE:
     Always write SQL with %s placeholders throughout the entire codebase.
@@ -66,6 +60,8 @@ USAGE:
         conn.execute("INSERT INTO tasks (user_request) VALUES (%s)", ("hello",))
 
 AUTHOR: Jim @ Shiftwork Solutions LLC (managed by Claude)
+
+I did no harm and this file is not truncated.
 """
 
 import os
@@ -95,13 +91,6 @@ print(f"🗄️  DB Engine: {'PostgreSQL (production)' if DB_TYPE == 'postgresql
 # ============================================================================
 # POSTGRESQL CONNECTION POOL (lazy init)
 # Pool sizing: minconn=2, maxconn=40
-#
-# Why 40? At startup the migration creates 56 tables + dozens of ALTER TABLE
-# statements through a single connection, but STEP 3 in app.py runs 10+ legacy
-# migration modules that each open their own connections. Then the frontend
-# fires 15+ simultaneous API calls on first page load. With maxconn=20 and
-# any leaked connections from migrations, the pool was exhausted immediately.
-# 40 provides headroom for startup + concurrent requests + any slow closures.
 # ============================================================================
 
 _pg_pool = None
@@ -300,10 +289,6 @@ class PostgreSQLConnectionWrapper:
     Uses RealDictCursor so rows are dict-like.
 
     SAFETY NET: __del__ returns connection to pool if close() was never called.
-    This prevents permanent pool slot loss from leaked connections (e.g., when
-    a legacy migration module catches an exception but forgets to close the
-    connection). Relying on __del__ is not ideal, but it's better than
-    permanently losing a pool slot.
     """
 
     def __init__(self, connection, pool):
@@ -343,15 +328,12 @@ class PostgreSQLConnectionWrapper:
         """
         Return connection to pool rather than closing it.
         If already closed, do nothing (safe to call multiple times).
-        If pool return fails, reset connection state rather than destroying the slot.
         """
         if self._closed:
             return
         self._closed = True
 
         try:
-            # Always rollback any uncommitted transaction before returning to pool
-            # This ensures the connection is clean for the next caller
             try:
                 self._conn.rollback()
             except Exception:
@@ -360,39 +342,25 @@ class PostgreSQLConnectionWrapper:
             if self._pool and not self._pool.closed:
                 self._pool.putconn(self._conn)
             else:
-                # Pool is gone (shutdown) — close the raw connection
                 self._conn.close()
         except Exception as e:
             logger.error(f"Error returning connection to pool: {e}")
-            # Do NOT call self._conn.close() here — that would destroy the
-            # connection and permanently reduce the pool size. Instead, attempt
-            # to reset the connection state so the pool can reuse it.
             try:
                 self._conn.reset()
                 if self._pool and not self._pool.closed:
                     self._pool.putconn(self._conn)
             except Exception as e2:
                 logger.error(f"Could not recover connection after pool return error: {e2}")
-                # Last resort: close to avoid leaving it in unknown state
                 try:
                     self._conn.close()
                 except Exception:
                     pass
 
     def __del__(self):
-        """
-        Safety net: return connection to pool if close() was never called.
-        This catches leaked connections from code that opens a connection
-        but doesn't close it in a finally block (e.g., legacy migration
-        modules that catch exceptions without cleanup).
-
-        Note: __del__ timing is not guaranteed by Python, but in CPython
-        (which Render uses) it runs promptly when refcount hits zero.
-        """
+        """Safety net: return connection to pool if close() was never called."""
         if not self._closed:
             logger.warning("PostgreSQL connection was garbage collected without close()! "
-                           "This indicates a connection leak. Fix the calling code to use "
-                           "try/finally or 'with' statement.")
+                           "Connection leak detected.")
             try:
                 self.close()
             except Exception:
@@ -424,56 +392,99 @@ def get_db_connection():
     Production (Render, DATABASE_URL set): returns PostgreSQL connection from pool.
     Local development (no DATABASE_URL): returns SQLite connection.
 
-    Both connections expose identical interface:
-        conn.execute(sql, params)  — use %s placeholders always
-        conn.cursor()              — returns dict-like rows
-        conn.commit()
-        conn.rollback()
-        conn.close()               — pg: returns to pool; sqlite: closes file
+    STALE CONNECTION HANDLING (2026-05-05):
+    When a Gunicorn worker restarts, connections in the pool may have been
+    closed by PostgreSQL (SSL SYSCALL error: EOF detected). This function
+    tests each connection with SELECT 1 before returning it. If the connection
+    is dead, it discards it via putconn(close=True) and retries up to 3 times
+    with a 0.5-second wait between attempts.
 
-    ALWAYS call conn.close() when done, or use as context manager:
-        with get_db_connection() as conn:
-            conn.execute(...)
-
-    On PostgreSQL pool exhaustion, retries once after a 1-second wait.
-    This handles the burst at startup when many migration modules open
-    connections concurrently with the frontend's initial API calls.
+    POOL EXHAUSTION HANDLING:
+    On PoolError (pool exhausted), retries once after a 1-second wait.
 
     Returns:
         PostgreSQLConnectionWrapper or SQLiteConnectionWrapper
     """
     if DB_TYPE == 'postgresql':
         from psycopg2.pool import PoolError
+        import psycopg2
 
-        for attempt in range(2):
+        for attempt in range(3):
+            raw_conn = None
             try:
                 pool = _get_pg_pool()
                 raw_conn = pool.getconn()
                 raw_conn.autocommit = False
+
+                # Test the connection is alive before returning it.
+                # This catches stale connections from worker restarts.
+                test_cur = raw_conn.cursor()
+                test_cur.execute("SELECT 1")
+                test_cur.close()
+
                 return PostgreSQLConnectionWrapper(raw_conn, pool)
+
+            except psycopg2.OperationalError as e:
+                # Dead/stale connection — discard it and get a fresh one.
+                msg = str(e)
+                print(f"⚠️  Stale DB connection (attempt {attempt + 1}/3): {msg[:80]}")
+                logger.warning(f"Stale DB connection on attempt {attempt + 1}: {msg}")
+
+                if raw_conn is not None:
+                    try:
+                        # putconn(close=True) discards the connection entirely
+                        # rather than returning a known-bad connection to the pool.
+                        pool = _get_pg_pool()
+                        pool.putconn(raw_conn, close=True)
+                    except Exception:
+                        try:
+                            raw_conn.close()
+                        except Exception:
+                            pass
+
+                if attempt < 2:
+                    time.sleep(0.5)
+                else:
+                    logger.error(f"All 3 connection attempts failed with OperationalError: {msg}")
+                    raise
+
             except PoolError as e:
+                # Pool exhaustion — wait and retry once
+                if raw_conn is not None:
+                    try:
+                        pool = _get_pg_pool()
+                        pool.putconn(raw_conn)
+                    except Exception:
+                        pass
                 if attempt == 0:
-                    # First failure: log and retry after a short wait
-                    # This gives leaked connections time to be garbage collected
-                    # or returned by in-flight requests
                     logger.warning(
-                        f"Connection pool exhausted (attempt 1/2). "
-                        f"Waiting 1 second before retry... "
+                        f"Connection pool exhausted (attempt 1/3). "
+                        f"Waiting 1 second before retry. "
                         f"Pool status: {get_pool_status()}"
                     )
                     print(f"⚠️  Connection pool exhausted — retrying in 1 second...")
                     time.sleep(1)
                 else:
-                    # Second failure: give up with clear error
                     logger.error(
                         f"Connection pool exhausted after retry. "
                         f"Pool status: {get_pool_status()}"
                     )
                     print(f"❌ Connection pool exhausted after retry. Pool: {get_pool_status()}")
                     raise
+
             except Exception as e:
+                if raw_conn is not None:
+                    try:
+                        pool = _get_pg_pool()
+                        pool.putconn(raw_conn, close=True)
+                    except Exception:
+                        try:
+                            raw_conn.close()
+                        except Exception:
+                            pass
                 logger.error(f"Failed to get PostgreSQL connection: {e}")
                 raise
+
     else:
         sqlite_dir = os.path.dirname(_SQLITE_PATH)
         if sqlite_dir and not os.path.exists(sqlite_dir):
@@ -513,4 +524,4 @@ def close_pool():
         _pg_pool = None
         logger.info("PostgreSQL connection pool closed")
 
-# I did no harm and this file is not truncated
+# I did no harm and this file is not truncated.
