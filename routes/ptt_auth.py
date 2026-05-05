@@ -206,7 +206,7 @@ def get_session(session_id: str):
     if not session_id:
         return None
 
-    now        = datetime.now(timezone.utc)
+    now         = datetime.now(timezone.utc)
     new_expires = now + timedelta(days=SESSION_DAYS)
 
     conn = get_db_connection()
@@ -219,29 +219,58 @@ def get_session(session_id: str):
         row = cursor.fetchone()
 
         if not row:
+            print(f"[ptt_auth] get_session: no row found for session_id={session_id[:8]}...")
             return None
 
         expires_at = row["expires_at"]
         if isinstance(expires_at, str):
             expires_at = datetime.fromisoformat(expires_at)
-        if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        # Handle both aware and naive datetimes safely
+        try:
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+        except Exception as tz_err:
+            print(f"[ptt_auth] get_session: tzinfo error: {tz_err}")
+            expires_at = datetime.now(timezone.utc) + timedelta(days=SESSION_DAYS)
 
         if now > expires_at:
-            cursor.execute("DELETE FROM ptt_session WHERE session_id = %s",
-                           (session_id,))
-            conn.commit()
+            print(f"[ptt_auth] get_session: session expired for {session_id[:8]}...")
+            try:
+                cursor.execute("DELETE FROM ptt_session WHERE session_id = %s",
+                               (session_id,))
+                conn.commit()
+            except Exception:
+                pass
             return None
 
-        cursor.execute("""
-            UPDATE ptt_session SET expires_at = %s, last_seen_at = NOW()
-            WHERE session_id = %s
-        """, (new_expires, session_id))
-        conn.commit()
+        # Roll expiry — non-fatal if it fails (e.g. missing last_seen_at column)
+        try:
+            cursor.execute("""
+                UPDATE ptt_session SET expires_at = %s, last_seen_at = NOW()
+                WHERE session_id = %s
+            """, (new_expires, session_id))
+            conn.commit()
+        except Exception as update_err:
+            print(f"[ptt_auth] get_session: UPDATE failed (non-fatal): {update_err}")
+            conn.rollback()
+            # Try without last_seen_at in case column is missing
+            try:
+                cursor.execute("""
+                    UPDATE ptt_session SET expires_at = %s
+                    WHERE session_id = %s
+                """, (new_expires, session_id))
+                conn.commit()
+            except Exception as update_err2:
+                print(f"[ptt_auth] get_session: UPDATE fallback also failed: {update_err2}")
+                conn.rollback()
 
         return {"user_type":  row["user_type"],
                 "user_id":    row["user_id"],
                 "company_id": row["company_id"]}
+
+    except Exception as e:
+        print(f"[ptt_auth] get_session: unexpected error: {e}")
+        return None
     finally:
         conn.close()
 
