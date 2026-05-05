@@ -313,10 +313,30 @@ def ptt_dashboard():
                        "WHERE company_id = %s", (company_id,))
         skill_count = cursor.fetchone()["total"]
 
-        cursor.execute("""SELECT id, name, email, phone, created_at
+        cursor.execute("""SELECT id, name, email, phone, notes, created_at
             FROM ptt_worker WHERE company_id = %s AND status = 'pending'
             ORDER BY created_at ASC LIMIT 10""", (company_id,))
-        pending_list = cursor.fetchall()
+        pending_rows = cursor.fetchall()
+
+        # Fetch skills for each pending worker
+        pending_list = []
+        for w in pending_rows:
+            cursor.execute("""
+                SELECT s.name FROM ptt_worker_skill ws
+                JOIN ptt_skill s ON s.id = ws.skill_id
+                WHERE ws.worker_id = %s
+                ORDER BY s.sort_order ASC
+            """, (w["id"],))
+            worker_skills = [r["name"] for r in cursor.fetchall()]
+            pending_list.append({
+                "id":         w["id"],
+                "name":       w["name"],
+                "email":      w["email"],
+                "phone":      w["phone"] or "",
+                "notes":      w["notes"] or "",
+                "skills":     worker_skills,
+                "created_at": w["created_at"],
+            })
 
         cursor.execute("""SELECT id, name, description, sort_order
             FROM ptt_skill WHERE company_id = %s
