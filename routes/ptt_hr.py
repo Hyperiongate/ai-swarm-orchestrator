@@ -342,6 +342,33 @@ def ptt_dashboard():
             FROM ptt_skill WHERE company_id = %s
             ORDER BY sort_order ASC, name ASC""", (company_id,))
         skills = cursor.fetchall()
+
+        # Active workers with their skills
+        cursor.execute("""
+            SELECT id, name, email, phone, approved_at
+            FROM ptt_worker
+            WHERE company_id = %s AND status = 'active'
+            ORDER BY name ASC
+        """, (company_id,))
+        active_rows = cursor.fetchall()
+
+        active_list = []
+        for w in active_rows:
+            cursor.execute("""
+                SELECT s.name FROM ptt_worker_skill ws
+                JOIN ptt_skill s ON s.id = ws.skill_id
+                WHERE ws.worker_id = %s
+                ORDER BY s.sort_order ASC
+            """, (w["id"],))
+            worker_skills = [r["name"] for r in cursor.fetchall()]
+            active_list.append({
+                "id":          w["id"],
+                "name":        w["name"],
+                "email":       w["email"],
+                "phone":       w["phone"] or "",
+                "approved_at": w["approved_at"],
+                "skills":      worker_skills,
+            })
     finally:
         conn.close()
 
@@ -356,6 +383,7 @@ def ptt_dashboard():
         apply_url=apply_url,
         pending_list=pending_list,
         skills=skills,
+        active_list=active_list,
     ))
 
     # If session came from URL param, set the cookie now on this 200 response.
