@@ -4,7 +4,7 @@ AI Swarm Orchestrator — Part Time Tracker: Auth Utilities
 Shiftwork Solutions LLC
 
 Created:      2026-05-01
-Last Updated: 2026-05-04
+Last Updated: 2026-05-06
 
 CHANGELOG:
   2026-05-04 — EMAIL SCANNER FIX.
@@ -14,6 +14,17 @@ CHANGELOG:
     magic link URLs do not consume the token. The token is only consumed
     by POST /ptt/auth when the human actually clicks the button.
     No other changes.
+
+  2026-05-06 — SID PROPAGATION FIX.
+    require_ptt_admin and require_ptt_worker now check ?sid= URL param
+    as fallback when cookie is absent. When ?sid= is used, the cookie
+    is set on the response. This allows all protected pages to receive
+    a session_id via URL and bootstrap the cookie — solving the Render
+    proxy issue where Set-Cookie is stripped on redirect responses.
+    Also added _get_session_and_sid() and _sid_response() helpers.
+    All existing view functions receive two new kwargs: _session_id and
+    _sid_from_url (used internally by the decorator, can be ignored by
+    views that don't need them).
 
   2026-05-04 — COOKIE FIX.
     set_session_cookie: removed secure=True, changed path to "/".
@@ -319,29 +330,93 @@ def get_current_session():
 # AUTH DECORATORS
 # =============================================================================
 
+def _get_session_and_sid(expected_type):
+    """
+    Get session from cookie or ?sid= URL param.
+    Returns (session_dict, session_id, sid_from_url).
+    sid_from_url=True means we need to set the cookie on the response.
+
+    This is required because Render's proxy strips Set-Cookie headers
+    from redirect responses. The ?sid= param lets us pass the session_id
+    through a normal page navigation and set the cookie on the 200 response.
+    """
+    # Check ?sid= first — it takes priority over a potentially stale cookie
+    url_sid = request.args.get("sid", "").strip()
+    if url_sid:
+        session = get_session(url_sid)
+        if session and session.get("user_type") == expected_type:
+            return session, url_sid, True
+
+    # Fall back to cookie
+    cookie_sid = request.cookies.get(PTT_SESSION_COOKIE, "").strip()
+    if cookie_sid:
+        session = get_session(cookie_sid)
+        if session and session.get("user_type") == expected_type:
+            return session, cookie_sid, False
+
+    return None, None, False
+
+
+def _sid_response(response, session_id, sid_from_url):
+    """
+    If session came from ?sid= URL param, set the cookie on the response.
+    This is the only way to reliably set cookies through Render's proxy.
+    """
+    if sid_from_url and session_id:
+        response.set_cookie(
+            PTT_SESSION_COOKIE, session_id,
+            max_age=SESSION_DAYS * 24 * 3600,
+            httponly=True, samesite="Lax", path="/",
+        )
+    return response
+
+
 def require_ptt_admin(f):
+    """
+    Decorator: require a valid admin session.
+    Checks cookie first, then ?sid= URL param.
+    If ?sid= provided, sets cookie on the response (bypasses Render proxy issue).
+    Injects ptt_session and session_id into view kwargs.
+    """
     @wraps(f)
     def decorated(*args, **kwargs):
-        session = get_current_session()
-        if not session or session.get("user_type") != "admin":
+        session, session_id, sid_from_url = _get_session_and_sid("admin")
+        if not session:
             if request.path.startswith("/api/ptt/"):
                 return jsonify({"error": "Authentication required"}), 401
             return redirect("/ptt/")
-        kwargs["ptt_session"] = session
-        return f(*args, **kwargs)
+        kwargs["ptt_session"]   = session
+        kwargs["_session_id"]   = session_id
+        kwargs["_sid_from_url"] = sid_from_url
+        result = f(*args, **kwargs)
+        # Set cookie on 200 responses when session came from ?sid=
+        if sid_from_url and hasattr(result, 'set_cookie'):
+            _sid_response(result, session_id, sid_from_url)
+        return result
     return decorated
 
 
 def require_ptt_worker(f):
+    """
+    Decorator: require a valid worker session.
+    Checks cookie first, then ?sid= URL param.
+    If ?sid= provided, sets cookie on the response.
+    Injects ptt_session and session_id into view kwargs.
+    """
     @wraps(f)
     def decorated(*args, **kwargs):
-        session = get_current_session()
-        if not session or session.get("user_type") != "worker":
+        session, session_id, sid_from_url = _get_session_and_sid("worker")
+        if not session:
             if request.path.startswith("/api/ptt/"):
                 return jsonify({"error": "Authentication required"}), 401
             return redirect("/ptt/")
-        kwargs["ptt_session"] = session
-        return f(*args, **kwargs)
+        kwargs["ptt_session"]   = session
+        kwargs["_session_id"]   = session_id
+        kwargs["_sid_from_url"] = sid_from_url
+        result = f(*args, **kwargs)
+        if sid_from_url and hasattr(result, 'set_cookie'):
+            _sid_response(result, session_id, sid_from_url)
+        return result
     return decorated
 
 
