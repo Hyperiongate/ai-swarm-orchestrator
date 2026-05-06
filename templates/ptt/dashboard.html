@@ -319,6 +319,10 @@
       </div>
     </a>
     <div class="nav-actions">
+      <a href="/ptt/shifts{% if session_id %}?sid={{ session_id }}{% endif %}"
+         style="color:rgba(255,255,255,.7); font-size:13px; text-decoration:none; margin-right:4px;">
+        Shifts
+      </a>
       <a href="https://outlook.office365.com/book/ShiftworkSolutionsLLC2@shift-work.com"
          target="_blank" rel="noopener" class="nav-cta">
         Book a Consultation
@@ -596,9 +600,14 @@
       <div class="section-card-body">
         <div class="empty-state">
           <div class="empty-icon">📋</div>
-          <h3>Shift posting coming in Phase 3</h3>
-          <p>Create shifts with skill requirements, see which workers qualify, and confirm coverage.</p>
-          <span class="coming-soon-pill">Phase 3 — Coming Next</span>
+          <h3>Manage your shifts</h3>
+          <p>Create shifts, find qualified workers, and confirm claims from the Shifts page.</p>
+          <a href="/ptt/shifts{% if session_id %}?sid={{ session_id }}{% endif %}"
+             style="display:inline-block; margin-top:12px; background:#E8610A; color:#fff;
+                    padding:10px 24px; border-radius:4px; font-size:14px; font-weight:700;
+                    text-decoration:none;">
+            Go to Shifts →
+          </a>
         </div>
       </div>
     </div>
