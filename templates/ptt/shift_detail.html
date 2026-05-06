@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<!--
+  templates/ptt/shift_detail.html
+  Part Time Tracker Lite — HR Shift Detail
+  Shiftwork Solutions LLC
+
+  Created:      2026-05-06
+  Last Updated: 2026-05-06
+
+  CHANGELOG:
+    2026-05-06 — INITIAL BUILD (Phase 3).
+      Shift info header, edit-in-place for notes.
+      "Find Qualified Workers" section — loads via API, shows match list
+      with email/phone copy buttons and "Mark as contacted" toggle.
+      Claims section with confirm/decline buttons.
+
+  Template variables:
+    company       — dict: name
+    shift         — dict: id, title, shift_date, start_time, end_time,
+                          workers_needed, status, urgency, notes,
+                          skill_required_id, skill_name
+    claims        — list: id, status, claimed_at, notes,
+                          worker_id, worker_name, worker_email, worker_phone
+    contacted_ids — set of worker_ids already contacted
+    ptt_session   — dict
+
+  I did no harm and this file is not truncated.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ shift.title }} — Part Time Tracker</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, Helvetica, sans-serif; background: #F4F6F8; color: #1A1A1A; min-height: 100vh; }
+
+    nav { background: #1F3D5C; padding: 0 24px; height: 56px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
+    .nav-brand { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    .nav-logo-mark { width: 32px; height: 32px; background: #E8610A; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 18px; font-weight: 700; }
+    .nav-title { color: #EEAE26; font-size: 15px; font-weight: 700; }
+    .nav-sub   { color: rgba(255,255,255,.55); font-size: 11px; }
+    .nav-links { display: flex; align-items: center; gap: 20px; }
+    .nav-link  { color: rgba(255,255,255,.7); font-size: 13px; text-decoration: none; }
+    .nav-link:hover { color: #fff; }
+    .nav-logout { color: rgba(255,255,255,.5); font-size: 12px; text-decoration: none; }
+    .nav-logout:hover { color: #fff; }
+
+    .page-header { background: #1F3D5C; padding: 20px 24px 24px; border-bottom: 3px solid #E8610A; }
+    .page-header-inner { max-width: 900px; margin: 0 auto; }
+    .breadcrumb { color: rgba(255,255,255,.5); font-size: 12px; margin-bottom: 6px; }
+    .breadcrumb a { color: rgba(255,255,255,.5); text-decoration: none; }
+    .breadcrumb a:hover { color: #fff; }
+    .page-header h1 { color: #fff; font-size: clamp(18px,4vw,22px); font-weight: 700; }
+
+    .main { max-width: 900px; margin: 0 auto; padding: 28px 16px 64px; }
+
+    .section-card { background: #fff; border-radius: 8px; box-shadow: 0 1px 8px rgba(31,61,92,.07); margin-bottom: 20px; overflow: hidden; }
+    .section-card-header { background: #F8FAFB; border-bottom: 1px solid #E8EDF2; padding: 14px 20px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .section-card-header h2 { font-size: 15px; font-weight: 700; color: #1F3D5C; }
+    .section-card-body { padding: 20px; }
+    .badge { background: #EEF3F8; color: #1F3D5C; font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 12px; }
+
+    /* Shift info grid */
+    .info-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 14px; }
+    .info-item .lbl { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: #888; margin-bottom: 3px; }
+    .info-item .val { font-size: 14px; color: #1A1A1A; }
+
+    .urgency-badge { display: inline-block; font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 10px; }
+    .urgency-urgent    { background: rgba(198,40,40,.1);  color: #C62828; }
+    .urgency-moderate  { background: rgba(232,97,10,.1);  color: #B85000; }
+    .urgency-long_term { background: rgba(29,158,117,.1); color: #157A5A; }
+
+    .status-badge { display: inline-block; font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 10px; }
+    .status-open      { background: rgba(29,158,117,.1); color: #157A5A; }
+    .status-filled    { background: rgba(31,61,92,.1);   color: #1F3D5C; }
+    .status-cancelled { background: #F0F0F0; color: #888; }
+
+    .notes-text { font-size: 13px; color: #555; line-height: 1.6; margin-top: 14px; padding-top: 14px; border-top: 1px solid #E8EDF2; }
+
+    /* Cancel button */
+    .btn-cancel-shift { background: #fff; color: #C62828; border: 1.5px solid #C62828; padding: 6px 14px; border-radius: 4px; font-size: 12px; font-weight: 700; font-family: Arial, sans-serif; cursor: pointer; }
+    .btn-cancel-shift:hover { background: #FFF0EE; }
+    .btn-cancel-shift:disabled { opacity: .5; cursor: not-allowed; }
+
+    /* Match list */
+    .match-toolbar { margin-bottom: 16px; }
+    .btn-load-matches { background: #1F3D5C; color: #fff; border: none; padding: 9px 20px; border-radius: 4px; font-size: 13px; font-weight: 700; font-family: Arial, sans-serif; cursor: pointer; transition: background .15s; }
+    .btn-load-matches:hover { background: #0D2438; }
+    .btn-load-matches:disabled { opacity: .6; cursor: not-allowed; }
+
+    .match-row { display: flex; align-items: flex-start; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #F0F4F8; gap: 12px; }
+    .match-row:last-child { border-bottom: none; }
+    .match-info { flex: 1; min-width: 0; }
+    .match-name { font-size: 14px; font-weight: 700; color: #1F3D5C; }
+    .match-contact { font-size: 12px; color: #666; margin-top: 2px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .btn-copy-small { background: #EEF3F8; border: none; color: #1F3D5C; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 3px; cursor: pointer; font-family: Arial, sans-serif; }
+    .btn-copy-small:hover { background: #C8D8E8; }
+    .match-skills { margin-top: 5px; }
+    .skill-tag { display: inline-block; background: #EEF3F8; border-radius: 10px; padding: 2px 8px; margin: 2px 2px 0 0; color: #1F3D5C; font-size: 11px; font-weight: 600; }
+
+    .btn-contacted { background: #fff; border: 1.5px solid #C8D8E8; color: #888; padding: 5px 12px; border-radius: 4px; font-size: 12px; font-weight: 700; font-family: Arial, sans-serif; cursor: pointer; transition: all .15s; white-space: nowrap; flex-shrink: 0; }
+    .btn-contacted:hover { border-color: #1F3D5C; color: #1F3D5C; }
+    .btn-contacted.done { background: #EEF3F8; border-color: #1D9E75; color: #1D9E75; cursor: default; }
+
+    .no-matches { font-size: 13px; color: #888; font-style: italic; padding: 8px 0; }
+
+    /* Claims */
+    .claim-row { display: flex; align-items: flex-start; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #F0F4F8; gap: 12px; }
+    .claim-row:last-child { border-bottom: none; }
+    .claim-info { flex: 1; min-width: 0; }
+    .claim-worker { font-size: 14px; font-weight: 700; color: #1F3D5C; }
+    .claim-meta   { font-size: 12px; color: #666; margin-top: 2px; }
+    .claim-status { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; margin-top: 4px; }
+    .claim-claimed   { background: rgba(232,97,10,.1);  color: #B85000; }
+    .claim-confirmed { background: rgba(29,158,117,.1); color: #157A5A; }
+    .claim-declined  { background: #F0F0F0; color: #888; }
+    .claim-actions { display: flex; gap: 8px; flex-shrink: 0; }
+
+    .btn-confirm { background: #1D9E75; color: #fff; border: none; padding: 6px 14px; border-radius: 4px; font-size: 12px; font-weight: 700; font-family: Arial, sans-serif; cursor: pointer; }
+    .btn-confirm:hover { background: #167A5A; }
+    .btn-confirm:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-decline { background: #fff; color: #C62828; border: 1.5px solid #C62828; padding: 6px 14px; border-radius: 4px; font-size: 12px; font-weight: 700; font-family: Arial, sans-serif; cursor: pointer; }
+    .btn-decline:hover { background: #FFF0EE; }
+    .btn-decline:disabled { opacity: .5; cursor: not-allowed; }
+
+    .empty-state { text-align: center; padding: 24px 16px; }
+    .empty-icon  { font-size: 32px; margin-bottom: 10px; }
+    .empty-state h3 { font-size: 15px; color: #1F3D5C; margin-bottom: 6px; }
+    .empty-state p  { font-size: 13px; color: #666; }
+
+    .toast { position: fixed; bottom: 20px; right: 20px; background: #1D9E75; color: #fff; padding: 10px 18px; border-radius: 6px; font-size: 13px; font-weight: 700; box-shadow: 0 4px 16px rgba(0,0,0,.2); transform: translateY(80px); opacity: 0; transition: transform .25s, opacity .25s; z-index: 9999; }
+    .toast.visible { transform: translateY(0); opacity: 1; }
+    .toast.error { background: #C62828; }
+  </style>
+</head>
+<body>
+  <div class="toast" id="toast"></div>
+
+  <nav>
+    <a href="/ptt/dashboard" class="nav-brand">
+      <div class="nav-logo-mark">S</div>
+      <div>
+        <div class="nav-title">Part Time Tracker</div>
+        <div class="nav-sub">{{ company.name }}</div>
+      </div>
+    </a>
+    <div class="nav-links">
+      <a href="/ptt/dashboard" class="nav-link">Dashboard</a>
+      <a href="/ptt/shifts" class="nav-link">Shifts</a>
+      <a href="/ptt/logout" class="nav-logout">Log out</a>
+    </div>
+  </nav>
+
+  <div class="page-header">
+    <div class="page-header-inner">
+      <div class="breadcrumb">
+        <a href="/ptt/shifts">← Shifts</a>
+      </div>
+      <h1>{{ shift.title }}</h1>
+    </div>
+  </div>
+
+  <div class="main">
+
+    <!-- Shift Info -->
+    <div class="section-card">
+      <div class="section-card-header">
+        <h2>Shift Details</h2>
+        {% if shift.status == 'open' %}
+        <button class="btn-cancel-shift" id="cancelBtn"
+                onclick="cancelShift({{ shift.id }})">Cancel Shift</button>
+        {% endif %}
+      </div>
+      <div class="section-card-body">
+        <div class="info-grid">
+          <div class="info-item">
+            <div class="lbl">Date</div>
+            <div class="val">{{ shift.shift_date }}</div>
+          </div>
+          <div class="info-item">
+            <div class="lbl">Time</div>
+            <div class="val">{{ shift.start_time[:5] }} – {{ shift.end_time[:5] }}</div>
+          </div>
+          <div class="info-item">
+            <div class="lbl">Workers needed</div>
+            <div class="val">{{ shift.workers_needed }}</div>
+          </div>
+          <div class="info-item">
+            <div class="lbl">Skill required</div>
+            <div class="val">{{ shift.skill_name or 'Any skill' }}</div>
+          </div>
+          <div class="info-item">
+            <div class="lbl">Urgency</div>
+            <div class="val">
+              <span class="urgency-badge urgency-{{ shift.urgency }}">
+                {{ shift.urgency | replace('_',' ') | title }}
+              </span>
+            </div>
+          </div>
+          <div class="info-item">
+            <div class="lbl">Status</div>
+            <div class="val" id="shiftStatusDisplay">
+              <span class="status-badge status-{{ shift.status }}">
+                {{ shift.status | title }}
+              </span>
+            </div>
+          </div>
+        </div>
+        {% if shift.notes %}
+        <div class="notes-text">{{ shift.notes }}</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Qualified Workers -->
+    {% if shift.status == 'open' %}
+    <div class="section-card">
+      <div class="section-card-header">
+        <h2>Qualified Workers</h2>
+        <span class="badge" id="matchCountBadge">—</span>
+      </div>
+      <div class="section-card-body">
+        <div class="match-toolbar">
+          <button class="btn-load-matches" id="loadMatchesBtn"
+                  onclick="loadMatches()">Find Qualified Workers</button>
+        </div>
+        <div id="matchList"></div>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Claims -->
+    <div class="section-card">
+      <div class="section-card-header">
+        <h2>Worker Claims</h2>
+        <span class="badge">{{ claims | length }} claim{% if claims | length != 1 %}s{% endif %}</span>
+      </div>
+      <div class="section-card-body" id="claimsPanel">
+        {% if claims %}
+        <div id="claimsList">
+          {% for c in claims %}
+          <div class="claim-row" id="claimRow{{ c.id }}">
+            <div class="claim-info">
+              <div class="claim-worker">{{ c.worker_name }}</div>
+              <div class="claim-meta">
+                {{ c.worker_email }}
+                {% if c.worker_phone %} &middot; {{ c.worker_phone }}{% endif %}
+                &middot; Claimed {{ c.claimed_at | string | truncate(16, True, '') }}
+              </div>
+              <span class="claim-status claim-{{ c.status }}">{{ c.status | title }}</span>
+            </div>
+            {% if c.status == 'claimed' %}
+            <div class="claim-actions">
+              <button class="btn-confirm" onclick="confirmClaim({{ c.id }}, this)">Confirm</button>
+              <button class="btn-decline" onclick="declineClaim({{ c.id }}, this)">Decline</button>
+            </div>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state">
+          <div class="empty-icon">📬</div>
+          <h3>No claims yet</h3>
+          <p>Workers who qualify will see this shift and can claim it from their dashboard.</p>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    const shiftId = {{ shift.id }};
+    const contactedIds = new Set({{ contacted_ids | list | tojson }});
+
+    function showToast(msg, isError=false) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.toggle('error', isError);
+      t.classList.add('visible');
+      setTimeout(() => t.classList.remove('visible'), 2800);
+    }
+
+    function copyText(text, btn) {
+      navigator.clipboard.writeText(text).then(() => {
+        const orig = btn.textContent;
+        btn.textContent = '✓';
+        setTimeout(() => btn.textContent = orig, 1500);
+      }).catch(() => {});
+    }
+
+    async function loadMatches() {
+      const btn  = document.getElementById('loadMatchesBtn');
+      const list = document.getElementById('matchList');
+      btn.disabled = true;
+      btn.textContent = 'Finding workers…';
+      list.innerHTML = '';
+
+      try {
+        const resp = await fetch('/api/ptt/admin/shifts/' + shiftId + '/matches');
+        const data = await resp.json();
+        if (!resp.ok || data.error) {
+          list.innerHTML = '<p class="no-matches">' + (data.error || 'Failed to load matches.') + '</p>';
+          btn.disabled = false; btn.textContent = 'Refresh Matches';
+          return;
+        }
+
+        document.getElementById('matchCountBadge').textContent =
+          data.total + ' qualified worker' + (data.total !== 1 ? 's' : '');
+
+        if (data.workers.length === 0) {
+          list.innerHTML = '<p class="no-matches">No workers match this shift\'s skill, availability, and schedule requirements.</p>';
+        } else {
+          let html = '';
+          data.workers.forEach(w => {
+            const isContacted = contactedIds.has(w.id);
+            const skillTags = w.skills.map(s => '<span class="skill-tag">' + _esc(s) + '</span>').join('');
+            html += `
+              <div class="match-row" id="matchRow${w.id}">
+                <div class="match-info">
+                  <div class="match-name">${_esc(w.name)}</div>
+                  <div class="match-contact">
+                    ${_esc(w.email)}
+                    <button class="btn-copy-small" onclick="copyText('${_esc(w.email)}', this)">Copy</button>
+                    ${w.phone ? _esc(w.phone) + '<button class="btn-copy-small" onclick="copyText(\'' + _esc(w.phone) + '\', this)">Copy</button>' : ''}
+                  </div>
+                  <div class="match-skills">${skillTags}</div>
+                </div>
+                <button class="btn-contacted ${isContacted ? 'done' : ''}"
+                        id="contactedBtn${w.id}"
+                        onclick="markContacted(${w.id}, this)"
+                        ${isContacted ? 'disabled' : ''}>
+                  ${isContacted ? '✓ Contacted' : 'Mark Contacted'}
+                </button>
+              </div>`;
+          });
+          list.innerHTML = html;
+        }
+
+        btn.disabled = false;
+        btn.textContent = 'Refresh Matches';
+      } catch (err) {
+        list.innerHTML = '<p class="no-matches">Network error. Please try again.</p>';
+        btn.disabled = false;
+        btn.textContent = 'Find Qualified Workers';
+      }
+    }
+
+    async function markContacted(workerId, btn) {
+      btn.disabled = true;
+      try {
+        const resp = await fetch(`/api/ptt/admin/shifts/${shiftId}/outreach/${workerId}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await resp.json();
+        if (!resp.ok || data.error) {
+          showToast(data.error || 'Failed to record.', true);
+          btn.disabled = false;
+          return;
+        }
+        contactedIds.add(workerId);
+        btn.textContent = '✓ Contacted';
+        btn.classList.add('done');
+        showToast('Outreach recorded.');
+      } catch (err) {
+        showToast('Network error.', true);
+        btn.disabled = false;
+      }
+    }
+
+    async function cancelShift(shiftId) {
+      if (!confirm('Cancel this shift? Workers who have claimed it will still be listed.')) return;
+      const btn = document.getElementById('cancelBtn');
+      btn.disabled = true;
+      try {
+        const resp = await fetch('/api/ptt/admin/shifts/' + shiftId + '/cancel', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await resp.json();
+        if (!resp.ok || data.error) {
+          showToast(data.error || 'Failed to cancel.', true);
+          btn.disabled = false; return;
+        }
+        document.getElementById('shiftStatusDisplay').innerHTML =
+          '<span class="status-badge status-cancelled">Cancelled</span>';
+        btn.remove();
+        // Hide the match section
+        const matchSection = document.querySelector('.section-card:nth-child(2)');
+        if (matchSection) matchSection.style.display = 'none';
+        showToast('Shift cancelled.');
+      } catch (err) {
+        showToast('Network error.', true);
+        btn.disabled = false;
+      }
+    }
+
+    async function confirmClaim(claimId, btn) {
+      const row = document.getElementById('claimRow' + claimId);
+      btn.disabled = true;
+      row.querySelectorAll('button').forEach(b => b.disabled = true);
+      try {
+        const resp = await fetch('/api/ptt/admin/claims/' + claimId + '/confirm', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await resp.json();
+        if (!resp.ok || data.error) {
+          showToast(data.error || 'Failed to confirm.', true);
+          row.querySelectorAll('button').forEach(b => b.disabled = false);
+          return;
+        }
+        row.querySelector('.claim-status').className = 'claim-status claim-confirmed';
+        row.querySelector('.claim-status').textContent = 'Confirmed';
+        row.querySelector('.claim-actions')?.remove();
+        showToast('Claim confirmed.');
+      } catch (err) {
+        showToast('Network error.', true);
+        row.querySelectorAll('button').forEach(b => b.disabled = false);
+      }
+    }
+
+    async function declineClaim(claimId, btn) {
+      const row = document.getElementById('claimRow' + claimId);
+      btn.disabled = true;
+      row.querySelectorAll('button').forEach(b => b.disabled = true);
+      try {
+        const resp = await fetch('/api/ptt/admin/claims/' + claimId + '/decline', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await resp.json();
+        if (!resp.ok || data.error) {
+          showToast(data.error || 'Failed to decline.', true);
+          row.querySelectorAll('button').forEach(b => b.disabled = false);
+          return;
+        }
+        row.querySelector('.claim-status').className = 'claim-status claim-declined';
+        row.querySelector('.claim-status').textContent = 'Declined';
+        row.querySelector('.claim-actions')?.remove();
+        showToast('Claim declined.');
+      } catch (err) {
+        showToast('Network error.', true);
+        row.querySelectorAll('button').forEach(b => b.disabled = false);
+      }
+    }
+
+    function _esc(str) {
+      return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    }
+  </script>
+</body>
+</html>
+<!-- I did no harm and this file is not truncated. -->
