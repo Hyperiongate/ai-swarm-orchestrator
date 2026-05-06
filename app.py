@@ -1,7 +1,7 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: May 04, 2026 — Part Time Tracker Lite (Phase 2 fixes)
+Last Updated: May 06, 2026 — Part Time Tracker Lite (Phase 3)
 
 CHANGELOG:
 - May 04, 2026: Part Time Tracker Lite — Phase 2 fixes — THREE CHANGES ONLY:
@@ -366,6 +366,27 @@ except Exception as e:
     traceback.print_exc()
 
 print("=" * 60)
+
+# ----------------------------------------------------------------------------
+# MIGRATION 011: Part Time Tracker Phase 3 — urgency + skill_required_id
+# Added: May 06, 2026
+# Adds urgency and skill_required_id columns to ptt_shift.
+# Fully idempotent.
+# ----------------------------------------------------------------------------
+try:
+    import importlib.util as _ilu11
+    import os as _os11
+    _m011_path = _os11.path.join(_os11.path.dirname(_os11.path.abspath(__file__)),
+                                 'migrations', 'migration_011_ptt_phase3.py')
+    _spec011 = _ilu11.spec_from_file_location("migration_011_ptt_phase3", _m011_path)
+    _mod011 = _ilu11.module_from_spec(_spec011)
+    _spec011.loader.exec_module(_mod011)
+    _mod011.run_migration()
+    print("Part Time Tracker Phase 3 migration (011) complete")
+except Exception as e:
+    print(f"Part Time Tracker Phase 3 migration (011) failed: {e}")
+    import traceback
+    traceback.print_exc()
 
 # ============================================================================
 # STEP 2: Initialize database (delegates to migration, safe to call again)
@@ -1407,6 +1428,30 @@ except ImportError as e:
     print(f"Part Time Tracker Worker Intake routes not found: {e}")
 except Exception as e:
     print(f"Part Time Tracker Worker Intake registration failed: {e}")
+
+# Part Time Tracker Lite — Shift Management Routes (HR)
+# Phase 3: shift CRUD, matching engine, outreach, claim confirm/decline.
+# Added: May 06, 2026
+try:
+    from routes.ptt_shifts import ptt_shifts_bp
+    app.register_blueprint(ptt_shifts_bp)
+    print("Part Time Tracker Shifts Routes registered")
+except ImportError as e:
+    print(f"Part Time Tracker Shifts routes not found: {e}")
+except Exception as e:
+    print(f"Part Time Tracker Shifts registration failed: {e}")
+
+# Part Time Tracker Lite — Worker Routes (authenticated worker side)
+# Phase 3: worker dashboard, claim shift, profile, availability, blackouts.
+# Added: May 06, 2026
+try:
+    from routes.ptt_worker import ptt_worker_bp
+    app.register_blueprint(ptt_worker_bp)
+    print("Part Time Tracker Worker Routes registered")
+except ImportError as e:
+    print(f"Part Time Tracker Worker routes not found: {e}")
+except Exception as e:
+    print(f"Part Time Tracker Worker registration failed: {e}")
 
 try:
     from routes.background_jobs import background_jobs_bp
