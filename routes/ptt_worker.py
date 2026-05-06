@@ -148,7 +148,7 @@ def _get_matching_shifts(cursor, company_id, worker_id):
 
 @ptt_worker_bp.route("/ptt/w/dashboard")
 @require_ptt_worker
-def ptt_worker_dashboard(ptt_session):
+def ptt_worker_dashboard(ptt_session, _session_id=None, _sid_from_url=False):
     """Worker dashboard — matching shifts and my claims."""
     worker_id  = ptt_session["user_id"]
     company_id = ptt_session["company_id"]
@@ -194,12 +194,13 @@ def ptt_worker_dashboard(ptt_session):
                            company=company,
                            matching_shifts=matching_shifts,
                            my_claims=my_claims,
-                           ptt_session=ptt_session)
+                           ptt_session=ptt_session,
+                           session_id=_session_id or "")
 
 
 @ptt_worker_bp.route("/ptt/w/profile")
 @require_ptt_worker
-def ptt_worker_profile_page(ptt_session):
+def ptt_worker_profile_page(ptt_session, _session_id=None, _sid_from_url=False):
     """Worker profile + availability + blackouts."""
     worker_id  = ptt_session["user_id"]
     company_id = ptt_session["company_id"]
@@ -260,7 +261,8 @@ def ptt_worker_profile_page(ptt_session):
                            availability=availability,
                            blackouts=blackouts,
                            day_names=day_names,
-                           ptt_session=ptt_session)
+                           ptt_session=ptt_session,
+                           session_id=_session_id or "")
 
 
 # =============================================================================
