@@ -146,8 +146,8 @@
       </div>
     </a>
     <div class="nav-links">
-      <a href="/ptt/dashboard" class="nav-link">Dashboard</a>
-      <a href="/ptt/shifts" class="nav-link">Shifts</a>
+      <a href="/ptt/dashboard{% if session_id %}?sid={{ session_id }}{% endif %}" class="nav-link">Dashboard</a>
+      <a href="/ptt/shifts{% if session_id %}?sid={{ session_id }}{% endif %}" class="nav-link">Shifts</a>
       <a href="/ptt/logout" class="nav-logout">Log out</a>
     </div>
   </nav>
@@ -155,7 +155,7 @@
   <div class="page-header">
     <div class="page-header-inner">
       <div class="breadcrumb">
-        <a href="/ptt/shifts">← Shifts</a>
+        <a href="/ptt/shifts{% if session_id %}?sid={{ session_id }}{% endif %}">← Shifts</a>
       </div>
       <h1>{{ shift.title }}</h1>
     </div>
