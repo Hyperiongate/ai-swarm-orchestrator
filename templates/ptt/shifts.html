@@ -143,8 +143,8 @@
       </div>
     </a>
     <div class="nav-links">
-      <a href="/ptt/dashboard" class="nav-link">Dashboard</a>
-      <a href="/ptt/shifts" class="nav-link active">Shifts</a>
+      <a href="/ptt/dashboard{% if session_id %}?sid={{ session_id }}{% endif %}" class="nav-link">Dashboard</a>
+      <a href="/ptt/shifts{% if session_id %}?sid={{ session_id }}{% endif %}" class="nav-link active">Shifts</a>
       <a href="/ptt/logout" class="nav-logout">Log out</a>
     </div>
   </nav>
