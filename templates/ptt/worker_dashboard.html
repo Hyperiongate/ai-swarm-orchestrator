@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<!--
+  templates/ptt/worker_dashboard.html
+  Part Time Tracker Lite — Worker Dashboard
+  Shiftwork Solutions LLC
+
+  Created:      2026-05-06
+  Last Updated: 2026-05-06
+
+  CHANGELOG:
+    2026-05-06 — INITIAL BUILD (Phase 3).
+      Two panels: open shifts that match the worker, and their claim history.
+
+  Template variables:
+    worker          — dict: id, name, email, phone
+    company         — dict: name
+    matching_shifts — list: id, title, shift_date, start_time, end_time,
+                            urgency, skill_name, notes
+    my_claims       — list: claim_id, claim_status, claimed_at, shift_id,
+                            title, shift_date, start_time, end_time,
+                            urgency, skill_name
+    ptt_session     — dict
+
+  I did no harm and this file is not truncated.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>My Dashboard — Part Time Tracker | {{ company.name }}</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, Helvetica, sans-serif; background: #F4F6F8; color: #1A1A1A; min-height: 100vh; }
+
+    nav { background: #1F3D5C; padding: 0 24px; height: 56px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
+    .nav-brand { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    .nav-logo-mark { width: 32px; height: 32px; background: #E8610A; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 18px; font-weight: 700; }
+    .nav-title { color: #EEAE26; font-size: 15px; font-weight: 700; }
+    .nav-sub   { color: rgba(255,255,255,.55); font-size: 11px; }
+    .nav-links { display: flex; align-items: center; gap: 20px; }
+    .nav-link  { color: rgba(255,255,255,.7); font-size: 13px; text-decoration: none; }
+    .nav-link:hover { color: #fff; }
+    .nav-logout { color: rgba(255,255,255,.5); font-size: 12px; text-decoration: none; }
+    .nav-logout:hover { color: #fff; }
+
+    .page-header { background: #1F3D5C; padding: 20px 24px 24px; border-bottom: 3px solid #E8610A; }
+    .page-header-inner { max-width: 860px; margin: 0 auto; }
+    .page-header h1 { color: #fff; font-size: clamp(18px,4vw,24px); font-weight: 700; }
+    .page-header p  { color: rgba(255,255,255,.6); font-size: 13px; margin-top: 4px; }
+
+    .main { max-width: 860px; margin: 0 auto; padding: 28px 16px 64px; }
+
+    .section-card { background: #fff; border-radius: 8px; box-shadow: 0 1px 8px rgba(31,61,92,.07); margin-bottom: 20px; overflow: hidden; }
+    .section-card-header { background: #F8FAFB; border-bottom: 1px solid #E8EDF2; padding: 14px 20px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .section-card-header h2 { font-size: 15px; font-weight: 700; color: #1F3D5C; }
+    .section-card-body { padding: 20px; }
+    .badge { background: #EEF3F8; color: #1F3D5C; font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 12px; }
+    .badge.orange { background: rgba(232,97,10,.1); color: #E8610A; }
+
+    .shift-card { border: 1.5px solid #E8EDF2; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+    .shift-card:last-child { margin-bottom: 0; }
+    .shift-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .shift-title { font-size: 15px; font-weight: 700; color: #1F3D5C; }
+    .shift-meta  { font-size: 12px; color: #666; margin-top: 3px; }
+    .shift-notes { font-size: 12px; color: #888; margin-top: 8px; font-style: italic; }
+
+    .urgency-badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
+    .urgency-urgent    { background: rgba(198,40,40,.1);  color: #C62828; }
+    .urgency-moderate  { background: rgba(232,97,10,.1);  color: #B85000; }
+    .urgency-long_term { background: rgba(29,158,117,.1); color: #157A5A; }
+
+    .btn-claim { background: #E8610A; color: #fff; border: none; padding: 8px 20px; border-radius: 4px; font-size: 13px; font-weight: 700; font-family: Arial, sans-serif; cursor: pointer; transition: background .15s; flex-shrink: 0; }
+    .btn-claim:hover { background: #C85208; }
+    .btn-claim:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-claim.claimed-state { background: #1D9E75; cursor: default; }
+
+    /* My claims table */
+    .claim-row { display: flex; align-items: flex-start; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #F0F4F8; gap: 12px; }
+    .claim-row:last-child { border-bottom: none; }
+    .claim-info { flex: 1; }
+    .claim-shift-title { font-size: 14px; font-weight: 700; color: #1F3D5C; }
+    .claim-shift-meta  { font-size: 12px; color: #666; margin-top: 2px; }
+    .claim-status-badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; margin-top: 4px; }
+    .cs-claimed   { background: rgba(232,97,10,.1);  color: #B85000; }
+    .cs-confirmed { background: rgba(29,158,117,.1); color: #157A5A; }
+    .cs-declined  { background: #F0F0F0; color: #888; }
+
+    .empty-state { text-align: center; padding: 24px 16px; }
+    .empty-icon  { font-size: 36px; margin-bottom: 10px; }
+    .empty-state h3 { font-size: 15px; color: #1F3D5C; margin-bottom: 6px; }
+    .empty-state p  { font-size: 13px; color: #666; line-height: 1.5; }
+
+    .toast { position: fixed; bottom: 20px; right: 20px; background: #1D9E75; color: #fff; padding: 10px 18px; border-radius: 6px; font-size: 13px; font-weight: 700; box-shadow: 0 4px 16px rgba(0,0,0,.2); transform: translateY(80px); opacity: 0; transition: transform .25s, opacity .25s; z-index: 9999; }
+    .toast.visible { transform: translateY(0); opacity: 1; }
+    .toast.error { background: #C62828; }
+  </style>
+</head>
+<body>
+  <div class="toast" id="toast"></div>
+
+  <nav>
+    <a href="/ptt/w/dashboard" class="nav-brand">
+      <div class="nav-logo-mark">S</div>
+      <div>
+        <div class="nav-title">Part Time Tracker</div>
+        <div class="nav-sub">{{ company.name }}</div>
+      </div>
+    </a>
+    <div class="nav-links">
+      <a href="/ptt/w/dashboard" class="nav-link active">Dashboard</a>
+      <a href="/ptt/w/profile" class="nav-link">My Profile</a>
+      <a href="/ptt/logout" class="nav-logout">Log out</a>
+    </div>
+  </nav>
+
+  <div class="page-header">
+    <div class="page-header-inner">
+      <h1>My Dashboard</h1>
+      <p>Welcome, {{ worker.name }} &mdash; {{ company.name }}</p>
+    </div>
+  </div>
+
+  <div class="main">
+
+    <!-- Open Shifts Matching Me -->
+    <div class="section-card">
+      <div class="section-card-header">
+        <h2>Shifts Available to You</h2>
+        <span class="badge {% if matching_shifts %}orange{% endif %}">
+          {{ matching_shifts | length }} available
+        </span>
+      </div>
+      <div class="section-card-body">
+        {% if matching_shifts %}
+          {% for s in matching_shifts %}
+          <div class="shift-card" id="shiftCard{{ s.id }}">
+            <div class="shift-card-header">
+              <div>
+                <div class="shift-title">{{ s.title }}</div>
+                <div class="shift-meta">
+                  {{ s.shift_date }} &middot; {{ s.start_time[:5] }}–{{ s.end_time[:5] }}
+                  {% if s.skill_name %} &middot; {{ s.skill_name }}{% endif %}
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+                <span class="urgency-badge urgency-{{ s.urgency }}">
+                  {{ s.urgency | replace('_',' ') | title }}
+                </span>
+                <button class="btn-claim" id="claimBtn{{ s.id }}"
+                        onclick="claimShift({{ s.id }}, this)">
+                  Claim
+                </button>
+              </div>
+            </div>
+            {% if s.notes %}
+            <div class="shift-notes">{{ s.notes }}</div>
+            {% endif %}
+          </div>
+          {% endfor %}
+        {% else %}
+        <div class="empty-state">
+          <div class="empty-icon">📋</div>
+          <h3>No shifts available right now</h3>
+          <p>When HR posts a shift that matches your skills and availability, it will appear here.
+             Make sure your <a href="/ptt/w/profile" style="color:#E8610A;">profile and availability</a> are up to date.</p>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- My Claims -->
+    <div class="section-card">
+      <div class="section-card-header">
+        <h2>My Claimed Shifts</h2>
+        <span class="badge">{{ my_claims | length }}</span>
+      </div>
+      <div class="section-card-body">
+        {% if my_claims %}
+        {% for c in my_claims %}
+        <div class="claim-row">
+          <div class="claim-info">
+            <div class="claim-shift-title">{{ c.title }}</div>
+            <div class="claim-shift-meta">
+              {{ c.shift_date }} &middot; {{ c.start_time[:5] }}–{{ c.end_time[:5] }}
+              {% if c.skill_name %} &middot; {{ c.skill_name }}{% endif %}
+            </div>
+            <span class="claim-status-badge cs-{{ c.claim_status }}">
+              {% if c.claim_status == 'claimed' %}Pending HR confirmation
+              {% elif c.claim_status == 'confirmed' %}Confirmed ✓
+              {% else %}Declined{% endif %}
+            </span>
+          </div>
+          <span class="urgency-badge urgency-{{ c.urgency }}" style="flex-shrink:0;margin-top:4px;">
+            {{ c.urgency | replace('_',' ') | title }}
+          </span>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="empty-state">
+          <div class="empty-icon">📬</div>
+          <h3>No claims yet</h3>
+          <p>Claim a shift above and it will appear here with its confirmation status.</p>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    function showToast(msg, isError=false) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.toggle('error', isError);
+      t.classList.add('visible');
+      setTimeout(() => t.classList.remove('visible'), 2800);
+    }
+
+    async function claimShift(shiftId, btn) {
+      btn.disabled = true;
+      btn.textContent = 'Claiming…';
+      try {
+        const resp = await fetch('/api/ptt/worker/shifts/' + shiftId + '/claim', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await resp.json();
+        if (!resp.ok || data.error) {
+          showToast(data.error || 'Failed to claim shift.', true);
+          btn.disabled = false; btn.textContent = 'Claim';
+          return;
+        }
+        btn.textContent = 'Claimed ✓';
+        btn.classList.add('claimed-state');
+        showToast('Shift claimed! HR will confirm shortly.');
+        // Refresh after 2 seconds to show updated state
+        setTimeout(() => window.location.reload(), 2000);
+      } catch (err) {
+        showToast('Network error. Please try again.', true);
+        btn.disabled = false; btn.textContent = 'Claim';
+      }
+    }
+  </script>
+</body>
+</html>
+<!-- I did no harm and this file is not truncated. -->
