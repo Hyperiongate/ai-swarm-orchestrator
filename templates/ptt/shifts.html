@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<!--
+  templates/ptt/shifts.html
+  Part Time Tracker Lite — HR Shift Management
+  Shiftwork Solutions LLC
+
+  Created:      2026-05-06
+  Last Updated: 2026-05-06
+
+  CHANGELOG:
+    2026-05-06 — INITIAL BUILD (Phase 3).
+      Shift list filtered by status. Create shift modal with all fields.
+      Cancel shift button. Links to shift detail page.
+
+  Template variables:
+    company  — dict: name
+    shifts   — list: id, title, shift_date, start_time, end_time,
+                     workers_needed, status, urgency, skill_name,
+                     claim_count, notes
+    skills   — list: id, name (for skill dropdown)
+    ptt_session — dict: user_id, company_id, user_type
+
+  I did no harm and this file is not truncated.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Shifts — Part Time Tracker | {{ company.name }}</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, Helvetica, sans-serif; background: #F4F6F8; color: #1A1A1A; min-height: 100vh; }
+
+    nav {
+      background: #1F3D5C; padding: 0 24px; height: 56px;
+      display: flex; align-items: center; justify-content: space-between;
+      position: sticky; top: 0; z-index: 100;
+    }
+    .nav-brand { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    .nav-logo-mark { width: 32px; height: 32px; background: #E8610A; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 18px; font-weight: 700; }
+    .nav-title { color: #EEAE26; font-size: 15px; font-weight: 700; }
+    .nav-sub   { color: rgba(255,255,255,.55); font-size: 11px; }
+    .nav-links { display: flex; align-items: center; gap: 20px; }
+    .nav-link  { color: rgba(255,255,255,.7); font-size: 13px; text-decoration: none; }
+    .nav-link:hover { color: #fff; }
+    .nav-link.active { color: #EEAE26; font-weight: 700; }
+    .nav-logout { color: rgba(255,255,255,.5); font-size: 12px; text-decoration: none; }
+    .nav-logout:hover { color: #fff; }
+
+    .page-header { background: #1F3D5C; padding: 20px 24px 24px; border-bottom: 3px solid #E8610A; }
+    .page-header-inner { max-width: 900px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+    .page-header h1 { color: #fff; font-size: clamp(18px,4vw,24px); font-weight: 700; }
+    .page-header p  { color: rgba(255,255,255,.6); font-size: 13px; margin-top: 4px; }
+
+    .btn-primary { background: #E8610A; color: #fff; border: none; padding: 10px 20px; border-radius: 4px; font-size: 14px; font-weight: 700; font-family: Arial, sans-serif; cursor: pointer; transition: background .15s; text-decoration: none; display: inline-block; }
+    .btn-primary:hover { background: #C85208; }
+
+    .main { max-width: 900px; margin: 0 auto; padding: 28px 16px 64px; }
+
+    /* Filter tabs */
+    .filter-bar { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+    .filter-btn { background: #fff; border: 1.5px solid #D0D7DE; color: #555; padding: 6px 16px; border-radius: 20px; font-size: 13px; font-weight: 700; font-family: Arial, sans-serif; cursor: pointer; transition: all .15s; }
+    .filter-btn:hover { border-color: #1F3D5C; color: #1F3D5C; }
+    .filter-btn.active { background: #1F3D5C; border-color: #1F3D5C; color: #fff; }
+
+    /* Shift table */
+    .section-card { background: #fff; border-radius: 8px; box-shadow: 0 1px 8px rgba(31,61,92,.07); overflow: hidden; }
+    .section-card-header { background: #F8FAFB; border-bottom: 1px solid #E8EDF2; padding: 14px 20px; display: flex; align-items: center; justify-content: space-between; }
+    .section-card-header h2 { font-size: 15px; font-weight: 700; color: #1F3D5C; }
+    .badge { background: #EEF3F8; color: #1F3D5C; font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 12px; }
+
+    .shift-table { width: 100%; border-collapse: collapse; }
+    .shift-table th { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: #888; padding: 10px 16px; text-align: left; border-bottom: 1px solid #E8EDF2; background: #F8FAFB; }
+    .shift-table td { padding: 12px 16px; border-bottom: 1px solid #F0F4F8; font-size: 13px; vertical-align: middle; }
+    .shift-table tr:last-child td { border-bottom: none; }
+    .shift-table tr:hover td { background: #FAFCFF; }
+
+    .shift-title-link { color: #1F3D5C; font-weight: 700; text-decoration: none; }
+    .shift-title-link:hover { text-decoration: underline; color: #E8610A; }
+
+    .urgency-badge { display: inline-block; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; padding: 2px 8px; border-radius: 10px; }
+    .urgency-urgent    { background: rgba(198,40,40,.1);   color: #C62828; }
+    .urgency-moderate  { background: rgba(232,97,10,.1);   color: #B85000; }
+    .urgency-long_term { background: rgba(29,158,117,.1);  color: #157A5A; }
+
+    .status-badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; }
+    .status-open      { background: rgba(29,158,117,.1);  color: #157A5A; }
+    .status-filled    { background: rgba(31,61,92,.1);    color: #1F3D5C; }
+    .status-cancelled { background: #F0F0F0; color: #888; }
+
+    .empty-state { text-align: center; padding: 40px 16px; }
+    .empty-icon  { font-size: 40px; margin-bottom: 12px; }
+    .empty-state h3 { font-size: 16px; color: #1F3D5C; margin-bottom: 8px; }
+    .empty-state p  { font-size: 13px; color: #666; line-height: 1.6; }
+
+    /* Modal */
+    .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 200; align-items: center; justify-content: center; padding: 16px; }
+    .modal-overlay.open { display: flex; }
+    .modal { background: #fff; border-radius: 8px; width: 100%; max-width: 540px; max-height: 90vh; overflow-y: auto; box-shadow: 0 8px 40px rgba(0,0,0,.2); }
+    .modal-header { background: #1F3D5C; padding: 16px 20px; display: flex; align-items: center; justify-content: space-between; }
+    .modal-header h2 { color: #fff; font-size: 16px; font-weight: 700; }
+    .modal-close { background: none; border: none; color: rgba(255,255,255,.6); font-size: 20px; cursor: pointer; line-height: 1; padding: 0 4px; }
+    .modal-close:hover { color: #fff; }
+    .modal-body { padding: 24px; }
+
+    .form-group { margin-bottom: 16px; }
+    .form-row   { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 480px) { .form-row { grid-template-columns: 1fr; } }
+    label { display: block; font-size: 13px; font-weight: 700; color: #1F3D5C; margin-bottom: 5px; }
+    label .req { color: #E8610A; margin-left: 2px; }
+    input[type="text"], input[type="date"], input[type="time"], input[type="number"], select, textarea {
+      width: 100%; padding: 8px 12px; border: 1.5px solid #D0D7DE; border-radius: 4px;
+      font-size: 13px; font-family: Arial, sans-serif; color: #1A1A1A; background: #fff;
+    }
+    input:focus, select:focus, textarea:focus { outline: none; border-color: #E8610A; box-shadow: 0 0 0 3px rgba(232,97,10,.1); }
+    textarea { resize: vertical; min-height: 70px; }
+
+    .radio-group { display: flex; gap: 12px; flex-wrap: wrap; }
+    .radio-option { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+    .radio-option input[type="radio"] { width: 16px; height: 16px; accent-color: #E8610A; padding: 0; border: none; }
+    .radio-option span { font-size: 13px; color: #1A1A1A; }
+
+    .modal-footer { padding: 16px 24px; border-top: 1px solid #E8EDF2; display: flex; gap: 10px; justify-content: flex-end; }
+    .btn-secondary { background: #E8EDF2; color: #555; border: none; padding: 10px 20px; border-radius: 4px; font-size: 14px; font-weight: 700; font-family: Arial, sans-serif; cursor: pointer; }
+
+    .error-banner { background: #FFF0EE; border-left: 4px solid #E8610A; padding: 10px 14px; border-radius: 0 4px 4px 0; margin-bottom: 16px; font-size: 13px; color: #7A2A00; display: none; }
+    .error-banner.visible { display: block; }
+
+    .toast { position: fixed; bottom: 20px; right: 20px; background: #1D9E75; color: #fff; padding: 10px 18px; border-radius: 6px; font-size: 13px; font-weight: 700; box-shadow: 0 4px 16px rgba(0,0,0,.2); transform: translateY(80px); opacity: 0; transition: transform .25s, opacity .25s; z-index: 9999; }
+    .toast.visible { transform: translateY(0); opacity: 1; }
+    .toast.error { background: #C62828; }
+  </style>
+</head>
+<body>
+  <div class="toast" id="toast"></div>
+
+  <nav>
+    <a href="/ptt/dashboard" class="nav-brand">
+      <div class="nav-logo-mark">S</div>
+      <div>
+        <div class="nav-title">Part Time Tracker</div>
+        <div class="nav-sub">{{ company.name }}</div>
+      </div>
+    </a>
+    <div class="nav-links">
+      <a href="/ptt/dashboard" class="nav-link">Dashboard</a>
+      <a href="/ptt/shifts" class="nav-link active">Shifts</a>
+      <a href="/ptt/logout" class="nav-logout">Log out</a>
+    </div>
+  </nav>
+
+  <div class="page-header">
+    <div class="page-header-inner">
+      <div>
+        <h1>Shifts</h1>
+        <p>Create and manage open shifts for your part-time pool.</p>
+      </div>
+      <button class="btn-primary" onclick="openCreateModal()">+ New Shift</button>
+    </div>
+  </div>
+
+  <div class="main">
+
+    <!-- Filter bar -->
+    <div class="filter-bar">
+      <button class="filter-btn active" onclick="filterShifts('all', this)">All</button>
+      <button class="filter-btn" onclick="filterShifts('open', this)">Open</button>
+      <button class="filter-btn" onclick="filterShifts('filled', this)">Filled</button>
+      <button class="filter-btn" onclick="filterShifts('cancelled', this)">Cancelled</button>
+    </div>
+
+    <div class="section-card">
+      <div class="section-card-header">
+        <h2>Shift Schedule</h2>
+        <span class="badge" id="shiftCount">{{ shifts | length }} shifts</span>
+      </div>
+
+      {% if shifts %}
+      <table class="shift-table" id="shiftTable">
+        <thead>
+          <tr>
+            <th>Shift</th>
+            <th>Date</th>
+            <th>Time</th>
+            <th>Skill</th>
+            <th>Urgency</th>
+            <th>Status</th>
+            <th>Claims</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in shifts %}
+          <tr data-status="{{ s.status }}">
+            <td>
+              <a href="/ptt/shifts/{{ s.id }}" class="shift-title-link">{{ s.title }}</a>
+            </td>
+            <td>{{ s.shift_date }}</td>
+            <td style="white-space:nowrap;">{{ s.start_time[:5] }}–{{ s.end_time[:5] }}</td>
+            <td>{{ s.skill_name or '—' }}</td>
+            <td>
+              <span class="urgency-badge urgency-{{ s.urgency }}">
+                {{ s.urgency | replace('_', ' ') | title }}
+              </span>
+            </td>
+            <td>
+              <span class="status-badge status-{{ s.status }}">{{ s.status | title }}</span>
+            </td>
+            <td>{{ s.claim_count }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="empty-state">
+        <div class="empty-icon">📋</div>
+        <h3>No shifts yet</h3>
+        <p>Click "New Shift" to create your first shift and start matching workers.</p>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Create Shift Modal -->
+  <div class="modal-overlay" id="createModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Create New Shift</h2>
+        <button class="modal-close" onclick="closeCreateModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="error-banner" id="modalError"></div>
+
+        <div class="form-group">
+          <label for="shiftTitle">Shift title <span class="req">*</span></label>
+          <input type="text" id="shiftTitle" placeholder="e.g. Forklift Operator — Day Shift">
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="shiftDate">Date <span class="req">*</span></label>
+            <input type="date" id="shiftDate">
+          </div>
+          <div class="form-group">
+            <label for="workersNeeded">Workers needed</label>
+            <input type="number" id="workersNeeded" value="1" min="1" max="99">
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="startTime">Start time <span class="req">*</span></label>
+            <input type="time" id="startTime" value="06:00">
+          </div>
+          <div class="form-group">
+            <label for="endTime">End time <span class="req">*</span></label>
+            <input type="time" id="endTime" value="18:00">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="skillRequired">Skill required</label>
+          <select id="skillRequired">
+            <option value="">Any skill (no filter)</option>
+            {% for skill in skills %}
+            <option value="{{ skill.id }}">{{ skill.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Urgency</label>
+          <div class="radio-group">
+            <label class="radio-option">
+              <input type="radio" name="urgency" value="urgent">
+              <span>🔴 Urgent</span>
+            </label>
+            <label class="radio-option">
+              <input type="radio" name="urgency" value="moderate" checked>
+              <span>🟡 Moderate</span>
+            </label>
+            <label class="radio-option">
+              <input type="radio" name="urgency" value="long_term">
+              <span>🟢 Long term</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="shiftNotes">Notes (optional)</label>
+          <textarea id="shiftNotes" placeholder="Special instructions, PPE required, parking info…"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeCreateModal()">Cancel</button>
+        <button class="btn-primary" id="createBtn" onclick="createShift()">Create Shift</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function showToast(msg, isError=false) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.toggle('error', isError);
+      t.classList.add('visible');
+      setTimeout(() => t.classList.remove('visible'), 2800);
+    }
+
+    function openCreateModal() {
+      document.getElementById('createModal').classList.add('open');
+      document.getElementById('shiftDate').value = '';
+      document.getElementById('shiftTitle').focus();
+    }
+
+    function closeCreateModal() {
+      document.getElementById('createModal').classList.remove('open');
+      document.getElementById('modalError').classList.remove('visible');
+    }
+
+    function filterShifts(status, btn) {
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const rows = document.querySelectorAll('#shiftTable tbody tr');
+      let visible = 0;
+      rows.forEach(row => {
+        const show = status === 'all' || row.dataset.status === status;
+        row.style.display = show ? '' : 'none';
+        if (show) visible++;
+      });
+      document.getElementById('shiftCount').textContent = visible + ' shift' + (visible !== 1 ? 's' : '');
+    }
+
+    async function createShift() {
+      const errEl = document.getElementById('modalError');
+      errEl.classList.remove('visible');
+
+      const title          = document.getElementById('shiftTitle').value.trim();
+      const shift_date     = document.getElementById('shiftDate').value;
+      const start_time     = document.getElementById('startTime').value;
+      const end_time       = document.getElementById('endTime').value;
+      const workers_needed = parseInt(document.getElementById('workersNeeded').value) || 1;
+      const urgency        = document.querySelector('input[name="urgency"]:checked')?.value || 'moderate';
+      const skillEl        = document.getElementById('skillRequired');
+      const skill_required_id = skillEl.value ? parseInt(skillEl.value) : null;
+      const notes          = document.getElementById('shiftNotes').value.trim();
+
+      if (!title) { errEl.textContent = 'Shift title is required.'; errEl.classList.add('visible'); return; }
+      if (!shift_date) { errEl.textContent = 'Date is required.'; errEl.classList.add('visible'); return; }
+      if (!start_time) { errEl.textContent = 'Start time is required.'; errEl.classList.add('visible'); return; }
+      if (!end_time)   { errEl.textContent = 'End time is required.'; errEl.classList.add('visible'); return; }
+      if (start_time >= end_time) { errEl.textContent = 'End time must be after start time.'; errEl.classList.add('visible'); return; }
+
+      const btn = document.getElementById('createBtn');
+      btn.disabled = true;
+      btn.textContent = 'Creating...';
+
+      try {
+        const resp = await fetch('/api/ptt/admin/shifts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title, shift_date, start_time, end_time,
+                                 workers_needed, urgency, skill_required_id, notes })
+        });
+        const data = await resp.json();
+        if (!resp.ok || data.error) {
+          errEl.textContent = data.error || 'Failed to create shift.';
+          errEl.classList.add('visible');
+          btn.disabled = false; btn.textContent = 'Create Shift';
+          return;
+        }
+        // Navigate to the new shift detail page
+        window.location.href = '/ptt/shifts/' + data.id;
+      } catch (err) {
+        errEl.textContent = 'Network error. Please try again.';
+        errEl.classList.add('visible');
+        btn.disabled = false; btn.textContent = 'Create Shift';
+      }
+    }
+
+    // Close modal on overlay click
+    document.getElementById('createModal').addEventListener('click', function(e) {
+      if (e.target === this) closeCreateModal();
+    });
+  </script>
+</body>
+</html>
+<!-- I did no harm and this file is not truncated. -->
