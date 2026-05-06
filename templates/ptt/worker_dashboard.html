@@ -107,8 +107,8 @@
       </div>
     </a>
     <div class="nav-links">
-      <a href="/ptt/w/dashboard" class="nav-link active">Dashboard</a>
-      <a href="/ptt/w/profile" class="nav-link">My Profile</a>
+      <a href="/ptt/w/dashboard{% if session_id %}?sid={{ session_id }}{% endif %}" class="nav-link active">Dashboard</a>
+      <a href="/ptt/w/profile{% if session_id %}?sid={{ session_id }}{% endif %}" class="nav-link">My Profile</a>
       <a href="/ptt/logout" class="nav-logout">Log out</a>
     </div>
   </nav>
