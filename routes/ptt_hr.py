@@ -384,6 +384,7 @@ def ptt_dashboard():
         pending_list=pending_list,
         skills=skills,
         active_list=active_list,
+        session_id=session_id,
     ))
 
     # If session came from URL param, set the cookie now on this 200 response.
