@@ -55,7 +55,9 @@ def _get_matching_shifts(cursor, company_id, worker_id):
 
     # Get open future shifts for this company
     cursor.execute("""
-        SELECT s.id, s.title, s.shift_date, s.start_time, s.end_time,
+        SELECT s.id, s.title, s.shift_date,
+               s.start_time::text AS start_time,
+               s.end_time::text AS end_time,
                s.workers_needed, s.urgency, s.notes,
                s.skill_required_id, sk.name AS skill_name,
                EXTRACT(DOW FROM s.shift_date)::int AS dow
@@ -176,7 +178,9 @@ def ptt_worker_dashboard(ptt_session, _session_id=None):
             SELECT c.id AS claim_id, c.status AS claim_status,
                    c.claimed_at, c.notes AS claim_notes,
                    s.id AS shift_id, s.title, s.shift_date,
-                   s.start_time, s.end_time, s.urgency,
+                   s.start_time::text AS start_time,
+                   s.end_time::text AS end_time,
+                   s.urgency,
                    sk.name AS skill_name
             FROM ptt_shift_claim c
             JOIN ptt_shift s ON s.id = c.shift_id
