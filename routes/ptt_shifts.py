@@ -52,7 +52,7 @@ ptt_shifts_bp = Blueprint("ptt_shifts", __name__)
 
 @ptt_shifts_bp.route("/ptt/shifts")
 @require_ptt_admin
-def ptt_shifts_list(ptt_session, _session_id=None, _sid_from_url=False):
+def ptt_shifts_list(ptt_session, _session_id=None):
     """HR shift list page."""
     company_id = ptt_session["company_id"]
 
@@ -100,7 +100,7 @@ def ptt_shifts_list(ptt_session, _session_id=None, _sid_from_url=False):
 
 @ptt_shifts_bp.route("/ptt/shifts/<int:shift_id>")
 @require_ptt_admin
-def ptt_shift_detail(ptt_session, shift_id, _session_id=None, _sid_from_url=False):
+def ptt_shift_detail(ptt_session, shift_id, _session_id=None):
     """HR shift detail page — shows matches and claims."""
     company_id = ptt_session["company_id"]
 
