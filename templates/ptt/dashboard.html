@@ -666,6 +666,7 @@
   </div><!-- /main -->
 
   <script>
+    const PTT_SID = "{{ session_id }}";
     // ── TOAST ──────────────────────────────────────────────────────────────
     function showToast(msg, isError = false) {
       const t = document.getElementById('toast');
@@ -712,7 +713,7 @@
 
       try {
         const resp = await fetch(`/api/ptt/admin/workers/${workerId}/approve`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PTT-Session': PTT_SID }
         });
         const data = await resp.json();
         if (!resp.ok || data.error) {
@@ -746,7 +747,7 @@
       try {
         const resp = await fetch(`/api/ptt/admin/workers/${workerId}/reject`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'X-PTT-Session': PTT_SID },
           body: JSON.stringify({ reason }),
         });
         const data = await resp.json();
@@ -825,7 +826,7 @@
       try {
         const resp = await fetch(`/api/ptt/admin/skills/${skillId}`, {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'X-PTT-Session': PTT_SID },
           body: JSON.stringify({ name }),
         });
         const data = await resp.json();
@@ -845,7 +846,8 @@
       if (!confirm(`Delete skill "${skillName}"? This cannot be undone.`)) return;
       try {
         const resp = await fetch(`/api/ptt/admin/skills/${skillId}`, {
-          method: 'DELETE'
+          method: 'DELETE',
+          headers: { 'X-PTT-Session': PTT_SID }
         });
         const data = await resp.json();
         if (!resp.ok || data.error) {
@@ -872,7 +874,7 @@
       try {
         const resp = await fetch('/api/ptt/admin/skills', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'X-PTT-Session': PTT_SID },
           body: JSON.stringify({ name }),
         });
         const data = await resp.json();
@@ -954,7 +956,7 @@
       try {
         const resp = await fetch('/api/ptt/admin/skills/reorder', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'X-PTT-Session': PTT_SID },
           body: JSON.stringify({ ordered_ids: orderedIds }),
         });
         if (!resp.ok) showToast('Failed to save order.', true);
