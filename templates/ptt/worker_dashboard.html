@@ -208,6 +208,7 @@
   </div>
 
   <script>
+    const PTT_SID = "{{ session_id }}";
     function showToast(msg, isError=false) {
       const t = document.getElementById('toast');
       t.textContent = msg;
@@ -221,7 +222,7 @@
       btn.textContent = 'Claiming…';
       try {
         const resp = await fetch('/api/ptt/worker/shifts/' + shiftId + '/claim', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PTT-Session': PTT_SID }
         });
         const data = await resp.json();
         if (!resp.ok || data.error) {
