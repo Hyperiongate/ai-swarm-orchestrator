@@ -272,6 +272,7 @@
   </div>
 
   <script>
+    const PTT_SID = "{{ session_id }}";
     const shiftId = {{ shift.id }};
     const contactedIds = new Set({{ contacted_ids | list | tojson }});
 
@@ -299,7 +300,7 @@
       list.innerHTML = '';
 
       try {
-        const resp = await fetch('/api/ptt/admin/shifts/' + shiftId + '/matches');
+        const resp = await fetch('/api/ptt/admin/shifts/' + shiftId + '/matches', { headers: { 'X-PTT-Session': PTT_SID } });
         const data = await resp.json();
         if (!resp.ok || data.error) {
           list.innerHTML = '<p class="no-matches">' + (data.error || 'Failed to load matches.') + '</p>';
@@ -352,7 +353,7 @@
       btn.disabled = true;
       try {
         const resp = await fetch(`/api/ptt/admin/shifts/${shiftId}/outreach/${workerId}`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PTT-Session': PTT_SID }
         });
         const data = await resp.json();
         if (!resp.ok || data.error) {
@@ -376,7 +377,7 @@
       btn.disabled = true;
       try {
         const resp = await fetch('/api/ptt/admin/shifts/' + shiftId + '/cancel', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PTT-Session': PTT_SID }
         });
         const data = await resp.json();
         if (!resp.ok || data.error) {
@@ -402,7 +403,7 @@
       row.querySelectorAll('button').forEach(b => b.disabled = true);
       try {
         const resp = await fetch('/api/ptt/admin/claims/' + claimId + '/confirm', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PTT-Session': PTT_SID }
         });
         const data = await resp.json();
         if (!resp.ok || data.error) {
@@ -426,7 +427,7 @@
       row.querySelectorAll('button').forEach(b => b.disabled = true);
       try {
         const resp = await fetch('/api/ptt/admin/claims/' + claimId + '/decline', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PTT-Session': PTT_SID }
         });
         const data = await resp.json();
         if (!resp.ok || data.error) {
