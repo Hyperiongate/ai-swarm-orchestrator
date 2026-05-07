@@ -375,7 +375,8 @@ def require_ptt_admin(f):
     """
     Decorator: require a valid admin session.
     Checks cookie first, then ?sid= URL param.
-    If ?sid= provided, sets cookie on the response (bypasses Render proxy issue).
+    If ?sid= provided, wraps result in make_response and sets cookie.
+    This bypasses Render's proxy stripping Set-Cookie on redirects.
     Injects ptt_session and session_id into view kwargs.
     """
     @wraps(f)
@@ -389,9 +390,16 @@ def require_ptt_admin(f):
         kwargs["_session_id"]   = session_id
         kwargs["_sid_from_url"] = sid_from_url
         result = f(*args, **kwargs)
-        # Set cookie on 200 responses when session came from ?sid=
-        if sid_from_url and hasattr(result, 'set_cookie'):
-            _sid_response(result, session_id, sid_from_url)
+        if sid_from_url and session_id:
+            # Wrap in make_response so we can set the cookie.
+            # render_template returns a string — not a Response object.
+            resp = make_response(result)
+            resp.set_cookie(
+                PTT_SESSION_COOKIE, session_id,
+                max_age=SESSION_DAYS * 24 * 3600,
+                httponly=True, samesite="Lax", path="/",
+            )
+            return resp
         return result
     return decorated
 
@@ -400,7 +408,7 @@ def require_ptt_worker(f):
     """
     Decorator: require a valid worker session.
     Checks cookie first, then ?sid= URL param.
-    If ?sid= provided, sets cookie on the response.
+    If ?sid= provided, wraps result in make_response and sets cookie.
     Injects ptt_session and session_id into view kwargs.
     """
     @wraps(f)
@@ -414,8 +422,14 @@ def require_ptt_worker(f):
         kwargs["_session_id"]   = session_id
         kwargs["_sid_from_url"] = sid_from_url
         result = f(*args, **kwargs)
-        if sid_from_url and hasattr(result, 'set_cookie'):
-            _sid_response(result, session_id, sid_from_url)
+        if sid_from_url and session_id:
+            resp = make_response(result)
+            resp.set_cookie(
+                PTT_SESSION_COOKIE, session_id,
+                max_age=SESSION_DAYS * 24 * 3600,
+                httponly=True, samesite="Lax", path="/",
+            )
+            return resp
         return result
     return decorated
 
