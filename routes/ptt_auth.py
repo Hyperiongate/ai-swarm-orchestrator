@@ -402,7 +402,9 @@ def require_ptt_admin(f):
     Session is read from X-PTT-Session header (API calls),
     ?sid= URL param (page navigation), or cookie (fallback).
     No cookie-setting — Render's proxy strips Set-Cookie headers.
-    Injects ptt_session and _session_id into view kwargs.
+    Injects ptt_session into view kwargs always.
+    Injects _session_id only for HTML page routes (not /api/ routes)
+    so API endpoints don't receive an unexpected keyword argument.
     """
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -413,7 +415,8 @@ def require_ptt_admin(f):
                 return jsonify({"error": "Authentication required"}), 401
             return redirect("/ptt/")
         kwargs["ptt_session"] = session
-        kwargs["_session_id"] = session_id
+        if not request.path.startswith("/api/ptt/"):
+            kwargs["_session_id"] = session_id
         return f(*args, **kwargs)
     return decorated
 
@@ -422,7 +425,7 @@ def require_ptt_worker(f):
     """
     Decorator: require a valid worker session.
     Session is read from X-PTT-Session header, ?sid= URL param, or cookie.
-    Injects ptt_session and _session_id into view kwargs.
+    Injects ptt_session always; _session_id only for HTML page routes.
     """
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -433,7 +436,8 @@ def require_ptt_worker(f):
                 return jsonify({"error": "Authentication required"}), 401
             return redirect("/ptt/")
         kwargs["ptt_session"] = session
-        kwargs["_session_id"] = session_id
+        if not request.path.startswith("/api/ptt/"):
+            kwargs["_session_id"] = session_id
         return f(*args, **kwargs)
     return decorated
 
