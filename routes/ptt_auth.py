@@ -4,7 +4,7 @@ AI Swarm Orchestrator — Part Time Tracker: Auth Utilities
 Shiftwork Solutions LLC
 
 Created:      2026-05-01
-Last Updated: 2026-05-06
+Last Updated: 2026-05-07
 
 CHANGELOG:
   2026-05-04 — EMAIL SCANNER FIX.
@@ -15,7 +15,7 @@ CHANGELOG:
     by POST /ptt/auth when the human actually clicks the button.
     No other changes.
 
-  2026-05-06 — SID PROPAGATION FIX.
+  2026-05-07 — COOKIELESS SESSION FIX.
     require_ptt_admin and require_ptt_worker now check ?sid= URL param
     as fallback when cookie is absent. When ?sid= is used, the cookie
     is set on the response. This allows all protected pages to receive
@@ -319,8 +319,33 @@ def clear_session_cookie(response):
     return response
 
 
+def get_session_id_from_request():
+    """
+    Read session_id from any of three sources (in priority order):
+    1. X-PTT-Session request header (used by JS fetch() API calls)
+    2. ?sid= URL query parameter (used for page navigation links)
+    3. ptt_session cookie (legacy, may not work on Render)
+
+    This triple-source approach is required because Render's proxy
+    strips Set-Cookie headers, making cookies unreliable. All PTT
+    pages pass session_id in the URL and all JS API calls send it
+    as a header, so cookies are no longer required.
+    """
+    # 1. Header (API calls from JS)
+    sid = request.headers.get("X-PTT-Session", "").strip()
+    if sid:
+        return sid
+    # 2. URL param (page navigation)
+    sid = request.args.get("sid", "").strip()
+    if sid:
+        return sid
+    # 3. Cookie (fallback)
+    sid = request.cookies.get(PTT_SESSION_COOKIE, "").strip()
+    return sid or None
+
+
 def get_current_session():
-    session_id = request.cookies.get(PTT_SESSION_COOKIE)
+    session_id = get_session_id_from_request()
     if not session_id:
         return None
     return get_session(session_id)
@@ -374,63 +399,42 @@ def _sid_response(response, session_id, sid_from_url):
 def require_ptt_admin(f):
     """
     Decorator: require a valid admin session.
-    Checks cookie first, then ?sid= URL param.
-    If ?sid= provided, wraps result in make_response and sets cookie.
-    This bypasses Render's proxy stripping Set-Cookie on redirects.
-    Injects ptt_session and session_id into view kwargs.
+    Session is read from X-PTT-Session header (API calls),
+    ?sid= URL param (page navigation), or cookie (fallback).
+    No cookie-setting — Render's proxy strips Set-Cookie headers.
+    Injects ptt_session and _session_id into view kwargs.
     """
     @wraps(f)
     def decorated(*args, **kwargs):
-        session, session_id, sid_from_url = _get_session_and_sid("admin")
-        if not session:
+        session_id = get_session_id_from_request()
+        session    = get_session(session_id) if session_id else None
+        if not session or session.get("user_type") != "admin":
             if request.path.startswith("/api/ptt/"):
                 return jsonify({"error": "Authentication required"}), 401
             return redirect("/ptt/")
-        kwargs["ptt_session"]   = session
-        kwargs["_session_id"]   = session_id
-        kwargs["_sid_from_url"] = sid_from_url
-        result = f(*args, **kwargs)
-        if sid_from_url and session_id:
-            # Wrap in make_response so we can set the cookie.
-            # render_template returns a string — not a Response object.
-            resp = make_response(result)
-            resp.set_cookie(
-                PTT_SESSION_COOKIE, session_id,
-                max_age=SESSION_DAYS * 24 * 3600,
-                httponly=True, samesite="Lax", path="/",
-            )
-            return resp
-        return result
+        kwargs["ptt_session"] = session
+        kwargs["_session_id"] = session_id
+        return f(*args, **kwargs)
     return decorated
 
 
 def require_ptt_worker(f):
     """
     Decorator: require a valid worker session.
-    Checks cookie first, then ?sid= URL param.
-    If ?sid= provided, wraps result in make_response and sets cookie.
-    Injects ptt_session and session_id into view kwargs.
+    Session is read from X-PTT-Session header, ?sid= URL param, or cookie.
+    Injects ptt_session and _session_id into view kwargs.
     """
     @wraps(f)
     def decorated(*args, **kwargs):
-        session, session_id, sid_from_url = _get_session_and_sid("worker")
-        if not session:
+        session_id = get_session_id_from_request()
+        session    = get_session(session_id) if session_id else None
+        if not session or session.get("user_type") != "worker":
             if request.path.startswith("/api/ptt/"):
                 return jsonify({"error": "Authentication required"}), 401
             return redirect("/ptt/")
-        kwargs["ptt_session"]   = session
-        kwargs["_session_id"]   = session_id
-        kwargs["_sid_from_url"] = sid_from_url
-        result = f(*args, **kwargs)
-        if sid_from_url and session_id:
-            resp = make_response(result)
-            resp.set_cookie(
-                PTT_SESSION_COOKIE, session_id,
-                max_age=SESSION_DAYS * 24 * 3600,
-                httponly=True, samesite="Lax", path="/",
-            )
-            return resp
-        return result
+        kwargs["ptt_session"] = session
+        kwargs["_session_id"] = session_id
+        return f(*args, **kwargs)
     return decorated
 
 
