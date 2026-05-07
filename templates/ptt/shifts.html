@@ -369,8 +369,8 @@
           btn.disabled = false; btn.textContent = 'Create Shift';
           return;
         }
-        // Navigate to the new shift detail page
-        window.location.href = '/ptt/shifts/' + data.id;
+        // Navigate to the new shift detail page (carry session)
+        window.location.href = '/ptt/shifts/' + data.id + (PTT_SID ? '?sid=' + PTT_SID : '');
       } catch (err) {
         errEl.textContent = 'Network error. Please try again.';
         errEl.classList.add('visible');
