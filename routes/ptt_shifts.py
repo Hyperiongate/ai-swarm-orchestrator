@@ -66,7 +66,9 @@ def ptt_shifts_list(ptt_session, _session_id=None):
         company = cursor.fetchone()
 
         cursor.execute("""
-            SELECT s.id, s.title, s.shift_date, s.start_time, s.end_time,
+            SELECT s.id, s.title, s.shift_date,
+                   s.start_time::text AS start_time,
+                   s.end_time::text AS end_time,
                    s.workers_needed, s.status, s.urgency, s.notes,
                    s.created_at,
                    sk.name AS skill_name,
@@ -109,7 +111,9 @@ def ptt_shift_detail(ptt_session, shift_id, _session_id=None):
         cursor = conn.cursor()
 
         cursor.execute("""
-            SELECT s.id, s.title, s.shift_date, s.start_time, s.end_time,
+            SELECT s.id, s.title, s.shift_date,
+                   s.start_time::text AS start_time,
+                   s.end_time::text AS end_time,
                    s.workers_needed, s.status, s.urgency, s.notes,
                    s.created_at, s.skill_required_id,
                    sk.name AS skill_name
