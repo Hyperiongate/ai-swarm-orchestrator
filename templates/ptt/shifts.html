@@ -298,6 +298,7 @@
   </div>
 
   <script>
+    const PTT_SID = "{{ session_id }}";
     function showToast(msg, isError=false) {
       const t = document.getElementById('toast');
       t.textContent = msg;
@@ -357,7 +358,7 @@
       try {
         const resp = await fetch('/api/ptt/admin/shifts', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'X-PTT-Session': PTT_SID },
           body: JSON.stringify({ title, shift_date, start_time, end_time,
                                  workers_needed, urgency, skill_required_id, notes })
         });
