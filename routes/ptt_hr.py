@@ -1,7 +1,7 @@
 """
 routes/ptt_hr.py  —  Part Time Tracker: HR Admin Routes
 Shiftwork Solutions LLC
-Created: 2026-05-01  |  Last Updated: 2026-05-04
+Created: 2026-05-01  |  Last Updated: 2026-05-08
 
 CHANGELOG:
   2026-05-04 — EMAIL SCANNER FIX. ONE CHANGE ONLY.
@@ -839,5 +839,68 @@ def ptt_worker_detail(ptt_session, worker_id):
         "approved_by_name": worker["approved_by_name"] or "",
         "skills": skills, "availability": availability,
     }}), 200
+
+# =============================================================================
+# DEV ENDPOINT — get a worker login link without sending email
+# POST /api/ptt/dev/worker-login-link  { "worker_id": 123 }
+# Returns { "login_url": "https://..." } — paste in browser to log in as worker
+# Use this during development when email is unavailable or slow.
+# =============================================================================
+@ptt_hr_bp.route("/api/ptt/dev/worker-login-link", methods=["POST"])
+def ptt_dev_worker_login_link():
+    """
+    DEV ONLY — generate a magic link for a worker without sending email.
+    Returns the URL directly in the response so you can paste it in browser.
+    Body: { "worker_id": int }  OR  { "worker_name": "Fred Liftdriver" }
+    """
+    data      = request.get_json(silent=True) or {}
+    worker_id = data.get("worker_id")
+    worker_name = (data.get("worker_name") or "").strip()
+
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+
+        if worker_id:
+            cursor.execute("""
+                SELECT id, name, email, company_id, status
+                FROM ptt_worker WHERE id = %s
+            """, (worker_id,))
+        elif worker_name:
+            cursor.execute("""
+                SELECT id, name, email, company_id, status
+                FROM ptt_worker WHERE LOWER(name) = LOWER(%s)
+                ORDER BY id DESC LIMIT 1
+            """, (worker_name,))
+        else:
+            return jsonify({"error": "worker_id or worker_name required"}), 400
+
+        worker = cursor.fetchone()
+        if not worker:
+            return jsonify({"error": "Worker not found"}), 404
+        if worker["status"] != "active":
+            return jsonify({
+                "error": f"Worker status is '{worker['status']}' — must be active to log in"
+            }), 409
+
+    finally:
+        conn.close()
+
+    try:
+        raw_token  = create_magic_token("worker", worker["id"], worker["company_id"])
+        magic_link = _build_magic_link(raw_token)
+    except Exception as e:
+        return jsonify({"error": f"Failed to create token: {e}"}), 500
+
+    return jsonify({
+        "status":     "ok",
+        "worker_id":  worker["id"],
+        "name":       worker["name"],
+        "email":      worker["email"],
+        "login_url":  magic_link,
+        "expires_in": "30 minutes",
+        "note":       "Paste login_url in browser to log in as this worker",
+    }), 200
+
 
 # I did no harm and this file is not truncated.
