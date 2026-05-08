@@ -388,6 +388,27 @@ except Exception as e:
     import traceback
     traceback.print_exc()
 
+# ----------------------------------------------------------------------------
+# MIGRATION 012: Fix ptt_worker unique constraint
+# Added: May 08, 2026
+# Replaces UNIQUE(company_id, email) with UNIQUE(company_id, name, email)
+# so two people sharing an email can both apply.
+# ----------------------------------------------------------------------------
+try:
+    import importlib.util as _ilu12
+    import os as _os12
+    _m012_path = _os12.path.join(_os12.path.dirname(_os12.path.abspath(__file__)),
+                                 'migrations', 'migration_012_ptt_worker_unique.py')
+    _spec012 = _ilu12.spec_from_file_location("migration_012_ptt_worker_unique", _m012_path)
+    _mod012 = _ilu12.module_from_spec(_spec012)
+    _spec012.loader.exec_module(_mod012)
+    _mod012.run_migration()
+    print("Part Time Tracker worker constraint migration (012) complete")
+except Exception as e:
+    print(f"Part Time Tracker worker constraint migration (012) failed: {e}")
+    import traceback
+    traceback.print_exc()
+
 # ============================================================================
 # STEP 2: Initialize database (delegates to migration, safe to call again)
 # ============================================================================
