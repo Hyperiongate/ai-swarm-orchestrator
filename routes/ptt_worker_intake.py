@@ -4,9 +4,15 @@ AI Swarm Orchestrator — Part Time Tracker: Worker Intake Routes
 Shiftwork Solutions LLC
 
 Created:      2026-05-04
-Last Updated: 2026-05-05
+Last Updated: 2026-05-08
 
 CHANGELOG:
+  2026-05-08 — REVIEW URL FIX.
+    Changed _build_review_url to point to /ptt/login instead of
+    /ptt/dashboard. The dashboard requires an active session, so
+    clicking the link from email was redirecting to the signup page.
+    Now it goes to the login page where HR can authenticate first.
+
   2026-05-05 — DUPLICATE CHECK FIX.
     Changed duplicate application check from email-only to name+email
     combination. The same email can appear with different names (e.g.,
@@ -39,9 +45,13 @@ ptt_worker_intake_bp = Blueprint("ptt_worker_intake", __name__)
 
 
 def _build_review_url(company_slug: str) -> str:
-    """Build the HR dashboard URL for the pending workers panel."""
+    """
+    Build the HR review URL for the pending workers notification email.
+    Points to /ptt/login so the admin is prompted to log in first.
+    After login they land on /ptt/dashboard where the pending panel is.
+    """
     base = request.host_url.rstrip("/")
-    return f"{base}/ptt/dashboard"
+    return f"{base}/ptt/login"
 
 
 # =============================================================================
