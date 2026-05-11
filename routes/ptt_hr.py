@@ -1,9 +1,25 @@
 """
 routes/ptt_hr.py  —  Part Time Tracker: HR Admin Routes
 Shiftwork Solutions LLC
-Created: 2026-05-01  |  Last Updated: 2026-05-08
+Created: 2026-05-01  |  Last Updated: 2026-05-11
 
 CHANGELOG:
+  2026-05-11 — LOGOUT FIX. ONE CHANGE ONLY.
+    ptt_logout() now uses get_session_id_from_request() instead of
+    request.cookies.get(PTT_COOKIE_NAME) to find the session ID to delete.
+    Workers never receive a cookie (Render's proxy strips Set-Cookie on
+    redirect responses), so the old cookie-only lookup always returned None
+    for worker sessions — leaving stale rows in ptt_session indefinitely.
+    get_session_id_from_request() checks X-PTT-Session header → ?sid= URL
+    param → cookie, so it works for both admin (cookie) and worker (?sid=)
+    sessions. Added get_session_id_from_request to the import block from
+    routes.ptt_auth. No other changes.
+
+  2026-05-08 — DEV ENDPOINT ADDED.
+    POST /api/ptt/dev/worker-login-link — generate a worker magic link
+    without sending email. Returns login_url directly. Accepts worker_id
+    or worker_name. Worker must have status='active'.
+
   2026-05-04 — EMAIL SCANNER FIX. ONE CHANGE ONLY.
     Split /ptt/auth into GET + POST to defeat email security scanners.
     GET  /ptt/auth?token=... uses peek_magic_token (does NOT consume the
@@ -35,6 +51,7 @@ from routes.ptt_auth import (
     create_magic_token, peek_magic_token, redeem_magic_token,
     create_session, get_session, delete_session, get_current_session,
     set_session_cookie, clear_session_cookie,
+    get_session_id_from_request,
     send_hr_signup_confirmation, send_hr_signup_notification,
     send_magic_link, send_worker_approved, insert_ptt_lead,
     require_ptt_admin,
@@ -398,7 +415,19 @@ def ptt_dashboard():
 
 @ptt_hr_bp.route("/ptt/logout")
 def ptt_logout():
-    session_id = request.cookies.get(PTT_COOKIE_NAME)
+    """
+    Log out any PTT user — admin or worker.
+
+    Uses get_session_id_from_request() to find the session ID regardless
+    of how the session is being carried:
+      - Admins: cookie (set on the /ptt/dashboard 200 response)
+      - Workers: ?sid= URL param (Render strips cookies on redirects,
+                 so workers never receive a cookie)
+
+    Without this fix, worker logouts never deleted the DB session row
+    because request.cookies.get() always returned None for workers.
+    """
+    session_id = get_session_id_from_request()
     if session_id:
         delete_session(session_id)
     resp = make_response(redirect("/ptt/"))
@@ -840,11 +869,14 @@ def ptt_worker_detail(ptt_session, worker_id):
         "skills": skills, "availability": availability,
     }}), 200
 
+
 # =============================================================================
 # DEV ENDPOINT — get a worker login link without sending email
 # POST /api/ptt/dev/worker-login-link  { "worker_id": 123 }
-# Returns { "login_url": "https://..." } — paste in browser to log in as worker
-# Use this during development when email is unavailable or slow.
+#   OR                                 { "worker_name": "Fred Liftdriver" }
+# Returns { "login_url": "https://..." } — paste in browser to log in as worker.
+# Use during development when email delivery is unavailable or slow.
+# Worker must have status = 'active'.
 # =============================================================================
 @ptt_hr_bp.route("/api/ptt/dev/worker-login-link", methods=["POST"])
 def ptt_dev_worker_login_link():
@@ -853,8 +885,8 @@ def ptt_dev_worker_login_link():
     Returns the URL directly in the response so you can paste it in browser.
     Body: { "worker_id": int }  OR  { "worker_name": "Fred Liftdriver" }
     """
-    data      = request.get_json(silent=True) or {}
-    worker_id = data.get("worker_id")
+    data        = request.get_json(silent=True) or {}
+    worker_id   = data.get("worker_id")
     worker_name = (data.get("worker_name") or "").strip()
 
     conn = get_db_connection()
