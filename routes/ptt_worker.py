@@ -4,12 +4,23 @@ AI Swarm Orchestrator — Part Time Tracker: Worker Routes
 Shiftwork Solutions LLC
 
 Created:      2026-05-06
-Last Updated: 2026-05-06
+Last Updated: 2026-05-11
 
 CHANGELOG:
+  2026-05-11 — AVAILABILITY TIME CAST FIX. ONE CHANGE ONLY.
+    ptt_worker_profile_page() availability query now casts start_time
+    and end_time to ::text. PostgreSQL returns time columns as
+    datetime.time objects, not strings. The template does
+    a.start_time[:5] (string slice) which raised:
+      TypeError: 'datetime.time' object is not subscriptable
+    Casting to ::text in the query gives "HH:MM:SS" strings which
+    the template can slice correctly. This is the same pattern already
+    used in all shift queries throughout the codebase.
+    No other changes.
+
   2026-05-06 — INITIAL BUILD (Phase 3).
     Worker-side routes: dashboard (matching shifts + my claims),
-    claim a shift, profile editing, availability CRUD, blackout CRUD.
+    claim a shift, profile editing, availability CRUD, blackouts.
 
 ROUTES (HTML):
     GET  /ptt/w/dashboard           — worker home
@@ -236,9 +247,13 @@ def ptt_worker_profile_page(ptt_session, _session_id=None):
         """, (worker_id, company_id))
         skills = cursor.fetchall()
 
-        # Availability rows
+        # Availability rows — cast to ::text so template can slice [:5]
+        # PostgreSQL returns time columns as datetime.time objects which
+        # are not subscriptable. ::text gives "HH:MM:SS" strings.
         cursor.execute("""
-            SELECT id, day_of_week, start_time, end_time
+            SELECT id, day_of_week,
+                   start_time::text AS start_time,
+                   end_time::text AS end_time
             FROM ptt_availability WHERE worker_id = %s
             ORDER BY day_of_week ASC
         """, (worker_id,))
