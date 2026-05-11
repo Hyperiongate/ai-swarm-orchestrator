@@ -1012,7 +1012,7 @@ def health():
 
     return jsonify({
         'status': 'healthy',
-        'version': 'PTT Lite Phase2 May04 + PTT Lite Phase1 May01 + Site Events Apr28 + Assessment PDF Apr21 + Assessment Sheets Apr17 + Security Hardening Apr07 + Newsletter API Apr02 + Survey in a Box Phase 2 Mar26 + Phase 3 Mar13 + Phase 6 Proactive Agent Mar12 + Phase 1 Onboarding Mar10 + Phase 3 Capabilities Manifest Mar08 + Phase 2A Memory Mar05 + PostgreSQL Migration Mar02',
+        'version': 'PTT Lite Phase3 May11 + PTT Lite Phase2 May04 + PTT Lite Phase1 May01 + Site Events Apr28 + Assessment PDF Apr21 + Assessment Sheets Apr17 + Security Hardening Apr07 + Newsletter API Apr02 + Survey in a Box Phase 2 Mar26 + Phase 3 Mar13 + Phase 6 Proactive Agent Mar12 + Phase 1 Onboarding Mar10 + Phase 3 Capabilities Manifest Mar08 + Phase 2A Memory Mar05 + PostgreSQL Migration Mar02',
         'database': {
             'type': get_db_type(),
             'backend': 'PostgreSQL (persistent)' if get_db_type() == 'postgresql' else 'SQLite (local dev)'
@@ -1115,7 +1115,7 @@ def health():
         },
         'part_time_tracker': {
             'status': 'enabled',
-            'phase': 'Lite Phase 2 — Skills CRUD + Worker Intake + Approval',
+            'phase': 'Lite Phase 3 — Shift Management, Worker Dashboard & Claims',
             'signup_url': '/ptt/',
             'login_url': '/ptt/login',
             'dashboard_url': '/ptt/dashboard',
@@ -1125,6 +1125,7 @@ def health():
             'api_apply': '/api/ptt/apply/<slug>',
             'dev_reset': '/api/ptt/dev/reset-company (POST {email})',
             'dev_reseed': '/api/ptt/dev/reseed-skills (POST {email})',
+            'dev_worker_login_link': '/api/ptt/dev/worker-login-link (POST {worker_id|worker_name})',
         },
     })
 
