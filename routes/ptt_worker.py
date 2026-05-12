@@ -345,18 +345,11 @@ def ptt_worker_claim_shift(ptt_session, shift_id):
                 VALUES (%s, %s, 'claimed')
             """, (shift_id, worker_id))
 
-        # Check if shift is now filled
-        cursor.execute("""
-            SELECT COUNT(*) AS cnt FROM ptt_shift_claim
-            WHERE shift_id = %s AND status IN ('claimed', 'confirmed')
-        """, (shift_id,))
-        claim_count = cursor.fetchone()["cnt"]
-
-        if claim_count >= shift["workers_needed"]:
-            cursor.execute("""
-                UPDATE ptt_shift SET status = 'filled', updated_at = NOW()
-                WHERE id = %s AND status = 'open'
-            """, (shift_id,))
+        # Do NOT mark shift filled here — only HR confirmation should fill a shift.
+        # Counting claims (not confirmations) caused shifts to auto-fill the
+        # moment a worker claimed, before HR had a chance to review.
+        # The fill logic lives in ptt_shifts_bp.ptt_claim_confirm() where
+        # it correctly counts confirmed claims only.
 
         conn.commit()
 
