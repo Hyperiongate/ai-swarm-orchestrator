@@ -1737,7 +1737,60 @@ def ptt_dev_reseed_skills():
     finally:
         conn.close()
 
+@app.route('/api/ptt/dev/reset-shift', methods=['POST'])
+def ptt_dev_reset_shift():
+    """
+    DEV ONLY — reset a single shift back to 'open' status and delete
+    all claims against it. Useful during testing when a shift was
+    incorrectly filled or you want to re-test the claim/confirm flow
+    without wiping the entire company.
+    Body: { "shift_id": int }
+    """
+    from db_engine import get_db_connection
+    data     = request.get_json(silent=True) or {}
+    shift_id = data.get("shift_id")
+    if not shift_id:
+        return jsonify({"error": "shift_id required"}), 400
+    try:
+        shift_id = int(shift_id)
+    except (TypeError, ValueError):
+        return jsonify({"error": "shift_id must be an integer"}), 400
 
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT id, title, company_id FROM ptt_shift WHERE id = %s",
+                       (shift_id,))
+        shift = cursor.fetchone()
+        if not shift:
+            return jsonify({"error": f"Shift {shift_id} not found"}), 404
+
+        cursor.execute("DELETE FROM ptt_shift_claim WHERE shift_id = %s", (shift_id,))
+        claims_deleted = cursor.rowcount
+
+        cursor.execute("""
+            UPDATE ptt_shift SET status = 'open', updated_at = NOW()
+            WHERE id = %s
+        """, (shift_id,))
+
+        conn.commit()
+        print(f"[ptt_dev] reset-shift {shift_id} ('{shift['title']}'): "
+              f"deleted {claims_deleted} claims, status -> open")
+        return jsonify({
+            "status":         "ok",
+            "shift_id":       shift_id,
+            "title":          shift["title"],
+            "claims_deleted": claims_deleted,
+            "shift_status":   "open",
+        }), 200
+
+    except Exception as e:
+        conn.rollback()
+        import traceback
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+    finally:
+        conn.close()
 # ============================================================================
 # PHASE 6: BACKGROUND SCHEDULER INIT
 # ============================================================================
