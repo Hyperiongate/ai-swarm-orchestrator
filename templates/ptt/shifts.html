@@ -192,7 +192,7 @@
           {% for s in shifts %}
           <tr data-status="{{ s.status }}">
             <td>
-              <a href="/ptt/shifts/{{ s.id }}" class="shift-title-link">{{ s.title }}</a>
+              <a href="/ptt/shifts/{{ s.id }}{% if session_id %}?sid={{ session_id }}{% endif %}" class="shift-title-link">{{ s.title }}</a>
             </td>
             <td>{{ s.shift_date }}</td>
             <td style="white-space:nowrap;">{{ s.start_time[:5] }}–{{ s.end_time[:5] }}</td>
