@@ -5,9 +5,17 @@
   Shiftwork Solutions LLC
 
   Created:      2026-05-01
-  Last Updated: 2026-05-05
+  Last Updated: 2026-05-14
 
   CHANGELOG:
+    2026-05-14 — BRANDING UPDATE.
+      Removed "Book a Consultation" button from nav bar.
+      Added "Powered by Shiftwork Solutions" text to nav bar.
+      Replaced bottom CTA banner with branded footer showing
+      contact information: shift-work.com, (415) 265-1621,
+      Contact@shift-work.com, © 2026 Shiftwork Solutions LLC.
+      No functional changes.
+
     2026-05-05 — Worker detail view.
       Pending worker rows now show skills as tags and notes.
       Added expandable "View Details" toggle per worker row.
@@ -61,11 +69,10 @@
     .nav-title { color: #EEAE26; font-size: 15px; font-weight: 700; }
     .nav-sub   { color: rgba(255,255,255,.55); font-size: 11px; }
     .nav-actions { display: flex; align-items: center; gap: 16px; }
-    .nav-cta {
-      background: #E8610A; color: #fff; padding: 7px 16px; border-radius: 4px;
-      font-size: 12px; font-weight: 700; text-decoration: none; white-space: nowrap;
+    .nav-powered {
+      color: rgba(255,255,255,.55); font-size: 12px; font-style: italic;
+      white-space: nowrap;
     }
-    .nav-cta:hover { background: #C85208; }
     .nav-logout { color: rgba(255,255,255,.6); font-size: 12px; text-decoration: none; }
     .nav-logout:hover { color: #fff; }
 
@@ -79,7 +86,7 @@
     .page-header p  { color: rgba(255,255,255,.6); font-size: 13px; margin-top: 4px; }
 
     /* ── MAIN ── */
-    .main { max-width: 860px; margin: 0 auto; padding: 28px 16px 64px; }
+    .main { max-width: 860px; margin: 0 auto; padding: 28px 16px 48px; }
 
     /* ── SUMMARY CARDS ── */
     .summary-grid {
@@ -144,11 +151,8 @@
     .apply-url-box .hint { font-size: 12px; color: #666; margin-top: 8px; }
 
     /* ── PENDING WORKERS ── */
-    .worker-row {
-      border-bottom: 1px solid #F0F4F8;
-    }
+    .worker-row { border-bottom: 1px solid #F0F4F8; }
     .worker-row:last-child { border-bottom: none; }
-
     .worker-row-header {
       display: flex; align-items: flex-start; justify-content: space-between;
       padding: 14px 0; gap: 12px;
@@ -162,9 +166,7 @@
       padding: 2px 9px; margin: 2px 2px 0 0; color: #1F3D5C; font-size: 11px;
       font-weight: 600;
     }
-    .no-skills-tag {
-      font-size: 11px; color: #aaa; font-style: italic;
-    }
+    .no-skills-tag { font-size: 11px; color: #aaa; font-style: italic; }
     .worker-right { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; flex-shrink: 0; }
     .worker-actions { display: flex; gap: 8px; }
     .btn-view-detail {
@@ -173,7 +175,6 @@
       font-family: Arial, Helvetica, sans-serif; opacity: .6;
     }
     .btn-view-detail:hover { opacity: 1; }
-
     .worker-detail {
       display: none;
       background: #F8FAFB; border-radius: 6px; padding: 14px 16px;
@@ -193,7 +194,6 @@
       border: 1px solid #E8EDF2;
     }
     .detail-notes.empty { color: #aaa; font-style: italic; }
-
     .btn-approve {
       background: #1D9E75; color: #fff; border: none;
       padding: 6px 14px; border-radius: 4px; font-size: 12px; font-weight: 700;
@@ -216,14 +216,11 @@
       padding: 10px 0; border-bottom: 1px solid #F0F4F8;
     }
     .skill-item:last-child { border-bottom: none; }
-    .skill-order-btns {
-      display: flex; flex-direction: column; gap: 2px; flex-shrink: 0;
-    }
+    .skill-order-btns { display: flex; flex-direction: column; gap: 2px; flex-shrink: 0; }
     .btn-order {
       background: #EEF3F8; border: none; width: 22px; height: 18px;
       border-radius: 3px; font-size: 10px; cursor: pointer; color: #1F3D5C;
-      display: flex; align-items: center; justify-content: center;
-      transition: background .1s;
+      display: flex; align-items: center; justify-content: center; transition: background .1s;
     }
     .btn-order:hover { background: #C8D8E8; }
     .btn-order:disabled { opacity: .3; cursor: not-allowed; }
@@ -253,17 +250,13 @@
     }
     .btn-save-skill   { background: #E8610A; color: #fff; }
     .btn-cancel-skill { background: #E8EDF2; color: #555; }
-
-    .add-skill-row {
-      display: flex; gap: 8px; align-items: center; margin-top: 16px;
-    }
+    .add-skill-row { display: flex; gap: 8px; align-items: center; margin-top: 16px; }
     .add-skill-input {
       flex: 1; padding: 8px 12px; border: 1.5px solid #D0D7DE; border-radius: 4px;
       font-size: 13px; font-family: Arial, Helvetica, sans-serif; color: #1A1A1A;
     }
     .add-skill-input:focus {
-      outline: none; border-color: #E8610A;
-      box-shadow: 0 0 0 3px rgba(232,97,10,.1);
+      outline: none; border-color: #E8610A; box-shadow: 0 0 0 3px rgba(232,97,10,.1);
     }
     .btn-add-skill {
       background: #1F3D5C; color: #fff; border: none; padding: 8px 18px;
@@ -272,6 +265,25 @@
       transition: background .15s;
     }
     .btn-add-skill:hover { background: #0D2438; }
+
+    /* ── FOOTER ── */
+    .ptt-footer {
+      background: #1F3D5C; margin-top: 40px; padding: 20px 24px;
+      text-align: center;
+    }
+    .ptt-footer .powered {
+      color: #EEAE26; font-size: 13px; font-weight: 700; margin-bottom: 6px;
+    }
+    .ptt-footer .contact {
+      color: rgba(255,255,255,.55); font-size: 12px; line-height: 1.8;
+    }
+    .ptt-footer .contact a {
+      color: rgba(255,255,255,.7); text-decoration: none;
+    }
+    .ptt-footer .contact a:hover { color: #fff; }
+    .ptt-footer .copy {
+      color: rgba(255,255,255,.3); font-size: 11px; margin-top: 8px;
+    }
 
     /* TOAST */
     .toast {
@@ -291,11 +303,6 @@
     .empty-icon  { font-size: 36px; margin-bottom: 12px; }
     .empty-state h3 { font-size: 16px; color: #1F3D5C; margin-bottom: 8px; }
     .empty-state p  { font-size: 13px; color: #666; line-height: 1.6; max-width: 380px; margin: 0 auto; }
-    .coming-soon-pill {
-      display: inline-block; background: #EEF3F8; border: 1px solid #C8D8E8;
-      color: #1F3D5C; font-size: 11px; font-weight: 700; letter-spacing: .06em;
-      text-transform: uppercase; padding: 4px 14px; border-radius: 20px; margin-top: 12px;
-    }
 
     /* INFO GRID */
     .info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
@@ -323,10 +330,7 @@
          style="color:rgba(255,255,255,.7); font-size:13px; text-decoration:none; margin-right:4px;">
         Shifts
       </a>
-      <a href="https://outlook.office365.com/book/ShiftworkSolutionsLLC2@shift-work.com"
-         target="_blank" rel="noopener" class="nav-cta">
-        Book a Consultation
-      </a>
+      <span class="nav-powered">Powered by Shiftwork Solutions</span>
       <a href="/ptt/logout" class="nav-logout">Log out</a>
     </div>
   </nav>
@@ -395,7 +399,6 @@
         <div id="workerList">
           {% for w in pending_list %}
           <div class="worker-row" id="workerRow{{ w.id }}">
-
             <div class="worker-row-header">
               <div class="worker-info">
                 <div class="worker-name">{{ w.name }}</div>
@@ -424,8 +427,6 @@
                 </button>
               </div>
             </div>
-
-            <!-- Expandable detail section -->
             <div class="worker-detail" id="workerDetail{{ w.id }}">
               <div class="detail-section">
                 <div class="detail-label">Skills</div>
@@ -446,8 +447,7 @@
                 </div>
               </div>
             </div>
-
-          </div><!-- /worker-row -->
+          </div>
           {% endfor %}
         </div>
         {% else %}
@@ -471,7 +471,6 @@
           These skills appear as checkboxes on worker applications.
           Click a skill name to rename it. Use the arrows to reorder.
         </p>
-
         <ul class="skills-list" id="skillsList">
           {% for skill in skills %}
           <li class="skill-item" data-id="{{ skill.id }}" id="skillItem{{ skill.id }}">
@@ -504,7 +503,6 @@
           </li>
           {% endfor %}
         </ul>
-
         <div class="add-skill-row">
           <input type="text" class="add-skill-input" id="newSkillName"
                  placeholder="New skill name…"
@@ -535,9 +533,7 @@
                   {{ w.email }}{% if w.phone %} &nbsp;&middot;&nbsp; {{ w.phone }}{% endif %}
                   {% if w.approved_at %}
                   &nbsp;&middot;&nbsp;
-                  <span style="color:#1D9E75; font-size:11px; font-weight:700;">
-                    Approved
-                  </span>
+                  <span style="color:#1D9E75; font-size:11px; font-weight:700;">Approved</span>
                   {% endif %}
                 </div>
                 <div class="worker-skills-preview">
@@ -591,7 +587,7 @@
       </div>
     </div>
 
-    <!-- SHIFTS (placeholder, Phase 3) -->
+    <!-- SHIFTS -->
     <div class="section-card">
       <div class="section-card-header">
         <h2>Open Shifts</h2>
@@ -641,33 +637,24 @@
       </div>
     </div>
 
-    <!-- CONSULTING CTA -->
-    <div style="background:#1F3D5C; border-radius:8px; padding:24px 28px;
-                display:flex; align-items:center; justify-content:space-between;
-                gap:16px; flex-wrap:wrap;">
-      <div>
-        <div style="color:#EEAE26; font-size:13px; font-weight:700;
-                    text-transform:uppercase; letter-spacing:.06em; margin-bottom:6px;">
-          Need schedule design help?
-        </div>
-        <div style="color:rgba(255,255,255,.8); font-size:14px; line-height:1.5;">
-          Shiftwork Solutions has helped hundreds of 24/7 operations design
-          better shift schedules. The first call is free.
-        </div>
-      </div>
-      <a href="https://outlook.office365.com/book/ShiftworkSolutionsLLC2@shift-work.com"
-         target="_blank" rel="noopener"
-         style="background:#E8610A; color:#fff; padding:12px 24px; border-radius:4px;
-                font-size:14px; font-weight:700; text-decoration:none; white-space:nowrap; flex-shrink:0;">
-        Book a Free Consultation
-      </a>
-    </div>
-
   </div><!-- /main -->
+
+  <!-- FOOTER -->
+  <footer class="ptt-footer">
+    <div class="powered">Powered by Shiftwork Solutions</div>
+    <div class="contact">
+      <a href="https://shift-work.com" target="_blank" rel="noopener">shift-work.com</a>
+      &nbsp;&middot;&nbsp;
+      <a href="tel:+14152651621">(415) 265-1621</a>
+      &nbsp;&middot;&nbsp;
+      <a href="mailto:Contact@shift-work.com">Contact@shift-work.com</a>
+    </div>
+    <div class="copy">&copy; 2026 Shiftwork Solutions LLC</div>
+  </footer>
 
   <script>
     const PTT_SID = "{{ session_id }}";
-    // ── TOAST ──────────────────────────────────────────────────────────────
+
     function showToast(msg, isError = false) {
       const t = document.getElementById('toast');
       t.textContent = msg;
@@ -676,7 +663,6 @@
       setTimeout(() => t.classList.remove('visible'), 2800);
     }
 
-    // ── COPY APPLY URL ─────────────────────────────────────────────────────
     function copyApplyUrl() {
       const url = document.getElementById('applyUrlDisplay').textContent.trim();
       const btn = document.getElementById('copyBtn');
@@ -692,7 +678,6 @@
       });
     }
 
-    // ── TOGGLE WORKER DETAIL ───────────────────────────────────────────────
     function toggleDetail(workerId, btn) {
       const detail = document.getElementById('workerDetail' + workerId);
       const isOpen = detail.classList.toggle('open');
@@ -705,12 +690,10 @@
       btn.textContent = isOpen ? 'Hide details ▲' : 'View details ▼';
     }
 
-    // ── APPROVE WORKER ─────────────────────────────────────────────────────
     async function approveWorker(workerId, btn) {
       const row = document.getElementById('workerRow' + workerId);
       btn.disabled = true;
       row.querySelectorAll('button').forEach(b => b.disabled = true);
-
       try {
         const resp = await fetch(`/api/ptt/admin/workers/${workerId}/approve`, {
           method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PTT-Session': PTT_SID }
@@ -723,11 +706,7 @@
         }
         row.style.opacity = '0';
         row.style.transition = 'opacity .3s';
-        setTimeout(() => {
-          row.remove();
-          updatePendingCount(-1);
-          checkEmptyPending();
-        }, 320);
+        setTimeout(() => { row.remove(); updatePendingCount(-1); checkEmptyPending(); }, 320);
         showToast('Worker approved — login link sent.');
       } catch (err) {
         showToast('Network error. Please try again.', true);
@@ -735,15 +714,12 @@
       }
     }
 
-    // ── REJECT WORKER ──────────────────────────────────────────────────────
     async function rejectWorker(workerId, btn) {
       const reason = prompt('Optional: enter a reason for rejection (not sent to worker)');
       if (reason === null) return;
-
       const row = document.getElementById('workerRow' + workerId);
       btn.disabled = true;
       row.querySelectorAll('button').forEach(b => b.disabled = true);
-
       try {
         const resp = await fetch(`/api/ptt/admin/workers/${workerId}/reject`, {
           method: 'POST',
@@ -758,11 +734,7 @@
         }
         row.style.opacity = '0';
         row.style.transition = 'opacity .3s';
-        setTimeout(() => {
-          row.remove();
-          updatePendingCount(-1);
-          checkEmptyPending();
-        }, 320);
+        setTimeout(() => { row.remove(); updatePendingCount(-1); checkEmptyPending(); }, 320);
         showToast('Application rejected.');
       } catch (err) {
         showToast('Network error. Please try again.', true);
@@ -773,8 +745,7 @@
     function updatePendingCount(delta) {
       const el = document.getElementById('pendingCount');
       const badge = document.getElementById('pendingBadge');
-      const current = parseInt(el.textContent) || 0;
-      const next = Math.max(0, current + delta);
+      const next = Math.max(0, (parseInt(el.textContent) || 0) + delta);
       el.textContent = next;
       badge.textContent = next + ' pending';
       badge.classList.toggle('orange', next > 0);
@@ -784,8 +755,7 @@
       const list = document.getElementById('workerList');
       if (list && list.querySelectorAll('.worker-row').length === 0) {
         list.innerHTML = '';
-        const panel = document.getElementById('pendingPanel');
-        panel.innerHTML = `
+        document.getElementById('pendingPanel').innerHTML = `
           <div class="empty-state">
             <div class="empty-icon">👤</div>
             <h3>No pending applications</h3>
@@ -794,14 +764,11 @@
       }
     }
 
-    // ── SKILLS CRUD ────────────────────────────────────────────────────────
-
     function startEditSkill(skillId) {
       document.getElementById('skillDisplay' + skillId).style.display = 'none';
       const input = document.getElementById('skillInput' + skillId);
       input.style.display = 'block';
-      input.focus();
-      input.select();
+      input.focus(); input.select();
       document.getElementById('skillSaveRow' + skillId).classList.add('visible');
     }
 
@@ -822,7 +789,6 @@
       const input = document.getElementById('skillInput' + skillId);
       const name  = input.value.trim();
       if (!name) { showToast('Skill name cannot be empty.', true); return; }
-
       try {
         const resp = await fetch(`/api/ptt/admin/skills/${skillId}`, {
           method: 'PUT',
@@ -830,47 +796,32 @@
           body: JSON.stringify({ name }),
         });
         const data = await resp.json();
-        if (!resp.ok || data.error) {
-          showToast(data.error || 'Failed to save.', true); return;
-        }
-        const display = document.getElementById('skillDisplay' + skillId);
-        display.textContent = name;
+        if (!resp.ok || data.error) { showToast(data.error || 'Failed to save.', true); return; }
+        document.getElementById('skillDisplay' + skillId).textContent = name;
         cancelEditSkill(skillId);
         showToast('Skill updated.');
-      } catch (err) {
-        showToast('Network error. Please try again.', true);
-      }
+      } catch (err) { showToast('Network error. Please try again.', true); }
     }
 
     async function deleteSkill(skillId, skillName) {
       if (!confirm(`Delete skill "${skillName}"? This cannot be undone.`)) return;
       try {
         const resp = await fetch(`/api/ptt/admin/skills/${skillId}`, {
-          method: 'DELETE',
-          headers: { 'X-PTT-Session': PTT_SID }
+          method: 'DELETE', headers: { 'X-PTT-Session': PTT_SID }
         });
         const data = await resp.json();
-        if (!resp.ok || data.error) {
-          showToast(data.error || 'Failed to delete.', true); return;
-        }
+        if (!resp.ok || data.error) { showToast(data.error || 'Failed to delete.', true); return; }
         const item = document.getElementById('skillItem' + skillId);
-        item.style.opacity = '0';
-        item.style.transition = 'opacity .25s';
-        setTimeout(() => {
-          item.remove();
-          updateSkillCount(-1);
-        }, 260);
+        item.style.opacity = '0'; item.style.transition = 'opacity .25s';
+        setTimeout(() => { item.remove(); updateSkillCount(-1); }, 260);
         showToast(`"${skillName}" deleted.`);
-      } catch (err) {
-        showToast('Network error. Please try again.', true);
-      }
+      } catch (err) { showToast('Network error. Please try again.', true); }
     }
 
     async function addSkill() {
       const input = document.getElementById('newSkillName');
       const name  = input.value.trim();
       if (!name) { input.focus(); return; }
-
       try {
         const resp = await fetch('/api/ptt/admin/skills', {
           method: 'POST',
@@ -878,53 +829,38 @@
           body: JSON.stringify({ name }),
         });
         const data = await resp.json();
-        if (!resp.ok || data.error) {
-          showToast(data.error || 'Failed to add skill.', true); return;
-        }
+        if (!resp.ok || data.error) { showToast(data.error || 'Failed to add skill.', true); return; }
         const list = document.getElementById('skillsList');
         const newId = data.id;
         const li = document.createElement('li');
-        li.className = 'skill-item';
-        li.id = 'skillItem' + newId;
-        li.dataset.id = newId;
+        li.className = 'skill-item'; li.id = 'skillItem' + newId; li.dataset.id = newId;
         li.innerHTML = `
           <div class="skill-order-btns">
-            <button class="btn-order" title="Move up"   onclick="moveSkill(${newId}, 'up')">▲</button>
-            <button class="btn-order" title="Move down" onclick="moveSkill(${newId}, 'down')">▼</button>
+            <button class="btn-order" onclick="moveSkill(${newId}, 'up')">▲</button>
+            <button class="btn-order" onclick="moveSkill(${newId}, 'down')">▼</button>
           </div>
           <div class="skill-name-field">
-            <div class="skill-name-display"
-                 onclick="startEditSkill(${newId})"
+            <div class="skill-name-display" onclick="startEditSkill(${newId})"
                  id="skillDisplay${newId}">${_esc(name)}</div>
             <input type="text" class="skill-name-input" id="skillInput${newId}"
-                   value="${_esc(name)}"
-                   onkeydown="skillKeydown(event, ${newId})"
+                   value="${_esc(name)}" onkeydown="skillKeydown(event, ${newId})"
                    placeholder="Skill name">
             <div class="skill-save-row" id="skillSaveRow${newId}">
-              <button class="btn-save-skill"   onclick="saveSkill(${newId})">Save</button>
+              <button class="btn-save-skill" onclick="saveSkill(${newId})">Save</button>
               <button class="btn-cancel-skill" onclick="cancelEditSkill(${newId})">Cancel</button>
             </div>
           </div>
-          <button class="btn-skill-delete" title="Delete skill"
-                  onclick="deleteSkill(${newId}, '${_esc(name)}')">✕</button>
-        `;
+          <button class="btn-skill-delete" onclick="deleteSkill(${newId}, '${_esc(name)}')">✕</button>`;
         list.appendChild(li);
-        input.value = '';
-        input.focus();
+        input.value = ''; input.focus();
         updateSkillCount(1);
         showToast(`"${name}" added.`);
-      } catch (err) {
-        showToast('Network error. Please try again.', true);
-      }
+      } catch (err) { showToast('Network error. Please try again.', true); }
     }
 
     function _esc(str) {
-      return String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
+      return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                        .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
     }
 
     function updateSkillCount(delta) {
@@ -935,22 +871,15 @@
       badge.textContent = next + ' skill' + (next !== 1 ? 's' : '');
     }
 
-    // ── REORDER ────────────────────────────────────────────────────────────
     async function moveSkill(skillId, direction) {
       const list  = document.getElementById('skillsList');
       const items = Array.from(list.querySelectorAll('.skill-item'));
       const idx   = items.findIndex(el => parseInt(el.dataset.id) === skillId);
       if (idx === -1) return;
-
       const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
       if (swapIdx < 0 || swapIdx >= items.length) return;
-
-      if (direction === 'up') {
-        list.insertBefore(items[idx], items[swapIdx]);
-      } else {
-        list.insertBefore(items[swapIdx], items[idx]);
-      }
-
+      if (direction === 'up') list.insertBefore(items[idx], items[swapIdx]);
+      else list.insertBefore(items[swapIdx], items[idx]);
       const orderedIds = Array.from(list.querySelectorAll('.skill-item'))
                               .map(el => parseInt(el.dataset.id));
       try {
@@ -960,9 +889,7 @@
           body: JSON.stringify({ ordered_ids: orderedIds }),
         });
         if (!resp.ok) showToast('Failed to save order.', true);
-      } catch (err) {
-        showToast('Network error saving order.', true);
-      }
+      } catch (err) { showToast('Network error saving order.', true); }
     }
   </script>
 </body>
