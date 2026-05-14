@@ -5,9 +5,15 @@
   Shiftwork Solutions LLC
 
   Created:      2026-05-06
-  Last Updated: 2026-05-06
+  Last Updated: 2026-05-14
 
   CHANGELOG:
+    2026-05-14 — BRANDING UPDATE.
+      Added "Powered by Shiftwork Solutions" text to nav bar.
+      Added branded footer: shift-work.com, (415) 265-1621,
+      Contact@shift-work.com, © 2026 Shiftwork Solutions LLC.
+      No functional changes.
+
     2026-05-06 — INITIAL BUILD (Phase 3).
       Shift info header, edit-in-place for notes.
       "Find Qualified Workers" section — loads via API, shows match list
@@ -43,6 +49,7 @@
     .nav-links { display: flex; align-items: center; gap: 20px; }
     .nav-link  { color: rgba(255,255,255,.7); font-size: 13px; text-decoration: none; }
     .nav-link:hover { color: #fff; }
+    .nav-powered { color: rgba(255,255,255,.55); font-size: 12px; font-style: italic; white-space: nowrap; }
     .nav-logout { color: rgba(255,255,255,.5); font-size: 12px; text-decoration: none; }
     .nav-logout:hover { color: #fff; }
 
@@ -53,7 +60,7 @@
     .breadcrumb a:hover { color: #fff; }
     .page-header h1 { color: #fff; font-size: clamp(18px,4vw,22px); font-weight: 700; }
 
-    .main { max-width: 900px; margin: 0 auto; padding: 28px 16px 64px; }
+    .main { max-width: 900px; margin: 0 auto; padding: 28px 16px 48px; }
 
     .section-card { background: #fff; border-radius: 8px; box-shadow: 0 1px 8px rgba(31,61,92,.07); margin-bottom: 20px; overflow: hidden; }
     .section-card-header { background: #F8FAFB; border-bottom: 1px solid #E8EDF2; padding: 14px 20px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
@@ -61,7 +68,6 @@
     .section-card-body { padding: 20px; }
     .badge { background: #EEF3F8; color: #1F3D5C; font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 12px; }
 
-    /* Shift info grid */
     .info-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 14px; }
     .info-item .lbl { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: #888; margin-bottom: 3px; }
     .info-item .val { font-size: 14px; color: #1A1A1A; }
@@ -78,12 +84,10 @@
 
     .notes-text { font-size: 13px; color: #555; line-height: 1.6; margin-top: 14px; padding-top: 14px; border-top: 1px solid #E8EDF2; }
 
-    /* Cancel button */
     .btn-cancel-shift { background: #fff; color: #C62828; border: 1.5px solid #C62828; padding: 6px 14px; border-radius: 4px; font-size: 12px; font-weight: 700; font-family: Arial, sans-serif; cursor: pointer; }
     .btn-cancel-shift:hover { background: #FFF0EE; }
     .btn-cancel-shift:disabled { opacity: .5; cursor: not-allowed; }
 
-    /* Match list */
     .match-toolbar { margin-bottom: 16px; }
     .btn-load-matches { background: #1F3D5C; color: #fff; border: none; padding: 9px 20px; border-radius: 4px; font-size: 13px; font-weight: 700; font-family: Arial, sans-serif; cursor: pointer; transition: background .15s; }
     .btn-load-matches:hover { background: #0D2438; }
@@ -105,7 +109,6 @@
 
     .no-matches { font-size: 13px; color: #888; font-style: italic; padding: 8px 0; }
 
-    /* Claims */
     .claim-row { display: flex; align-items: flex-start; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #F0F4F8; gap: 12px; }
     .claim-row:last-child { border-bottom: none; }
     .claim-info { flex: 1; min-width: 0; }
@@ -132,6 +135,14 @@
     .toast { position: fixed; bottom: 20px; right: 20px; background: #1D9E75; color: #fff; padding: 10px 18px; border-radius: 6px; font-size: 13px; font-weight: 700; box-shadow: 0 4px 16px rgba(0,0,0,.2); transform: translateY(80px); opacity: 0; transition: transform .25s, opacity .25s; z-index: 9999; }
     .toast.visible { transform: translateY(0); opacity: 1; }
     .toast.error { background: #C62828; }
+
+    /* ── FOOTER ── */
+    .ptt-footer { background: #1F3D5C; margin-top: 40px; padding: 20px 24px; text-align: center; }
+    .ptt-footer .powered { color: #EEAE26; font-size: 13px; font-weight: 700; margin-bottom: 6px; }
+    .ptt-footer .contact { color: rgba(255,255,255,.55); font-size: 12px; line-height: 1.8; }
+    .ptt-footer .contact a { color: rgba(255,255,255,.7); text-decoration: none; }
+    .ptt-footer .contact a:hover { color: #fff; }
+    .ptt-footer .copy { color: rgba(255,255,255,.3); font-size: 11px; margin-top: 8px; }
   </style>
 </head>
 <body>
@@ -148,6 +159,7 @@
     <div class="nav-links">
       <a href="/ptt/dashboard{% if session_id %}?sid={{ session_id }}{% endif %}" class="nav-link">Dashboard</a>
       <a href="/ptt/shifts{% if session_id %}?sid={{ session_id }}{% endif %}" class="nav-link">Shifts</a>
+      <span class="nav-powered">Powered by Shiftwork Solutions</span>
       <a href="/ptt/logout" class="nav-logout">Log out</a>
     </div>
   </nav>
@@ -271,6 +283,19 @@
 
   </div>
 
+  <!-- FOOTER -->
+  <footer class="ptt-footer">
+    <div class="powered">Powered by Shiftwork Solutions</div>
+    <div class="contact">
+      <a href="https://shift-work.com" target="_blank" rel="noopener">shift-work.com</a>
+      &nbsp;&middot;&nbsp;
+      <a href="tel:+14152651621">(415) 265-1621</a>
+      &nbsp;&middot;&nbsp;
+      <a href="mailto:Contact@shift-work.com">Contact@shift-work.com</a>
+    </div>
+    <div class="copy">&copy; 2026 Shiftwork Solutions LLC</div>
+  </footer>
+
   <script>
     const PTT_SID = "{{ session_id }}";
     const shiftId = {{ shift.id }};
@@ -295,22 +320,17 @@
     async function loadMatches() {
       const btn  = document.getElementById('loadMatchesBtn');
       const list = document.getElementById('matchList');
-      btn.disabled = true;
-      btn.textContent = 'Finding workers…';
+      btn.disabled = true; btn.textContent = 'Finding workers…';
       list.innerHTML = '';
-
       try {
         const resp = await fetch('/api/ptt/admin/shifts/' + shiftId + '/matches', { headers: { 'X-PTT-Session': PTT_SID } });
         const data = await resp.json();
         if (!resp.ok || data.error) {
           list.innerHTML = '<p class="no-matches">' + (data.error || 'Failed to load matches.') + '</p>';
-          btn.disabled = false; btn.textContent = 'Refresh Matches';
-          return;
+          btn.disabled = false; btn.textContent = 'Refresh Matches'; return;
         }
-
         document.getElementById('matchCountBadge').textContent =
           data.total + ' qualified worker' + (data.total !== 1 ? 's' : '');
-
         if (data.workers.length === 0) {
           list.innerHTML = '<p class="no-matches">No workers match this shift\'s skill, availability, and schedule requirements.</p>';
         } else {
@@ -339,13 +359,10 @@
           });
           list.innerHTML = html;
         }
-
-        btn.disabled = false;
-        btn.textContent = 'Refresh Matches';
+        btn.disabled = false; btn.textContent = 'Refresh Matches';
       } catch (err) {
         list.innerHTML = '<p class="no-matches">Network error. Please try again.</p>';
-        btn.disabled = false;
-        btn.textContent = 'Find Qualified Workers';
+        btn.disabled = false; btn.textContent = 'Find Qualified Workers';
       }
     }
 
@@ -356,19 +373,11 @@
           method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PTT-Session': PTT_SID }
         });
         const data = await resp.json();
-        if (!resp.ok || data.error) {
-          showToast(data.error || 'Failed to record.', true);
-          btn.disabled = false;
-          return;
-        }
+        if (!resp.ok || data.error) { showToast(data.error || 'Failed to record.', true); btn.disabled = false; return; }
         contactedIds.add(workerId);
-        btn.textContent = '✓ Contacted';
-        btn.classList.add('done');
+        btn.textContent = '✓ Contacted'; btn.classList.add('done');
         showToast('Outreach recorded.');
-      } catch (err) {
-        showToast('Network error.', true);
-        btn.disabled = false;
-      }
+      } catch (err) { showToast('Network error.', true); btn.disabled = false; }
     }
 
     async function cancelShift(shiftId) {
@@ -380,21 +389,14 @@
           method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PTT-Session': PTT_SID }
         });
         const data = await resp.json();
-        if (!resp.ok || data.error) {
-          showToast(data.error || 'Failed to cancel.', true);
-          btn.disabled = false; return;
-        }
+        if (!resp.ok || data.error) { showToast(data.error || 'Failed to cancel.', true); btn.disabled = false; return; }
         document.getElementById('shiftStatusDisplay').innerHTML =
           '<span class="status-badge status-cancelled">Cancelled</span>';
         btn.remove();
-        // Hide the match section
         const matchSection = document.querySelector('.section-card:nth-child(2)');
         if (matchSection) matchSection.style.display = 'none';
         showToast('Shift cancelled.');
-      } catch (err) {
-        showToast('Network error.', true);
-        btn.disabled = false;
-      }
+      } catch (err) { showToast('Network error.', true); btn.disabled = false; }
     }
 
     async function confirmClaim(claimId, btn) {
@@ -408,8 +410,7 @@
         const data = await resp.json();
         if (!resp.ok || data.error) {
           showToast(data.error || 'Failed to confirm.', true);
-          row.querySelectorAll('button').forEach(b => b.disabled = false);
-          return;
+          row.querySelectorAll('button').forEach(b => b.disabled = false); return;
         }
         row.querySelector('.claim-status').className = 'claim-status claim-confirmed';
         row.querySelector('.claim-status').textContent = 'Confirmed';
@@ -432,8 +433,7 @@
         const data = await resp.json();
         if (!resp.ok || data.error) {
           showToast(data.error || 'Failed to decline.', true);
-          row.querySelectorAll('button').forEach(b => b.disabled = false);
-          return;
+          row.querySelectorAll('button').forEach(b => b.disabled = false); return;
         }
         row.querySelector('.claim-status').className = 'claim-status claim-declined';
         row.querySelector('.claim-status').textContent = 'Declined';
