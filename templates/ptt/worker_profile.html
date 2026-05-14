@@ -5,9 +5,15 @@
   Shiftwork Solutions LLC
 
   Created:      2026-05-06
-  Last Updated: 2026-05-06
+  Last Updated: 2026-05-14
 
   CHANGELOG:
+    2026-05-14 — BRANDING UPDATE.
+      Added "Powered by Shiftwork Solutions" text to nav bar.
+      Added branded footer: shift-work.com, (415) 265-1621,
+      Contact@shift-work.com, © 2026 Shiftwork Solutions LLC.
+      No functional changes.
+
     2026-05-06 — INITIAL BUILD (Phase 3).
       Edit name/phone. Select skills from company list.
       Set weekly availability (day + start/end time per day).
@@ -42,6 +48,7 @@
     .nav-link  { color: rgba(255,255,255,.7); font-size: 13px; text-decoration: none; }
     .nav-link:hover { color: #fff; }
     .nav-link.active { color: #EEAE26; font-weight: 700; }
+    .nav-powered { color: rgba(255,255,255,.55); font-size: 12px; font-style: italic; white-space: nowrap; }
     .nav-logout { color: rgba(255,255,255,.5); font-size: 12px; text-decoration: none; }
     .nav-logout:hover { color: #fff; }
 
@@ -50,7 +57,7 @@
     .page-header h1 { color: #fff; font-size: clamp(18px,4vw,24px); font-weight: 700; }
     .page-header p  { color: rgba(255,255,255,.6); font-size: 13px; margin-top: 4px; }
 
-    .main { max-width: 720px; margin: 0 auto; padding: 28px 16px 64px; }
+    .main { max-width: 720px; margin: 0 auto; padding: 28px 16px 48px; }
 
     .section-card { background: #fff; border-radius: 8px; box-shadow: 0 1px 8px rgba(31,61,92,.07); margin-bottom: 20px; overflow: hidden; }
     .section-card-header { background: #F8FAFB; border-bottom: 1px solid #E8EDF2; padding: 14px 20px; }
@@ -72,7 +79,6 @@
     .btn-save:hover { background: #C85208; }
     .btn-save:disabled { opacity: .6; cursor: not-allowed; }
 
-    /* Skills checkboxes */
     .skills-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
     .skill-check { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1.5px solid #E0E8F0; border-radius: 6px; cursor: pointer; transition: border-color .15s, background .15s; }
     .skill-check:hover { border-color: #E8610A; background: #FFF8F5; }
@@ -81,7 +87,6 @@
     .skill-check input[type="checkbox"]:focus { outline: none; box-shadow: none; }
     .skill-check-label { font-size: 13px; font-weight: 600; color: #1F3D5C; }
 
-    /* Availability table */
     .avail-table { width: 100%; border-collapse: collapse; }
     .avail-table th { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: #888; padding: 8px 10px; text-align: left; border-bottom: 1px solid #E8EDF2; }
     .avail-table td { padding: 8px 10px; border-bottom: 1px solid #F0F4F8; font-size: 13px; vertical-align: middle; }
@@ -93,7 +98,6 @@
     .avail-times span { font-size: 12px; color: #888; }
     .avail-times input:disabled { opacity: .4; }
 
-    /* Blackouts */
     .blackout-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #F0F4F8; }
     .blackout-row:last-child { border-bottom: none; }
     .blackout-dates { flex: 1; font-size: 13px; color: #1F3D5C; }
@@ -108,6 +112,14 @@
     .toast { position: fixed; bottom: 20px; right: 20px; background: #1D9E75; color: #fff; padding: 10px 18px; border-radius: 6px; font-size: 13px; font-weight: 700; box-shadow: 0 4px 16px rgba(0,0,0,.2); transform: translateY(80px); opacity: 0; transition: transform .25s, opacity .25s; z-index: 9999; }
     .toast.visible { transform: translateY(0); opacity: 1; }
     .toast.error { background: #C62828; }
+
+    /* ── FOOTER ── */
+    .ptt-footer { background: #1F3D5C; margin-top: 40px; padding: 20px 24px; text-align: center; }
+    .ptt-footer .powered { color: #EEAE26; font-size: 13px; font-weight: 700; margin-bottom: 6px; }
+    .ptt-footer .contact { color: rgba(255,255,255,.55); font-size: 12px; line-height: 1.8; }
+    .ptt-footer .contact a { color: rgba(255,255,255,.7); text-decoration: none; }
+    .ptt-footer .contact a:hover { color: #fff; }
+    .ptt-footer .copy { color: rgba(255,255,255,.3); font-size: 11px; margin-top: 8px; }
   </style>
 </head>
 <body>
@@ -124,6 +136,7 @@
     <div class="nav-links">
       <a href="/ptt/w/dashboard{% if session_id %}?sid={{ session_id }}{% endif %}" class="nav-link">Dashboard</a>
       <a href="/ptt/w/profile{% if session_id %}?sid={{ session_id }}{% endif %}" class="nav-link active">My Profile</a>
+      <span class="nav-powered">Powered by Shiftwork Solutions</span>
       <a href="/ptt/logout" class="nav-logout">Log out</a>
     </div>
   </nav>
@@ -252,7 +265,6 @@
         <p style="font-size:13px; color:#666; margin-bottom:14px; line-height:1.5;">
           Add date ranges when you are not available (vacation, appointments, etc.)
         </p>
-
         <div id="blackoutList">
           {% if blackouts %}
             {% for b in blackouts %}
@@ -270,7 +282,6 @@
           <p class="empty-note" id="noBlackoutsNote">No unavailable dates set.</p>
           {% endif %}
         </div>
-
         <div class="add-blackout-row" style="margin-top:16px;">
           <div class="form-group" style="margin:0;">
             <label for="blackoutStart" style="font-size:12px;">From</label>
@@ -293,6 +304,19 @@
 
   </div>
 
+  <!-- FOOTER -->
+  <footer class="ptt-footer">
+    <div class="powered">Powered by Shiftwork Solutions</div>
+    <div class="contact">
+      <a href="https://shift-work.com" target="_blank" rel="noopener">shift-work.com</a>
+      &nbsp;&middot;&nbsp;
+      <a href="tel:+14152651621">(415) 265-1621</a>
+      &nbsp;&middot;&nbsp;
+      <a href="mailto:Contact@shift-work.com">Contact@shift-work.com</a>
+    </div>
+    <div class="copy">&copy; 2026 Shiftwork Solutions LLC</div>
+  </footer>
+
   <script>
     const PTT_SID = "{{ session_id }}";
     function showToast(msg, isError=false) {
@@ -303,7 +327,6 @@
       setTimeout(() => t.classList.remove('visible'), 2800);
     }
 
-    // ── PROFILE ──────────────────────────────────────────────────────────────
     async function saveProfile() {
       const name  = document.getElementById('workerName').value.trim();
       const phone = document.getElementById('workerPhone').value.trim();
@@ -320,7 +343,6 @@
       } catch { showToast('Network error.', true); }
     }
 
-    // ── SKILLS ───────────────────────────────────────────────────────────────
     function toggleSkill(skillId, labelEl) {
       const cb = document.getElementById('skillCb' + skillId);
       cb.checked = !cb.checked;
@@ -345,13 +367,12 @@
       } catch { showToast('Network error.', true); }
     }
 
-    // ── AVAILABILITY ─────────────────────────────────────────────────────────
     function toggleAvailDay(dow) {
-      const checked = document.getElementById('availCheck' + dow).checked;
+      const checked  = document.getElementById('availCheck' + dow).checked;
       const timesDiv = document.getElementById('availTimes' + dow);
       const inputs   = timesDiv.querySelectorAll('input');
-      timesDiv.style.opacity          = checked ? '1' : '0.4';
-      timesDiv.style.pointerEvents    = checked ? '' : 'none';
+      timesDiv.style.opacity       = checked ? '1' : '0.4';
+      timesDiv.style.pointerEvents = checked ? '' : 'none';
       inputs.forEach(inp => inp.disabled = !checked);
     }
 
@@ -377,7 +398,6 @@
       } catch { showToast('Network error.', true); }
     }
 
-    // ── BLACKOUTS ─────────────────────────────────────────────────────────────
     async function addBlackout() {
       const start  = document.getElementById('blackoutStart').value;
       const end    = document.getElementById('blackoutEnd').value;
@@ -392,16 +412,11 @@
         });
         const data = await resp.json();
         if (!resp.ok || data.error) { showToast(data.error || 'Failed to add.', true); return; }
-
-        // Remove empty note
         const note = document.getElementById('noBlackoutsNote');
         if (note) note.remove();
-
-        // Append row
         const list = document.getElementById('blackoutList');
         const div  = document.createElement('div');
-        div.className = 'blackout-row';
-        div.id = 'blackoutRow' + data.id;
+        div.className = 'blackout-row'; div.id = 'blackoutRow' + data.id;
         div.innerHTML = `
           <div style="flex:1;">
             <div class="blackout-dates">${_esc(start)} → ${_esc(end)}</div>
@@ -409,7 +424,6 @@
           </div>
           <button class="btn-delete-blackout" onclick="deleteBlackout(${data.id}, this)">✕</button>`;
         list.appendChild(div);
-
         document.getElementById('blackoutStart').value  = '';
         document.getElementById('blackoutEnd').value    = '';
         document.getElementById('blackoutReason').value = '';
