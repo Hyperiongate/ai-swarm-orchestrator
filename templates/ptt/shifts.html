@@ -5,9 +5,15 @@
   Shiftwork Solutions LLC
 
   Created:      2026-05-06
-  Last Updated: 2026-05-06
+  Last Updated: 2026-05-14
 
   CHANGELOG:
+    2026-05-14 — BRANDING UPDATE.
+      Added "Powered by Shiftwork Solutions" text to nav bar.
+      Added branded footer: shift-work.com, (415) 265-1621,
+      Contact@shift-work.com, © 2026 Shiftwork Solutions LLC.
+      No functional changes.
+
     2026-05-06 — INITIAL BUILD (Phase 3).
       Shift list filtered by status. Create shift modal with all fields.
       Cancel shift button. Links to shift detail page.
@@ -44,6 +50,7 @@
     .nav-link  { color: rgba(255,255,255,.7); font-size: 13px; text-decoration: none; }
     .nav-link:hover { color: #fff; }
     .nav-link.active { color: #EEAE26; font-weight: 700; }
+    .nav-powered { color: rgba(255,255,255,.55); font-size: 12px; font-style: italic; white-space: nowrap; }
     .nav-logout { color: rgba(255,255,255,.5); font-size: 12px; text-decoration: none; }
     .nav-logout:hover { color: #fff; }
 
@@ -55,15 +62,13 @@
     .btn-primary { background: #E8610A; color: #fff; border: none; padding: 10px 20px; border-radius: 4px; font-size: 14px; font-weight: 700; font-family: Arial, sans-serif; cursor: pointer; transition: background .15s; text-decoration: none; display: inline-block; }
     .btn-primary:hover { background: #C85208; }
 
-    .main { max-width: 900px; margin: 0 auto; padding: 28px 16px 64px; }
+    .main { max-width: 900px; margin: 0 auto; padding: 28px 16px 48px; }
 
-    /* Filter tabs */
     .filter-bar { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
     .filter-btn { background: #fff; border: 1.5px solid #D0D7DE; color: #555; padding: 6px 16px; border-radius: 20px; font-size: 13px; font-weight: 700; font-family: Arial, sans-serif; cursor: pointer; transition: all .15s; }
     .filter-btn:hover { border-color: #1F3D5C; color: #1F3D5C; }
     .filter-btn.active { background: #1F3D5C; border-color: #1F3D5C; color: #fff; }
 
-    /* Shift table */
     .section-card { background: #fff; border-radius: 8px; box-shadow: 0 1px 8px rgba(31,61,92,.07); overflow: hidden; }
     .section-card-header { background: #F8FAFB; border-bottom: 1px solid #E8EDF2; padding: 14px 20px; display: flex; align-items: center; justify-content: space-between; }
     .section-card-header h2 { font-size: 15px; font-weight: 700; color: #1F3D5C; }
@@ -93,7 +98,6 @@
     .empty-state h3 { font-size: 16px; color: #1F3D5C; margin-bottom: 8px; }
     .empty-state p  { font-size: 13px; color: #666; line-height: 1.6; }
 
-    /* Modal */
     .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 200; align-items: center; justify-content: center; padding: 16px; }
     .modal-overlay.open { display: flex; }
     .modal { background: #fff; border-radius: 8px; width: 100%; max-width: 540px; max-height: 90vh; overflow-y: auto; box-shadow: 0 8px 40px rgba(0,0,0,.2); }
@@ -129,6 +133,14 @@
     .toast { position: fixed; bottom: 20px; right: 20px; background: #1D9E75; color: #fff; padding: 10px 18px; border-radius: 6px; font-size: 13px; font-weight: 700; box-shadow: 0 4px 16px rgba(0,0,0,.2); transform: translateY(80px); opacity: 0; transition: transform .25s, opacity .25s; z-index: 9999; }
     .toast.visible { transform: translateY(0); opacity: 1; }
     .toast.error { background: #C62828; }
+
+    /* ── FOOTER ── */
+    .ptt-footer { background: #1F3D5C; margin-top: 40px; padding: 20px 24px; text-align: center; }
+    .ptt-footer .powered { color: #EEAE26; font-size: 13px; font-weight: 700; margin-bottom: 6px; }
+    .ptt-footer .contact { color: rgba(255,255,255,.55); font-size: 12px; line-height: 1.8; }
+    .ptt-footer .contact a { color: rgba(255,255,255,.7); text-decoration: none; }
+    .ptt-footer .contact a:hover { color: #fff; }
+    .ptt-footer .copy { color: rgba(255,255,255,.3); font-size: 11px; margin-top: 8px; }
   </style>
 </head>
 <body>
@@ -145,6 +157,7 @@
     <div class="nav-links">
       <a href="/ptt/dashboard{% if session_id %}?sid={{ session_id }}{% endif %}" class="nav-link">Dashboard</a>
       <a href="/ptt/shifts{% if session_id %}?sid={{ session_id }}{% endif %}" class="nav-link active">Shifts</a>
+      <span class="nav-powered">Powered by Shiftwork Solutions</span>
       <a href="/ptt/logout" class="nav-logout">Log out</a>
     </div>
   </nav>
@@ -161,7 +174,6 @@
 
   <div class="main">
 
-    <!-- Filter bar -->
     <div class="filter-bar">
       <button class="filter-btn active" onclick="filterShifts('all', this)">All</button>
       <button class="filter-btn" onclick="filterShifts('open', this)">Open</button>
@@ -297,6 +309,19 @@
     </div>
   </div>
 
+  <!-- FOOTER -->
+  <footer class="ptt-footer">
+    <div class="powered">Powered by Shiftwork Solutions</div>
+    <div class="contact">
+      <a href="https://shift-work.com" target="_blank" rel="noopener">shift-work.com</a>
+      &nbsp;&middot;&nbsp;
+      <a href="tel:+14152651621">(415) 265-1621</a>
+      &nbsp;&middot;&nbsp;
+      <a href="mailto:Contact@shift-work.com">Contact@shift-work.com</a>
+    </div>
+    <div class="copy">&copy; 2026 Shiftwork Solutions LLC</div>
+  </footer>
+
   <script>
     const PTT_SID = "{{ session_id }}";
     function showToast(msg, isError=false) {
@@ -345,15 +370,14 @@
       const skill_required_id = skillEl.value ? parseInt(skillEl.value) : null;
       const notes          = document.getElementById('shiftNotes').value.trim();
 
-      if (!title) { errEl.textContent = 'Shift title is required.'; errEl.classList.add('visible'); return; }
+      if (!title)      { errEl.textContent = 'Shift title is required.'; errEl.classList.add('visible'); return; }
       if (!shift_date) { errEl.textContent = 'Date is required.'; errEl.classList.add('visible'); return; }
       if (!start_time) { errEl.textContent = 'Start time is required.'; errEl.classList.add('visible'); return; }
       if (!end_time)   { errEl.textContent = 'End time is required.'; errEl.classList.add('visible'); return; }
       if (start_time >= end_time) { errEl.textContent = 'End time must be after start time.'; errEl.classList.add('visible'); return; }
 
       const btn = document.getElementById('createBtn');
-      btn.disabled = true;
-      btn.textContent = 'Creating...';
+      btn.disabled = true; btn.textContent = 'Creating...';
 
       try {
         const resp = await fetch('/api/ptt/admin/shifts', {
@@ -369,7 +393,6 @@
           btn.disabled = false; btn.textContent = 'Create Shift';
           return;
         }
-        // Navigate to the new shift detail page (carry session)
         window.location.href = '/ptt/shifts/' + data.id + (PTT_SID ? '?sid=' + PTT_SID : '');
       } catch (err) {
         errEl.textContent = 'Network error. Please try again.';
@@ -378,7 +401,6 @@
       }
     }
 
-    // Close modal on overlay click
     document.getElementById('createModal').addEventListener('click', function(e) {
       if (e.target === this) closeCreateModal();
     });
