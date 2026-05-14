@@ -5,9 +5,15 @@
   Shiftwork Solutions LLC
 
   Created:      2026-05-06
-  Last Updated: 2026-05-06
+  Last Updated: 2026-05-14
 
   CHANGELOG:
+    2026-05-14 — BRANDING UPDATE.
+      Added "Powered by Shiftwork Solutions" text to nav bar.
+      Added branded footer: shift-work.com, (415) 265-1621,
+      Contact@shift-work.com, © 2026 Shiftwork Solutions LLC.
+      No functional changes.
+
     2026-05-06 — INITIAL BUILD (Phase 3).
       Two panels: open shifts that match the worker, and their claim history.
 
@@ -40,6 +46,7 @@
     .nav-links { display: flex; align-items: center; gap: 20px; }
     .nav-link  { color: rgba(255,255,255,.7); font-size: 13px; text-decoration: none; }
     .nav-link:hover { color: #fff; }
+    .nav-powered { color: rgba(255,255,255,.55); font-size: 12px; font-style: italic; white-space: nowrap; }
     .nav-logout { color: rgba(255,255,255,.5); font-size: 12px; text-decoration: none; }
     .nav-logout:hover { color: #fff; }
 
@@ -48,7 +55,7 @@
     .page-header h1 { color: #fff; font-size: clamp(18px,4vw,24px); font-weight: 700; }
     .page-header p  { color: rgba(255,255,255,.6); font-size: 13px; margin-top: 4px; }
 
-    .main { max-width: 860px; margin: 0 auto; padding: 28px 16px 64px; }
+    .main { max-width: 860px; margin: 0 auto; padding: 28px 16px 48px; }
 
     .section-card { background: #fff; border-radius: 8px; box-shadow: 0 1px 8px rgba(31,61,92,.07); margin-bottom: 20px; overflow: hidden; }
     .section-card-header { background: #F8FAFB; border-bottom: 1px solid #E8EDF2; padding: 14px 20px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
@@ -74,7 +81,6 @@
     .btn-claim:disabled { opacity: .5; cursor: not-allowed; }
     .btn-claim.claimed-state { background: #1D9E75; cursor: default; }
 
-    /* My claims table */
     .claim-row { display: flex; align-items: flex-start; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #F0F4F8; gap: 12px; }
     .claim-row:last-child { border-bottom: none; }
     .claim-info { flex: 1; }
@@ -93,6 +99,14 @@
     .toast { position: fixed; bottom: 20px; right: 20px; background: #1D9E75; color: #fff; padding: 10px 18px; border-radius: 6px; font-size: 13px; font-weight: 700; box-shadow: 0 4px 16px rgba(0,0,0,.2); transform: translateY(80px); opacity: 0; transition: transform .25s, opacity .25s; z-index: 9999; }
     .toast.visible { transform: translateY(0); opacity: 1; }
     .toast.error { background: #C62828; }
+
+    /* ── FOOTER ── */
+    .ptt-footer { background: #1F3D5C; margin-top: 40px; padding: 20px 24px; text-align: center; }
+    .ptt-footer .powered { color: #EEAE26; font-size: 13px; font-weight: 700; margin-bottom: 6px; }
+    .ptt-footer .contact { color: rgba(255,255,255,.55); font-size: 12px; line-height: 1.8; }
+    .ptt-footer .contact a { color: rgba(255,255,255,.7); text-decoration: none; }
+    .ptt-footer .contact a:hover { color: #fff; }
+    .ptt-footer .copy { color: rgba(255,255,255,.3); font-size: 11px; margin-top: 8px; }
   </style>
 </head>
 <body>
@@ -109,6 +123,7 @@
     <div class="nav-links">
       <a href="/ptt/w/dashboard{% if session_id %}?sid={{ session_id }}{% endif %}" class="nav-link active">Dashboard</a>
       <a href="/ptt/w/profile{% if session_id %}?sid={{ session_id }}{% endif %}" class="nav-link">My Profile</a>
+      <span class="nav-powered">Powered by Shiftwork Solutions</span>
       <a href="/ptt/logout" class="nav-logout">Log out</a>
     </div>
   </nav>
@@ -162,7 +177,7 @@
           <div class="empty-icon">📋</div>
           <h3>No shifts available right now</h3>
           <p>When HR posts a shift that matches your skills and availability, it will appear here.
-             Make sure your <a href="/ptt/w/profile" style="color:#E8610A;">profile and availability</a> are up to date.</p>
+             Make sure your <a href="/ptt/w/profile{% if session_id %}?sid={{ session_id }}{% endif %}" style="color:#E8610A;">profile and availability</a> are up to date.</p>
         </div>
         {% endif %}
       </div>
@@ -207,6 +222,19 @@
 
   </div>
 
+  <!-- FOOTER -->
+  <footer class="ptt-footer">
+    <div class="powered">Powered by Shiftwork Solutions</div>
+    <div class="contact">
+      <a href="https://shift-work.com" target="_blank" rel="noopener">shift-work.com</a>
+      &nbsp;&middot;&nbsp;
+      <a href="tel:+14152651621">(415) 265-1621</a>
+      &nbsp;&middot;&nbsp;
+      <a href="mailto:Contact@shift-work.com">Contact@shift-work.com</a>
+    </div>
+    <div class="copy">&copy; 2026 Shiftwork Solutions LLC</div>
+  </footer>
+
   <script>
     const PTT_SID = "{{ session_id }}";
     function showToast(msg, isError=false) {
@@ -218,8 +246,7 @@
     }
 
     async function claimShift(shiftId, btn) {
-      btn.disabled = true;
-      btn.textContent = 'Claiming…';
+      btn.disabled = true; btn.textContent = 'Claiming…';
       try {
         const resp = await fetch('/api/ptt/worker/shifts/' + shiftId + '/claim', {
           method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PTT-Session': PTT_SID }
@@ -227,13 +254,10 @@
         const data = await resp.json();
         if (!resp.ok || data.error) {
           showToast(data.error || 'Failed to claim shift.', true);
-          btn.disabled = false; btn.textContent = 'Claim';
-          return;
+          btn.disabled = false; btn.textContent = 'Claim'; return;
         }
-        btn.textContent = 'Claimed ✓';
-        btn.classList.add('claimed-state');
+        btn.textContent = 'Claimed ✓'; btn.classList.add('claimed-state');
         showToast('Shift claimed! HR will confirm shortly.');
-        // Refresh after 2 seconds to show updated state
         setTimeout(() => window.location.href = '/ptt/w/dashboard' + (PTT_SID ? '?sid=' + PTT_SID : ''), 2000);
       } catch (err) {
         showToast('Network error. Please try again.', true);
