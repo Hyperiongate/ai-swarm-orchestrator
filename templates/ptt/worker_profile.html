@@ -304,6 +304,10 @@
 
   </div>
 
+
+  {%- from 'ptt/chat_widget.html' import chat_widget %}
+  {{ chat_widget('franklin', company.name, worker.name, session_id) }}
+
   <!-- FOOTER -->
   <footer class="ptt-footer">
     <div class="powered">Powered by Shiftwork Solutions</div>
