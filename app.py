@@ -1474,7 +1474,17 @@ except ImportError as e:
     print(f"Part Time Tracker Worker routes not found: {e}")
 except Exception as e:
     print(f"Part Time Tracker Worker registration failed: {e}")
-
+  
+# Part Time Tracker Lite — AI Chat Advisors (Carolyn + Franklin)
+# Added: May 15, 2026
+try:
+    from routes.ptt_chat import ptt_chat_bp
+    app.register_blueprint(ptt_chat_bp)
+    print("Part Time Tracker Chat Advisors registered")
+except ImportError as e:
+    print(f"Part Time Tracker Chat routes not found: {e}")
+except Exception as e:
+    print(f"Part Time Tracker Chat registration failed: {e}")
 try:
     from routes.background_jobs import background_jobs_bp
     app.register_blueprint(background_jobs_bp)
