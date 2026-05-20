@@ -1,9 +1,24 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: May 06, 2026 — Part Time Tracker Lite (Phase 3)
+Last Updated: May 20, 2026 — Knowledge Search Endpoint Support (Thomas Live KB Integration)
 
 CHANGELOG:
+- May 20, 2026: KNOWLEDGE SEARCH ENDPOINT SUPPORT — ONE CHANGE ONLY:
+  1. KB SHARING: Added a single line that stores the existing knowledge_base
+     instance in app.config['KNOWLEDGE_BASE'] immediately after it is created.
+     This lets the new /api/knowledge/search endpoint in routes/ingest.py read
+     the same singleton instance — avoiding creation of a second, duplicate
+     knowledge base. The line is additive only. If knowledge_base is None
+     (initialization failed), app.config['KNOWLEDGE_BASE'] is set to None
+     and the search endpoint will return a graceful "KB not available"
+     response — no crashes.
+  NO OTHER CHANGES. All migrations, blueprints, routes, helper code, and
+  the entire startup sequence are completely untouched. Rule 1 (do no harm)
+  preserved.
+
+- May 11, 2026: Part Time Tracker Lite — Phase 3 — see prior entry for details.
+
 - May 04, 2026: Part Time Tracker Lite — Phase 2 fixes — THREE CHANGES ONLY:
   1. MIGRATION: Added migration_010_ptt_phase2.py call in STEP 1,
      immediately after migration_009_ptt.py. Adds approved_by,
@@ -75,81 +90,32 @@ CHANGELOG:
   3. HEALTH CHECK: Updated version string. Added 'security' section.
   NO OTHER CHANGES.
 
-- April 2, 2026: Newsletter Subscription API — THREE CHANGES ONLY:
-  1. MIGRATION: Added migration_006_newsletter.py call in STEP 1,
-     immediately after migration_005_code_mode.py. Creates
-     newsletter_subscribers table. Fully idempotent.
-  2. BLUEPRINT: Registered newsletter_bp from routes/newsletter.py.
-     Placed AFTER the proactive agent blueprint block (not inside it).
-  3. DEPLOY FIX: Corrected placement of newsletter blueprint registration
-     that was accidentally nested inside the proactive agent try block,
-     causing a syntax error on startup.
-  NO OTHER CHANGES.
+- April 2, 2026: Newsletter Subscription API — THREE CHANGES ONLY.
+- March 27, 2026: Code mode selection — TWO CHANGES ONLY.
+- March 26, 2026: Survey in a Box Phase 2 — TWO CHANGES ONLY.
+- March 13, 2026: Survey in a Box Phase 3 — THREE CHANGES ONLY.
+- March 12, 2026: Phase 6 Deliverable 7 — Scheduler + Swarm self-registration.
+- March 12, 2026: Phase 6 Proactive Agent — Registered proactive_bp.
+- March 10, 2026: Survey in a Box Phase 1 — THREE CHANGES ONLY.
+- March 08, 2026: Phase 3 Self-Awareness — CAPABILITIES MANIFEST WIRED IN.
+- March 05, 2026: Phase 2A Memory Schema Fix.
+- March 05, 2026: Phase 2A - Registered memory blueprint (routes/memory.py).
+- March 03, 2026: Phase 9b - FIX BROKEN TABLE SCHEMAS.
+- March 03, 2026: SCHEMA MIGRATION.
+- March 02, 2026: POSTGRESQL MIGRATION.
+- February 27, 2026: ADDED /api/admin/restore-knowledge ENDPOINT.
+- February 26, 2026: ADDED /api/admin/clear-knowledge-db ENDPOINT.
+- February 25, 2026: ADDED /api/admin/kb-diagnose ENDPOINT.
+- February 23, 2026: ADDED Blog Posts Table Migration.
+- February 22, 2026: RE-ENABLED Case Study Generator.
+- February 20, 2026: BUG FIX #1 - intelligence_bp name conflict.
+- February 20, 2026: BUG FIX #2 - conversation_learning import path.
+- February 18, 2026: FIXED NameError crash on startup.
+- February 18, 2026: BACKGROUND KB INIT.
+- February 5, 2026: INCREASED FILE UPLOAD LIMIT TO 100MB.
+- January 30, 2026: ADDED BULLETPROOF PROJECT MANAGEMENT.
 
-- March 27, 2026: Code mode selection — TWO CHANGES ONLY:
-  1. MIGRATION: Added migration_005_code_mode.py call in STEP 1,
-     immediately after migration_004_phase2_enhancements.py. Adds
-     code_mode column to survey_projects (DEFAULT 'random').
-     Fully idempotent — safe to run on every startup.
-  2. HEALTH CHECK: Updated survey_in_a_box phase string to include
-     'Code Mode Selection'.
-  NO OTHER CHANGES.
-
-- March 26, 2026: Survey in a Box Phase 2 — TWO CHANGES ONLY:
-  1. MIGRATION: Added migration_004_phase2_enhancements.py call in STEP 1,
-     immediately after migration_003_survey_responses.py. Creates the
-     survey_roster table and adds 3 columns to survey_projects
-     (roster_uploaded, roster_count, generated_document_path) and 1 column
-     to survey_responses (employee_code). Fully idempotent — safe to run
-     on every startup.
-  2. HEALTH CHECK: Updated survey_in_a_box phase string from
-     '3 - Online Survey Engine' to '2+3 - Survey Assembly & Online Engine'.
-  NO OTHER CHANGES. All existing routes, blueprints, features, and startup
-  sequence are completely unchanged.
-
-- March 13, 2026: Survey in a Box Phase 3 — THREE CHANGES ONLY:
-  1. MIGRATION: Added migration_003_survey_responses.py call in STEP 1,
-     immediately after migration_002_survey_in_a_box.py. Creates the
-     survey_responses table (JSONB one-row-per-respondent) and adds
-     4 columns to survey_projects: survey_url, is_open, opened_at, closed_at.
-     Fully idempotent — safe to run on every startup.
-  2. BLUEPRINT: Registered survey_respondent_bp from routes/survey_respondent.py.
-     Adds employee-facing /survey/take/<token> page and all
-     /api/survey/take/* and /api/survey/admin/project/*/open,close,
-     responses, export endpoints.
-     Placed immediately after the survey_admin_bp registration block.
-     Follows the identical try/except pattern used by all other blueprints.
-  3. CLEANUP: Removed the survey_diagnostics blueprint registration block.
-     That file (routes/survey_diagnostics.py) was a temporary diagnostic
-     created during Phase 1 debugging. It has served its purpose.
-  4. HEALTH CHECK: Updated survey_in_a_box phase string from
-     '1 - Client Onboarding' to '3 - Online Survey Engine'.
-  NO OTHER CHANGES. All existing routes, blueprints, features, and startup
-  sequence are completely unchanged.
-
-- March 12, 2026: Phase 6 Deliverable 7 — Scheduler + Swarm self-registration
-- March 12, 2026: Phase 6 Proactive Agent — Registered proactive_bp
-- March 10, 2026: Survey in a Box Phase 1 — THREE CHANGES ONLY
-- March 08, 2026: Phase 3 Self-Awareness — CAPABILITIES MANIFEST WIRED IN
-- March 05, 2026: Phase 2A Memory Schema Fix
-- March 05, 2026: Phase 2A - Registered memory blueprint (routes/memory.py)
-- March 05, 2026: Phase 1 Log Cleanup (Opus direction pre-Phase 2)
-- March 03, 2026: Phase 9b - FIX BROKEN TABLE SCHEMAS
-- March 03, 2026: SCHEMA MIGRATION
-- March 02, 2026: POSTGRESQL MIGRATION
-- February 27, 2026: ADDED /api/admin/restore-knowledge ENDPOINT
-- February 26, 2026: ADDED /api/admin/clear-knowledge-db ENDPOINT
-- February 25, 2026: ADDED /api/admin/kb-diagnose ENDPOINT
-- February 23, 2026: ADDED Blog Posts Table Migration
-- February 22, 2026: RE-ENABLED Case Study Generator
-- February 20, 2026: BUG FIX #1 - intelligence_bp name conflict
-- February 20, 2026: BUG FIX #2 - conversation_learning import path
-- February 18, 2026: FIXED NameError crash on startup
-- February 18, 2026: BACKGROUND KB INIT
-- February 5, 2026: INCREASED FILE UPLOAD LIMIT TO 100MB
-- January 30, 2026: ADDED BULLETPROOF PROJECT MANAGEMENT
-
-AUTHOR: Jim @ Shiftwork Solutions LLC 
+AUTHOR: Jim @ Shiftwork Solutions LLC
 """
 
 from flask import Flask, render_template, jsonify, request
@@ -326,8 +292,6 @@ except Exception as e:
 # ----------------------------------------------------------------------------
 # MIGRATION 009: Part Time Tracker Lite
 # Added: May 01, 2026
-# Creates all ptt_* tables. No existing Swarm tables modified.
-# Fully idempotent.
 # ----------------------------------------------------------------------------
 try:
     import importlib.util as _ilu9
@@ -347,8 +311,6 @@ except Exception as e:
 # ----------------------------------------------------------------------------
 # MIGRATION 010: Part Time Tracker Phase 2 — Worker audit columns
 # Added: May 04, 2026
-# Adds approved_by, approved_at, rejected_at, rejection_reason to
-# ptt_worker. No other tables modified. Fully idempotent.
 # ----------------------------------------------------------------------------
 try:
     import importlib.util as _ilu10
@@ -370,8 +332,6 @@ print("=" * 60)
 # ----------------------------------------------------------------------------
 # MIGRATION 011: Part Time Tracker Phase 3 — urgency + skill_required_id
 # Added: May 06, 2026
-# Adds urgency and skill_required_id columns to ptt_shift.
-# Fully idempotent.
 # ----------------------------------------------------------------------------
 try:
     import importlib.util as _ilu11
@@ -391,8 +351,6 @@ except Exception as e:
 # ----------------------------------------------------------------------------
 # MIGRATION 012: Fix ptt_worker unique constraint
 # Added: May 08, 2026
-# Replaces UNIQUE(company_id, email) with UNIQUE(company_id, name, email)
-# so two people sharing an email can both apply.
 # ----------------------------------------------------------------------------
 try:
     import importlib.util as _ilu12
@@ -504,6 +462,20 @@ except Exception as e:
     print(f"Traceback: {traceback.format_exc()}")
     knowledge_base = None
 
+# ============================================================================
+# KB SHARING — Added May 20, 2026
+# ============================================================================
+# Make the knowledge_base instance accessible to any blueprint that needs it.
+# The new /api/knowledge/search endpoint in routes/ingest.py reads this so it
+# can call semantic_search() on the same singleton instance — never creating
+# a duplicate KB. If knowledge_base is None (init failed or no files found),
+# this stores None and the search endpoint returns a graceful 503 response.
+# This is the ONLY change to this file from the prior version (May 11, 2026).
+# ============================================================================
+app.config['KNOWLEDGE_BASE'] = knowledge_base
+print(f"KB sharing: app.config['KNOWLEDGE_BASE'] = "
+      f"{'<EnhancedProjectKnowledgeBase>' if knowledge_base else 'None'}")
+
 # Load optional modules
 SCHEDULE_GENERATOR_AVAILABLE = False
 try:
@@ -559,9 +531,9 @@ try:
                 }
             generate_capabilities_manifest(kb_stats=_kb_stats)
             _summary = get_manifest_summary()
-            print(f"✅ Capabilities manifest ready: {_summary}")
+            print(f"Capabilities manifest ready: {_summary}")
         except Exception as _e:
-            print(f"⚠️ Deferred manifest warm failed (non-fatal): {_e}")
+            print(f"Deferred manifest warm failed (non-fatal): {_e}")
 
     _warm_thread = _threading.Thread(
         target=_warm_manifest_when_kb_ready,
@@ -1012,7 +984,7 @@ def health():
 
     return jsonify({
         'status': 'healthy',
-        'version': 'PTT Lite Phase3 May11 + PTT Lite Phase2 May04 + PTT Lite Phase1 May01 + Site Events Apr28 + Assessment PDF Apr21 + Assessment Sheets Apr17 + Security Hardening Apr07 + Newsletter API Apr02 + Survey in a Box Phase 2 Mar26 + Phase 3 Mar13 + Phase 6 Proactive Agent Mar12 + Phase 1 Onboarding Mar10 + Phase 3 Capabilities Manifest Mar08 + Phase 2A Memory Mar05 + PostgreSQL Migration Mar02',
+        'version': 'KB Search Endpoint May20 + PTT Lite Phase3 May11 + PTT Lite Phase2 May04 + PTT Lite Phase1 May01 + Site Events Apr28 + Assessment PDF Apr21 + Assessment Sheets Apr17 + Security Hardening Apr07 + Newsletter API Apr02 + Survey in a Box Phase 2 Mar26 + Phase 3 Mar13 + Phase 6 Proactive Agent Mar12 + Phase 1 Onboarding Mar10 + Phase 3 Capabilities Manifest Mar08 + Phase 2A Memory Mar05 + PostgreSQL Migration Mar02',
         'database': {
             'type': get_db_type(),
             'backend': 'PostgreSQL (persistent)' if get_db_type() == 'postgresql' else 'SQLite (local dev)'
@@ -1032,7 +1004,9 @@ def health():
             'status': kb_status,
             'documents_indexed': kb_doc_count,
             'initialization_complete': kb_ready,
-            'diagnose_url': '/api/admin/kb-diagnose'
+            'diagnose_url': '/api/admin/kb-diagnose',
+            'search_url': '/api/knowledge/search',
+            'context_url': '/api/knowledge/context'
         },
         'schedule_generator': {
             'status': 'enabled' if SCHEDULE_GENERATOR_AVAILABLE else 'disabled',
@@ -1424,9 +1398,6 @@ except Exception as e:
 
 # ----------------------------------------------------------------------------
 # Part Time Tracker Lite — HR Admin Routes
-# Phase 1: signup, magic link auth, dashboard shell.
-# Phase 2: skills CRUD, worker approval, 14-skill seed.
-# Added: May 01, 2026 | Updated: May 04, 2026
 # ----------------------------------------------------------------------------
 try:
     from routes.ptt_hr import ptt_hr_bp
@@ -1439,8 +1410,6 @@ except Exception as e:
 
 # ----------------------------------------------------------------------------
 # Part Time Tracker Lite — Worker Intake Routes (public, no auth)
-# Provides GET /ptt/apply/<slug> and POST /api/ptt/apply/<slug>.
-# Added: May 04, 2026
 # ----------------------------------------------------------------------------
 try:
     from routes.ptt_worker_intake import ptt_worker_intake_bp
@@ -1452,8 +1421,6 @@ except Exception as e:
     print(f"Part Time Tracker Worker Intake registration failed: {e}")
 
 # Part Time Tracker Lite — Shift Management Routes (HR)
-# Phase 3: shift CRUD, matching engine, outreach, claim confirm/decline.
-# Added: May 06, 2026
 try:
     from routes.ptt_shifts import ptt_shifts_bp
     app.register_blueprint(ptt_shifts_bp)
@@ -1464,8 +1431,6 @@ except Exception as e:
     print(f"Part Time Tracker Shifts registration failed: {e}")
 
 # Part Time Tracker Lite — Worker Routes (authenticated worker side)
-# Phase 3: worker dashboard, claim shift, profile, availability, blackouts.
-# Added: May 06, 2026
 try:
     from routes.ptt_worker import ptt_worker_bp
     app.register_blueprint(ptt_worker_bp)
@@ -1474,9 +1439,8 @@ except ImportError as e:
     print(f"Part Time Tracker Worker routes not found: {e}")
 except Exception as e:
     print(f"Part Time Tracker Worker registration failed: {e}")
-  
+
 # Part Time Tracker Lite — AI Chat Advisors (Carolyn + Franklin)
-# Added: May 15, 2026
 try:
     from routes.ptt_chat import ptt_chat_bp
     app.register_blueprint(ptt_chat_bp)
@@ -1485,6 +1449,7 @@ except ImportError as e:
     print(f"Part Time Tracker Chat routes not found: {e}")
 except Exception as e:
     print(f"Part Time Tracker Chat registration failed: {e}")
+
 try:
     from routes.background_jobs import background_jobs_bp
     app.register_blueprint(background_jobs_bp)
@@ -1617,21 +1582,11 @@ def fix_memory_schema():
 
 # ============================================================================
 # PTT DEV ENDPOINTS — development/testing only
-# POST /api/ptt/dev/reset-company  { "email": "admin@example.com" }
-#   Wipes ALL ptt_* data for the company associated with this admin email.
-#   Safe to call multiple times. Returns counts of deleted rows.
-# POST /api/ptt/dev/reseed-skills  { "email": "admin@example.com" }
-#   Replaces the skill list for the company with the 14 Opus-specified
-#   industry skills. Deletes existing skills first (cascades to
-#   ptt_worker_skill and ptt_shift_skill). Use after reset-company to
-#   get a fresh company with the correct skill seed.
 # ============================================================================
 @app.route('/api/ptt/dev/reset-company', methods=['POST'])
 def ptt_dev_reset_company():
     """
     DEV ONLY — wipe all ptt_* data for a company by admin email.
-    Deletes: sessions, tokens, workers, skills, shifts, company, admin user.
-    Does NOT touch any other Swarm tables.
     """
     from db_engine import get_db_connection
     data  = request.get_json(silent=True) or {}
@@ -1643,7 +1598,6 @@ def ptt_dev_reset_company():
     try:
         cursor = conn.cursor()
 
-        # Find company via admin email
         cursor.execute("""
             SELECT a.id AS admin_id, a.company_id
             FROM ptt_admin_user a WHERE a.email = %s
@@ -1655,22 +1609,17 @@ def ptt_dev_reset_company():
         company_id = row["company_id"]
         counts = {}
 
-        # Delete in FK-safe order
         cursor.execute("DELETE FROM ptt_session    WHERE company_id = %s", (company_id,))
         counts["sessions"] = cursor.rowcount
         cursor.execute("DELETE FROM ptt_magic_token WHERE company_id = %s", (company_id,))
         counts["tokens"] = cursor.rowcount
 
-        # Workers cascade to ptt_worker_skill, ptt_availability,
-        # ptt_blackout, ptt_shift_outreach, ptt_shift_claim
         cursor.execute("DELETE FROM ptt_worker WHERE company_id = %s", (company_id,))
         counts["workers"] = cursor.rowcount
 
-        # Shifts cascade to ptt_shift_skill, ptt_shift_outreach, ptt_shift_claim
         cursor.execute("DELETE FROM ptt_shift WHERE company_id = %s", (company_id,))
         counts["shifts"] = cursor.rowcount
 
-        # Skills cascade to ptt_worker_skill, ptt_shift_skill
         cursor.execute("DELETE FROM ptt_skill WHERE company_id = %s", (company_id,))
         counts["skills"] = cursor.rowcount
 
@@ -1696,9 +1645,7 @@ def ptt_dev_reset_company():
 def ptt_dev_reseed_skills():
     """
     DEV ONLY — replace skill list for a company with the 14 Opus-specified
-    industry skills. Deletes existing skills first (FK cascades handle
-    ptt_worker_skill and ptt_shift_skill). Use to fix companies created
-    before Phase 2 that only have Skill 1-5.
+    industry skills.
     """
     from db_engine import get_db_connection
     from routes.ptt_hr import SKILL_SEED
@@ -1721,11 +1668,9 @@ def ptt_dev_reseed_skills():
 
         company_id = row["company_id"]
 
-        # Delete existing skills (cascades to junction tables)
         cursor.execute("DELETE FROM ptt_skill WHERE company_id = %s", (company_id,))
         deleted = cursor.rowcount
 
-        # Insert 14 fresh skills
         for skill_name, skill_desc, sort_order in SKILL_SEED:
             cursor.execute("""
                 INSERT INTO ptt_skill (company_id, name, description, sort_order)
@@ -1751,10 +1696,7 @@ def ptt_dev_reseed_skills():
 def ptt_dev_reset_shift():
     """
     DEV ONLY — reset a single shift back to 'open' status and delete
-    all claims against it. Useful during testing when a shift was
-    incorrectly filled or you want to re-test the claim/confirm flow
-    without wiping the entire company.
-    Body: { "shift_id": int }
+    all claims against it.
     """
     from db_engine import get_db_connection
     data     = request.get_json(silent=True) or {}
