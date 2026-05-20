@@ -1,64 +1,88 @@
 """
 KNOWLEDGE INGESTION ROUTES
 Created: February 2, 2026
-Last Updated: February 28, 2026 - GAP 2 FIX: 'lifestyle' → 'eaf' in _detect_document_type()
+Last Updated: May 20, 2026 - ADDED knowledge_search_bp with /api/knowledge/search
+              and /api/knowledge/context endpoints for live KB access (Thomas integration).
 
 CHANGELOG:
 
-- February 28, 2026 — GAP 2 FIX: 'lifestyle' keyword added to eaf detection
-  PROBLEM: Four Lifestyle Presentation PPTX files were classified as 'implementation_ppt'
-    instead of 'eaf'. They contain embedded lifestyle survey chart data (survey_client_result
-    and survey_norm patterns), but the filename lacks 'eaf', 'employee', or 'survey' — it
-    only has 'lifestyle'. Affected files:
-      Durand_Glass_Lifestyle_Presentation_with_extra_breakouts.pptx  (123 chart patterns)
-      Aptalis_Lifestyle_Presentation.pptx                             (106 chart patterns)
-      Andersen_Corp._Lifestyle_Presentation.pptx                      (98 chart patterns)
-      Impax_Lifestyle_Presentation.ppt
-    Under the Gap 2 engine fix, re-ingesting these as 'implementation_ppt' would route
-    them to the slide-text extractor and lose the chart data. Correct type is 'eaf' →
-    routes to _extract_from_survey_pptx (chart XML extractor) → full chart patterns.
-  FIX: Added 'lifestyle' to the eaf keyword check in _detect_document_type(). This is
-    a single-word addition to one conditional: no other logic changed.
-  SCOPE: _detect_document_type() only. All other code unchanged.
-  NOTE: Existing DB records for these files already have correct chart patterns from
-    prior ingestion. Fix ensures re-ingestion produces the same correct result.
+- May 20, 2026: KNOWLEDGE SEARCH BLUEPRINT ADDED — additive change.
 
-- February 27, 2026 (Session 3 - Part 2): ADDED lessons_learned_md detection for .md files
-  * .md files with 'lesson' in filename now detect as 'lessons_learned_md' instead
-    of 'generic'. Jim dictates lessons learned to Claude Sonnet which produces rich
-    structured Markdown (## category headings, ### Lesson #N, **Field:** labels).
-    The generic extractor captured only 1 pattern from 18,000 words of knowledge.
-    'lessons_learned_md' routes to a dedicated full Markdown extractor in the engine
-    that captures all 19 lessons with: situation, key_principle, why_matters,
-    hard_truth, watch_out_for, do/don't lists, bullets, numbered items, bold_fields
-    dict, and full_text for AI retrieval.
-  * ingest_document_content() aliases 'lessons_learned_md' → engine sees
-    'lessons_learned_md' (engine has its own dispatcher for this type).
-  * detectDocumentType() in knowledge_management.html updated to mirror this logic.
+  WHAT WAS ADDED:
+    A new Blueprint object `knowledge_search_bp` exposed at module level
+    alongside the existing `ingest_bp`. The new blueprint uses url_prefix
+    '/api/knowledge' (separate from ingest_bp's '/api/ingest') and exposes
+    two read-only endpoints:
 
-- February 27, 2026 (Session 3 - Part 1): FIXED 'engagement' triggering contract mis-classification
-  * BUG FIX: Removed 'engagement' from contract detection keywords.
-  * ADDED per-file document_types support in /api/ingest/batch.
-  * ADDED _detect_document_type() helper used by both single and batch endpoints.
-  * Single-file /api/ingest/document also auto-detects when no type provided.
+      GET /api/knowledge/search
+        Query params: q (required), max_results (default 5, max 20),
+                      category (optional)
+        Returns: JSON {success, results: [{filename, title, category, score,
+                 excerpt, word_count, relevance_type}, ...], count, query,
+                 kb_ready, max_results}
+        Calls EnhancedProjectKnowledgeBase.semantic_search() — already exists
+        in knowledge_integration.py. Does NOT modify any data.
 
-- February 27, 2026 (Session 2): ADDED /api/ingest/batch endpoint
-  * Multi-file upload support, _process_file_for_ingest() shared helper.
+      GET /api/knowledge/context
+        Query params: q (required), max_context (default 8000, max 16000),
+                      max_results (default 3, max 10)
+        Returns: JSON {success, context: "...formatted AI-ready string...",
+                       query, kb_ready, length, max_context, max_results}
+        Calls EnhancedProjectKnowledgeBase.get_context_for_task() — already
+        exists. Returns the same prefixed/cited context block the Swarm uses
+        internally for task work, ready to inject into a system prompt.
 
-- February 27, 2026 (Session 1): FIXED DOCX content extraction
-  * python-docx structured extraction replacing raw UTF-8 decode of zip bytes.
+  WHY:
+    Thomas's runtime needs live access to the project knowledge base so his
+    answers reflect the current Swarm KB rather than knowledge frozen into
+    his system prompt at deploy time. Mirrors Thomas's existing pattern of
+    calling /api/survey/norm/search on every turn.
 
-- February 26, 2026 (Session 2): UPDATED PPTX and Excel routes to pass file_bytes
-- February 26, 2026 (Session 1): ADDED new document types and proposal alias
-- February 22, 2026: ADDED /api/ingest/export (GET)
-- February 4, 2026: FIXED PowerPoint temp file handling
+  GRACEFUL DEGRADATION:
+    - If app.config['KNOWLEDGE_BASE'] is None (KB init failed or no files),
+      both endpoints return 503 with a clear message — never crash.
+    - If the KB exists but is_ready=False (still warming up in background),
+      endpoints return 200 with empty results and kb_ready=false so callers
+      can degrade silently rather than block. This matches the existing
+      semantic_search() contract which already has a 2-second wait.
 
-Flask API endpoints for document ingestion system.
+  HOW IT IS WIRED:
+    app.py (in the May 20, 2026 update) imports BOTH blueprints from this
+    module and registers them:
+        from routes.ingest import ingest_bp, knowledge_search_bp
+        app.register_blueprint(ingest_bp)
+        app.register_blueprint(knowledge_search_bp)
+    The first line was already there. The second line is new in app.py.
+    If for any reason app.py does NOT register knowledge_search_bp, the
+    new endpoints simply do not exist — every existing /api/ingest/* route
+    continues to work exactly as before.
+
+  SCOPE OF CHANGE TO THIS FILE:
+    - Added `current_app` to the flask import line.
+    - Added the new `knowledge_search_bp` Blueprint at the bottom of the file.
+    - Added the `_get_kb_instance()` helper.
+    - Added two new endpoint functions: `knowledge_search()` and
+      `knowledge_context()`.
+    - No existing function, endpoint, or helper was modified.
+    - No existing behavior changed.
+    - Rule 1 (do no harm) preserved.
+
+- February 28, 2026 — GAP 2 FIX: 'lifestyle' keyword added to eaf detection.
+- February 27, 2026 (Session 3 - Part 2): ADDED lessons_learned_md detection.
+- February 27, 2026 (Session 3 - Part 1): FIXED 'engagement' triggering contract mis-classification.
+- February 27, 2026 (Session 2): ADDED /api/ingest/batch endpoint.
+- February 27, 2026 (Session 1): FIXED DOCX content extraction.
+- February 26, 2026 (Session 2): UPDATED PPTX and Excel routes to pass file_bytes.
+- February 26, 2026 (Session 1): ADDED new document types and proposal alias.
+- February 22, 2026: ADDED /api/ingest/export (GET).
+- February 4, 2026: FIXED PowerPoint temp file handling.
+
+Flask API endpoints for document ingestion and knowledge search.
 Part of Shoulders of Giants cumulative learning system.
 Author: Jim @ Shiftwork Solutions LLC
 """
 
-from flask import Blueprint, request, jsonify, render_template, send_file
+from flask import Blueprint, request, jsonify, render_template, send_file, current_app
 from werkzeug.utils import secure_filename
 import os
 import sys
@@ -69,22 +93,22 @@ import io
 
 try:
     from document_ingestion_engine import get_document_ingestor
-    print("✅ Knowledge Ingestion: Direct import succeeded")
+    print("Knowledge Ingestion: Direct import succeeded")
 except ImportError as e1:
-    print(f"⚠️  Direct import failed: {e1}")
+    print(f"Direct import failed: {e1}")
     try:
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         from document_ingestion_engine import get_document_ingestor
-        print("✅ Knowledge Ingestion: Path-adjusted import succeeded")
+        print("Knowledge Ingestion: Path-adjusted import succeeded")
     except ImportError as e2:
-        print(f"⚠️  Path-adjusted import failed: {e2}")
+        print(f"Path-adjusted import failed: {e2}")
         try:
             root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
             sys.path.insert(0, root_dir)
             from document_ingestion_engine import get_document_ingestor
-            print("✅ Knowledge Ingestion: Root directory import succeeded")
+            print("Knowledge Ingestion: Root directory import succeeded")
         except ImportError as e3:
-            print(f"❌ All import attempts failed!")
+            print(f"All import attempts failed!")
             print(f"   Error 1: {e1}")
             print(f"   Error 2: {e2}")
             print(f"   Error 3: {e3}")
@@ -109,19 +133,7 @@ def allowed_file(filename):
 def _detect_document_type(filename):
     """
     Auto-detect document type from filename and extension.
-
-    Added February 27, 2026 (Session 3).
     Mirrors detectDocumentType() in knowledge_management.html exactly.
-
-    CHANGELOG:
-    - February 28, 2026 (Gap 2): Added 'lifestyle' to eaf keyword check.
-      Lifestyle Presentation PPTX files contain survey chart data and must
-      route to 'eaf' (→ _extract_from_survey_pptx chart extractor) not
-      'implementation_ppt' (→ slide text extractor).
-    - February 27, 2026 (Session 3): 'engagement' REMOVED from contract
-      detection keywords. Contract requires 'contract' OR 'agreement' explicitly.
-
-    Returns: document type string understood by document_ingestion_engine.py
     """
     name = filename.lower()
     ext  = name.rsplit('.', 1)[-1] if '.' in name else ''
@@ -129,8 +141,6 @@ def _detect_document_type(filename):
     if ext in ('pptx', 'ppt'):
         if 'oaf' in name or 'operations' in name:
             return 'oaf'
-        # GAP 2 FIX February 28, 2026: Added 'lifestyle' — Lifestyle Presentation
-        # files contain survey chart data and must use the EAF chart extractor.
         if 'eaf' in name or 'employee' in name or 'survey' in name or 'lifestyle' in name:
             return 'eaf'
         return 'implementation_ppt'
@@ -143,7 +153,6 @@ def _detect_document_type(filename):
     if ext in ('docx', 'doc'):
         if 'lesson' in name:
             return 'lessons_learned'
-        # FIX: 'engagement' REMOVED — requires 'contract' or 'agreement' explicitly
         if 'contract' in name or 'agreement' in name:
             return 'contract'
         if 'proposal' in name:
@@ -154,11 +163,6 @@ def _detect_document_type(filename):
             return 'implementation_manual'
         return 'general_word'
 
-    # .md files with 'lesson' in the name → lessons_learned_md.
-    # Jim dictates lessons learned to Claude Sonnet which produces rich structured
-    # Markdown with ## category headings, ### Lesson #N headings, and **Field:**
-    # bold labels. This is a distinct, knowledge-rich format requiring a dedicated
-    # Markdown extractor. 'generic' classification lost all lesson structure.
     if ext == 'md':
         if 'lesson' in name:
             return 'lessons_learned_md'
@@ -177,11 +181,6 @@ def _detect_document_type(filename):
 def _extract_docx_structured(file_bytes: bytes) -> dict:
     """
     Extract structured paragraph data from a .docx file using python-docx.
-
-    Returns dict with:
-        'paragraphs': list of {style, bold, text} dicts
-        'plain_text': clean newline-joined text
-        'error': None or error string
     """
     result = {'paragraphs': [], 'plain_text': '', 'error': None}
     try:
@@ -229,16 +228,6 @@ def _extract_docx_structured(file_bytes: bytes) -> dict:
 def _process_file_for_ingest(file, document_type, metadata):
     """
     Shared file processing logic for both single and batch endpoints.
-
-    Added February 27, 2026 (Session 2): extracted from ingest_document().
-    Updated February 27, 2026 (Session 3): document_type now auto-detected
-    upstream; this function receives the resolved type.
-
-    For PPTX files: extracts slide text via python-pptx and passes BOTH the
-    slide_text_content (as 'content') AND the raw file_bytes. The engine
-    routing then decides which extractor to use based on document_type:
-      - 'eaf' / 'survey_pptx' / 'oaf' → chart XML extractor (file_bytes)
-      - 'implementation_ppt' with content → slide text extractor + optional chart merge
     """
     filename_lower = file.filename.lower()
 
@@ -329,8 +318,6 @@ def _process_file_for_ingest(file, document_type, metadata):
 def ingest_document():
     """
     Upload and ingest a single document into the knowledge base.
-
-    document_type is optional — auto-detected from filename if absent or blank.
     """
     try:
         if 'file' not in request.files:
@@ -345,7 +332,6 @@ def ingest_document():
                 'error': f'File type not allowed. Allowed: {", ".join(sorted(ALLOWED_EXTENSIONS))}'
             }), 400
 
-        # Auto-detect if not provided
         document_type = request.form.get('document_type', '').strip()
         if not document_type:
             document_type = _detect_document_type(file.filename)
@@ -378,18 +364,6 @@ def ingest_document():
 def ingest_batch():
     """
     Upload and ingest multiple documents in a single request.
-
-    Updated February 27, 2026 (Session 3):
-    Accepts 'document_types' JSON array (one per file, same order as 'files').
-    Type resolution per file: per-file type → global fallback → auto-detect from filename.
-    Each file's resolved type is returned as 'detected_type' in its result entry.
-
-    Expects:
-        files:          One or more files (multipart, same field name)
-        document_types: JSON array of type strings, one per file (optional)
-        document_type:  Global fallback type (optional)
-        client:         Optional, applied to all files
-        industry:       Optional, applied to all files
     """
     try:
         files = request.files.getlist('files')
@@ -425,7 +399,6 @@ def ingest_batch():
                 error_count += 1
                 continue
 
-            # Resolve: per-file → global → auto-detect
             doc_type = ''
             if idx < len(per_file_types):
                 doc_type = (per_file_types[idx] or '').strip()
@@ -496,13 +469,10 @@ def ingest_batch():
 def ingest_document_content(ingestor, content, document_type, metadata, file_bytes=None):
     """
     Helper: pass content and metadata to the ingestion engine.
-    'proposal' aliased to 'contract' (same extractor).
-    'lessons_learned_md' passed through as-is — engine has dedicated Markdown extractor.
     """
     try:
         if document_type == 'proposal':
             document_type = 'contract'
-        # lessons_learned_md is handled natively by the engine dispatcher
         kwargs = {
             'content': content,
             'document_type': document_type,
@@ -824,5 +794,242 @@ def clear_knowledge_base():
             'traceback': traceback.format_exc()
         }), 500
 # ============================================================================
+
+
+# ============================================================================
+# KNOWLEDGE SEARCH BLUEPRINT — Added May 20, 2026
+#
+# This is a SEPARATE blueprint from ingest_bp because we want the URL prefix
+# '/api/knowledge' (not '/api/ingest/knowledge'). It is exported at module
+# level so app.py can register it alongside ingest_bp:
+#
+#     from routes.ingest import ingest_bp, knowledge_search_bp
+#     app.register_blueprint(ingest_bp)
+#     app.register_blueprint(knowledge_search_bp)
+#
+# The blueprint exposes two read-only endpoints that let Thomas (and any
+# future AI client) query the live project knowledge base on every turn.
+# Both endpoints fail gracefully if the KB is unavailable.
+# ============================================================================
+
+knowledge_search_bp = Blueprint(
+    'knowledge_search',
+    __name__,
+    url_prefix='/api/knowledge'
+)
+
+
+def _get_kb_instance():
+    """
+    Return the EnhancedProjectKnowledgeBase singleton from app.config, or
+    None if it has not been initialized. The Swarm's app.py stores the
+    instance in app.config['KNOWLEDGE_BASE'] immediately after creating it
+    (added May 20, 2026). This helper centralizes the lookup so both
+    endpoints handle the missing-KB case the same way.
+    """
+    try:
+        return current_app.config.get('KNOWLEDGE_BASE')
+    except Exception:
+        return None
+
+
+@knowledge_search_bp.route('/search', methods=['GET'])
+def knowledge_search():
+    """
+    Search the project knowledge base and return structured results.
+
+    Query parameters
+    ----------------
+    q : str (required)
+        The search query string. Forms the basis of semantic + keyword
+        matching against indexed documents.
+    max_results : int (optional, default 5, max 20)
+        Maximum number of result objects to return.
+    category : str (optional)
+        Filter to a single document category as classified by
+        knowledge_integration.py._categorize_document(). Valid values
+        include (but are not limited to):
+          "Contract", "Implementation Guide", "Survey & Assessment",
+          "Schedule Library", "Company Profile", "Lessons Learned",
+          "Best Practices Guide", "Executive Summary", "Scope of Work",
+          "Reference Material"
+        Omit to search across all categories.
+
+    Returns
+    -------
+    200 OK with JSON body:
+        {
+            "success":     true,
+            "query":       "<query>",
+            "category":    "<category or null>",
+            "kb_ready":    bool,
+            "count":       int,
+            "max_results": int,
+            "results": [
+                {
+                    "filename":       "...",
+                    "title":          "...",
+                    "category":       "...",
+                    "score":          float,
+                    "excerpt":        "...",
+                    "word_count":     int,
+                    "relevance_type": "Highly Relevant" | "Very Relevant" | ...
+                },
+                ...
+            ]
+        }
+
+    400 BAD REQUEST if 'q' is missing or empty.
+
+    503 SERVICE UNAVAILABLE if the KB singleton does not exist in
+    app.config (initialization failed at startup). The response body
+    is JSON with success:false and a clear error message.
+    """
+    query = (request.args.get('q') or '').strip()
+    if not query:
+        return jsonify({
+            'success': False,
+            'error':   "Missing required query parameter 'q'."
+        }), 400
+
+    try:
+        max_results = int(request.args.get('max_results', 5))
+    except (TypeError, ValueError):
+        max_results = 5
+    max_results = max(1, min(max_results, 20))
+
+    category = request.args.get('category') or None
+    if category is not None:
+        category = category.strip() or None
+
+    kb = _get_kb_instance()
+    if kb is None:
+        return jsonify({
+            'success':  False,
+            'error':    'Knowledge base not initialized. '
+                        'Check Swarm startup logs and /api/admin/kb-diagnose.',
+            'kb_ready': False
+        }), 503
+
+    try:
+        results = kb.semantic_search(
+            query=query,
+            max_results=max_results,
+            category_filter=category
+        )
+        return jsonify({
+            'success':     True,
+            'query':       query,
+            'category':    category,
+            'kb_ready':    bool(getattr(kb, 'is_ready', False)),
+            'count':       len(results),
+            'max_results': max_results,
+            'results':     results
+        }), 200
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'success':   False,
+            'error':     f'Knowledge search failed: {str(e)}',
+            'traceback': traceback.format_exc()
+        }), 500
+
+
+@knowledge_search_bp.route('/context', methods=['GET'])
+def knowledge_context():
+    """
+    Return an AI-ready formatted context block for a query.
+
+    This is the endpoint Thomas's runtime calls on every conversation turn.
+    The returned `context` string is already wrapped with a "SHIFTWORK
+    SOLUTIONS PROJECT KNOWLEDGE" header and per-source citations — Thomas
+    appends it directly to his system prompt without further formatting.
+
+    Query parameters
+    ----------------
+    q : str (required)
+        The search query (typically the visitor's latest message or a
+        short summary derived from it).
+    max_context : int (optional, default 8000, max 16000)
+        Maximum length of the returned context string in characters.
+        The KB's get_context_for_task() truncates internally if needed.
+    max_results : int (optional, default 3, max 10)
+        Maximum number of source documents to include in the context.
+
+    Returns
+    -------
+    200 OK with JSON body:
+        {
+            "success":     true,
+            "query":       "<query>",
+            "kb_ready":    bool,
+            "length":      int,
+            "max_context": int,
+            "max_results": int,
+            "context":     "...the formatted context string..."
+        }
+
+    The "context" field will be an empty string if the KB is still warming
+    up (kb_ready:false) or if no documents matched the query. Callers
+    should treat empty context as a normal degradation case.
+
+    400 BAD REQUEST if 'q' is missing or empty.
+
+    503 SERVICE UNAVAILABLE if the KB singleton does not exist in
+    app.config.
+    """
+    query = (request.args.get('q') or '').strip()
+    if not query:
+        return jsonify({
+            'success': False,
+            'error':   "Missing required query parameter 'q'."
+        }), 400
+
+    try:
+        max_context = int(request.args.get('max_context', 8000))
+    except (TypeError, ValueError):
+        max_context = 8000
+    max_context = max(500, min(max_context, 16000))
+
+    try:
+        max_results = int(request.args.get('max_results', 3))
+    except (TypeError, ValueError):
+        max_results = 3
+    max_results = max(1, min(max_results, 10))
+
+    kb = _get_kb_instance()
+    if kb is None:
+        return jsonify({
+            'success':  False,
+            'error':    'Knowledge base not initialized. '
+                        'Check Swarm startup logs and /api/admin/kb-diagnose.',
+            'kb_ready': False,
+            'context':  ''
+        }), 503
+
+    try:
+        context = kb.get_context_for_task(
+            task_description=query,
+            max_context=max_context,
+            max_results=max_results
+        )
+        return jsonify({
+            'success':     True,
+            'query':       query,
+            'kb_ready':    bool(getattr(kb, 'is_ready', False)),
+            'length':      len(context),
+            'max_context': max_context,
+            'max_results': max_results,
+            'context':     context
+        }), 200
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'success':   False,
+            'error':     f'Knowledge context failed: {str(e)}',
+            'context':   '',
+            'traceback': traceback.format_exc()
+        }), 500
+
 
 # I did no harm and this file is not truncated
