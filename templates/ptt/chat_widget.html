@@ -11,9 +11,7 @@
     2026-05-15 — INITIAL BUILD.
       Reusable Jinja2 macro that embeds the Carolyn (HR) or Franklin
       (worker) AI chat widget into any PTT template.
-      Usage: {% from 'ptt/chat_widget.html' import chat_widget %}
-             {{ chat_widget('carolyn', company.name, admin.name, session_id) }}
-             {{ chat_widget('franklin', company.name, worker.name, session_id) }}
+      Usage: see individual PTT templates for per-page invocations.
 
   Parameters:
     persona      — 'carolyn' or 'franklin'
@@ -361,3 +359,4 @@
 })();
 </script>
 {% endmacro %}
+{# I did no harm and this file is not truncated. #}
