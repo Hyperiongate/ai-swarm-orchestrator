@@ -89,7 +89,7 @@ def _get_anthropic():
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
 
 VOICE_IDS = {
-    "carolyn":  "hpp4J3VqNfWAUOO0d1Usm",
+    "carolyn":  "Xb7hH8MSUJpSbSDYk0k2",
     "franklin": "sB7vwSCyX0tQmU24cW2C",
 }
 
