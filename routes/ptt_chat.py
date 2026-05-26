@@ -4,9 +4,15 @@ AI Swarm Orchestrator — Part Time Tracker: AI Chat Advisors
 Shiftwork Solutions LLC
 
 Created:      2026-05-15
-Last Updated: 2026-05-15
+Last Updated: 2026-05-26
 
 CHANGELOG:
+  2026-05-26 — MARKDOWN STRIP FIX.
+    _strip_urls_for_tts() now also strips markdown formatting
+    (**bold**, *italic*, `code`, headers, bullets) before TTS
+    so Franklin/Carolyn do not speak "asterisk asterisk" aloud.
+    No other changes.
+
   2026-05-15 — INITIAL BUILD.
     Two AI chat personas embedded in PTT Lite:
 
@@ -14,7 +20,7 @@ CHANGELOG:
       Knows the full HR side of PTT Lite: dashboard, worker approval,
       skills taxonomy, shift creation, matching engine, claims management,
       apply link, session mechanics. Persona is warm, professional, patient.
-      Voice: ElevenLabs hpp4J3VqNfWAUOO0d1Usm.
+      Voice: ElevenLabs hpp4J3VqNfWAUOO0d1Us.
       Embedded in: dashboard, shifts, shift_detail templates.
 
     FRANKLIN — Worker advisor.
@@ -83,7 +89,7 @@ def _get_anthropic():
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
 
 VOICE_IDS = {
-    "carolyn":  "hpp4J3VqNfWAUOO0d1Us",
+    "carolyn":  "hpp4J3VqNfWAUOO0d1Usm",
     "franklin": "sB7vwSCyX0tQmU24cW2C",
 }
 
@@ -99,17 +105,37 @@ MAX_TOKENS  = 400  # per response — advisors are concise
 
 def _strip_urls_for_tts(text: str) -> str:
     """
-    Remove URLs from text before sending to ElevenLabs so the advisor
-    does not speak raw URLs aloud. Intro phrases like "here:" are
-    replaced with "via the link in the chat".
+    Prepare text for ElevenLabs TTS:
+      1. Strip markdown formatting so symbols are not spoken aloud.
+         Handles: **bold**, *italic*, __bold__, _italic_, `code`,
+         ### headers, and leading bullet characters (-, *, •).
+      2. Replace URLs with "via the link in the chat" so raw URLs
+         are not spoken aloud.
+      3. Collapse extra whitespace.
+
+    Added markdown stripping: 2026-05-26 — Franklin was speaking
+    "asterisk asterisk" aloud when Claude returned bold text.
     """
+    # Strip markdown bold/italic: **text** -> text, *text* -> text
+    text = re.sub(r'\*{1,3}(.*?)\*{1,3}', r'\1', text)
+    # Strip markdown bold/italic underscores: __text__ -> text, _text_ -> text
+    text = re.sub(r'_{1,3}(.*?)_{1,3}', r'\1', text)
+    # Strip inline code backticks: `code` -> code
+    text = re.sub(r'`([^`]+)`', r'\1', text)
+    # Strip markdown headers: ### Heading -> Heading
+    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+    # Strip leading bullet characters at line start
+    text = re.sub(r'^[\-\*•]\s+', '', text, flags=re.MULTILINE)
+    # URL pass 1: intro-word + URL
     text = re.sub(
         r'\s+(?:here|at|there)\s*:?\s*https?://[^\s,;)"\'<>]+',
         ' via the link in the chat',
         text,
         flags=re.IGNORECASE
     )
+    # URL pass 2: bare URLs
     text = re.sub(r'https?://[^\s,;)"\'<>]+', 'via the link in the chat', text)
+    # Collapse extra whitespace
     text = re.sub(r'  +', ' ', text).strip()
     return text
 
