@@ -5,9 +5,14 @@
   Shiftwork Solutions LLC
 
   Created:      2026-05-06
-  Last Updated: 2026-05-14
+  Last Updated: 2026-05-28
 
   CHANGELOG:
+    2026-05-28 — PAST SHIFT WARNING BANNER.
+      Added warning banner at top of shift detail page when the
+      shift date has passed but status is still open. Requires
+      today variable from route.
+
     2026-05-14 — BRANDING UPDATE.
       Added "Powered by Shiftwork Solutions" text to nav bar.
       Added branded footer: shift-work.com, (415) 265-1621,
@@ -132,6 +137,13 @@
     .empty-state h3 { font-size: 15px; color: #1F3D5C; margin-bottom: 6px; }
     .empty-state p  { font-size: 13px; color: #666; }
 
+    .past-warning {
+      background: rgba(198,40,40,.08); border-left: 4px solid #C62828;
+      padding: 12px 16px; border-radius: 0 6px 6px 0; margin-bottom: 20px;
+      font-size: 13px; color: #7A1F1F; display: flex; align-items: center; gap: 8px;
+    }
+    .past-warning strong { color: #C62828; }
+
     .toast { position: fixed; bottom: 20px; right: 20px; background: #1D9E75; color: #fff; padding: 10px 18px; border-radius: 6px; font-size: 13px; font-weight: 700; box-shadow: 0 4px 16px rgba(0,0,0,.2); transform: translateY(80px); opacity: 0; transition: transform .25s, opacity .25s; z-index: 9999; }
     .toast.visible { transform: translateY(0); opacity: 1; }
     .toast.error { background: #C62828; }
@@ -174,6 +186,12 @@
   </div>
 
   <div class="main">
+
+    {% if shift.status == 'open' and shift.shift_date | string < today %}
+    <div class="past-warning">
+      ⚠️ <span><strong>This shift date has passed.</strong> It is still marked Open but workers can no longer see it. Consider cancelling it to keep your shift list tidy.</span>
+    </div>
+    {% endif %}
 
     <!-- Shift Info -->
     <div class="section-card">
