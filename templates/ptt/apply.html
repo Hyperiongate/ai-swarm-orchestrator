@@ -5,9 +5,19 @@
   Shiftwork Solutions LLC
 
   Created:      2026-05-04
-  Last Updated: 2026-05-04
+  Last Updated: 2026-05-28
 
   CHANGELOG:
+    2026-05-28 — SUCCESS PANEL UPDATE.
+      Updated success panel message to tell the applicant they will
+      receive a confirmation email and that the company will be in
+      touch. Previously said "you'll receive an email if approved"
+      which was vague and gave no reassurance. Now says:
+        - Confirmation email is on its way
+        - The company team will be reaching out
+      Matches the new send_applicant_received() email behaviour in
+      ptt_worker_intake.py. No form, logic, or style changes.
+
     2026-05-04 — INITIAL BUILD (Phase 2).
       Public application form. No auth required.
       Shows company name and industry, skill checkboxes from the
@@ -149,7 +159,6 @@
     .skill-check input[type="checkbox"] {
       width: 16px; height: 16px; margin-top: 2px; flex-shrink: 0;
       accent-color: #E8610A; cursor: pointer;
-      /* Override the generic input padding rule */
       padding: 0; border: none; border-radius: 0;
     }
     .skill-check input[type="checkbox"]:focus {
@@ -193,6 +202,12 @@
     }
     .success-panel h3 { font-size: 20px; color: #1F3D5C; margin-bottom: 10px; }
     .success-panel p  { font-size: 13px; color: #555; line-height: 1.6; }
+    .success-next {
+      background: #EEF3F8; border-radius: 6px; padding: 14px 16px;
+      margin-top: 16px; text-align: left; font-size: 13px; color: #1F3D5C;
+      line-height: 1.6;
+    }
+    .success-next strong { color: #1F3D5C; }
   </style>
 </head>
 <body>
@@ -298,10 +313,12 @@
             Thank you for applying to the part-time pool at
             <strong>{{ company.name }}</strong>.
           </p>
-          <p style="margin-top:8px; color:#888; font-size:12px;">
-            You'll receive an email at <strong id="successEmail"></strong>
-            if your application is approved.
-          </p>
+          <div class="success-next">
+            <strong>What happens next:</strong><br>
+            A confirmation email is on its way to <strong id="successEmail"></strong>.<br>
+            Someone from the <strong>{{ company.name }}</strong> team will be
+            reaching out to you directly to follow up on your application.
+          </div>
         </div>
 
       </div><!-- /card-body -->
