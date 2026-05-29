@@ -5,9 +5,14 @@
   Shiftwork Solutions LLC
 
   Created:      2026-05-01
-  Last Updated: 2026-05-14
+  Last Updated: 2026-05-28
 
   CHANGELOG:
+    2026-05-28 — BUTTON LABEL UPDATE.
+      Renamed "Approve" to "Send Approval" and "Reject" to "Send Decline"
+      to reflect that both actions now trigger emails to the applicant.
+      Updated toast messages accordingly.
+
     2026-05-14 — BRANDING UPDATE.
       Removed "Book a Consultation" button from nav bar.
       Added "Powered by Shiftwork Solutions" text to nav bar.
@@ -417,8 +422,8 @@
               </div>
               <div class="worker-right">
                 <div class="worker-actions">
-                  <button class="btn-approve" onclick="approveWorker({{ w.id }}, this)">Approve</button>
-                  <button class="btn-reject"  onclick="rejectWorker({{ w.id }}, this)">Reject</button>
+                  <button class="btn-approve" onclick="approveWorker({{ w.id }}, this)">Send Approval</button>
+                  <button class="btn-reject"  onclick="rejectWorker({{ w.id }}, this)">Send Decline</button>
                 </div>
                 <button class="btn-view-detail"
                         onclick="toggleDetail({{ w.id }}, this)"
@@ -711,7 +716,7 @@
         row.style.opacity = '0';
         row.style.transition = 'opacity .3s';
         setTimeout(() => { row.remove(); updatePendingCount(-1); checkEmptyPending(); }, 320);
-        showToast('Worker approved — login link sent.');
+        showToast('Approval sent — login link emailed to worker.');
       } catch (err) {
         showToast('Network error. Please try again.', true);
         row.querySelectorAll('button').forEach(b => b.disabled = false);
@@ -739,7 +744,7 @@
         row.style.opacity = '0';
         row.style.transition = 'opacity .3s';
         setTimeout(() => { row.remove(); updatePendingCount(-1); checkEmptyPending(); }, 320);
-        showToast('Application rejected.');
+        showToast('Decline email sent to applicant.');
       } catch (err) {
         showToast('Network error. Please try again.', true);
         row.querySelectorAll('button').forEach(b => b.disabled = false);
