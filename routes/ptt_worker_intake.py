@@ -4,9 +4,18 @@ AI Swarm Orchestrator — Part Time Tracker: Worker Intake Routes
 Shiftwork Solutions LLC
 
 Created:      2026-05-04
-Last Updated: 2026-05-08
+Last Updated: 2026-05-28
 
 CHANGELOG:
+  2026-05-28 — APPLICANT CONFIRMATION EMAIL.
+    After a successful application submission, send a confirmation email
+    to the applicant via send_applicant_received(). The email:
+      - Confirms their application was received
+      - Names the company they applied to
+      - Says the team will be reaching out directly
+    Fire-and-forget (non-fatal) — never blocks or breaks the submission.
+    Added send_applicant_received to the import from routes.ptt_auth.
+
   2026-05-08 — REVIEW URL FIX.
     Changed _build_review_url to point to /ptt/login instead of
     /ptt/dashboard. The dashboard requires an active session, so
@@ -19,16 +28,6 @@ CHANGELOG:
     two people sharing an email address). Only the exact name+email
     pair is treated as a duplicate for a given company.
 
-    Previous behaviour: any re-use of an email triggered "already
-    under review" even if it was a different person with a different name.
-
-    New behaviour:
-      - Same name + same email + pending   -> "already under review"
-      - Same name + same email + active    -> "already an active member"
-      - Same name + same email + inactive  -> re-application allowed
-      - Different name + same email        -> new application created
-      - Same name + different email        -> new application created
-
   2026-05-04 — INITIAL BUILD (Phase 2).
     Public-facing worker application flow.
 
@@ -38,7 +37,10 @@ I did no harm and this file is not truncated.
 from flask import Blueprint, request, jsonify, render_template
 
 from db_engine import get_db_connection
-from routes.ptt_auth import send_worker_application_received
+from routes.ptt_auth import (
+    send_worker_application_received,
+    send_applicant_received,
+)
 
 
 ptt_worker_intake_bp = Blueprint("ptt_worker_intake", __name__)
@@ -105,6 +107,10 @@ def ptt_apply_submit(slug):
     Body: { name, email, phone (optional), skill_ids (list), notes (optional) }
     Returns: { status: "ok" } or { error: "..." }
 
+    On success:
+      - Notifies HR admin by email (existing behaviour)
+      - Sends confirmation email to the applicant (new — non-fatal)
+
     DUPLICATE LOGIC:
     Duplicates are detected on name+email combination per company, NOT
     email alone. Two people sharing an email address are allowed to apply
@@ -144,7 +150,6 @@ def ptt_apply_submit(slug):
         company_name = company["name"]
 
         # Check for duplicate: same name AND same email for this company.
-        # Email alone is NOT a duplicate — two people may share an email.
         cursor.execute("""
             SELECT id, status FROM ptt_worker
             WHERE company_id = %s
@@ -191,7 +196,7 @@ def ptt_apply_submit(slug):
                   phone or None, notes or None))
             worker_id = cursor.fetchone()["id"]
 
-        # Insert skill associations — verify each skill belongs to this company
+        # Insert skill associations
         if skill_ids:
             cursor.execute("""
                 SELECT id FROM ptt_skill
@@ -237,10 +242,17 @@ def ptt_apply_submit(slug):
     except Exception as e:
         print(f"[ptt_worker_intake] admin notification exception (non-fatal): {e}")
 
+    # Send confirmation email to applicant (non-fatal)
+    try:
+        ok, info = send_applicant_received(email, name, company_name)
+        print(f"[ptt_worker_intake] applicant confirmation: ok={ok}, {info}")
+    except Exception as e:
+        print(f"[ptt_worker_intake] applicant confirmation exception (non-fatal): {e}")
+
     return jsonify({
         "status":  "ok",
         "message": "Your application has been submitted. "
-                   "You will receive an email if you are approved.",
+                   "You will receive a confirmation email shortly.",
     }), 200
 
 # I did no harm and this file is not truncated.
