@@ -687,4 +687,59 @@ def insert_ptt_lead(company_name, admin_name, admin_email, industry, facility_si
     finally:
         conn.close()
 
+def send_applicant_received(worker_email: str, worker_name: str, company_name: str):
+    subject = "Your application to " + company_name + " has been received"
+    body = (
+        "<p style=\"font-size:15px; line-height:1.6;\">Hi " + worker_name + ",</p>"
+        "<p style=\"font-size:14px; line-height:1.6;\">"
+        "Thank you for applying to the part-time pool at "
+        "<strong>" + company_name + "</strong>. Your application has been received "
+        "and is currently under review.</p>"
+        "<p style=\"font-size:14px; line-height:1.6;\">"
+        "Someone from the <strong>" + company_name + "</strong> team will be "
+        "reaching out to you directly. Please make sure your phone number "
+        "is correct on your application so they can get in touch.</p>"
+        "<p style=\"font-size:13px; color:#666; line-height:1.6; margin-top:16px;\">"
+        "If you have any questions, contact the HR team at "
+        + company_name + " directly.</p>"
+    )
+    html = _email_wrap(_email_header("Application Received"), body)
+    text = (
+        "Hi " + worker_name + ",\n\n"
+        "Thank you for applying to the part-time pool at " + company_name + ". "
+        "Your application has been received and is under review.\n\n"
+        "Someone from the " + company_name + " team will be reaching out to you directly.\n\n"
+        "Shiftwork Solutions LLC | (415) 265-1621 | shift-work.com"
+    )
+    return _send_email(worker_email, subject, html, text)
+
+
+def send_worker_declined(worker_email: str, worker_name: str, company_name: str):
+    subject = "Your application to " + company_name
+    body = (
+        "<p style=\"font-size:15px; line-height:1.6;\">Hi " + worker_name + ",</p>"
+        "<p style=\"font-size:14px; line-height:1.6;\">"
+        "Thank you for your interest in joining the part-time pool at "
+        "<strong>" + company_name + "</strong>. After careful consideration, "
+        "we are not able to move forward with your application at this time.</p>"
+        "<p style=\"font-size:14px; line-height:1.6;\">"
+        "We will keep your application on file and may reach out in the "
+        "future if a suitable opportunity arises.</p>"
+        "<p style=\"font-size:13px; color:#666; line-height:1.6; margin-top:16px;\">"
+        "We appreciate the time you took to apply and wish you the best "
+        "in your search.</p>"
+    )
+    html = _email_wrap(_email_header("Application Update"), body)
+    text = (
+        "Hi " + worker_name + ",\n\n"
+        "Thank you for your interest in " + company_name + ". After careful "
+        "consideration, we are not able to move forward with your application "
+        "at this time.\n\n"
+        "We will keep your application on file and may reach out in the future "
+        "if a suitable opportunity arises.\n\n"
+        "We appreciate the time you took to apply and wish you the best.\n\n"
+        "Shiftwork Solutions LLC | (415) 265-1621 | shift-work.com"
+    )
+    return _send_email(worker_email, subject, html, text)
+
 # I did no harm and this file is not truncated.
