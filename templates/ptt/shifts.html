@@ -5,9 +5,13 @@
   Shiftwork Solutions LLC
 
   Created:      2026-05-06
-  Last Updated: 2026-05-14
+  Last Updated: 2026-05-28
 
   CHANGELOG:
+    2026-05-28 — PAST SHIFT BADGE.
+      Added "Past" badge in status column for open shifts whose
+      date has already passed. Requires today variable from route.
+
     2026-05-14 — BRANDING UPDATE.
       Added "Powered by Shiftwork Solutions" text to nav bar.
       Added branded footer: shift-work.com, (415) 265-1621,
@@ -92,6 +96,7 @@
     .status-open      { background: rgba(29,158,117,.1);  color: #157A5A; }
     .status-filled    { background: rgba(31,61,92,.1);    color: #1F3D5C; }
     .status-cancelled { background: #F0F0F0; color: #888; }
+    .status-past      { background: rgba(198,40,40,.08); color: #C62828; }
 
     .empty-state { text-align: center; padding: 40px 16px; }
     .empty-icon  { font-size: 40px; margin-bottom: 12px; }
@@ -216,6 +221,9 @@
             </td>
             <td>
               <span class="status-badge status-{{ s.status }}">{{ s.status | title }}</span>
+              {% if s.status == 'open' and s.shift_date | string < today %}
+              <span class="status-badge status-past" style="margin-left:4px;">Past</span>
+              {% endif %}
             </td>
             <td>{{ s.claim_count }}</td>
           </tr>
