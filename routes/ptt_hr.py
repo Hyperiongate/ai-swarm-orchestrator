@@ -1,9 +1,16 @@
 """
 routes/ptt_hr.py  —  Part Time Tracker: HR Admin Routes
 Shiftwork Solutions LLC
-Created: 2026-05-01  |  Last Updated: 2026-05-11
+Created: 2026-05-01  |  Last Updated: 2026-05-28
 
 CHANGELOG:
+  2026-05-28 — DECLINE EMAIL.
+    ptt_worker_reject() now sends a decline email to the applicant
+    via send_worker_declined(). Professional tone, keep-on-file
+    language. Non-fatal — rejection still completes if email fails.
+    Added send_worker_declined to import block. Added worker name/email
+    fetch and company name fetch to the reject route.
+
   2026-05-11 — LOGOUT FIX. ONE CHANGE ONLY.
     ptt_logout() now uses get_session_id_from_request() instead of
     request.cookies.get(PTT_COOKIE_NAME) to find the session ID to delete.
@@ -53,8 +60,8 @@ from routes.ptt_auth import (
     set_session_cookie, clear_session_cookie,
     get_session_id_from_request,
     send_hr_signup_confirmation, send_hr_signup_notification,
-    send_magic_link, send_worker_approved, insert_ptt_lead,
-    require_ptt_admin,
+    send_magic_link, send_worker_approved, send_worker_declined,
+    insert_ptt_lead, require_ptt_admin,
 )
 
 ptt_hr_bp = Blueprint("ptt_hr", __name__)
@@ -806,10 +813,17 @@ def ptt_worker_reject(ptt_session, worker_id):
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
-        cursor.execute("SELECT id FROM ptt_worker WHERE id=%s AND company_id=%s AND status='pending'",
-                       (worker_id, company_id))
-        if not cursor.fetchone():
+        cursor.execute(
+            "SELECT id, name, email FROM ptt_worker "
+            "WHERE id=%s AND company_id=%s AND status='pending'",
+            (worker_id, company_id))
+        worker = cursor.fetchone()
+        if not worker:
             return jsonify({"error": "Worker not found or already processed"}), 404
+        # Fetch company name for decline email
+        cursor.execute("SELECT name FROM ptt_company WHERE id=%s", (company_id,))
+        co = cursor.fetchone()
+        company_name = co["name"] if co else ""
         cursor.execute("""UPDATE ptt_worker SET status='inactive',
             rejected_at=NOW(), rejection_reason=%s WHERE id=%s AND company_id=%s""",
             (reason or None, worker_id, company_id))
@@ -820,6 +834,14 @@ def ptt_worker_reject(ptt_session, worker_id):
         return jsonify({"error": "Failed to reject worker. Please try again."}), 500
     finally:
         conn.close()
+
+    # Send decline email to applicant (non-fatal)
+    try:
+        ok, info = send_worker_declined(worker["email"], worker["name"], company_name)
+        print(f"[ptt_hr] worker declined email: ok={ok}, {info}")
+    except Exception as e:
+        print(f"[ptt_hr] worker declined email exception (non-fatal): {e}")
+
     return jsonify({"status": "ok"}), 200
 
 
