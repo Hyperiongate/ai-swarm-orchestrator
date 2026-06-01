@@ -1,21 +1,28 @@
 """
 Introspection Engine
 Created: January 25, 2026
-Last Updated: March 04, 2026 - POSTGRESQL COMPATIBILITY FIX
+Last Updated: June 01, 2026 — WO-3 PostgreSQL Migration Repair
 
 CHANGELOG:
+- June 01, 2026: WO-3 POSTGRESQL MIGRATION REPAIR
+  * Fix C — Insert id retrieval: _save_introspection() now uses
+    INSERT ... RETURNING id and cursor.fetchone()['id'] instead of
+    cursor.lastrowid (which psycopg2 does not support).
+  * Fix E — Database driver: from database import get_db (SQLite legacy)
+    replaced with from db_engine import get_db_connection throughout.
+    _analyze_goal_alignment(), _save_introspection(), get_latest_introspection(),
+    get_introspection_history() all updated to use get_db_connection() with
+    try...finally conn.close() pattern.
+  * All %s placeholders and named column access introduced in the
+    March 04, 2026 fix are preserved exactly as-is.
+  * No functionality changes. All methods, classes, and public API preserved.
+  Reference: introspection.py (root-level, March 04, 2026) used as pattern.
+
 - March 04, 2026: POSTGRESQL COMPATIBILITY FIX
-  * Fixed column names to match actual introspection_insights table schema:
-      - summary → description
-      - full_analysis_json → data
-      - requires_action → is_actioned
-      - notification_pending → is_read (inverted: unread = pending)
-      - period_analyzed → category
-      - notification_shown_at → updated_at
-  * Changed all ? parameter placeholders to %s (PostgreSQL via db_engine)
-  * Fixed fetchone()[0] → fetchone()['cnt'] for RealDictCursor compatibility
-  * Fixed connection leaks (added try/finally with db.close() everywhere)
-  * No functionality changes — all introspection features preserved
+  * Fixed column names to match actual introspection_insights table schema.
+  * Changed all ? parameter placeholders to %s.
+  * Fixed fetchone()[0] for RealDictCursor compatibility.
+  * Fixed connection leaks.
 
 PURPOSE:
 Main orchestrator for the Introspection Layer.
@@ -37,7 +44,7 @@ import json
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 
-from database import get_db
+from db_engine import get_db_connection
 from orchestration.ai_clients import call_claude_sonnet
 
 
@@ -46,37 +53,28 @@ from orchestration.ai_clients import call_claude_sonnet
 # ============================================================================
 
 INTROSPECTION_TRIGGERS = [
-    # Direct commands
     'run introspection',
     'start introspection',
     'self evaluate',
     'self-evaluate',
     'evaluate yourself',
-
-    # Questions about performance
     'how are you doing',
     'how are you performing',
     'how is the swarm doing',
     'how is the swarm performing',
     'swarm status',
     'swarm health',
-
-    # Report requests
     'show introspection',
     'introspection report',
     'your self assessment',
     'self assessment',
     'show me your assessment',
     'what did you find about yourself',
-
-    # Proposal related
     'any self-improvement suggestions',
     'show me your proposals',
     'pending proposals',
     'improvement proposals',
     'what improvements do you suggest',
-
-    # Reflection requests
     'reflect on your performance',
     'what have you learned about yourself',
     'tell me about yourself',
@@ -95,10 +93,8 @@ def is_introspection_request(user_request: str) -> Dict[str, Any]:
     """
     request_lower = user_request.lower().strip()
 
-    # Check for exact or near matches
     for trigger in INTROSPECTION_TRIGGERS:
         if trigger in request_lower:
-            # Determine action type
             action = 'run'
             if any(word in request_lower for word in ['show', 'report', 'latest', 'recent']):
                 action = 'show_latest'
@@ -112,7 +108,6 @@ def is_introspection_request(user_request: str) -> Dict[str, Any]:
                 'matched_trigger': trigger
             }
 
-    # Check for partial matches with lower confidence
     introspection_words = ['introspect', 'self-aware', 'self aware', 'reflect', 'assessment']
     for word in introspection_words:
         if word in request_lower:
@@ -134,22 +129,18 @@ def is_introspection_request(user_request: str) -> Dict[str, Any]:
 def check_introspection_notifications() -> Dict[str, Any]:
     """
     Check if there's a pending introspection notification.
-    Called at the start of orchestrate() to notify Jim of updates.
 
-    COLUMN MAPPING (March 04, 2026):
+    COLUMN MAPPING:
         introspection_insights actual columns:
         id, insight_type, category, title, description, severity,
         confidence_score, data, is_read, is_actioned, action_taken,
         created_at, updated_at
-
-    Returns:
-        Dict with notification details or has_notification: False
     """
     try:
-        db = get_db()
+        conn = get_db_connection()
         try:
-            # is_read = FALSE means notification is still pending
-            pending = db.execute('''
+            cursor = conn.cursor()
+            cursor.execute('''
                 SELECT
                     id,
                     created_at,
@@ -161,12 +152,12 @@ def check_introspection_notifications() -> Dict[str, Any]:
                 WHERE is_read = FALSE
                 ORDER BY created_at DESC
                 LIMIT 1
-            ''').fetchone()
+            ''')
+            pending = cursor.fetchone()
 
             if not pending:
                 return {'has_notification': False}
 
-            # Parse the full analysis to get health score
             health_score = 0
             trend = 'stable'
             try:
@@ -177,10 +168,10 @@ def check_introspection_notifications() -> Dict[str, Any]:
             except Exception:
                 pass
 
-            # Count pending proposals
-            pending_proposals_row = db.execute('''
-                SELECT COUNT(*) as cnt FROM modification_proposals WHERE status = %s
-            ''', ('pending',)).fetchone()
+            cursor.execute('''
+                SELECT COUNT(*) AS cnt FROM modification_proposals WHERE status = %s
+            ''', ('pending',))
+            pending_proposals_row = cursor.fetchone()
             pending_proposals = pending_proposals_row['cnt'] if pending_proposals_row else 0
 
             return {
@@ -194,7 +185,7 @@ def check_introspection_notifications() -> Dict[str, Any]:
                 'pending_proposals': pending_proposals or 0
             }
         finally:
-            db.close()
+            conn.close()
     except Exception as e:
         print(f"Error checking introspection notifications: {e}")
         return {'has_notification': False, 'error': str(e)}
@@ -203,24 +194,25 @@ def check_introspection_notifications() -> Dict[str, Any]:
 def mark_notification_shown(introspection_id: int) -> bool:
     """Mark an introspection notification as shown (read)."""
     try:
-        db = get_db()
+        conn = get_db_connection()
         try:
-            db.execute('''
+            cursor = conn.cursor()
+            cursor.execute('''
                 UPDATE introspection_insights
                 SET is_read = TRUE, updated_at = CURRENT_TIMESTAMP
                 WHERE id = %s
             ''', (introspection_id,))
-            db.commit()
+            conn.commit()
             return True
         finally:
-            db.close()
+            conn.close()
     except Exception as e:
         print(f"Error marking notification shown: {e}")
         return False
 
 
 # ============================================================================
-# BUSINESS OBJECTIVES (Configured for Goal Alignment)
+# BUSINESS OBJECTIVES
 # ============================================================================
 
 BUSINESS_OBJECTIVES = [
@@ -277,17 +269,8 @@ class IntrospectionEngine:
         self.business_objectives = BUSINESS_OBJECTIVES
 
     def run_introspection(self, days: int = 7, is_monthly: bool = False) -> Dict[str, Any]:
-        """
-        Run a complete introspection cycle.
-
-        Args:
-            days: Number of days to analyze (7 for weekly, 30 for monthly)
-            is_monthly: Whether this is the monthly deep-dive
-
-        Returns:
-            Complete introspection report
-        """
-        print(f"🔍 Starting Introspection Cycle ({'Monthly Deep-Dive' if is_monthly else 'Weekly'})...")
+        """Run a complete introspection cycle."""
+        print(f"Starting Introspection Cycle ({'Monthly Deep-Dive' if is_monthly else 'Weekly'})...")
 
         report = {
             'introspection_type': 'monthly' if is_monthly else 'weekly',
@@ -297,11 +280,10 @@ class IntrospectionEngine:
         }
 
         # Component 1: Self-Monitoring
-        print("  📊 Component 1: Self-Monitoring...")
+        print("  Component 1: Self-Monitoring...")
         try:
             from introspection.self_monitor import get_self_monitor
             monitor = get_self_monitor()
-
             metrics = monitor.collect_metrics(days=days)
             trends = monitor.analyze_trends(metrics)
             anomalies = monitor.detect_anomalies(metrics)
@@ -318,32 +300,29 @@ class IntrospectionEngine:
                 'anomalies': anomalies
             }
         except Exception as e:
-            print(f"    ⚠️ Self-Monitoring failed: {e}")
+            print(f"    Self-Monitoring failed: {e}")
             report['components']['self_monitoring'] = {'status': 'failed', 'error': str(e)}
 
-        # Component 2: Capability Boundaries (stub for Phase 1)
-        print("  🚧 Component 2: Capability Boundaries (Phase 2)...")
+        # Component 2: Capability Boundaries (stub)
         report['components']['capability_boundaries'] = {
             'status': 'pending_phase_2',
             'message': 'Capability boundary tracking will be added in Phase 2'
         }
 
-        # Component 3: Confidence Calibration (stub for Phase 1)
-        print("  🚧 Component 3: Confidence Calibration (Phase 2)...")
+        # Component 3: Confidence Calibration (stub)
         report['components']['confidence_calibration'] = {
             'status': 'pending_phase_2',
             'message': 'Confidence calibration will be added in Phase 2'
         }
 
-        # Component 4: Self-Modification Proposals (stub for Phase 1)
-        print("  🚧 Component 4: Proposals (Phase 3)...")
+        # Component 4: Self-Modification Proposals (stub)
         report['components']['proposals'] = {
             'status': 'pending_phase_3',
             'message': 'Self-modification proposals will be added in Phase 3'
         }
 
         # Component 5: Goal Alignment
-        print("  🎯 Component 5: Goal Alignment...")
+        print("  Component 5: Goal Alignment...")
         try:
             alignment = self._analyze_goal_alignment(days)
             report['components']['goal_alignment'] = {
@@ -354,45 +333,44 @@ class IntrospectionEngine:
                 'observations': alignment.get('observations', [])
             }
         except Exception as e:
-            print(f"    ⚠️ Goal Alignment failed: {e}")
+            print(f"    Goal Alignment failed: {e}")
             report['components']['goal_alignment'] = {'status': 'failed', 'error': str(e)}
 
-        # Generate synthesized reflection
-        print("  💭 Generating reflection narrative...")
+        # Generate reflection
+        print("  Generating reflection narrative...")
         try:
             reflection = self._generate_reflection(report)
             report['reflection'] = reflection
         except Exception as e:
-            print(f"    ⚠️ Reflection generation failed: {e}")
+            print(f"    Reflection generation failed: {e}")
             report['reflection'] = f"Unable to generate reflection: {e}"
 
-        # Calculate overall summary
         report['summary'] = self._generate_summary(report)
 
-        # Save to database
-        print("  💾 Saving introspection report...")
+        print("  Saving introspection report...")
         insight_id = self._save_introspection(report)
         report['insight_id'] = insight_id
 
         self.last_evaluation = report
 
         health_score = report.get('components', {}).get('self_monitoring', {}).get('health_score', 'N/A')
-        print(f"✅ Introspection complete! Health Score: {health_score}/100")
+        print(f"Introspection complete! Health Score: {health_score}/100")
 
         return report
 
     def _analyze_goal_alignment(self, days: int) -> Dict[str, Any]:
         """Analyze how well swarm activities align with business objectives."""
-        db = get_db()
+        conn = get_db_connection()
         try:
+            cursor = conn.cursor()
             cutoff_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d %H:%M:%S')
 
-            # Get all tasks from the period
-            tasks = db.execute('''
+            cursor.execute('''
                 SELECT id, user_request, task_type, status
                 FROM tasks
                 WHERE created_at >= %s
-            ''', (cutoff_date,)).fetchall()
+            ''', (cutoff_date,))
+            tasks = cursor.fetchall()
 
             total_tasks = len(tasks)
             if total_tasks == 0:
@@ -403,7 +381,6 @@ class IntrospectionEngine:
                     'observations': ['No tasks to analyze in this period']
                 }
 
-            # Categorize tasks by objective
             objective_counts = {obj['id']: 0 for obj in self.business_objectives}
             unaligned_count = 0
 
@@ -423,15 +400,12 @@ class IntrospectionEngine:
                 if not matched:
                     unaligned_count += 1
 
-            # Build objective breakdown
             by_objective = []
             weighted_score = 0
 
             for obj in self.business_objectives:
                 count = objective_counts[obj['id']]
                 percentage = round((count / total_tasks * 100), 1) if total_tasks > 0 else 0
-
-                # Score based on how well usage matches weight expectation
                 expected_percentage = obj['weight'] * 100
                 usage_score = min(100, (percentage / expected_percentage * 100)) if expected_percentage > 0 else 0
                 weighted_score += usage_score * obj['weight']
@@ -445,9 +419,7 @@ class IntrospectionEngine:
                     'assessment': self._assess_objective_usage(percentage, expected_percentage)
                 })
 
-            # Generate observations
             observations = []
-
             most_used = max(by_objective, key=lambda x: x['percentage'])
             least_used = min(by_objective, key=lambda x: x['percentage'])
 
@@ -467,10 +439,9 @@ class IntrospectionEngine:
                 'observations': observations
             }
         finally:
-            db.close()
+            conn.close()
 
     def _assess_objective_usage(self, actual: float, expected: float) -> str:
-        """Assess how well actual usage matches expected."""
         if expected == 0:
             return 'n/a'
         ratio = actual / expected
@@ -482,10 +453,7 @@ class IntrospectionEngine:
             return 'underutilized'
 
     def _generate_reflection(self, report: Dict) -> str:
-        """
-        Generate a first-person narrative reflection synthesizing all components.
-        Uses AI to create a thoughtful, human-like self-assessment.
-        """
+        """Generate a first-person narrative reflection via AI."""
         monitoring = report.get('components', {}).get('self_monitoring', {})
         alignment = report.get('components', {}).get('goal_alignment', {})
 
@@ -493,11 +461,9 @@ class IntrospectionEngine:
         trend = monitoring.get('trend_direction', 'stable')
         anomalies = monitoring.get('anomalies_detected', 0)
         metrics = monitoring.get('metrics', {})
-
         tasks = metrics.get('tasks', {})
         total_tasks = tasks.get('total', 0)
         success_rate = tasks.get('success_rate', 0)
-
         alignment_score = alignment.get('alignment_score', 0)
         unaligned = alignment.get('unaligned_tasks', 0)
         by_objective = alignment.get('by_objective', [])
@@ -570,7 +536,6 @@ Write the reflection now:"""
             reflection += f"Most of my activity ({most_used['percentage']}%) focused on {most_used['name']}. "
 
         reflection += "\n\nI'll continue monitoring my performance and looking for ways to better serve the business objectives."
-
         return reflection
 
     def _generate_summary(self, report: Dict) -> Dict[str, Any]:
@@ -592,26 +557,20 @@ Write the reflection now:"""
         """
         Save the introspection report to the database.
 
-        COLUMN MAPPING to actual introspection_insights table:
-            insight_type → insight_type
-            category → period info (was period_analyzed)
-            title → introspection type label
-            description → reflection text (was summary)
-            severity → 'info'
-            confidence_score → health_score / 100
-            data → full JSON report (was full_analysis_json)
-            is_read → FALSE (notification pending)
-            is_actioned → requires_attention flag
+        Uses INSERT ... RETURNING id instead of cursor.lastrowid.
+        Targets only real introspection_insights schema columns.
         """
-        db = get_db()
+        conn = get_db_connection()
         try:
+            cursor = conn.cursor()
             summary = report.get('summary', {})
 
-            cursor = db.execute('''
+            cursor.execute('''
                 INSERT INTO introspection_insights (
                     insight_type, category, title, description, severity,
                     confidence_score, data, is_read, is_actioned
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, FALSE, %s)
+                RETURNING id
             ''', (
                 report.get('introspection_type', 'weekly'),
                 f"{report.get('period_days', 7)} days ending {report.get('generated_at', '')}",
@@ -623,24 +582,27 @@ Write the reflection now:"""
                 summary.get('requires_attention', False)
             ))
 
-            insight_id = cursor.lastrowid
-            db.commit()
+            row = cursor.fetchone()
+            insight_id = row['id'] if row else 0
+            conn.commit()
             return insight_id
         except Exception as e:
             print(f"Failed to save introspection: {e}")
             return 0
         finally:
-            db.close()
+            conn.close()
 
     def get_latest_introspection(self) -> Optional[Dict[str, Any]]:
         """Get the most recent introspection report."""
-        db = get_db()
+        conn = get_db_connection()
         try:
-            row = db.execute('''
+            cursor = conn.cursor()
+            cursor.execute('''
                 SELECT * FROM introspection_insights
                 ORDER BY created_at DESC
                 LIMIT 1
-            ''').fetchone()
+            ''')
+            row = cursor.fetchone()
 
             if row:
                 return {
@@ -658,18 +620,20 @@ Write the reflection now:"""
             print(f"Error fetching latest introspection: {e}")
             return None
         finally:
-            db.close()
+            conn.close()
 
     def get_introspection_history(self, limit: int = 10) -> List[Dict[str, Any]]:
         """Get history of introspection reports."""
-        db = get_db()
+        conn = get_db_connection()
         try:
-            rows = db.execute('''
+            cursor = conn.cursor()
+            cursor.execute('''
                 SELECT id, insight_type, created_at, description, confidence_score, is_actioned
                 FROM introspection_insights
                 ORDER BY created_at DESC
                 LIMIT %s
-            ''', (limit,)).fetchall()
+            ''', (limit,))
+            rows = cursor.fetchall()
 
             return [{
                 'id': row['id'],
@@ -683,7 +647,7 @@ Write the reflection now:"""
             print(f"Error fetching introspection history: {e}")
             return []
         finally:
-            db.close()
+            conn.close()
 
     def format_notification_message(self, notification: Dict) -> str:
         """Format a notification for display in the swarm interface."""
