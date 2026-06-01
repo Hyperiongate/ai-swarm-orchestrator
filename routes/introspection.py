@@ -1,7 +1,25 @@
 """
 Introspection Routes
 Created: January 25, 2026
-Last Updated: January 25, 2026
+Last Updated: June 01, 2026 — WO-3 PostgreSQL Migration Repair
+
+CHANGELOG:
+- June 01, 2026: WO-3 POSTGRESQL MIGRATION REPAIR
+  * Fix A — Placeholders: get_introspection_by_id() had a bare ? placeholder.
+    Replaced with %s.
+  * Fix B — Named cursor access: get_introspection_status() used fetchone()[0]
+    on a COUNT(*) query. Replaced with AS count alias and fetchone()['count'].
+  * Fix D — Schema alignment: get_introspection_by_id() read phantom columns
+    (period_analyzed, summary, requires_action, notification_pending,
+    full_analysis_json) that do not exist in the real introspection_insights
+    table. Rewritten to use real column names (category, description,
+    is_actioned, is_read, data) matching the actual schema.
+  * Fix E — Database driver: get_introspection_status() and
+    get_introspection_by_id() used from database import get_db (SQLite legacy).
+    Replaced with from db_engine import get_db_connection with
+    try...finally conn.close() pattern.
+  * No other changes. All endpoints, blueprint registration, and the
+    import block for the introspection engine are untouched.
 
 API endpoints for the Introspection Layer - emulated self-awareness.
 
@@ -56,12 +74,6 @@ except Exception as e:
 def get_introspection_status():
     """
     Get the status of the introspection system.
-    
-    Returns:
-    - available: Whether introspection is operational
-    - last_introspection: Most recent report summary
-    - components: Status of each introspection component
-    - schedule: When evaluations run
     """
     try:
         if not INTROSPECTION_AVAILABLE or not engine:
@@ -70,20 +82,21 @@ def get_introspection_status():
                 'available': False,
                 'message': 'Introspection Layer not installed'
             })
-        
-        # Get latest introspection
+
         latest = engine.get_latest_introspection()
-        
-        # Get introspection count
-        from database import get_db
-        db = get_db()
+
+        from db_engine import get_db_connection
+        conn = get_db_connection()
         try:
-            count = db.execute('SELECT COUNT(*) FROM introspection_insights').fetchone()[0]
-        except:
+            cursor = conn.cursor()
+            cursor.execute('SELECT COUNT(*) AS count FROM introspection_insights')
+            row = cursor.fetchone()
+            count = row['count'] if row else 0
+        except Exception:
             count = 0
         finally:
-            db.close()
-        
+            conn.close()
+
         return jsonify({
             'success': True,
             'available': True,
@@ -123,15 +136,6 @@ def get_introspection_status():
 def run_introspection():
     """
     Trigger an introspection cycle.
-    
-    Request Body (optional):
-    {
-        "days": 7,           // Number of days to analyze (default: 7, max: 90)
-        "is_monthly": false  // Whether this is a monthly deep-dive
-    }
-    
-    Returns:
-    - Complete introspection report with health score, alignment, and reflection
     """
     try:
         if not INTROSPECTION_AVAILABLE or not engine:
@@ -139,26 +143,22 @@ def run_introspection():
                 'success': False,
                 'error': 'Introspection Layer not available'
             }), 503
-        
-        # Parse request parameters
+
         data = request.json or {}
         days = data.get('days', 7)
         is_monthly = data.get('is_monthly', False)
-        
-        # Validate days
+
         if not isinstance(days, int) or days < 1 or days > 90:
             return jsonify({
                 'success': False,
                 'error': 'Days must be an integer between 1 and 90'
             }), 400
-        
-        # Auto-detect monthly if 30 days requested
+
         if days >= 28 and not is_monthly:
             is_monthly = True
-        
-        # Run the introspection
+
         report = engine.run_introspection(days=days, is_monthly=is_monthly)
-        
+
         return jsonify({
             'success': True,
             'introspection': {
@@ -191,12 +191,6 @@ def run_introspection():
 def get_latest_introspection():
     """
     Get the most recent introspection report.
-    
-    Query Parameters:
-    - full: If 'true', include complete raw data (default: false)
-    
-    Returns:
-    - Latest introspection summary or full report
     """
     try:
         if not INTROSPECTION_AVAILABLE or not engine:
@@ -204,18 +198,17 @@ def get_latest_introspection():
                 'success': False,
                 'error': 'Introspection Layer not available'
             }), 503
-        
+
         include_full = request.args.get('full', 'false').lower() == 'true'
-        
         latest = engine.get_latest_introspection()
-        
+
         if not latest:
             return jsonify({
                 'success': True,
                 'introspection': None,
                 'message': 'No introspections found. Run an introspection first.'
             })
-        
+
         response = {
             'success': True,
             'introspection': {
@@ -228,10 +221,10 @@ def get_latest_introspection():
                 'notification_pending': latest.get('notification_pending')
             }
         }
-        
+
         if include_full and latest.get('full_report'):
             response['full_report'] = latest.get('full_report')
-        
+
         return jsonify(response)
     except Exception as e:
         return jsonify({
@@ -248,12 +241,6 @@ def get_latest_introspection():
 def get_introspection_history():
     """
     Get history of past introspections.
-    
-    Query Parameters:
-    - limit: Maximum number to return (default: 10, max: 50)
-    
-    Returns:
-    - List of introspection summaries (newest first)
     """
     try:
         if not INTROSPECTION_AVAILABLE or not engine:
@@ -261,12 +248,11 @@ def get_introspection_history():
                 'success': False,
                 'error': 'Introspection Layer not available'
             }), 503
-        
+
         limit = request.args.get('limit', 10, type=int)
         limit = min(max(limit, 1), 50)
-        
         history = engine.get_introspection_history(limit=limit)
-        
+
         return jsonify({
             'success': True,
             'introspections': history,
@@ -280,16 +266,19 @@ def get_introspection_history():
 
 
 # ============================================================================
-# GET SPECIFIC INTROSPECTION
+# GET SPECIFIC INTROSPECTION BY ID
 # ============================================================================
 
 @introspection_bp.route('/api/introspection/<int:introspection_id>', methods=['GET'])
 def get_introspection_by_id(introspection_id):
     """
     Get a specific introspection by ID.
-    
-    Returns:
-    - Full introspection report
+
+    Uses real introspection_insights column names:
+        id, insight_type, created_at, category (was period_analyzed),
+        description (was summary), confidence_score,
+        is_actioned (was requires_action), is_read (was notification_pending),
+        data (was full_analysis_json)
     """
     try:
         if not INTROSPECTION_AVAILABLE:
@@ -297,39 +286,40 @@ def get_introspection_by_id(introspection_id):
                 'success': False,
                 'error': 'Introspection Layer not available'
             }), 503
-        
-        from database import get_db
-        db = get_db()
-        
+
+        from db_engine import get_db_connection
+        conn = get_db_connection()
         try:
-            row = db.execute('''
-                SELECT * FROM introspection_insights WHERE id = ?
-            ''', (introspection_id,)).fetchone()
-            
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT * FROM introspection_insights WHERE id = %s
+            ''', (introspection_id,))
+            row = cursor.fetchone()
+
             if not row:
                 return jsonify({
                     'success': False,
                     'error': f'Introspection {introspection_id} not found'
                 }), 404
-            
+
             introspection = {
                 'id': row['id'],
                 'insight_type': row['insight_type'],
                 'created_at': row['created_at'],
-                'period_analyzed': row['period_analyzed'],
-                'summary': row['summary'],
+                'period_analyzed': row['category'],
+                'summary': row['description'],
                 'health_score': int(row['confidence_score'] * 100) if row['confidence_score'] else 0,
-                'requires_action': bool(row['requires_action']),
-                'notification_pending': bool(row['notification_pending']),
-                'full_report': json.loads(row['full_analysis_json']) if row['full_analysis_json'] else None
+                'requires_action': bool(row['is_actioned']),
+                'notification_pending': not bool(row['is_read']),
+                'full_report': json.loads(row['data']) if row['data'] else None
             }
-            
+
             return jsonify({
                 'success': True,
                 'introspection': introspection
             })
         finally:
-            db.close()
+            conn.close()
     except Exception as e:
         return jsonify({
             'success': False,
@@ -345,11 +335,6 @@ def get_introspection_by_id(introspection_id):
 def check_notification():
     """
     Check if there's a pending introspection notification.
-    
-    Returns:
-    - has_notification: boolean
-    - notification details if pending
-    - formatted_message: Ready to display message
     """
     try:
         if not INTROSPECTION_AVAILABLE or not engine:
@@ -357,12 +342,12 @@ def check_notification():
                 'success': True,
                 'has_notification': False
             })
-        
+
         notification = check_introspection_notifications()
-        
+
         if notification.get('has_notification'):
             notification['formatted_message'] = engine.format_notification_message(notification)
-        
+
         return jsonify({
             'success': True,
             **notification
@@ -382,12 +367,7 @@ def check_notification():
 @introspection_bp.route('/api/introspection/notification/dismiss', methods=['POST'])
 def dismiss_notification():
     """
-    Dismiss (mark as shown) a pending introspection notification.
-    
-    Request Body:
-    {
-        "introspection_id": 123
-    }
+    Dismiss a pending introspection notification.
     """
     try:
         if not INTROSPECTION_AVAILABLE:
@@ -395,18 +375,18 @@ def dismiss_notification():
                 'success': False,
                 'error': 'Introspection Layer not available'
             }), 503
-        
+
         data = request.json or {}
         introspection_id = data.get('introspection_id')
-        
+
         if not introspection_id:
             return jsonify({
                 'success': False,
                 'error': 'introspection_id is required'
             }), 400
-        
+
         success = mark_notification_shown(introspection_id)
-        
+
         return jsonify({
             'success': success,
             'message': 'Notification dismissed' if success else 'Failed to dismiss notification'
@@ -426,12 +406,6 @@ def dismiss_notification():
 def get_reflection():
     """
     Get just the reflection narrative from the latest introspection.
-    This is the first-person self-assessment text.
-    
-    Returns:
-    - reflection: The narrative text
-    - health_score: Current health score
-    - generated_at: When the reflection was generated
     """
     try:
         if not INTROSPECTION_AVAILABLE or not engine:
@@ -439,18 +413,18 @@ def get_reflection():
                 'success': False,
                 'error': 'Introspection Layer not available'
             }), 503
-        
+
         latest = engine.get_latest_introspection()
-        
+
         if not latest or not latest.get('full_report'):
             return jsonify({
                 'success': True,
                 'reflection': None,
                 'message': 'No reflection available. Run an introspection first.'
             })
-        
+
         full_report = latest.get('full_report', {})
-        
+
         return jsonify({
             'success': True,
             'reflection': full_report.get('reflection', ''),
@@ -473,11 +447,6 @@ def get_reflection():
 def get_goal_alignment():
     """
     Get detailed goal alignment analysis from the latest introspection.
-    
-    Returns:
-    - alignment_score: Overall alignment percentage
-    - by_objective: Breakdown by business objective
-    - observations: Key findings
     """
     try:
         if not INTROSPECTION_AVAILABLE or not engine:
@@ -485,19 +454,19 @@ def get_goal_alignment():
                 'success': False,
                 'error': 'Introspection Layer not available'
             }), 503
-        
+
         latest = engine.get_latest_introspection()
-        
+
         if not latest or not latest.get('full_report'):
             return jsonify({
                 'success': True,
                 'alignment': None,
                 'message': 'No alignment data available. Run an introspection first.'
             })
-        
+
         full_report = latest.get('full_report', {})
         alignment = full_report.get('components', {}).get('goal_alignment', {})
-        
+
         return jsonify({
             'success': True,
             'alignment': {
@@ -525,17 +494,6 @@ def get_goal_alignment():
 def detect_intent():
     """
     Detect if a user message is an introspection request.
-    Used by the orchestrator to route introspection commands.
-    
-    Request Body:
-    {
-        "message": "how are you doing?"
-    }
-    
-    Returns:
-    - is_introspection: boolean
-    - action: 'run', 'show_latest', 'show_proposals', or null
-    - confidence: float
     """
     try:
         if not INTROSPECTION_AVAILABLE:
@@ -544,18 +502,18 @@ def detect_intent():
                 'is_introspection': False,
                 'message': 'Introspection Layer not available'
             })
-        
+
         data = request.json or {}
         message = data.get('message', '')
-        
+
         if not message:
             return jsonify({
                 'success': False,
                 'error': 'message is required'
             }), 400
-        
+
         result = is_introspection_request(message)
-        
+
         return jsonify({
             'success': True,
             **result
