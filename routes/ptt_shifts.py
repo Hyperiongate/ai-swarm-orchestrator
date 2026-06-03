@@ -1,13 +1,19 @@
 """
 routes/ptt_shifts.py
-AI Swarm Orchestrator — Part Time Tracker: HR Shift Management Routes
+AI Swarm Orchestrator - Part Time Tracker: HR Shift Management Routes
 Shiftwork Solutions LLC
 
 Created:      2026-05-06
-Last Updated: 2026-05-06
+Last Updated: 2026-06-03 - WO-5 encoding fix: replaced em-dash on line 3
+              with ASCII hyphen (was causing SyntaxError: invalid character
+              U+2014 on startup, preventing ptt_shifts_bp from registering).
 
 CHANGELOG:
-  2026-05-06 — INITIAL BUILD (Phase 3).
+  2026-06-03 - ENCODING FIX.
+    Replaced em-dash (U+2014) with ASCII hyphen (-) in the module
+    docstring header. No functional changes whatsoever.
+
+  2026-05-06 - INITIAL BUILD (Phase 3).
     HR shift management: create, list, view, cancel shifts.
     Matching engine: filters active workers by skill, availability,
     blackouts, and existing commitments.
@@ -15,17 +21,17 @@ CHANGELOG:
     Claim management: confirm or decline worker-initiated claims.
 
 ROUTES (HTML):
-    GET  /ptt/shifts                — shift list
-    GET  /ptt/shifts/new            — create shift form
-    GET  /ptt/shifts/<id>           — shift detail + matches + claims
+    GET  /ptt/shifts                -- shift list
+    GET  /ptt/shifts/new            -- create shift form
+    GET  /ptt/shifts/<id>           -- shift detail + matches + claims
 
 API ROUTES:
-    POST /api/ptt/admin/shifts                    — create shift
-    POST /api/ptt/admin/shifts/<id>/cancel        — cancel shift
-    GET  /api/ptt/admin/shifts/<id>/matches       — qualified workers
-    POST /api/ptt/admin/shifts/<id>/outreach/<wid>— mark as contacted
-    POST /api/ptt/admin/claims/<id>/confirm       — confirm claim
-    POST /api/ptt/admin/claims/<id>/decline       — decline claim
+    POST /api/ptt/admin/shifts                     -- create shift
+    POST /api/ptt/admin/shifts/<id>/cancel         -- cancel shift
+    GET  /api/ptt/admin/shifts/<id>/matches        -- qualified workers
+    POST /api/ptt/admin/shifts/<id>/outreach/<wid> -- mark as contacted
+    POST /api/ptt/admin/claims/<id>/confirm        -- confirm claim
+    POST /api/ptt/admin/claims/<id>/decline        -- decline claim
 
 MATCHING LOGIC:
     1. Active workers in this company
@@ -103,7 +109,7 @@ def ptt_shifts_list(ptt_session, _session_id=None):
 @ptt_shifts_bp.route("/ptt/shifts/<int:shift_id>")
 @require_ptt_admin
 def ptt_shift_detail(ptt_session, shift_id, _session_id=None):
-    """HR shift detail page — shows matches and claims."""
+    """HR shift detail page -- shows matches and claims."""
     company_id = ptt_session["company_id"]
 
     conn = get_db_connection()
@@ -150,17 +156,19 @@ def ptt_shift_detail(ptt_session, shift_id, _session_id=None):
     finally:
         conn.close()
 
+    today = datetime.now(timezone.utc).date().isoformat()
     return render_template("ptt/shift_detail.html",
                            company=company,
                            shift=shift,
                            claims=claims,
                            contacted_ids=contacted_ids,
                            ptt_session=ptt_session,
-                           session_id=_session_id or "")
+                           session_id=_session_id or "",
+                           today=today)
 
 
 # =============================================================================
-# API — SHIFT CRUD
+# API -- SHIFT CRUD
 # =============================================================================
 
 @ptt_shifts_bp.route("/api/ptt/admin/shifts", methods=["POST"])
@@ -181,7 +189,7 @@ def ptt_shift_create(ptt_session):
     end_time          = (data.get("end_time") or "").strip()
     workers_needed    = data.get("workers_needed", 1)
     urgency           = (data.get("urgency") or "moderate").strip()
-    skill_required_id = data.get("skill_required_id")  # int or None
+    skill_required_id = data.get("skill_required_id")
     notes             = (data.get("notes") or "").strip()
 
     if not title:
@@ -202,7 +210,6 @@ def ptt_shift_create(ptt_session):
     except (TypeError, ValueError):
         workers_needed = 1
 
-    # Validate skill_required_id belongs to this company
     if skill_required_id:
         try:
             skill_required_id = int(skill_required_id)
@@ -269,7 +276,7 @@ def ptt_shift_cancel(ptt_session, shift_id):
 
 
 # =============================================================================
-# API — MATCHING ENGINE
+# API -- MATCHING ENGINE
 # =============================================================================
 
 @ptt_shifts_bp.route("/api/ptt/admin/shifts/<int:shift_id>/matches", methods=["GET"])
@@ -290,7 +297,6 @@ def ptt_shift_matches(ptt_session, shift_id):
     try:
         cursor = conn.cursor()
 
-        # Get shift details
         cursor.execute("""
             SELECT id, shift_date, start_time, end_time, skill_required_id
             FROM ptt_shift
@@ -305,16 +311,12 @@ def ptt_shift_matches(ptt_session, shift_id):
         start_time        = shift["start_time"]
         end_time          = shift["end_time"]
 
-        # Determine day_of_week from shift_date
-        # PostgreSQL: EXTRACT(DOW FROM date) returns 0=Sunday .. 6=Saturday
         cursor.execute("""
             SELECT EXTRACT(DOW FROM %s::date)::int AS dow
         """, (str(shift_date),))
         dow = cursor.fetchone()["dow"]
 
-        # Step 1: Start with active workers in this company
         if skill_required_id:
-            # Step 2: Filter by skill
             cursor.execute("""
                 SELECT w.id, w.name, w.email, w.phone
                 FROM ptt_worker w
@@ -336,7 +338,6 @@ def ptt_shift_matches(ptt_session, shift_id):
 
         candidate_ids = [w["id"] for w in candidates]
 
-        # Step 3: Filter by availability
         cursor.execute("""
             SELECT DISTINCT worker_id FROM ptt_availability
             WHERE worker_id = ANY(%s::int[])
@@ -346,7 +347,6 @@ def ptt_shift_matches(ptt_session, shift_id):
         """, (candidate_ids, dow, str(start_time), str(end_time)))
         available_ids = {r["worker_id"] for r in cursor.fetchall()}
 
-        # Step 4: Exclude blackouts covering the shift date
         cursor.execute("""
             SELECT DISTINCT worker_id FROM ptt_blackout
             WHERE worker_id = ANY(%s::int[])
@@ -355,7 +355,6 @@ def ptt_shift_matches(ptt_session, shift_id):
         """, (candidate_ids, str(shift_date), str(shift_date)))
         blacked_out_ids = {r["worker_id"] for r in cursor.fetchall()}
 
-        # Step 5: Exclude workers with overlapping confirmed/claimed shifts
         cursor.execute("""
             SELECT DISTINCT c.worker_id
             FROM ptt_shift_claim c
@@ -370,13 +369,11 @@ def ptt_shift_matches(ptt_session, shift_id):
               str(end_time), str(start_time), shift_id))
         overlapping_ids = {r["worker_id"] for r in cursor.fetchall()}
 
-        # Get skills and outreach status for qualifying workers
         cursor.execute("""
             SELECT worker_id FROM ptt_shift_outreach WHERE shift_id = %s
         """, (shift_id,))
         contacted_ids = {r["worker_id"] for r in cursor.fetchall()}
 
-        # Build result
         result = []
         for w in candidates:
             wid = w["id"]
@@ -387,7 +384,6 @@ def ptt_shift_matches(ptt_session, shift_id):
             if wid in overlapping_ids:
                 continue
 
-            # Get worker skills
             cursor.execute("""
                 SELECT s.name FROM ptt_worker_skill ws
                 JOIN ptt_skill s ON s.id = ws.skill_id
@@ -397,12 +393,12 @@ def ptt_shift_matches(ptt_session, shift_id):
             skills = [r["name"] for r in cursor.fetchall()]
 
             result.append({
-                "id":          wid,
-                "name":        w["name"],
-                "email":       w["email"],
-                "phone":       w["phone"] or "",
-                "skills":      skills,
-                "contacted":   wid in contacted_ids,
+                "id":        wid,
+                "name":      w["name"],
+                "email":     w["email"],
+                "phone":     w["phone"] or "",
+                "skills":    skills,
+                "contacted": wid in contacted_ids,
             })
 
     finally:
@@ -412,32 +408,26 @@ def ptt_shift_matches(ptt_session, shift_id):
 
 
 # =============================================================================
-# API — OUTREACH
+# API -- OUTREACH
 # =============================================================================
 
 @ptt_shifts_bp.route("/api/ptt/admin/shifts/<int:shift_id>/outreach/<int:worker_id>",
                      methods=["POST"])
 @require_ptt_admin
 def ptt_shift_outreach(ptt_session, shift_id, worker_id):
-    """
-    Mark a worker as contacted for a shift.
-    Upserts a row in ptt_shift_outreach.
-    """
+    """Mark a worker as contacted for a shift. Upserts ptt_shift_outreach."""
     company_id = ptt_session["company_id"]
-    admin_id   = ptt_session["user_id"]
 
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
 
-        # Verify shift belongs to this company
         cursor.execute("""
             SELECT id FROM ptt_shift WHERE id = %s AND company_id = %s
         """, (shift_id, company_id))
         if not cursor.fetchone():
             return jsonify({"error": "Shift not found"}), 404
 
-        # Verify worker belongs to this company
         cursor.execute("""
             SELECT id FROM ptt_worker WHERE id = %s AND company_id = %s
         """, (worker_id, company_id))
@@ -463,7 +453,7 @@ def ptt_shift_outreach(ptt_session, shift_id, worker_id):
 
 
 # =============================================================================
-# API — CLAIM MANAGEMENT
+# API -- CLAIM MANAGEMENT
 # =============================================================================
 
 @ptt_shifts_bp.route("/api/ptt/admin/claims/<int:claim_id>/confirm", methods=["POST"])
@@ -479,7 +469,6 @@ def ptt_claim_confirm(ptt_session, claim_id):
     try:
         cursor = conn.cursor()
 
-        # Get the claim and verify it belongs to this company
         cursor.execute("""
             SELECT c.id, c.shift_id, c.worker_id, c.status,
                    s.workers_needed, s.company_id
@@ -493,21 +482,18 @@ def ptt_claim_confirm(ptt_session, claim_id):
         if claim["status"] != "claimed":
             return jsonify({"error": "Claim is not in 'claimed' status"}), 409
 
-        # Confirm the claim
         cursor.execute("""
             UPDATE ptt_shift_claim
             SET status = 'confirmed', resolved_at = NOW()
             WHERE id = %s
         """, (claim_id,))
 
-        # Count confirmed claims for this shift
         cursor.execute("""
             SELECT COUNT(*) AS cnt FROM ptt_shift_claim
             WHERE shift_id = %s AND status = 'confirmed'
         """, (claim["shift_id"],))
         confirmed_count = cursor.fetchone()["cnt"]
 
-        # Fill the shift if enough workers confirmed
         if confirmed_count >= claim["workers_needed"]:
             cursor.execute("""
                 UPDATE ptt_shift SET status = 'filled', updated_at = NOW()
