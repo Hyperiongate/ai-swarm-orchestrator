@@ -1,476 +1,570 @@
-<!DOCTYPE html>
-<!--
-  templates/ptt/shift_detail.html
-  Part Time Tracker Lite — HR Shift Detail
-  Shiftwork Solutions LLC
+"""
+routes/ptt_shifts.py
+AI Swarm Orchestrator — Part Time Tracker: HR Shift Management Routes
+Shiftwork Solutions LLC
 
-  Created:      2026-05-06
-  Last Updated: 2026-05-28
+Created:      2026-05-06
+Last Updated: 2026-05-06
 
-  CHANGELOG:
-    2026-05-28 — PAST SHIFT WARNING BANNER.
-      Added warning banner at top of shift detail page when the
-      shift date has passed but status is still open. Requires
-      today variable from route.
+CHANGELOG:
+  2026-05-06 — INITIAL BUILD (Phase 3).
+    HR shift management: create, list, view, cancel shifts.
+    Matching engine: filters active workers by skill, availability,
+    blackouts, and existing commitments.
+    Outreach tracking: mark a worker as contacted for a shift.
+    Claim management: confirm or decline worker-initiated claims.
 
-    2026-05-14 — BRANDING UPDATE.
-      Added "Powered by Shiftwork Solutions" text to nav bar.
-      Added branded footer: shift-work.com, (415) 265-1621,
-      Contact@shift-work.com, © 2026 Shiftwork Solutions LLC.
-      No functional changes.
+ROUTES (HTML):
+    GET  /ptt/shifts                — shift list
+    GET  /ptt/shifts/new            — create shift form
+    GET  /ptt/shifts/<id>           — shift detail + matches + claims
 
-    2026-05-06 — INITIAL BUILD (Phase 3).
-      Shift info header, edit-in-place for notes.
-      "Find Qualified Workers" section — loads via API, shows match list
-      with email/phone copy buttons and "Mark as contacted" toggle.
-      Claims section with confirm/decline buttons.
+API ROUTES:
+    POST /api/ptt/admin/shifts                    — create shift
+    POST /api/ptt/admin/shifts/<id>/cancel        — cancel shift
+    GET  /api/ptt/admin/shifts/<id>/matches       — qualified workers
+    POST /api/ptt/admin/shifts/<id>/outreach/<wid>— mark as contacted
+    POST /api/ptt/admin/claims/<id>/confirm       — confirm claim
+    POST /api/ptt/admin/claims/<id>/decline       — decline claim
 
-  Template variables:
-    company       — dict: name
-    shift         — dict: id, title, shift_date, start_time, end_time,
-                          workers_needed, status, urgency, notes,
-                          skill_required_id, skill_name
-    claims        — list: id, status, claimed_at, notes,
-                          worker_id, worker_name, worker_email, worker_phone
-    contacted_ids — set of worker_ids already contacted
-    ptt_session   — dict
+MATCHING LOGIC:
+    1. Active workers in this company
+    2. Filter by skill_required_id (if set)
+    3. Filter by availability (day_of_week covers shift start+end time)
+    4. Exclude blackouts covering the shift date
+    5. Exclude workers with overlapping confirmed/claimed shifts
 
-  I did no harm and this file is not truncated.
--->
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{{ shift.title }} — Part Time Tracker</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: Arial, Helvetica, sans-serif; background: #F4F6F8; color: #1A1A1A; min-height: 100vh; }
+I did no harm and this file is not truncated.
+"""
 
-    nav { background: #1F3D5C; padding: 0 24px; height: 56px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
-    .nav-brand { display: flex; align-items: center; gap: 10px; text-decoration: none; }
-    .nav-logo-mark { width: 32px; height: 32px; background: #E8610A; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 18px; font-weight: 700; }
-    .nav-title { color: #EEAE26; font-size: 15px; font-weight: 700; }
-    .nav-sub   { color: rgba(255,255,255,.55); font-size: 11px; }
-    .nav-links { display: flex; align-items: center; gap: 20px; }
-    .nav-link  { color: rgba(255,255,255,.7); font-size: 13px; text-decoration: none; }
-    .nav-link:hover { color: #fff; }
-    .nav-powered { color: rgba(255,255,255,.55); font-size: 12px; font-style: italic; white-space: nowrap; }
-    .nav-logout { color: rgba(255,255,255,.5); font-size: 12px; text-decoration: none; }
-    .nav-logout:hover { color: #fff; }
+from datetime import datetime, timezone
+from flask import Blueprint, request, jsonify, render_template, redirect
 
-    .page-header { background: #1F3D5C; padding: 20px 24px 24px; border-bottom: 3px solid #E8610A; }
-    .page-header-inner { max-width: 900px; margin: 0 auto; }
-    .breadcrumb { color: rgba(255,255,255,.5); font-size: 12px; margin-bottom: 6px; }
-    .breadcrumb a { color: rgba(255,255,255,.5); text-decoration: none; }
-    .breadcrumb a:hover { color: #fff; }
-    .page-header h1 { color: #fff; font-size: clamp(18px,4vw,22px); font-weight: 700; }
+from db_engine import get_db_connection
+from routes.ptt_auth import require_ptt_admin, send_worker_claimed_shift
 
-    .main { max-width: 900px; margin: 0 auto; padding: 28px 16px 48px; }
-
-    .section-card { background: #fff; border-radius: 8px; box-shadow: 0 1px 8px rgba(31,61,92,.07); margin-bottom: 20px; overflow: hidden; }
-    .section-card-header { background: #F8FAFB; border-bottom: 1px solid #E8EDF2; padding: 14px 20px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-    .section-card-header h2 { font-size: 15px; font-weight: 700; color: #1F3D5C; }
-    .section-card-body { padding: 20px; }
-    .badge { background: #EEF3F8; color: #1F3D5C; font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 12px; }
-
-    .info-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 14px; }
-    .info-item .lbl { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: #888; margin-bottom: 3px; }
-    .info-item .val { font-size: 14px; color: #1A1A1A; }
-
-    .urgency-badge { display: inline-block; font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 10px; }
-    .urgency-urgent    { background: rgba(198,40,40,.1);  color: #C62828; }
-    .urgency-moderate  { background: rgba(232,97,10,.1);  color: #B85000; }
-    .urgency-long_term { background: rgba(29,158,117,.1); color: #157A5A; }
-
-    .status-badge { display: inline-block; font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 10px; }
-    .status-open      { background: rgba(29,158,117,.1); color: #157A5A; }
-    .status-filled    { background: rgba(31,61,92,.1);   color: #1F3D5C; }
-    .status-cancelled { background: #F0F0F0; color: #888; }
-
-    .notes-text { font-size: 13px; color: #555; line-height: 1.6; margin-top: 14px; padding-top: 14px; border-top: 1px solid #E8EDF2; }
-
-    .btn-cancel-shift { background: #fff; color: #C62828; border: 1.5px solid #C62828; padding: 6px 14px; border-radius: 4px; font-size: 12px; font-weight: 700; font-family: Arial, sans-serif; cursor: pointer; }
-    .btn-cancel-shift:hover { background: #FFF0EE; }
-    .btn-cancel-shift:disabled { opacity: .5; cursor: not-allowed; }
-
-    .match-toolbar { margin-bottom: 16px; }
-    .btn-load-matches { background: #1F3D5C; color: #fff; border: none; padding: 9px 20px; border-radius: 4px; font-size: 13px; font-weight: 700; font-family: Arial, sans-serif; cursor: pointer; transition: background .15s; }
-    .btn-load-matches:hover { background: #0D2438; }
-    .btn-load-matches:disabled { opacity: .6; cursor: not-allowed; }
-
-    .match-row { display: flex; align-items: flex-start; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #F0F4F8; gap: 12px; }
-    .match-row:last-child { border-bottom: none; }
-    .match-info { flex: 1; min-width: 0; }
-    .match-name { font-size: 14px; font-weight: 700; color: #1F3D5C; }
-    .match-contact { font-size: 12px; color: #666; margin-top: 2px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-    .btn-copy-small { background: #EEF3F8; border: none; color: #1F3D5C; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 3px; cursor: pointer; font-family: Arial, sans-serif; }
-    .btn-copy-small:hover { background: #C8D8E8; }
-    .match-skills { margin-top: 5px; }
-    .skill-tag { display: inline-block; background: #EEF3F8; border-radius: 10px; padding: 2px 8px; margin: 2px 2px 0 0; color: #1F3D5C; font-size: 11px; font-weight: 600; }
-
-    .btn-contacted { background: #fff; border: 1.5px solid #C8D8E8; color: #888; padding: 5px 12px; border-radius: 4px; font-size: 12px; font-weight: 700; font-family: Arial, sans-serif; cursor: pointer; transition: all .15s; white-space: nowrap; flex-shrink: 0; }
-    .btn-contacted:hover { border-color: #1F3D5C; color: #1F3D5C; }
-    .btn-contacted.done { background: #EEF3F8; border-color: #1D9E75; color: #1D9E75; cursor: default; }
-
-    .no-matches { font-size: 13px; color: #888; font-style: italic; padding: 8px 0; }
-
-    .claim-row { display: flex; align-items: flex-start; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #F0F4F8; gap: 12px; }
-    .claim-row:last-child { border-bottom: none; }
-    .claim-info { flex: 1; min-width: 0; }
-    .claim-worker { font-size: 14px; font-weight: 700; color: #1F3D5C; }
-    .claim-meta   { font-size: 12px; color: #666; margin-top: 2px; }
-    .claim-status { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; margin-top: 4px; }
-    .claim-claimed   { background: rgba(232,97,10,.1);  color: #B85000; }
-    .claim-confirmed { background: rgba(29,158,117,.1); color: #157A5A; }
-    .claim-declined  { background: #F0F0F0; color: #888; }
-    .claim-actions { display: flex; gap: 8px; flex-shrink: 0; }
-
-    .btn-confirm { background: #1D9E75; color: #fff; border: none; padding: 6px 14px; border-radius: 4px; font-size: 12px; font-weight: 700; font-family: Arial, sans-serif; cursor: pointer; }
-    .btn-confirm:hover { background: #167A5A; }
-    .btn-confirm:disabled { opacity: .5; cursor: not-allowed; }
-    .btn-decline { background: #fff; color: #C62828; border: 1.5px solid #C62828; padding: 6px 14px; border-radius: 4px; font-size: 12px; font-weight: 700; font-family: Arial, sans-serif; cursor: pointer; }
-    .btn-decline:hover { background: #FFF0EE; }
-    .btn-decline:disabled { opacity: .5; cursor: not-allowed; }
-
-    .empty-state { text-align: center; padding: 24px 16px; }
-    .empty-icon  { font-size: 32px; margin-bottom: 10px; }
-    .empty-state h3 { font-size: 15px; color: #1F3D5C; margin-bottom: 6px; }
-    .empty-state p  { font-size: 13px; color: #666; }
-
-    .past-warning {
-      background: rgba(198,40,40,.08); border-left: 4px solid #C62828;
-      padding: 12px 16px; border-radius: 0 6px 6px 0; margin-bottom: 20px;
-      font-size: 13px; color: #7A1F1F; display: flex; align-items: center; gap: 8px;
-    }
-    .past-warning strong { color: #C62828; }
-
-    .toast { position: fixed; bottom: 20px; right: 20px; background: #1D9E75; color: #fff; padding: 10px 18px; border-radius: 6px; font-size: 13px; font-weight: 700; box-shadow: 0 4px 16px rgba(0,0,0,.2); transform: translateY(80px); opacity: 0; transition: transform .25s, opacity .25s; z-index: 9999; }
-    .toast.visible { transform: translateY(0); opacity: 1; }
-    .toast.error { background: #C62828; }
-
-    /* ── FOOTER ── */
-    .ptt-footer { background: #1F3D5C; margin-top: 40px; padding: 20px 24px; text-align: center; }
-    .ptt-footer .powered { color: #EEAE26; font-size: 13px; font-weight: 700; margin-bottom: 6px; }
-    .ptt-footer .contact { color: rgba(255,255,255,.55); font-size: 12px; line-height: 1.8; }
-    .ptt-footer .contact a { color: rgba(255,255,255,.7); text-decoration: none; }
-    .ptt-footer .contact a:hover { color: #fff; }
-    .ptt-footer .copy { color: rgba(255,255,255,.3); font-size: 11px; margin-top: 8px; }
-  </style>
-</head>
-<body>
-  <div class="toast" id="toast"></div>
-
-  <nav>
-    <a href="/ptt/dashboard" class="nav-brand">
-      <div class="nav-logo-mark">S</div>
-      <div>
-        <div class="nav-title">Part Time Tracker</div>
-        <div class="nav-sub">{{ company.name }}</div>
-      </div>
-    </a>
-    <div class="nav-links">
-      <a href="/ptt/dashboard{% if session_id %}?sid={{ session_id }}{% endif %}" class="nav-link">Dashboard</a>
-      <a href="/ptt/shifts{% if session_id %}?sid={{ session_id }}{% endif %}" class="nav-link">Shifts</a>
-      <span class="nav-powered">Powered by Shiftwork Solutions</span>
-      <a href="/ptt/logout" class="nav-logout">Log out</a>
-    </div>
-  </nav>
-
-  <div class="page-header">
-    <div class="page-header-inner">
-      <div class="breadcrumb">
-        <a href="/ptt/shifts{% if session_id %}?sid={{ session_id }}{% endif %}">← Shifts</a>
-      </div>
-      <h1>{{ shift.title }}</h1>
-    </div>
-  </div>
-
-  <div class="main">
-
-    {% if shift.status == 'open' and shift.shift_date | string < today %}
-    <div class="past-warning">
-      ⚠️ <span><strong>This shift date has passed.</strong> It is still marked Open but workers can no longer see it. Consider cancelling it to keep your shift list tidy.</span>
-    </div>
-    {% endif %}
-
-    <!-- Shift Info -->
-    <div class="section-card">
-      <div class="section-card-header">
-        <h2>Shift Details</h2>
-        {% if shift.status == 'open' %}
-        <button class="btn-cancel-shift" id="cancelBtn"
-                onclick="cancelShift({{ shift.id }})">Cancel Shift</button>
-        {% endif %}
-      </div>
-      <div class="section-card-body">
-        <div class="info-grid">
-          <div class="info-item">
-            <div class="lbl">Date</div>
-            <div class="val">{{ shift.shift_date }}</div>
-          </div>
-          <div class="info-item">
-            <div class="lbl">Time</div>
-            <div class="val">{{ shift.start_time[:5] }} – {{ shift.end_time[:5] }}</div>
-          </div>
-          <div class="info-item">
-            <div class="lbl">Workers needed</div>
-            <div class="val">{{ shift.workers_needed }}</div>
-          </div>
-          <div class="info-item">
-            <div class="lbl">Skill required</div>
-            <div class="val">{{ shift.skill_name or 'Any skill' }}</div>
-          </div>
-          <div class="info-item">
-            <div class="lbl">Urgency</div>
-            <div class="val">
-              <span class="urgency-badge urgency-{{ shift.urgency }}">
-                {{ shift.urgency | replace('_',' ') | title }}
-              </span>
-            </div>
-          </div>
-          <div class="info-item">
-            <div class="lbl">Status</div>
-            <div class="val" id="shiftStatusDisplay">
-              <span class="status-badge status-{{ shift.status }}">
-                {{ shift.status | title }}
-              </span>
-            </div>
-          </div>
-        </div>
-        {% if shift.notes %}
-        <div class="notes-text">{{ shift.notes }}</div>
-        {% endif %}
-      </div>
-    </div>
-
-    <!-- Qualified Workers -->
-    {% if shift.status == 'open' %}
-    <div class="section-card">
-      <div class="section-card-header">
-        <h2>Qualified Workers</h2>
-        <span class="badge" id="matchCountBadge">—</span>
-      </div>
-      <div class="section-card-body">
-        <div class="match-toolbar">
-          <button class="btn-load-matches" id="loadMatchesBtn"
-                  onclick="loadMatches()">Find Qualified Workers</button>
-        </div>
-        <div id="matchList"></div>
-      </div>
-    </div>
-    {% endif %}
-
-    <!-- Claims -->
-    <div class="section-card">
-      <div class="section-card-header">
-        <h2>Worker Claims</h2>
-        <span class="badge">{{ claims | length }} claim{% if claims | length != 1 %}s{% endif %}</span>
-      </div>
-      <div class="section-card-body" id="claimsPanel">
-        {% if claims %}
-        <div id="claimsList">
-          {% for c in claims %}
-          <div class="claim-row" id="claimRow{{ c.id }}">
-            <div class="claim-info">
-              <div class="claim-worker">{{ c.worker_name }}</div>
-              <div class="claim-meta">
-                {{ c.worker_email }}
-                {% if c.worker_phone %} &middot; {{ c.worker_phone }}{% endif %}
-                &middot; Claimed {{ c.claimed_at | string | truncate(16, True, '') }}
-              </div>
-              <span class="claim-status claim-{{ c.status }}">{{ c.status | title }}</span>
-            </div>
-            {% if c.status == 'claimed' %}
-            <div class="claim-actions">
-              <button class="btn-confirm" onclick="confirmClaim({{ c.id }}, this)">Confirm</button>
-              <button class="btn-decline" onclick="declineClaim({{ c.id }}, this)">Decline</button>
-            </div>
-            {% endif %}
-          </div>
-          {% endfor %}
-        </div>
-        {% else %}
-        <div class="empty-state">
-          <div class="empty-icon">📬</div>
-          <h3>No claims yet</h3>
-          <p>Workers who qualify will see this shift and can claim it from their dashboard.</p>
-        </div>
-        {% endif %}
-      </div>
-    </div>
-
-  </div>
+ptt_shifts_bp = Blueprint("ptt_shifts", __name__)
 
 
-  {%- from 'ptt/chat_widget.html' import chat_widget %}
-  {{ chat_widget('carolyn', company.name, '', session_id) }}
+# =============================================================================
+# HTML PAGES
+# =============================================================================
 
-  <!-- FOOTER -->
-  <footer class="ptt-footer">
-    <div class="powered">Powered by Shiftwork Solutions</div>
-    <div class="contact">
-      <a href="https://shift-work.com" target="_blank" rel="noopener">shift-work.com</a>
-      &nbsp;&middot;&nbsp;
-      <a href="tel:+14152651621">(415) 265-1621</a>
-      &nbsp;&middot;&nbsp;
-      <a href="mailto:Contact@shift-work.com">Contact@shift-work.com</a>
-    </div>
-    <div class="copy">&copy; 2026 Shiftwork Solutions LLC</div>
-  </footer>
+@ptt_shifts_bp.route("/ptt/shifts")
+@require_ptt_admin
+def ptt_shifts_list(ptt_session, _session_id=None):
+    """HR shift list page."""
+    company_id = ptt_session["company_id"]
 
-  <script>
-    const PTT_SID = "{{ session_id }}";
-    const shiftId = {{ shift.id }};
-    const contactedIds = new Set({{ contacted_ids | list | tojson }});
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
 
-    function showToast(msg, isError=false) {
-      const t = document.getElementById('toast');
-      t.textContent = msg;
-      t.classList.toggle('error', isError);
-      t.classList.add('visible');
-      setTimeout(() => t.classList.remove('visible'), 2800);
-    }
+        cursor.execute("""
+            SELECT name FROM ptt_company WHERE id = %s
+        """, (company_id,))
+        company = cursor.fetchone()
 
-    function copyText(text, btn) {
-      navigator.clipboard.writeText(text).then(() => {
-        const orig = btn.textContent;
-        btn.textContent = '✓';
-        setTimeout(() => btn.textContent = orig, 1500);
-      }).catch(() => {});
-    }
+        cursor.execute("""
+            SELECT s.id, s.title, s.shift_date,
+                   s.start_time::text AS start_time,
+                   s.end_time::text AS end_time,
+                   s.workers_needed, s.status, s.urgency, s.notes,
+                   s.created_at,
+                   sk.name AS skill_name,
+                   COUNT(c.id) FILTER (WHERE c.status IN ('claimed','confirmed'))
+                       AS claim_count
+            FROM ptt_shift s
+            LEFT JOIN ptt_skill sk ON sk.id = s.skill_required_id
+            LEFT JOIN ptt_shift_claim c ON c.shift_id = s.id
+            WHERE s.company_id = %s
+            GROUP BY s.id, sk.name
+            ORDER BY s.shift_date ASC, s.start_time ASC
+        """, (company_id,))
+        shifts = cursor.fetchall()
 
-    async function loadMatches() {
-      const btn  = document.getElementById('loadMatchesBtn');
-      const list = document.getElementById('matchList');
-      btn.disabled = true; btn.textContent = 'Finding workers…';
-      list.innerHTML = '';
-      try {
-        const resp = await fetch('/api/ptt/admin/shifts/' + shiftId + '/matches', { headers: { 'X-PTT-Session': PTT_SID } });
-        const data = await resp.json();
-        if (!resp.ok || data.error) {
-          list.innerHTML = '<p class="no-matches">' + (data.error || 'Failed to load matches.') + '</p>';
-          btn.disabled = false; btn.textContent = 'Refresh Matches'; return;
-        }
-        document.getElementById('matchCountBadge').textContent =
-          data.total + ' qualified worker' + (data.total !== 1 ? 's' : '');
-        if (data.workers.length === 0) {
-          list.innerHTML = '<p class="no-matches">No workers match this shift\'s skill, availability, and schedule requirements.</p>';
-        } else {
-          let html = '';
-          data.workers.forEach(w => {
-            const isContacted = contactedIds.has(w.id);
-            const skillTags = w.skills.map(s => '<span class="skill-tag">' + _esc(s) + '</span>').join('');
-            html += `
-              <div class="match-row" id="matchRow${w.id}">
-                <div class="match-info">
-                  <div class="match-name">${_esc(w.name)}</div>
-                  <div class="match-contact">
-                    ${_esc(w.email)}
-                    <button class="btn-copy-small" onclick="copyText('${_esc(w.email)}', this)">Copy</button>
-                    ${w.phone ? _esc(w.phone) + '<button class="btn-copy-small" onclick="copyText(\'' + _esc(w.phone) + '\', this)">Copy</button>' : ''}
-                  </div>
-                  <div class="match-skills">${skillTags}</div>
-                </div>
-                <button class="btn-contacted ${isContacted ? 'done' : ''}"
-                        id="contactedBtn${w.id}"
-                        onclick="markContacted(${w.id}, this)"
-                        ${isContacted ? 'disabled' : ''}>
-                  ${isContacted ? '✓ Contacted' : 'Mark Contacted'}
-                </button>
-              </div>`;
-          });
-          list.innerHTML = html;
-        }
-        btn.disabled = false; btn.textContent = 'Refresh Matches';
-      } catch (err) {
-        list.innerHTML = '<p class="no-matches">Network error. Please try again.</p>';
-        btn.disabled = false; btn.textContent = 'Find Qualified Workers';
-      }
-    }
+        cursor.execute("""
+            SELECT id, name FROM ptt_skill
+            WHERE company_id = %s ORDER BY sort_order ASC, name ASC
+        """, (company_id,))
+        skills = cursor.fetchall()
 
-    async function markContacted(workerId, btn) {
-      btn.disabled = true;
-      try {
-        const resp = await fetch(`/api/ptt/admin/shifts/${shiftId}/outreach/${workerId}`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PTT-Session': PTT_SID }
-        });
-        const data = await resp.json();
-        if (!resp.ok || data.error) { showToast(data.error || 'Failed to record.', true); btn.disabled = false; return; }
-        contactedIds.add(workerId);
-        btn.textContent = '✓ Contacted'; btn.classList.add('done');
-        showToast('Outreach recorded.');
-      } catch (err) { showToast('Network error.', true); btn.disabled = false; }
-    }
+    finally:
+        conn.close()
 
-    async function cancelShift(shiftId) {
-      if (!confirm('Cancel this shift? Workers who have claimed it will still be listed.')) return;
-      const btn = document.getElementById('cancelBtn');
-      btn.disabled = true;
-      try {
-        const resp = await fetch('/api/ptt/admin/shifts/' + shiftId + '/cancel', {
-          method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PTT-Session': PTT_SID }
-        });
-        const data = await resp.json();
-        if (!resp.ok || data.error) { showToast(data.error || 'Failed to cancel.', true); btn.disabled = false; return; }
-        document.getElementById('shiftStatusDisplay').innerHTML =
-          '<span class="status-badge status-cancelled">Cancelled</span>';
-        btn.remove();
-        const matchSection = document.querySelector('.section-card:nth-child(2)');
-        if (matchSection) matchSection.style.display = 'none';
-        showToast('Shift cancelled.');
-      } catch (err) { showToast('Network error.', true); btn.disabled = false; }
-    }
+    return render_template("ptt/shifts.html",
+                           company=company,
+                           shifts=shifts,
+                           skills=skills,
+                           ptt_session=ptt_session,
+                           session_id=_session_id or "")
 
-    async function confirmClaim(claimId, btn) {
-      const row = document.getElementById('claimRow' + claimId);
-      btn.disabled = true;
-      row.querySelectorAll('button').forEach(b => b.disabled = true);
-      try {
-        const resp = await fetch('/api/ptt/admin/claims/' + claimId + '/confirm', {
-          method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PTT-Session': PTT_SID }
-        });
-        const data = await resp.json();
-        if (!resp.ok || data.error) {
-          showToast(data.error || 'Failed to confirm.', true);
-          row.querySelectorAll('button').forEach(b => b.disabled = false); return;
-        }
-        row.querySelector('.claim-status').className = 'claim-status claim-confirmed';
-        row.querySelector('.claim-status').textContent = 'Confirmed';
-        row.querySelector('.claim-actions')?.remove();
-        showToast('Claim confirmed.');
-      } catch (err) {
-        showToast('Network error.', true);
-        row.querySelectorAll('button').forEach(b => b.disabled = false);
-      }
-    }
 
-    async function declineClaim(claimId, btn) {
-      const row = document.getElementById('claimRow' + claimId);
-      btn.disabled = true;
-      row.querySelectorAll('button').forEach(b => b.disabled = true);
-      try {
-        const resp = await fetch('/api/ptt/admin/claims/' + claimId + '/decline', {
-          method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PTT-Session': PTT_SID }
-        });
-        const data = await resp.json();
-        if (!resp.ok || data.error) {
-          showToast(data.error || 'Failed to decline.', true);
-          row.querySelectorAll('button').forEach(b => b.disabled = false); return;
-        }
-        row.querySelector('.claim-status').className = 'claim-status claim-declined';
-        row.querySelector('.claim-status').textContent = 'Declined';
-        row.querySelector('.claim-actions')?.remove();
-        showToast('Claim declined.');
-      } catch (err) {
-        showToast('Network error.', true);
-        row.querySelectorAll('button').forEach(b => b.disabled = false);
-      }
-    }
+@ptt_shifts_bp.route("/ptt/shifts/<int:shift_id>")
+@require_ptt_admin
+def ptt_shift_detail(ptt_session, shift_id, _session_id=None):
+    """HR shift detail page — shows matches and claims."""
+    company_id = ptt_session["company_id"]
 
-    function _esc(str) {
-      return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-    }
-  </script>
-</body>
-</html>
-<!-- I did no harm and this file is not truncated. -->
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT s.id, s.title, s.shift_date,
+                   s.start_time::text AS start_time,
+                   s.end_time::text AS end_time,
+                   s.workers_needed, s.status, s.urgency, s.notes,
+                   s.created_at, s.skill_required_id,
+                   sk.name AS skill_name
+            FROM ptt_shift s
+            LEFT JOIN ptt_skill sk ON sk.id = s.skill_required_id
+            WHERE s.id = %s AND s.company_id = %s
+        """, (shift_id, company_id))
+        shift = cursor.fetchone()
+        if not shift:
+            return redirect("/ptt/shifts")
+
+        # Claims with worker info
+        cursor.execute("""
+            SELECT c.id, c.status, c.claimed_at, c.notes,
+                   w.id AS worker_id, w.name AS worker_name,
+                   w.email AS worker_email, w.phone AS worker_phone
+            FROM ptt_shift_claim c
+            JOIN ptt_worker w ON w.id = c.worker_id
+            WHERE c.shift_id = %s
+            ORDER BY c.claimed_at ASC
+        """, (shift_id,))
+        claims = cursor.fetchall()
+
+        # Outreach records for this shift
+        cursor.execute("""
+            SELECT worker_id FROM ptt_shift_outreach WHERE shift_id = %s
+        """, (shift_id,))
+        contacted_ids = {r["worker_id"] for r in cursor.fetchall()}
+
+        # Company name
+        cursor.execute("SELECT name FROM ptt_company WHERE id = %s", (company_id,))
+        company = cursor.fetchone()
+
+    finally:
+        conn.close()
+
+    return render_template("ptt/shift_detail.html",
+                           company=company,
+                           shift=shift,
+                           claims=claims,
+                           contacted_ids=contacted_ids,
+                           ptt_session=ptt_session,
+                           session_id=_session_id or "")
+
+
+# =============================================================================
+# API — SHIFT CRUD
+# =============================================================================
+
+@ptt_shifts_bp.route("/api/ptt/admin/shifts", methods=["POST"])
+@require_ptt_admin
+def ptt_shift_create(ptt_session):
+    """
+    Create a new shift.
+    Body: { title, shift_date (YYYY-MM-DD), start_time (HH:MM),
+            end_time (HH:MM), workers_needed, urgency,
+            skill_required_id (int or null), notes }
+    """
+    company_id = ptt_session["company_id"]
+    data = request.get_json(silent=True) or {}
+
+    title             = (data.get("title") or "").strip()
+    shift_date        = (data.get("shift_date") or "").strip()
+    start_time        = (data.get("start_time") or "").strip()
+    end_time          = (data.get("end_time") or "").strip()
+    workers_needed    = data.get("workers_needed", 1)
+    urgency           = (data.get("urgency") or "moderate").strip()
+    skill_required_id = data.get("skill_required_id")  # int or None
+    notes             = (data.get("notes") or "").strip()
+
+    if not title:
+        return jsonify({"error": "Shift title is required"}), 400
+    if not shift_date:
+        return jsonify({"error": "Shift date is required"}), 400
+    if not start_time:
+        return jsonify({"error": "Start time is required"}), 400
+    if not end_time:
+        return jsonify({"error": "End time is required"}), 400
+    if urgency not in ("urgent", "moderate", "long_term"):
+        urgency = "moderate"
+
+    try:
+        workers_needed = int(workers_needed)
+        if workers_needed < 1:
+            workers_needed = 1
+    except (TypeError, ValueError):
+        workers_needed = 1
+
+    # Validate skill_required_id belongs to this company
+    if skill_required_id:
+        try:
+            skill_required_id = int(skill_required_id)
+        except (TypeError, ValueError):
+            skill_required_id = None
+
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+
+        if skill_required_id:
+            cursor.execute("""
+                SELECT id FROM ptt_skill
+                WHERE id = %s AND company_id = %s
+            """, (skill_required_id, company_id))
+            if not cursor.fetchone():
+                skill_required_id = None
+
+        cursor.execute("""
+            INSERT INTO ptt_shift
+                (company_id, title, shift_date, start_time, end_time,
+                 workers_needed, urgency, skill_required_id, notes, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'open')
+            RETURNING id
+        """, (company_id, title, shift_date, start_time, end_time,
+              workers_needed, urgency, skill_required_id, notes or None))
+        new_id = cursor.fetchone()["id"]
+        conn.commit()
+
+    except Exception as e:
+        conn.rollback()
+        print(f"[ptt_shifts] create error: {e}")
+        return jsonify({"error": "Failed to create shift. Please try again."}), 500
+    finally:
+        conn.close()
+
+    return jsonify({"status": "ok", "id": new_id}), 200
+
+
+@ptt_shifts_bp.route("/api/ptt/admin/shifts/<int:shift_id>/cancel", methods=["POST"])
+@require_ptt_admin
+def ptt_shift_cancel(ptt_session, shift_id):
+    """Cancel a shift (soft delete via status = 'cancelled')."""
+    company_id = ptt_session["company_id"]
+
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE ptt_shift SET status = 'cancelled', updated_at = NOW()
+            WHERE id = %s AND company_id = %s AND status != 'cancelled'
+        """, (shift_id, company_id))
+        if cursor.rowcount == 0:
+            return jsonify({"error": "Shift not found or already cancelled"}), 404
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"[ptt_shifts] cancel error: {e}")
+        return jsonify({"error": "Failed to cancel shift."}), 500
+    finally:
+        conn.close()
+
+    return jsonify({"status": "ok"}), 200
+
+
+# =============================================================================
+# API — MATCHING ENGINE
+# =============================================================================
+
+@ptt_shifts_bp.route("/api/ptt/admin/shifts/<int:shift_id>/matches", methods=["GET"])
+@require_ptt_admin
+def ptt_shift_matches(ptt_session, shift_id):
+    """
+    Return qualified workers for a shift.
+    Filters:
+      1. Active workers in this company
+      2. Skill match (if shift has skill_required_id)
+      3. Availability covers the shift day + time window
+      4. No blackout covering the shift date
+      5. No overlapping confirmed/claimed shift on the same date+time
+    """
+    company_id = ptt_session["company_id"]
+
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+
+        # Get shift details
+        cursor.execute("""
+            SELECT id, shift_date, start_time, end_time, skill_required_id
+            FROM ptt_shift
+            WHERE id = %s AND company_id = %s AND status = 'open'
+        """, (shift_id, company_id))
+        shift = cursor.fetchone()
+        if not shift:
+            return jsonify({"error": "Shift not found or not open"}), 404
+
+        skill_required_id = shift["skill_required_id"]
+        shift_date        = shift["shift_date"]
+        start_time        = shift["start_time"]
+        end_time          = shift["end_time"]
+
+        # Determine day_of_week from shift_date
+        # PostgreSQL: EXTRACT(DOW FROM date) returns 0=Sunday .. 6=Saturday
+        cursor.execute("""
+            SELECT EXTRACT(DOW FROM %s::date)::int AS dow
+        """, (str(shift_date),))
+        dow = cursor.fetchone()["dow"]
+
+        # Step 1: Start with active workers in this company
+        if skill_required_id:
+            # Step 2: Filter by skill
+            cursor.execute("""
+                SELECT w.id, w.name, w.email, w.phone
+                FROM ptt_worker w
+                JOIN ptt_worker_skill ws ON ws.worker_id = w.id
+                WHERE w.company_id = %s
+                  AND w.status = 'active'
+                  AND ws.skill_id = %s
+            """, (company_id, skill_required_id))
+        else:
+            cursor.execute("""
+                SELECT w.id, w.name, w.email, w.phone
+                FROM ptt_worker w
+                WHERE w.company_id = %s AND w.status = 'active'
+            """, (company_id,))
+        candidates = cursor.fetchall()
+
+        if not candidates:
+            return jsonify({"workers": [], "total": 0}), 200
+
+        candidate_ids = [w["id"] for w in candidates]
+
+        # Step 3: Filter by availability
+        cursor.execute("""
+            SELECT DISTINCT worker_id FROM ptt_availability
+            WHERE worker_id = ANY(%s::int[])
+              AND day_of_week = %s
+              AND start_time <= %s
+              AND end_time   >= %s
+        """, (candidate_ids, dow, str(start_time), str(end_time)))
+        available_ids = {r["worker_id"] for r in cursor.fetchall()}
+
+        # Step 4: Exclude blackouts covering the shift date
+        cursor.execute("""
+            SELECT DISTINCT worker_id FROM ptt_blackout
+            WHERE worker_id = ANY(%s::int[])
+              AND start_date <= %s
+              AND end_date   >= %s
+        """, (candidate_ids, str(shift_date), str(shift_date)))
+        blacked_out_ids = {r["worker_id"] for r in cursor.fetchall()}
+
+        # Step 5: Exclude workers with overlapping confirmed/claimed shifts
+        cursor.execute("""
+            SELECT DISTINCT c.worker_id
+            FROM ptt_shift_claim c
+            JOIN ptt_shift s ON s.id = c.shift_id
+            WHERE c.worker_id = ANY(%s::int[])
+              AND c.status IN ('claimed', 'confirmed')
+              AND s.shift_date = %s
+              AND s.start_time < %s
+              AND s.end_time   > %s
+              AND s.id != %s
+        """, (candidate_ids, str(shift_date),
+              str(end_time), str(start_time), shift_id))
+        overlapping_ids = {r["worker_id"] for r in cursor.fetchall()}
+
+        # Get skills and outreach status for qualifying workers
+        cursor.execute("""
+            SELECT worker_id FROM ptt_shift_outreach WHERE shift_id = %s
+        """, (shift_id,))
+        contacted_ids = {r["worker_id"] for r in cursor.fetchall()}
+
+        # Build result
+        result = []
+        for w in candidates:
+            wid = w["id"]
+            if wid not in available_ids:
+                continue
+            if wid in blacked_out_ids:
+                continue
+            if wid in overlapping_ids:
+                continue
+
+            # Get worker skills
+            cursor.execute("""
+                SELECT s.name FROM ptt_worker_skill ws
+                JOIN ptt_skill s ON s.id = ws.skill_id
+                WHERE ws.worker_id = %s
+                ORDER BY s.sort_order ASC
+            """, (wid,))
+            skills = [r["name"] for r in cursor.fetchall()]
+
+            result.append({
+                "id":          wid,
+                "name":        w["name"],
+                "email":       w["email"],
+                "phone":       w["phone"] or "",
+                "skills":      skills,
+                "contacted":   wid in contacted_ids,
+            })
+
+    finally:
+        conn.close()
+
+    return jsonify({"workers": result, "total": len(result)}), 200
+
+
+# =============================================================================
+# API — OUTREACH
+# =============================================================================
+
+@ptt_shifts_bp.route("/api/ptt/admin/shifts/<int:shift_id>/outreach/<int:worker_id>",
+                     methods=["POST"])
+@require_ptt_admin
+def ptt_shift_outreach(ptt_session, shift_id, worker_id):
+    """
+    Mark a worker as contacted for a shift.
+    Upserts a row in ptt_shift_outreach.
+    """
+    company_id = ptt_session["company_id"]
+    admin_id   = ptt_session["user_id"]
+
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+
+        # Verify shift belongs to this company
+        cursor.execute("""
+            SELECT id FROM ptt_shift WHERE id = %s AND company_id = %s
+        """, (shift_id, company_id))
+        if not cursor.fetchone():
+            return jsonify({"error": "Shift not found"}), 404
+
+        # Verify worker belongs to this company
+        cursor.execute("""
+            SELECT id FROM ptt_worker WHERE id = %s AND company_id = %s
+        """, (worker_id, company_id))
+        if not cursor.fetchone():
+            return jsonify({"error": "Worker not found"}), 404
+
+        cursor.execute("""
+            INSERT INTO ptt_shift_outreach (shift_id, worker_id, contacted_at)
+            VALUES (%s, %s, NOW())
+            ON CONFLICT (shift_id, worker_id) DO UPDATE
+                SET contacted_at = NOW()
+        """, (shift_id, worker_id))
+        conn.commit()
+
+    except Exception as e:
+        conn.rollback()
+        print(f"[ptt_shifts] outreach error: {e}")
+        return jsonify({"error": "Failed to record outreach."}), 500
+    finally:
+        conn.close()
+
+    return jsonify({"status": "ok"}), 200
+
+
+# =============================================================================
+# API — CLAIM MANAGEMENT
+# =============================================================================
+
+@ptt_shifts_bp.route("/api/ptt/admin/claims/<int:claim_id>/confirm", methods=["POST"])
+@require_ptt_admin
+def ptt_claim_confirm(ptt_session, claim_id):
+    """
+    Confirm a worker's shift claim.
+    If workers_needed claims are now confirmed, mark shift as filled.
+    """
+    company_id = ptt_session["company_id"]
+
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+
+        # Get the claim and verify it belongs to this company
+        cursor.execute("""
+            SELECT c.id, c.shift_id, c.worker_id, c.status,
+                   s.workers_needed, s.company_id
+            FROM ptt_shift_claim c
+            JOIN ptt_shift s ON s.id = c.shift_id
+            WHERE c.id = %s AND s.company_id = %s
+        """, (claim_id, company_id))
+        claim = cursor.fetchone()
+        if not claim:
+            return jsonify({"error": "Claim not found"}), 404
+        if claim["status"] != "claimed":
+            return jsonify({"error": "Claim is not in 'claimed' status"}), 409
+
+        # Confirm the claim
+        cursor.execute("""
+            UPDATE ptt_shift_claim
+            SET status = 'confirmed', resolved_at = NOW()
+            WHERE id = %s
+        """, (claim_id,))
+
+        # Count confirmed claims for this shift
+        cursor.execute("""
+            SELECT COUNT(*) AS cnt FROM ptt_shift_claim
+            WHERE shift_id = %s AND status = 'confirmed'
+        """, (claim["shift_id"],))
+        confirmed_count = cursor.fetchone()["cnt"]
+
+        # Fill the shift if enough workers confirmed
+        if confirmed_count >= claim["workers_needed"]:
+            cursor.execute("""
+                UPDATE ptt_shift SET status = 'filled', updated_at = NOW()
+                WHERE id = %s AND status = 'open'
+            """, (claim["shift_id"],))
+
+        conn.commit()
+
+    except Exception as e:
+        conn.rollback()
+        print(f"[ptt_shifts] confirm claim error: {e}")
+        return jsonify({"error": "Failed to confirm claim."}), 500
+    finally:
+        conn.close()
+
+    return jsonify({"status": "ok"}), 200
+
+
+@ptt_shifts_bp.route("/api/ptt/admin/claims/<int:claim_id>/decline", methods=["POST"])
+@require_ptt_admin
+def ptt_claim_decline(ptt_session, claim_id):
+    """Decline a worker's shift claim."""
+    company_id = ptt_session["company_id"]
+    data = request.get_json(silent=True) or {}
+    notes = (data.get("notes") or "").strip()
+
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT c.id, c.status, s.company_id
+            FROM ptt_shift_claim c
+            JOIN ptt_shift s ON s.id = c.shift_id
+            WHERE c.id = %s AND s.company_id = %s
+        """, (claim_id, company_id))
+        claim = cursor.fetchone()
+        if not claim:
+            return jsonify({"error": "Claim not found"}), 404
+        if claim["status"] not in ("claimed", "confirmed"):
+            return jsonify({"error": "Claim cannot be declined in its current state"}), 409
+
+        cursor.execute("""
+            UPDATE ptt_shift_claim
+            SET status = 'declined', resolved_at = NOW(),
+                notes = COALESCE(%s, notes)
+            WHERE id = %s
+        """, (notes or None, claim_id))
+        conn.commit()
+
+    except Exception as e:
+        conn.rollback()
+        print(f"[ptt_shifts] decline claim error: {e}")
+        return jsonify({"error": "Failed to decline claim."}), 500
+    finally:
+        conn.close()
+
+    return jsonify({"status": "ok"}), 200
+
+# I did no harm and this file is not truncated.
