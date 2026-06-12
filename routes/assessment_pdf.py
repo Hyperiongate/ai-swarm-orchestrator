@@ -4,9 +4,27 @@ AI Swarm Orchestrator — Shiftwork Operations Assessment PDF
 Shiftwork Solutions LLC
 
 Created:      2026-04-21
-Last Updated: 2026-04-22
+Last Updated: 2026-06-12
 
 CHANGE LOG:
+  2026-06-12 — SCORECARD LAYOUT FIX (Part 3 only).
+    Jim's live test showed the red/green extreme labels ("Critical
+    Issues" / "Excellent Balance" etc.) overlapping the bottom of
+    each score bar, and dimension titles crowding the row above.
+    Root cause: after drawing the 0.22" bar, the cursor dropped only
+    0.28" before drawing the extremes baseline — putting the baseline
+    just 0.06" below the bar bottom. Text glyphs rise ~0.11" above
+    their baseline at 8pt, so the labels rendered INSIDE the bar.
+    Fix — new per-row geometry in the Section 4 dimension loop:
+      label baseline → 0.24" gap → bar (0.22") → 0.17" clearance
+      → extremes baseline → 0.33" row separation.
+    Per-row height grows from 0.72" to 0.96". Verified all 8 rows
+    still fit on one page: first label starts at y≈8.96"; 8 rows
+    consume 7.68", finishing at y≈1.28" — clear of the 0.55" footer.
+    ensure_space per-row reservation bumped 0.95 → 1.00 to match.
+    NO OTHER CHANGES — cover, Reality Check, Executive Summary,
+    About section, email notification, CORS, and route all untouched.
+
   2026-04-22 — CORS HOTFIX.
     Initial 2026-04-21 build relied on flask_cors's @cross_origin()
     decorator. In production behind Render's proxy, preflight
@@ -674,6 +692,18 @@ def build_assessment_pdf(payload):
 
     # ==================================================================
     # SECTION 4 — DIMENSIONAL SCORECARD
+    #
+    # Row geometry fixed 2026-06-12. Each row:
+    #   label baseline
+    #   -0.24"  gap so the bar doesn't touch the label
+    #   bar     0.22" tall (top edge at cursor, drawn downward)
+    #   -0.17"  clearance so 8pt extreme labels sit BELOW the bar,
+    #           not inside it (8pt glyphs rise ~0.11" above baseline)
+    #   extremes baseline (red low label left, green high label right)
+    #   -0.33"  row separation before the next dimension label
+    # Total per row: 0.96". All 8 rows fit on one page: first label
+    # at y≈8.96", 8 rows = 7.68", finishing at y≈1.28" — clear of the
+    # 0.55" footer band.
     # ==================================================================
     y = height - margin
 
@@ -719,18 +749,20 @@ def build_assessment_pdf(payload):
             score_val = 0.0
         score_val = max(0.0, min(100.0, score_val))
 
-        y = ensure_space(y, 0.95, "Dimensional Scorecard")
+        y = ensure_space(y, 1.00, "Dimensional Scorecard")
 
-        # Dimension label + numeric score
+        # Dimension label + numeric score (shared baseline)
         c.setFillColor(BODY_TEXT)
         c.setFont("Helvetica-Bold", 11)
         c.drawString(bar_x, y, label)
         c.setFillColor(NAVY)
         c.setFont("Helvetica-Bold", 13)
         c.drawRightString(bar_x + bar_w_max, y, f"{int(score_val)}%")
-        y -= 0.22 * inch
 
-        # Track (grey)
+        # Gap between label baseline and bar top
+        y -= 0.24 * inch
+
+        # Track (grey) — bar occupies y-0.22 .. y
         c.setFillColor(BORDER_MED)
         c.roundRect(bar_x, y - 0.22 * inch, bar_w_max, 0.22 * inch, 3,
                     fill=1, stroke=0)
@@ -740,15 +772,21 @@ def build_assessment_pdf(payload):
             c.setFillColor(color_for_score(score_val))
             c.roundRect(bar_x, y - 0.22 * inch, fill_w, 0.22 * inch, 3,
                         fill=1, stroke=0)
-        y -= 0.28 * inch
 
-        # Extremes labels
+        # Move cursor to the bar bottom, then add clearance so the 8pt
+        # extreme labels render fully BELOW the bar instead of inside it
+        y -= 0.22 * inch   # bar height
+        y -= 0.17 * inch   # clearance below bar
+
+        # Extremes labels (baseline now safely below the bar)
         c.setFont("Helvetica", 8)
         c.setFillColor(RED)
         c.drawString(bar_x, y, low_lbl or "")
         c.setFillColor(GREEN)
         c.drawRightString(bar_x + bar_w_max, y, high_lbl or "")
-        y -= 0.22 * inch
+
+        # Row separation before the next dimension
+        y -= 0.33 * inch
 
     draw_footer("Dimensional Scorecard")
     c.showPage()
