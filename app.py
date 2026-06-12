@@ -1,9 +1,25 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: May 20, 2026 — Knowledge Search Endpoint Support (Thomas Live KB Integration)
+Last Updated: June 12, 2026 — Assessment AI Proxy (server-side Anthropic calls for the Shiftwork Operations Assessment)
 
 CHANGELOG:
+- June 12, 2026: ASSESSMENT AI PROXY — TWO CHANGES ONLY:
+  1. BLUEPRINT: Registered assessment_ai_bp from routes/assessment_ai.py.
+     Placed immediately AFTER the assessment_pdf_bp registration block.
+     Provides POST /api/assessment/t1-commentary and
+     POST /api/assessment/t2-evaluate — server-side Anthropic API calls
+     for the Shiftwork Operations Assessment page. Fixes the launch-day
+     bug where the page called api.anthropic.com directly from the
+     visitor's browser with no API key (every call failed and the page
+     silently used its fallbacks). Prompts are now built server-side,
+     which protects the prompt strategy from page-source inspection and
+     prevents the API key from being used as an open proxy. CORS locked
+     to shift-work.com. Uses the existing ANTHROPIC_API_KEY env var.
+  2. HEALTH CHECK: Updated version string and added 'assessment_ai'
+     section.
+  NO OTHER CHANGES. Rule 1 (do no harm) preserved.
+
 - May 20, 2026: KNOWLEDGE SEARCH ENDPOINT SUPPORT — ONE CHANGE ONLY:
   1. KB SHARING: Added a single line that stores the existing knowledge_base
      instance in app.config['KNOWLEDGE_BASE'] immediately after it is created.
@@ -984,7 +1000,7 @@ def health():
 
     return jsonify({
         'status': 'healthy',
-        'version': 'KB Search Endpoint May20 + PTT Lite Phase3 May11 + PTT Lite Phase2 May04 + PTT Lite Phase1 May01 + Site Events Apr28 + Assessment PDF Apr21 + Assessment Sheets Apr17 + Security Hardening Apr07 + Newsletter API Apr02 + Survey in a Box Phase 2 Mar26 + Phase 3 Mar13 + Phase 6 Proactive Agent Mar12 + Phase 1 Onboarding Mar10 + Phase 3 Capabilities Manifest Mar08 + Phase 2A Memory Mar05 + PostgreSQL Migration Mar02',
+        'version': 'Assessment AI Proxy Jun12 + KB Search Endpoint May20 + PTT Lite Phase3 May11 + PTT Lite Phase2 May04 + PTT Lite Phase1 May01 + Site Events Apr28 + Assessment PDF Apr21 + Assessment Sheets Apr17 + Security Hardening Apr07 + Newsletter API Apr02 + Survey in a Box Phase 2 Mar26 + Phase 3 Mar13 + Phase 6 Proactive Agent Mar12 + Phase 1 Onboarding Mar10 + Phase 3 Capabilities Manifest Mar08 + Phase 2A Memory Mar05 + PostgreSQL Migration Mar02',
         'database': {
             'type': get_db_type(),
             'backend': 'PostgreSQL (persistent)' if get_db_type() == 'postgresql' else 'SQLite (local dev)'
@@ -1079,6 +1095,13 @@ def health():
             'scores_url': '/api/assessment/update-scores',
             'pdf_url': '/api/assessment/generate-pdf',
             'sheet': 'Shift Assessment Data',
+        },
+        'assessment_ai': {
+            'status': 'enabled',
+            't1_commentary_url': '/api/assessment/t1-commentary',
+            't2_evaluate_url': '/api/assessment/t2-evaluate',
+            'model': 'claude-sonnet-4-6',
+            'note': 'Server-side Anthropic calls for the Shiftwork Operations Assessment (added Jun 12, 2026)',
         },
         'site_events': {
             'status': 'enabled',
@@ -1386,6 +1409,19 @@ except ImportError as e:
     print(f"Assessment PDF routes not found: {e}")
 except Exception as e:
     print(f"Assessment PDF registration failed: {e}")
+
+# ----------------------------------------------------------------------------
+# Assessment AI Proxy — server-side Anthropic calls for the assessment page
+# Added: June 12, 2026
+# ----------------------------------------------------------------------------
+try:
+    from routes.assessment_ai import assessment_ai_bp
+    app.register_blueprint(assessment_ai_bp)
+    print("Assessment AI Proxy API registered")
+except ImportError as e:
+    print(f"Assessment AI Proxy routes not found: {e}")
+except Exception as e:
+    print(f"Assessment AI Proxy registration failed: {e}")
 
 try:
     from routes.site_events import site_events_bp
