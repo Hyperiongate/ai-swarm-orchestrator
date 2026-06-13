@@ -5,6 +5,35 @@ Shiftwork Solutions LLC
 =============================================================================
 
 CHANGE LOG:
+- June 12, 2026: WO-12 THREE-ZONE LAYOUT
+  * .main-grid: changed from 2 columns (300px 1fr) to 3 columns
+    (210px 360px 1fr) — mode rail / context sidebar / chat.
+  * .container max-width raised 1400px -> 1800px so the wider grid
+    has room on large monitors.
+  * NEW Section 2B: .mode-rail vertical navigation styles. The 14 mode
+    buttons moved out of the header into this rail (index.html change,
+    same date). Rail is sticky and scrolls internally if needed.
+  * .header slimmed to a single title bar (smaller padding/font). The
+    legacy .mode-switcher and base .mode-btn rules are RETAINED so any
+    other page using them is unaffected — the rail uses scoped
+    .mode-rail .mode-btn overrides only.
+  * Section 6 rewritten: .main-content is now a flex column with a
+    viewport-based height; .conversation uses flex: 1 + min-height: 0
+    instead of the old max-height calc. This preserves the February 8
+    scrolling guarantee (input always visible, page never grows) with
+    a more robust mechanism. The old per-viewport max-height media
+    queries in Section 6 were removed because flex sizing replaces them.
+  * .sidebar: now sticky with internal scroll; min-height: 700px removed
+    (it could force page overflow on short screens under the new sticky
+    behavior). Width now comes from the grid column (360px, was 300px).
+  * Section 15 responsive rewritten for the 3-zone layout: below 1100px
+    the rail becomes a horizontal scrollable strip on top, the layout
+    stacks chat-first then sidebar (matching the previous mobile order),
+    and .conversation returns to max-height viewport calcs.
+  * NO feature-panel styles were removed or altered (voice, conversations,
+    research, alerts, pipeline, manuals, briefing, documents, feedback,
+    badges, modal-support styles in index.html are untouched).
+
 - February 8, 2026: FIXED CONVERSATION SCROLLING ISSUE
   * Changed .conversation from fixed height (500px) to responsive max-height
   * Added calc(100vh - 350px) for dynamic viewport-based sizing
@@ -12,6 +41,8 @@ CHANGE LOG:
   * Prevents page from growing with more messages
   * Input box always visible without scrolling page
   * CRITICAL FIX: Solves "page gets bigger and bigger" issue
+  * NOTE June 12, 2026: mechanism superseded by flex layout (see above);
+    the guarantee itself is preserved.
 
 - January 23, 2026: Added Voice Control Styles
   * Added .voice-control-section with visual hierarchy
@@ -42,21 +73,22 @@ CHANGE LOG:
   * Added section comments for maintainability
 
 SECTIONS:
-1. Reset & Base Styles
-2. Layout Components (Container, Header, Grid)
-3. Sidebar Styles
-4. Voice Control Section
-5. Conversations Section (Memory Feature)
-6. Main Content & Conversation ***FIXED***
-7. Memory Indicator (Memory Feature)
-8. Messages & Formatting
-9. Feedback System
+1.  Reset & Base Styles
+2.  Layout Components (Container, Header, Grid)
+2B. Mode Rail (NEW June 12, 2026)
+3.  Sidebar Styles
+4.  Voice Control Section
+5.  Conversations Section (Memory Feature)
+6.  Main Content & Conversation ***FLEX LAYOUT June 12, 2026***
+7.  Memory Indicator (Memory Feature)
+8.  Messages & Formatting
+9.  Feedback System
 10. Loading States
 11. Input Area
 12. Badges & Indicators
 13. AI Response Formatting
 14. Utility Classes
-15. Responsive Styles
+15. Responsive Styles ***REWRITTEN June 12, 2026***
 16. Documents Section
 
 =============================================================================
@@ -84,15 +116,17 @@ body {
    ============================================================================= */
 
 .container {
-    max-width: 1400px;
+    max-width: 1800px;   /* June 12, 2026: was 1400px — widened for 3-zone grid */
     margin: 0 auto;
 }
 
+/* June 12, 2026: slim single title bar — the two mode-button rows moved
+   to the .mode-rail (see Section 2B and index.html same date). */
 .header {
     background: white;
-    padding: 20px 30px;
+    padding: 14px 24px;
     border-radius: 15px;
-    margin-bottom: 20px;
+    margin-bottom: 16px;
     box-shadow: 0 10px 30px rgba(0,0,0,0.2);
     display: flex;
     justify-content: space-between;
@@ -101,15 +135,19 @@ body {
 
 .header-left h1 {
     color: #667eea;
-    margin-bottom: 5px;
-    font-size: 24px;
+    margin-bottom: 2px;
+    font-size: 20px;
 }
 
 .header-left p {
     color: #666;
-    font-size: 14px;
+    font-size: 12px;
 }
 
+/* LEGACY (retained June 12, 2026): .mode-switcher and base .mode-btn are
+   no longer used in the index.html header but are kept intact so nothing
+   else that references them breaks. The rail applies its own scoped
+   overrides in Section 2B. */
 .mode-switcher {
     display: flex;
     gap: 10px;
@@ -135,10 +173,89 @@ body {
     transform: translateY(-2px);
 }
 
+/* June 12, 2026: three-zone grid — rail / sidebar / chat */
 .main-grid {
     display: grid;
-    grid-template-columns: 300px 1fr;
-    gap: 20px;
+    grid-template-columns: 210px 360px 1fr;
+    gap: 16px;
+    align-items: start;
+}
+
+/* =============================================================================
+   2B. MODE RAIL — NEW June 12, 2026 (WO-12)
+   Vertical navigation column holding all 14 mode buttons that previously
+   lived in the header. Buttons keep their original IDs and onclick handlers
+   (switchMode addresses them by ID only — see swarm-app.js Section 6).
+   ============================================================================= */
+
+.mode-rail {
+    background: white;
+    border-radius: 15px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+    padding: 14px 12px;
+    position: sticky;
+    top: 20px;
+    max-height: calc(100vh - 40px);
+    overflow-y: auto;
+}
+
+.mode-rail::-webkit-scrollbar {
+    width: 6px;
+}
+
+.mode-rail::-webkit-scrollbar-track {
+    background: #f0f0f0;
+    border-radius: 3px;
+}
+
+.mode-rail::-webkit-scrollbar-thumb {
+    background: #667eea;
+    border-radius: 3px;
+}
+
+/* Small uppercase group labels inside the rail */
+.mode-rail-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: #999;
+    margin: 14px 6px 6px 6px;
+}
+
+.mode-rail-label:first-child {
+    margin-top: 0;
+}
+
+/* Scoped overrides: rail buttons are full-width, left-aligned list items.
+   Base .mode-btn rules above still apply first; these override for the rail. */
+.mode-rail .mode-btn {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 10px 12px;
+    margin: 0 0 6px 0;
+    font-size: 13px;
+    border: 2px solid transparent;
+    background: #f8f9fa;
+    color: #444;
+    border-radius: 8px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mode-rail .mode-btn:hover {
+    transform: translateX(3px);
+    border-color: #667eea;
+    color: #667eea;
+    background: white;
+}
+
+.mode-rail .mode-btn.active {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-color: #667eea;
+    color: white;
 }
 
 /* =============================================================================
@@ -150,10 +267,12 @@ body {
     padding: 20px;
     border-radius: 15px;
     box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-    height: fit-content;
-    max-height: calc(100vh - 80px);
-    min-height: 700px;
+    position: sticky;          /* June 12, 2026: sticky with internal scroll */
+    top: 20px;
+    max-height: calc(100vh - 40px);
     overflow-y: auto;
+    /* June 12, 2026: min-height: 700px removed — under sticky behavior it
+       could force the column taller than the viewport on short screens. */
 }
 
 .sidebar h3 {
@@ -760,66 +879,45 @@ body {
 }
 
 /* =============================================================================
-   6. MAIN CONTENT & CONVERSATION ***FIXED FOR SCROLLING***
-   ============================================================================= */
+   6. MAIN CONTENT & CONVERSATION  ***FLEX LAYOUT — June 12, 2026***
+   =============================================================================
+   The chat column is now a flex column with a viewport-based height.
+   .conversation grows to fill the space between the memory indicator and
+   the input area (flex: 1; min-height: 0). This preserves the February 8
+   guarantee — input always visible, page never grows with messages —
+   without per-viewport max-height media queries. On stacked layouts
+   (<=1100px) Section 15 restores max-height sizing because the column no
+   longer has a fixed height there. */
 
 .main-content {
     background: white;
-    padding: 30px;
+    padding: 24px;
     border-radius: 15px;
     box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 40px);   /* body padding top+bottom = 40px; column is self-contained, header scrolls with page */
+    min-height: 520px;
 }
 
-/* 
- * CRITICAL FIX - February 8, 2026
- * 
- * OLD: height: 500px (caused page to grow infinitely)
- * NEW: max-height with viewport calculation (locks conversation area)
- * 
- * This ensures:
- * - Conversation area has maximum height based on viewport
- * - Only messages scroll, not entire page
- * - Input box always visible at bottom
- * - Page doesn't grow as conversation gets longer
- */
 .conversation {
-    /* Use viewport height minus space for header + input + padding */
-    max-height: calc(100vh - 350px);
-    
-    /* Ensure minimum usable height */
-    min-height: 400px;
-    
-    /* Allow natural height up to max-height */
-    height: auto;
-    
-    /* Enable scrolling when content exceeds max-height */
+    /* June 12, 2026: flex sizing replaces max-height calc */
+    flex: 1 1 auto;
+    min-height: 0;
+
+    /* Enable scrolling when content exceeds available space */
     overflow-y: auto;
     overflow-x: hidden;
-    
-    /* Styling */
+
+    /* Styling (unchanged) */
     border: 2px solid #e0e0e0;
     border-radius: 10px;
     padding: 20px;
     margin-bottom: 20px;
     background: #f8f9fa;
-    
+
     /* Smooth scrolling */
     scroll-behavior: smooth;
-}
-
-/* Adjust calculation for smaller screens */
-@media (max-height: 800px) {
-    .conversation {
-        max-height: calc(100vh - 300px);
-        min-height: 300px;
-    }
-}
-
-@media (max-height: 600px) {
-    .conversation {
-        max-height: calc(100vh - 250px);
-        min-height: 200px;
-    }
 }
 
 /* =============================================================================
@@ -828,6 +926,7 @@ body {
 
 .memory-indicator {
     margin-bottom: 15px;
+    flex-shrink: 0;   /* June 12, 2026: never compressed by the flex column */
 }
 
 .memory-status {
@@ -1091,6 +1190,7 @@ body {
     background: #f8f9fa;
     border-radius: 10px;
     margin-bottom: 20px;
+    flex-shrink: 0;   /* June 12, 2026: never compressed by the flex column */
 }
 
 .loading.active {
@@ -1125,6 +1225,7 @@ body {
 .input-area {
     display: flex;
     gap: 10px;
+    flex-shrink: 0;   /* June 12, 2026: input always keeps its height */
 }
 
 .input-area textarea {
@@ -1414,44 +1515,82 @@ body {
 }
 
 /* =============================================================================
-   15. RESPONSIVE STYLES
+   15. RESPONSIVE STYLES  ***REWRITTEN June 12, 2026 for 3-zone layout***
    ============================================================================= */
 
-@media (max-width: 1024px) {
+/* Stacked layout: rail becomes a horizontal scrollable strip on top,
+   then chat, then sidebar — matching the previous mobile ordering. */
+@media (max-width: 1100px) {
     .main-grid {
         grid-template-columns: 1fr;
     }
-    
-    .sidebar {
-        order: 2;
+
+    .mode-rail {
+        position: static;
         max-height: none;
+        overflow-x: auto;
+        overflow-y: hidden;
+        display: flex;
+        flex-wrap: nowrap;
+        align-items: center;
+        gap: 6px;
+        padding: 10px 12px;
+        order: 0;
+        -webkit-overflow-scrolling: touch;
     }
-    
+
+    .mode-rail-label {
+        display: none;
+    }
+
+    .mode-rail .mode-btn {
+        flex: 0 0 auto;
+        width: auto;
+        margin: 0;
+        white-space: nowrap;
+        overflow: visible;
+        text-overflow: clip;
+    }
+
+    .mode-rail .mode-btn:hover {
+        transform: translateY(-2px);
+    }
+
     .main-content {
         order: 1;
+        height: auto;          /* column height no longer fixed when stacked */
+        min-height: 0;
+        display: block;        /* fall back to flow layout when stacked */
     }
-    
+
+    /* Restore viewport-based conversation sizing for stacked layout
+       (the flex mechanism requires the fixed-height column above 1100px) */
+    .conversation {
+        max-height: calc(100vh - 400px);
+        min-height: 300px;
+    }
+
+    .sidebar {
+        order: 2;
+        position: static;
+        max-height: none;
+    }
+
     .mode-switcher {
         flex-wrap: wrap;
     }
-    
+
     .conversations-list {
         max-height: 150px;
     }
-    
+
     /* Voice section on tablet */
     .voice-control-section {
         padding: 12px;
     }
-    
+
     .voice-waveform {
         height: 20px;
-    }
-    
-    /* Adjust conversation height for tablets */
-    .conversation {
-        max-height: calc(100vh - 400px);
-        min-height: 300px;
     }
 }
 
