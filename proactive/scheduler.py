@@ -2,9 +2,36 @@
 AI SWARM ORCHESTRATOR - Proactive Scheduler
 File: proactive/scheduler.py
 Created: June 01, 2026
-Last Updated: June 01, 2026 — WO-4 Initial implementation
+Last Updated: June 13, 2026 — WO-10 Add Daily Briefing Job
 
 CHANGELOG:
+- June 13, 2026: WO-10 — ADD DAILY BRIEFING JOB (now 5 jobs)
+  * Added JOB 5: daily_briefing_morning — runs EVERY day at 6:30 AM Pacific,
+    calling generate_daily_briefing() from proactive/daily_briefing.py.
+  * Why: that generator was always designed to be driven by this scheduler —
+    its own docstring names "proactive/scheduler.py at 6:30 AM Pacific
+    (automatic)" as a caller — but the job was never registered when this
+    file was first created in WO-4. As a result the briefing only ever
+    generated on-demand when the Briefing panel was opened. This wires the
+    intended automatic morning run so the briefing is pre-built each day.
+  * Timezone: this single job uses America/Los_Angeles (NOT UTC like the
+    other four), by deliberate choice — a morning briefing should land at a
+    stable 6:30 AM LOCAL time year-round, so APScheduler/pytz handles the
+    PDT<->PST daylight-saving shift automatically. pytz resolves the string
+    'America/Los_Angeles' exactly as it already resolves 'UTC' for the other
+    jobs (string timezones are supported and already in use here).
+  * Idempotent: generate_daily_briefing() UPSERTs on briefing_date, so a
+    daily run cleanly overwrites that day's briefing — running it every
+    morning is safe.
+  * Pattern preserved: JOB 5 follows the exact established pattern — a
+    standalone no-argument function, import performed inside the function
+    body, and a full try/except so a briefing failure never affects the
+    other jobs or the running app. Same job_defaults apply (coalesce,
+    max_instances=1, misfire_grace_time=3600).
+  * Still gated on ENABLE_SCHEDULED_JOBS=true. NO existing job was changed —
+    the four WO-4 jobs are byte-for-byte the same. Rule 1 (do no harm)
+    preserved.
+
 - June 01, 2026: WO-4 — INITIAL IMPLEMENTATION
   * Created proactive/scheduler.py — this file previously did not exist,
     causing app.py's `from proactive.scheduler import init_scheduler` to
@@ -66,6 +93,13 @@ MONTHLY_INTRO_HOUR    = 8
 MONTHLY_INTRO_MINUTE  = 30  # 08:30 UTC first Wednesday of month
 
 HEALTH_CHECK_INTERVAL_MINUTES = 30  # every 30 minutes, matches app_monitor.py default
+
+# WO-10: Daily morning briefing — fires in LOCAL Pacific time (not UTC) so it
+# always lands at 6:30 AM regardless of daylight saving. APScheduler/pytz
+# resolve this string timezone and apply the PDT/PST offset automatically.
+BRIEFING_TIMEZONE = 'America/Los_Angeles'
+BRIEFING_HOUR     = 6
+BRIEFING_MINUTE   = 30  # 6:30 AM Pacific, every day
 
 
 # ============================================================================
@@ -149,6 +183,36 @@ def _job_service_health_check():
         print(f"[Scheduler] Service health check failed: {e}")
 
 
+def _job_daily_briefing():
+    """
+    WO-10: Daily morning briefing — runs every day at 6:30 AM Pacific.
+
+    Calls generate_daily_briefing() (proactive/daily_briefing.py), which is
+    the same underlying function the on-demand GET /api/briefing path uses.
+    The generator UPSERTs on briefing_date, so this daily run simply ensures
+    today's briefing exists (pre-built) and overwrites it cleanly if it does.
+
+    The import is performed inside this function (matching the other jobs) so
+    that, if proactive/daily_briefing.py is ever unavailable at runtime, this
+    job logs and returns without disturbing the scheduler or other jobs.
+    """
+    logger.info("[Scheduler] Starting daily briefing generation")
+    print(f"[Scheduler] {datetime.utcnow().isoformat()} — daily briefing generation starting (6:30 AM Pacific)")
+    try:
+        from proactive.daily_briefing import generate_daily_briefing
+        result = generate_daily_briefing()
+        if isinstance(result, dict) and result.get('success'):
+            print(f"[Scheduler] Daily briefing generated for {result.get('briefing_date', 'today')}")
+            logger.info(f"[Scheduler] Daily briefing generated for {result.get('briefing_date', 'today')}")
+        else:
+            err = result.get('error') if isinstance(result, dict) else 'unknown result'
+            print(f"[Scheduler] Daily briefing returned no success flag: {err}")
+            logger.warning(f"[Scheduler] Daily briefing returned no success flag: {err}")
+    except Exception as e:
+        logger.error(f"[Scheduler] Daily briefing failed: {e}")
+        print(f"[Scheduler] Daily briefing failed: {e}")
+
+
 # ============================================================================
 # SCHEDULER INIT
 # ============================================================================
@@ -174,11 +238,12 @@ def init_scheduler(app):
     - All job exceptions are caught internally — a failed job never
       crashes the scheduler thread or the Flask app.
 
-    Job schedule (all times UTC):
-        swarm_evaluation_weekly  — Wednesday 08:05
-        introspection_weekly     — Wednesday 08:15
-        introspection_monthly    — First Wednesday of month 08:30
+    Job schedule:
+        swarm_evaluation_weekly  — Wednesday 08:05 UTC
+        introspection_weekly     — Wednesday 08:15 UTC
+        introspection_monthly    — First Wednesday of month 08:30 UTC
         service_health_check     — Every 30 minutes
+        daily_briefing_morning   — Every day 06:30 America/Los_Angeles (WO-10)
 
     Args:
         app: The Flask application instance (passed for context if needed
@@ -272,17 +337,36 @@ def init_scheduler(app):
             replace_existing=True,
         )
 
+        # ------------------------------------------------------------------
+        # JOB 5: Daily Morning Briefing  (WO-10)
+        # Every day at 06:30 America/Los_Angeles (stable 6:30 AM Pacific,
+        # DST handled automatically). Pre-builds the briefing each morning;
+        # generate_daily_briefing() UPSERTs on briefing_date so this is
+        # idempotent. NOTE: this job intentionally uses Pacific time rather
+        # than UTC — see the WO-10 changelog note at the top of this file.
+        # ------------------------------------------------------------------
+        scheduler.add_job(
+            func=_job_daily_briefing,
+            trigger=CronTrigger(hour=BRIEFING_HOUR,
+                                minute=BRIEFING_MINUTE,
+                                timezone=BRIEFING_TIMEZONE),
+            id='daily_briefing_morning',
+            name='Daily Morning Briefing',
+            replace_existing=True,
+        )
+
         scheduler.start()
         _scheduler = scheduler
 
         print(
-            f"[Scheduler] Started — 4 jobs active:\n"
+            f"[Scheduler] Started — 5 jobs active:\n"
             f"  swarm_evaluation_weekly  : Wednesday 08:05 UTC\n"
             f"  introspection_weekly     : Wednesday 08:15 UTC\n"
             f"  introspection_monthly    : First Wednesday 08:30 UTC\n"
-            f"  service_health_check     : every {HEALTH_CHECK_INTERVAL_MINUTES} minutes"
+            f"  service_health_check     : every {HEALTH_CHECK_INTERVAL_MINUTES} minutes\n"
+            f"  daily_briefing_morning   : every day 06:30 {BRIEFING_TIMEZONE}"
         )
-        logger.info("[Scheduler] BackgroundScheduler started with 4 jobs")
+        logger.info("[Scheduler] BackgroundScheduler started with 5 jobs")
 
     except ImportError:
         print(
