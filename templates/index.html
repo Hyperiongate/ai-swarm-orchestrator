@@ -8,29 +8,26 @@
     =============================================================================
     
     CHANGE LOG:
-    - June 12, 2026: THREE-ZONE LAYOUT RESTRUCTURE (WO-12)
-      * Layout reorganized into three zones:
-        ZONE 1 — Mode Rail (new <nav class="mode-rail">): all fourteen mode
-                 buttons moved out of the two header rows into a vertical
-                 rail on the far left. Every button keeps its EXACT id,
-                 class ("mode-btn"), and onclick handler, so the
-                 switchMode() contract in swarm-app.js is untouched.
-                 Button labels are now wrapped in <span class="rail-label">
-                 so CSS can collapse the rail to icon-only on mid-width
-                 screens. switchMode() only reads ids/classes — innerHTML
-                 structure is irrelevant to it.
-        ZONE 2 — Context Sidebar: unchanged content, wider via CSS grid.
-        ZONE 3 — Chat: unchanged content, gains the remaining width and
-                 the vertical room freed by the slimmer header.
-      * Header reduced to a slim title bar (mode-switcher block removed —
-        its buttons live in the Mode Rail now).
-      * Container gets class "wide", main grid gets class "three-zone".
-        All new styling lives in swarm-styles.css Section 17, which is
-        ADDITIVE ONLY — no pre-existing CSS rule was modified, so other
-        templates sharing the stylesheet are unaffected.
-      * NOTHING ELSE CHANGED: every sidebar panel, the chat area, the Add
-        Lead modal, all inline JavaScript, and all element IDs are verbatim
-        from the March 13, 2026 version. Rule 1 (do no harm) preserved.
+    - June 13, 2026: SPLIT LAYOUT (50/50) — mode buttons returned to header (WO-12 rev)
+      * The June 12 left "Mode Rail" was removed because it narrowed the chat
+        instead of widening it. The 14 mode buttons are back in the header in
+        two rows — this is the exact original pre-June-12 header markup. Every
+        button id, class ("mode-btn"), and onclick is unchanged, so the
+        switchMode() contract in swarm-app.js is untouched. The <span
+        class="rail-label"> wrappers are gone; button labels are plain text again.
+      * Main grid now uses class "split-5050": sidebar and chat share the row
+        50/50 (equal columns). Container keeps class "wide".
+      * All layout styling lives in swarm-styles.css Section 17, which was
+        revised the same day and remains ADDITIVE ONLY — no pre-existing CSS
+        rule was modified, so other templates sharing the stylesheet are
+        unaffected.
+      * NOTHING ELSE CHANGED: every sidebar panel, the chat area, the Add Lead
+        modal, all inline JavaScript, and all element IDs are verbatim from the
+        March 13, 2026 version. Rule 1 (do no harm) preserved.
+
+    - June 12, 2026: THREE-ZONE LAYOUT RESTRUCTURE (superseded June 13, 2026)
+      * Original attempt moved the 14 mode buttons into a left vertical rail.
+        Superseded by the split layout above — see the June 13 entry.
 
     - March 13, 2026: BUG FIX — loadTodaysBriefing() field name mismatch
       * GET /api/briefing returns { success, briefing: { content, generated_at } }
@@ -816,53 +813,50 @@
     </style>
 </head>
 <body>
-    <!-- June 12, 2026: container gets "wide" class, grid gets "three-zone" class.
-         Both classes only add CSS (Section 17); base classes still apply. -->
+    <!-- June 13, 2026: container keeps "wide" class (Section 17, additive).
+         Grid uses "split-5050" class for an equal sidebar/chat split. -->
     <div class="container wide">
-        <!-- SLIM HEADER — June 12, 2026: mode-switcher block removed; its 14 buttons
-             now live in the Mode Rail (<nav class="mode-rail">) inside the grid below.
-             Title + tagline only. -->
+        <!-- HEADER SECTION — June 13, 2026: mode buttons RESTORED to the header
+             in two rows (the June 12 left "mode rail" was removed because it
+             narrowed the chat). This is the original pre-June-12 header markup,
+             unchanged: every button id, class, and onclick is identical, so
+             switchMode() in swarm-app.js works exactly as before. -->
         <div class="header">
             <div class="header-left">
                 <h1>🤖 AI Swarm - Unified Interface</h1>
                 <p>Quick tasks + Project workflows with learning feedback</p>
             </div>
+            <div class="mode-switcher" style="display: flex; flex-direction: column; gap: 10px;">
+                <!-- ROW 1: Core Tasks -->
+                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                    <button class="mode-btn active" onclick="switchMode('quick')" id="quickModeBtn">⚡ Quick Task</button>
+                    <button class="mode-btn" onclick="switchMode('project')" id="projectModeBtn">📁 Project</button>
+                    <button class="mode-btn" onclick="switchMode('calculator')" id="calculatorModeBtn">🧮 Calculator</button>
+                    <button class="mode-btn" onclick="switchMode('survey')" id="surveyModeBtn">📋 Survey</button>
+                    <button class="mode-btn" onclick="switchMode('marketing')" id="marketingModeBtn">📢 Marketing</button>
+                </div>
+                <!-- ROW 2: Intelligence Tools -->
+                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                    <button class="mode-btn" onclick="switchMode('opportunities')" id="opportunitiesModeBtn">🎯 Opportunities</button>
+                    <button class="mode-btn" onclick="switchMode('research')" id="researchModeBtn">🔬 Research</button>
+                    <button class="mode-btn" onclick="switchMode('alerts')" id="alertsModeBtn">🔔 Alerts</button>
+                    <button class="mode-btn" onclick="switchMode('pipeline')" id="pipelineModeBtn">📊 Pipeline</button>
+                    <button class="mode-btn" onclick="switchMode('manuals')" id="manualsModeBtn">📝 Manuals</button>
+                    <button class="mode-btn" onclick="window.location.href='/knowledge'" id="knowledgeModeBtn">🧠 Knowledge</button>
+                    <button class="mode-btn" onclick="switchMode('casestudies')" id="casestudiesModeBtn">✍️ Case Studies</button>
+                    <button class="mode-btn" onclick="switchMode('blogposts')" id="blogpostsModeBtn">📝 Blog Posts</button>
+                    <button class="mode-btn" onclick="switchMode('briefing')" id="briefingModeBtn">🗓️ Briefing</button>
+                </div>
+            </div>
         </div>
 
-        <!-- MAIN GRID LAYOUT — June 12, 2026: "three-zone" class adds the
-             210px / 360px / 1fr column template from Section 17. -->
-        <div class="main-grid three-zone">
+        <!-- MAIN GRID LAYOUT — June 13, 2026: "split-5050" class adds the
+             1fr / 1fr (equal) column template from Section 17. Sidebar left,
+             chat right, 50/50. -->
+        <div class="main-grid split-5050">
 
             <!-- =========================================================
-                 ZONE 1: MODE RAIL  (NEW June 12, 2026 — WO-12)
-                 All 14 mode buttons moved here from the old header rows.
-                 Every id, class, and onclick is IDENTICAL to the originals,
-                 so switchMode() in swarm-app.js works unchanged. Labels are
-                 wrapped in <span class="rail-label"> so CSS can hide just the
-                 text (not the icon) when the rail collapses on mid screens.
-                 ========================================================= -->
-            <nav class="mode-rail" id="modeRail">
-                <div class="mode-rail-section">Core Tasks</div>
-                <button class="mode-btn active" onclick="switchMode('quick')" id="quickModeBtn">⚡ <span class="rail-label">Quick Task</span></button>
-                <button class="mode-btn" onclick="switchMode('project')" id="projectModeBtn">📁 <span class="rail-label">Project</span></button>
-                <button class="mode-btn" onclick="switchMode('calculator')" id="calculatorModeBtn">🧮 <span class="rail-label">Calculator</span></button>
-                <button class="mode-btn" onclick="switchMode('survey')" id="surveyModeBtn">📋 <span class="rail-label">Survey</span></button>
-                <button class="mode-btn" onclick="switchMode('marketing')" id="marketingModeBtn">📢 <span class="rail-label">Marketing</span></button>
-
-                <div class="mode-rail-section">Intelligence Tools</div>
-                <button class="mode-btn" onclick="switchMode('opportunities')" id="opportunitiesModeBtn">🎯 <span class="rail-label">Opportunities</span></button>
-                <button class="mode-btn" onclick="switchMode('research')" id="researchModeBtn">🔬 <span class="rail-label">Research</span></button>
-                <button class="mode-btn" onclick="switchMode('alerts')" id="alertsModeBtn">🔔 <span class="rail-label">Alerts</span></button>
-                <button class="mode-btn" onclick="switchMode('pipeline')" id="pipelineModeBtn">📊 <span class="rail-label">Pipeline</span></button>
-                <button class="mode-btn" onclick="switchMode('manuals')" id="manualsModeBtn">📝 <span class="rail-label">Manuals</span></button>
-                <button class="mode-btn" onclick="window.location.href='/knowledge'" id="knowledgeModeBtn">🧠 <span class="rail-label">Knowledge</span></button>
-                <button class="mode-btn" onclick="switchMode('casestudies')" id="casestudiesModeBtn">✍️ <span class="rail-label">Case Studies</span></button>
-                <button class="mode-btn" onclick="switchMode('blogposts')" id="blogpostsModeBtn">📝 <span class="rail-label">Blog Posts</span></button>
-                <button class="mode-btn" onclick="switchMode('briefing')" id="briefingModeBtn">🗓️ <span class="rail-label">Briefing</span></button>
-            </nav>
-
-            <!-- =========================================================
-                 ZONE 2: CONTEXT SIDEBAR  (content verbatim from original)
+                 CONTEXT SIDEBAR  (content verbatim from original)
                  ========================================================= -->
             <div class="sidebar">
                 
@@ -1534,7 +1528,7 @@ document.addEventListener('DOMContentLoaded', function() {
             </div>
             
             <!-- =========================================================
-                 ZONE 3: MAIN CONTENT AREA  (content verbatim from original)
+                 MAIN CONTENT AREA — CHAT  (content verbatim from original)
                  ========================================================= -->
             <div class="main-content">
                 
@@ -3270,19 +3264,18 @@ document.addEventListener('DOMContentLoaded', function() {
 <!--
 =============================================================================
 INDEX.HTML - AI Swarm Unified Interface
-Updated: June 12, 2026
-Changes: THREE-ZONE LAYOUT RESTRUCTURE (WO-12).
-         The two header button rows were replaced by a vertical Mode Rail
-         (<nav class="mode-rail">) on the far left. All 14 mode buttons kept
-         their exact id, class ("mode-btn"), and onclick — so switchMode() in
-         swarm-app.js is untouched. Button text is wrapped in
-         <span class="rail-label"> so the rail can collapse to icon-only on
-         mid-width screens; switchMode() never reads button innerHTML, so this
-         is safe. Container gained class "wide" and the grid gained class
-         "three-zone"; both only trigger the additive Section 17 in
-         swarm-styles.css. Header reduced to a slim title bar. Every sidebar
-         panel, the chat area, the Add Lead modal, and all inline JavaScript
-         are byte-for-byte the same as the March 13, 2026 version.
+Updated: June 13, 2026
+Changes: SPLIT LAYOUT (50/50) — mode buttons returned to the header.
+         The June 12 left "Mode Rail" narrowed the chat, so it was removed.
+         The 14 mode buttons are back in the header in two rows — the exact
+         original pre-June-12 markup. Every button id, class ("mode-btn"),
+         and onclick is unchanged, so switchMode() in swarm-app.js is
+         untouched. The <span class="rail-label"> wrappers are gone; labels
+         are plain text again. Container keeps class "wide"; the grid now uses
+         class "split-5050" for an equal sidebar/chat split, both triggering
+         the revised (still additive) Section 17 in swarm-styles.css. Every
+         sidebar panel, the chat area, the Add Lead modal, and all inline
+         JavaScript are byte-for-byte the same as the March 13, 2026 version.
          Prior change (March 13, 2026): loadTodaysBriefing() field-name fix
          (data.briefing.content) — preserved unchanged.
 I did no harm and this file is not truncated
