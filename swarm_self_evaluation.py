@@ -1,9 +1,55 @@
 """
 Swarm Self-Evaluation Engine
 Created: January 25, 2026
-Last Updated: June 01, 2026 — WO-2 PostgreSQL Migration Repair
+Last Updated: June 13, 2026 — WO-8 Idle-Period Scoring Fix + Route DB Methods
 
 CHANGELOG:
+- June 13, 2026: WO-8 IDLE-PERIOD SCORING FIX + ROUTE DB-ACCESS METHODS
+  * Problem 1 (idle artifact): a week with zero tasks processed was scored as a
+    FAILING system (health score ~30, trend "needs_attention"). 0 tasks -> 0%
+    success fed straight into the weighted health score, and the gap analyzer
+    flagged the 0% success / 0 consensus / 0 feedback / 0 knowledge-use as real
+    deficiencies (some at HIGH severity). Every quiet week produced a scary
+    report, and once WO-11 enables alerts it would email a false alarm.
+  * Root cause: the scoring logic treated "idle / no data" identically to
+    "active but failing."
+  * Fix (SwarmReportGenerator):
+      - Added _is_idle() helper (True when tasks.total == 0) and the
+        NEUTRAL_IDLE_HEALTH_SCORE constant (75 — reads "stable", never
+        "improving" or "failing").
+      - _calculate_health_score(): returns the neutral score when idle.
+      - _determine_trend(): returns 'stable' when idle. Kept inside the existing
+        trend vocabulary (improving/stable/needs_attention) — NO new enum value
+        — so any downstream consumer or colour-map behaves normally.
+      - _generate_executive_summary(): idle weeks get a plain-language
+        "system was idle, not unhealthy / no data" summary instead of
+        "0 tasks ... 0% success rate".
+      - generate_report(): adds top-level 'idle_period' boolean to the report.
+  * Fix (GapAnalyzer.analyze_gaps): each activity-derived gap check is now gated
+    on `not is_idle` IN PLACE (original ordering preserved exactly for active
+    weeks). The market-derived "new model" gaps still run, since they are
+    independent of weekly activity.
+  * Fix (_save_evaluation / get_latest_evaluation / get_evaluation_history):
+    'idle_period' is stored in the compact metrics JSON and surfaced by the read
+    methods, giving the alert/briefing layer a clean boolean to suppress false
+    alarms instead of string-matching the trend.
+  * Problem 2 (routes coupling): routes/evaluation.py still did direct SQLite
+    DB access for /status count, GET /<id>, and DELETE /<id>. Added three new
+    engine methods so ALL swarm_evaluations DB access lives here, on the
+    migrated db_engine / RealDictCursor / %s pattern:
+      - get_evaluation_count() -> int
+      - get_evaluation_by_id(evaluation_id) -> Optional[Dict]   (rich shape,
+        reconstructed from real schema exactly like get_latest_evaluation())
+      - delete_evaluation(evaluation_id) -> bool                (uses
+        DELETE ... RETURNING id; commits; rolls back on error)
+  * NOTE for review: per-component scores in health_score.components are left
+    computing from the real (zero) metrics during idle weeks — they are honest
+    values, and the overall score / trend / summary now frame the period
+    correctly. If a UI panel colours those sub-scores red on an idle week, say
+    so and they can be neutralised too.
+  * No functionality removed. All classes, methods, and public API preserved;
+    active-week behaviour is unchanged.
+
 - June 01, 2026: WO-2 POSTGRESQL MIGRATION REPAIR
   * Fix A — Placeholders: All SQL ? placeholders replaced with %s throughout
     collect_weekly_metrics(), _save_evaluation(), get_latest_evaluation(),
@@ -475,8 +521,17 @@ class GapAnalyzer:
     def analyze_gaps(self) -> List[Dict[str, Any]]:
         gaps = []
 
+        # WO-8 (June 13, 2026): when the period is idle (zero tasks), the
+        # activity-derived metrics are all zero by ABSENCE, not by failure.
+        # Each activity-derived check below is gated on `not is_idle` so an
+        # idle week does not manufacture false (and high-severity) gaps. The
+        # gates are applied in place, preserving the original gap ORDERING for
+        # active weeks exactly. The market-derived "new model" gaps further
+        # below are independent of weekly activity and still run when idle.
         tasks = self.performance.get('tasks', {})
-        if tasks.get('success_rate', 100) < 95:
+        is_idle = tasks.get('total', 0) == 0
+
+        if not is_idle and tasks.get('success_rate', 100) < 95:
             gaps.append({
                 'category': 'performance',
                 'gap': 'Task Success Rate Below Target',
@@ -486,7 +541,7 @@ class GapAnalyzer:
                 'recommendation': 'Review failed tasks for patterns, consider adding fallback AI providers'
             })
 
-        if tasks.get('avg_execution_time_seconds', 0) > 20:
+        if not is_idle and tasks.get('avg_execution_time_seconds', 0) > 20:
             gaps.append({
                 'category': 'performance',
                 'gap': 'Slow Average Response Time',
@@ -497,7 +552,7 @@ class GapAnalyzer:
             })
 
         consensus = self.performance.get('consensus', {})
-        if consensus.get('avg_agreement_score', 1) < 0.8:
+        if not is_idle and consensus.get('avg_agreement_score', 1) < 0.8:
             gaps.append({
                 'category': 'quality',
                 'gap': 'Low AI Agreement Scores',
@@ -508,7 +563,7 @@ class GapAnalyzer:
             })
 
         specialists = self.performance.get('specialists', [])
-        if isinstance(specialists, list):
+        if not is_idle and isinstance(specialists, list):
             specialist_names = [s.get('name', '').lower() for s in specialists]
             desired_specialists = ['gpt4', 'deepseek', 'gemini']
             for specialist in desired_specialists:
@@ -523,7 +578,7 @@ class GapAnalyzer:
                     })
 
         feedback = self.performance.get('feedback', {})
-        if feedback.get('avg_quality_rating', 5) < 4.0:
+        if not is_idle and feedback.get('avg_quality_rating', 5) < 4.0:
             gaps.append({
                 'category': 'quality',
                 'gap': 'Low Quality Ratings',
@@ -533,7 +588,7 @@ class GapAnalyzer:
                 'recommendation': 'Review low-rated tasks, improve formatting and completeness'
             })
 
-        if feedback.get('avg_accuracy_rating', 5) < 4.0:
+        if not is_idle and feedback.get('avg_accuracy_rating', 5) < 4.0:
             gaps.append({
                 'category': 'accuracy',
                 'gap': 'Low Accuracy Ratings',
@@ -556,7 +611,7 @@ class GapAnalyzer:
                 })
 
         kb = self.performance.get('knowledge_base', {})
-        if kb.get('knowledge_usage_rate', 100) < 50:
+        if not is_idle and kb.get('knowledge_usage_rate', 100) < 50:
             gaps.append({
                 'category': 'knowledge',
                 'gap': 'Low Knowledge Base Utilization',
@@ -644,11 +699,25 @@ class RecommendationEngine:
 
 
 class SwarmReportGenerator:
+    # WO-8 (June 13, 2026): neutral health score for an idle / no-data week.
+    # Chosen to read as "stable" (>= 60) but never "improving" (< 80), so an
+    # idle period is reported as neither a failure nor a win.
+    NEUTRAL_IDLE_HEALTH_SCORE = 75
+
     def __init__(self, performance: Dict, market: Dict, gaps: List[Dict], recommendations: List[Dict]):
         self.performance = performance
         self.market = market
         self.gaps = gaps
         self.recommendations = recommendations
+
+    def _is_idle(self) -> bool:
+        """
+        WO-8: True when no tasks were processed in the period. A zero-task week
+        is 'no data', not a failing system, and must not be scored as one.
+        (A tasks-collection error also yields total == 0 and is treated as
+        no-data, which is the safe/conservative outcome.)
+        """
+        return self.performance.get('tasks', {}).get('total', 0) == 0
 
     def generate_report(self) -> Dict[str, Any]:
         health_score = self._calculate_health_score()
@@ -659,6 +728,7 @@ class SwarmReportGenerator:
             'report_type': 'weekly_swarm_evaluation',
             'generated_at': datetime.now().isoformat(),
             'week_of': datetime.now().strftime('%B %d, %Y'),
+            'idle_period': self._is_idle(),  # WO-8: clean flag for alert/briefing suppression
             'executive_summary': summary,
             'health_score': {
                 'overall': health_score,
@@ -701,6 +771,11 @@ class SwarmReportGenerator:
         return report
 
     def _calculate_health_score(self) -> int:
+        # WO-8: an idle week (zero tasks) is scored as neutral no-data, not as a
+        # failing system. Without this, 0 tasks -> 0% success dragged the
+        # weighted score down to ~30 and tripped a false "needs_attention".
+        if self._is_idle():
+            return self.NEUTRAL_IDLE_HEALTH_SCORE
         scores = []
         task_success = self.performance.get('tasks', {}).get('success_rate', 0)
         scores.append(min(task_success, 100) * 0.4)
@@ -715,6 +790,11 @@ class SwarmReportGenerator:
         return int(sum(scores))
 
     def _determine_trend(self) -> str:
+        # WO-8: idle weeks are 'stable' (nothing needs attention). Kept inside
+        # the existing trend vocabulary (improving/stable/needs_attention) so no
+        # new enum value reaches downstream consumers or colour-maps.
+        if self._is_idle():
+            return 'stable'
         health = self._calculate_health_score()
         gaps_count = len([g for g in self.gaps if g.get('severity') == 'high'])
         if health >= 80 and gaps_count == 0:
@@ -726,6 +806,14 @@ class SwarmReportGenerator:
 
     def _generate_executive_summary(self, health_score: int, trend: str) -> str:
         tasks = self.performance.get('tasks', {})
+        # WO-8: idle weeks get a plain-language no-data summary instead of the
+        # misleading "processed 0 tasks ... 0% success rate".
+        if self._is_idle():
+            high_gaps = len([g for g in self.gaps if g.get('severity') == 'high'])
+            return (f"The AI Swarm processed no tasks during this period, so the system was idle "
+                    f"rather than unhealthy. With no activity to measure, this is reported as a "
+                    f"no-data period with a neutral health score of {health_score}/100. "
+                    f"{len(self.gaps)} gaps identified with {high_gaps} requiring immediate attention.")
         trend_text = {
             'improving': 'Performance is trending positively.',
             'stable': 'Performance is stable.',
@@ -852,7 +940,8 @@ class SwarmSelfEvaluator:
                 'gaps_identified': report.get('gaps_identified', 0),
                 'high_priority_gaps_count': len(report.get('high_priority_gaps', [])),
                 'health_components': report.get('health_score', {}).get('components', {}),
-                'executive_summary': report.get('executive_summary', '')
+                'executive_summary': report.get('executive_summary', ''),
+                'idle_period': report.get('idle_period', False)  # WO-8: surfaced by read methods
             })
 
             recommendations_payload = json.dumps(report.get('recommendations', {}))
@@ -879,6 +968,110 @@ class SwarmSelfEvaluator:
         except Exception as e:
             print(f"  Failed to save evaluation: {e}")
             return 0
+        finally:
+            conn.close()
+
+    def get_evaluation_count(self) -> int:
+        """
+        WO-8: Total number of stored evaluations.
+
+        Added so routes/evaluation.py no longer needs its own (SQLite-era) DB
+        access for the /status count. Uses the migrated db_engine /
+        RealDictCursor / %s pattern.
+        """
+        conn = get_db_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute('SELECT COUNT(*) AS count FROM swarm_evaluations')
+            row = cursor.fetchone()
+            return row['count'] if row else 0
+        except Exception as e:
+            print(f"Error counting evaluations: {e}")
+            return 0
+        finally:
+            conn.close()
+
+    def get_evaluation_by_id(self, evaluation_id: int) -> Optional[Dict[str, Any]]:
+        """
+        WO-8: Fetch a single evaluation by id.
+
+        Reconstructs the same rich dict shape as get_latest_evaluation() from
+        the REAL schema columns (id, evaluation_date, health_score, trend,
+        metrics, raw_data), parsing the rich fields out of the metrics JSON.
+        Returns None if no row with that id exists.
+
+        Replaces the old route code that selected 8 phantom columns
+        (period_days, tasks_processed, success_rate, executive_summary,
+        gaps_count, high_priority_gaps_count, recommendations_count,
+        full_report_json) which do not exist in the table.
+        """
+        conn = get_db_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT id, evaluation_date, health_score, trend, metrics, raw_data
+                FROM swarm_evaluations
+                WHERE id = %s
+            ''', (evaluation_id,))
+            row = cursor.fetchone()
+
+            if not row:
+                return None
+
+            metrics_data = {}
+            try:
+                metrics_data = json.loads(row['metrics']) if row['metrics'] else {}
+            except Exception:
+                pass
+
+            return {
+                'id': row['id'],
+                'evaluation_date': str(row['evaluation_date']),
+                'health_score': row['health_score'],
+                'trend': row['trend'],
+                'tasks_processed': metrics_data.get('tasks_processed', 0),
+                'success_rate': metrics_data.get('success_rate', '0%'),
+                'executive_summary': metrics_data.get('executive_summary', ''),
+                'gaps_count': metrics_data.get('gaps_identified', 0),
+                'high_priority_gaps_count': metrics_data.get('high_priority_gaps_count', 0),
+                'recommendations_count': 0,  # preserved for API compat
+                'idle_period': metrics_data.get('idle_period', False),
+                'full_report': json.loads(row['raw_data']) if row['raw_data'] else None
+            }
+        except Exception as e:
+            print(f"Error fetching evaluation {evaluation_id}: {e}")
+            return None
+        finally:
+            conn.close()
+
+    def delete_evaluation(self, evaluation_id: int) -> bool:
+        """
+        WO-8: Delete a single evaluation by id.
+
+        Returns True if a row was deleted, False if no such id existed.
+        Uses DELETE ... RETURNING id (PostgreSQL) to detect existence in one
+        statement; commits on success, rolls back on error.
+
+        Replaces the old route code that used the SQLite get_db() API and
+        `?` placeholders.
+        """
+        conn = get_db_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                'DELETE FROM swarm_evaluations WHERE id = %s RETURNING id',
+                (evaluation_id,)
+            )
+            deleted = cursor.fetchone()
+            conn.commit()
+            return deleted is not None
+        except Exception as e:
+            print(f"Error deleting evaluation {evaluation_id}: {e}")
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            return False
         finally:
             conn.close()
 
@@ -919,6 +1112,7 @@ class SwarmSelfEvaluator:
                     'gaps_count': metrics_data.get('gaps_identified', 0),
                     'high_priority_gaps_count': metrics_data.get('high_priority_gaps_count', 0),
                     'recommendations_count': 0,  # preserved for API compat
+                    'idle_period': metrics_data.get('idle_period', False),  # WO-8
                     'full_report': json.loads(row['raw_data']) if row['raw_data'] else None
                 }
             return None
@@ -962,7 +1156,8 @@ class SwarmSelfEvaluator:
                     'tasks_processed': metrics_data.get('tasks_processed', 0),
                     'success_rate': metrics_data.get('success_rate', '0%'),
                     'gaps_count': metrics_data.get('gaps_identified', 0),
-                    'high_priority_gaps_count': metrics_data.get('high_priority_gaps_count', 0)
+                    'high_priority_gaps_count': metrics_data.get('high_priority_gaps_count', 0),
+                    'idle_period': metrics_data.get('idle_period', False)  # WO-8
                 })
             return history
         except Exception as e:
