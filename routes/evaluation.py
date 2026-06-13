@@ -1,9 +1,46 @@
 """
 Evaluation Routes
 Created: January 25, 2026
-Last Updated: January 25, 2026
+Last Updated: June 13, 2026 — WO-8 PostgreSQL Migration Repair (routes)
 
 API endpoints for the Swarm Self-Evaluation System.
+
+CHANGELOG:
+- June 13, 2026: WO-8 POSTGRESQL MIGRATION REPAIR (routes)
+  * Three endpoints still ran SQLite-era code that fails on PostgreSQL:
+        GET    /api/evaluation/status
+        GET    /api/evaluation/<id>
+        DELETE /api/evaluation/<id>
+    Each used `from database import get_db` (SQLite legacy module), `?`
+    placeholders, the `db.execute(...).fetchone()` chained API, and integer-
+    index access `fetchone()[0]` (incompatible with RealDictCursor). The
+    GET-by-id endpoint additionally read EIGHT phantom columns that do not
+    exist in the real swarm_evaluations schema (period_days, tasks_processed,
+    success_rate, executive_summary, gaps_count, high_priority_gaps_count,
+    recommendations_count, full_report_json).
+  * Proper fix: ALL direct database access was removed from this routes file.
+    The three endpoints now delegate to the evaluation engine, which is the
+    single migrated owner of swarm_evaluations DB access (same db_engine /
+    RealDictCursor / %s / RETURNING pattern as WO-2). New engine methods used:
+        evaluator.get_evaluation_count()
+        evaluator.get_evaluation_by_id(evaluation_id)
+        evaluator.delete_evaluation(evaluation_id)
+    This removes the `from database import get_db` SQLite dependency from this
+    file entirely and deletes the duplicated/phantom-column SQL.
+  * status endpoint: hardened the "next suggested" date math. The stored
+    evaluation_date is a PostgreSQL timestamp string that may include
+    microseconds (e.g. '2026-06-10 08:05:20.339708'), which the old
+    strptime('%Y-%m-%d %H:%M:%S') could not parse and would 500 on. A
+    tolerant _parse_eval_date() helper now handles ISO, microsecond, and
+    plain formats, falling back to today's date if parsing fails.
+  * latest endpoint: now also passes through the new 'idle_period' boolean
+    (additive key) so the briefing/alert layer can suppress false alarms on a
+    quiet week without string-matching the trend.
+  * No endpoints removed; no routes, paths, or existing response keys changed.
+    The already-working endpoints (/latest, /history, /run, /performance,
+    /market, /gaps, /recommendations) delegated to the migrated engine before
+    this change and are otherwise unchanged.
+- January 25, 2026: Initial version.
 
 ENDPOINTS:
 - GET  /api/evaluation/status     - Get evaluation system status
@@ -13,12 +50,15 @@ ENDPOINTS:
 - GET  /api/evaluation/<id>       - Get specific evaluation by ID
 - GET  /api/evaluation/performance - Get raw performance metrics
 - GET  /api/evaluation/market     - Get latest market scan
+- GET  /api/evaluation/gaps       - Get capability gaps analysis
+- GET  /api/evaluation/recommendations - Get recommendations
+- DELETE /api/evaluation/<id>     - Delete a specific evaluation
 
 AUTHOR: Jim @ Shiftwork Solutions LLC
 """
 
 from flask import Blueprint, request, jsonify
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 
 evaluation_bp = Blueprint('evaluation', __name__)
@@ -43,6 +83,37 @@ except Exception as e:
 
 
 # ============================================================================
+# HELPERS
+# ============================================================================
+
+def _parse_eval_date(value):
+    """
+    WO-8: Parse a stored evaluation_date string into a datetime, tolerantly.
+
+    The value originates from a PostgreSQL TIMESTAMP cast to str(), which may
+    look like '2026-06-10 08:05:20.339708' (with microseconds), '2026-06-10
+    08:05:20', or an ISO string with a 'T' separator. Returns None if it
+    cannot be parsed (callers fall back to today's date), so the date math
+    never raises.
+    """
+    if not value:
+        return None
+    text = str(value).strip()
+    # fromisoformat handles both 'T' and space separators and optional
+    # microseconds on Python 3.7+.
+    try:
+        return datetime.fromisoformat(text)
+    except Exception:
+        pass
+    for fmt in ('%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M:%S', '%Y-%m-%d'):
+        try:
+            return datetime.strptime(text, fmt)
+        except Exception:
+            continue
+    return None
+
+
+# ============================================================================
 # STATUS ENDPOINT
 # ============================================================================
 
@@ -50,12 +121,12 @@ except Exception as e:
 def get_evaluation_status():
     """
     Get the status of the evaluation system.
-    
+
     Returns:
     - available: Whether the evaluation system is operational
     - last_evaluation: Date of most recent evaluation
-    - next_scheduled: When next evaluation should run (suggested)
-    - evaluation_count: Total evaluations in database
+    - next_suggested: When next evaluation should run (suggested)
+    - total_evaluations: Total evaluations in database
     """
     try:
         if not EVALUATION_AVAILABLE or not evaluator:
@@ -64,30 +135,26 @@ def get_evaluation_status():
                 'available': False,
                 'message': 'Swarm Self-Evaluation system not installed'
             })
-        
+
         # Get latest evaluation
         latest = evaluator.get_latest_evaluation()
-        
-        # Get evaluation count
-        from database import get_db
-        db = get_db()
-        try:
-            count = db.execute('SELECT COUNT(*) FROM swarm_evaluations').fetchone()[0]
-        except:
-            count = 0
-        finally:
-            db.close()
-        
-        # Calculate suggested next evaluation
+
+        # WO-8: count comes from the engine now (no direct SQLite DB access here)
+        count = evaluator.get_evaluation_count()
+
+        # Calculate suggested next evaluation (WO-8: tolerant date parse — the
+        # stored timestamp may carry microseconds, which the old strptime
+        # could not handle).
         next_suggested = None
         if latest and latest.get('evaluation_date'):
-            from datetime import timedelta
-            last_date = datetime.strptime(latest['evaluation_date'], '%Y-%m-%d %H:%M:%S')
-            next_date = last_date + timedelta(days=7)
-            next_suggested = next_date.strftime('%Y-%m-%d')
+            last_date = _parse_eval_date(latest['evaluation_date'])
+            if last_date:
+                next_suggested = (last_date + timedelta(days=7)).strftime('%Y-%m-%d')
+            else:
+                next_suggested = datetime.now().strftime('%Y-%m-%d')
         else:
             next_suggested = datetime.now().strftime('%Y-%m-%d')
-        
+
         return jsonify({
             'success': True,
             'available': True,
@@ -115,13 +182,13 @@ def get_evaluation_status():
 def run_evaluation():
     """
     Trigger a new swarm self-evaluation.
-    
+
     Request Body (optional):
     {
         "days": 7,           // Number of days to analyze (default: 7)
         "save": true         // Whether to save to database (default: true)
     }
-    
+
     Returns:
     - Complete evaluation report with health score, gaps, and recommendations
     """
@@ -131,27 +198,28 @@ def run_evaluation():
                 'success': False,
                 'error': 'Swarm Self-Evaluation system not available'
             }), 503
-        
+
         # Parse request parameters
         data = request.json or {}
         days = data.get('days', 7)
         save_to_db = data.get('save', True)
-        
+
         # Validate days parameter
         if not isinstance(days, int) or days < 1 or days > 90:
             return jsonify({
                 'success': False,
                 'error': 'Days must be an integer between 1 and 90'
             }), 400
-        
+
         # Run the evaluation
         report = evaluator.run_evaluation(days=days, save_to_db=save_to_db)
-        
+
         return jsonify({
             'success': True,
             'evaluation': {
                 'generated_at': report.get('generated_at'),
                 'week_of': report.get('week_of'),
+                'idle_period': report.get('idle_period', False),
                 'executive_summary': report.get('executive_summary'),
                 'health_score': report.get('health_score'),
                 'performance_summary': report.get('performance_summary'),
@@ -180,10 +248,10 @@ def run_evaluation():
 def get_latest_evaluation():
     """
     Get the most recent evaluation report.
-    
+
     Query Parameters:
     - full: If 'true', include complete raw data (default: false)
-    
+
     Returns:
     - Latest evaluation summary or full report
     """
@@ -193,18 +261,18 @@ def get_latest_evaluation():
                 'success': False,
                 'error': 'Swarm Self-Evaluation system not available'
             }), 503
-        
+
         include_full = request.args.get('full', 'false').lower() == 'true'
-        
+
         latest = evaluator.get_latest_evaluation()
-        
+
         if not latest:
             return jsonify({
                 'success': True,
                 'evaluation': None,
                 'message': 'No evaluations found. Run an evaluation first.'
             })
-        
+
         response = {
             'success': True,
             'evaluation': {
@@ -217,13 +285,14 @@ def get_latest_evaluation():
                 'executive_summary': latest.get('executive_summary'),
                 'gaps_count': latest.get('gaps_count'),
                 'high_priority_gaps_count': latest.get('high_priority_gaps_count'),
-                'recommendations_count': latest.get('recommendations_count')
+                'recommendations_count': latest.get('recommendations_count'),
+                'idle_period': latest.get('idle_period', False)  # WO-8 additive key
             }
         }
-        
+
         if include_full and latest.get('full_report'):
             response['full_report'] = latest.get('full_report')
-        
+
         return jsonify(response)
     except Exception as e:
         return jsonify({
@@ -240,10 +309,10 @@ def get_latest_evaluation():
 def get_evaluation_history():
     """
     Get history of past evaluations.
-    
+
     Query Parameters:
     - limit: Maximum number of evaluations to return (default: 10, max: 50)
-    
+
     Returns:
     - List of evaluation summaries (newest first)
     """
@@ -253,12 +322,12 @@ def get_evaluation_history():
                 'success': False,
                 'error': 'Swarm Self-Evaluation system not available'
             }), 503
-        
+
         limit = request.args.get('limit', 10, type=int)
         limit = min(max(limit, 1), 50)  # Clamp between 1 and 50
-        
+
         history = evaluator.get_evaluation_history(limit=limit)
-        
+
         return jsonify({
             'success': True,
             'evaluations': history,
@@ -279,52 +348,34 @@ def get_evaluation_history():
 def get_evaluation_by_id(evaluation_id):
     """
     Get a specific evaluation by its ID.
-    
+
     Returns:
     - Full evaluation report for the specified ID
+
+    WO-8: now delegates to evaluator.get_evaluation_by_id(), which reads the
+    REAL swarm_evaluations schema (no phantom columns) on the migrated
+    db_engine pattern. The previous direct-SQLite implementation could never
+    succeed on PostgreSQL.
     """
     try:
-        if not EVALUATION_AVAILABLE:
+        if not EVALUATION_AVAILABLE or not evaluator:
             return jsonify({
                 'success': False,
                 'error': 'Swarm Self-Evaluation system not available'
             }), 503
-        
-        from database import get_db
-        db = get_db()
-        
-        try:
-            row = db.execute('''
-                SELECT * FROM swarm_evaluations WHERE id = ?
-            ''', (evaluation_id,)).fetchone()
-            
-            if not row:
-                return jsonify({
-                    'success': False,
-                    'error': f'Evaluation {evaluation_id} not found'
-                }), 404
-            
-            evaluation = {
-                'id': row['id'],
-                'evaluation_date': row['evaluation_date'],
-                'period_days': row['period_days'],
-                'health_score': row['health_score'],
-                'trend': row['trend'],
-                'tasks_processed': row['tasks_processed'],
-                'success_rate': row['success_rate'],
-                'executive_summary': row['executive_summary'],
-                'gaps_count': row['gaps_count'],
-                'high_priority_gaps_count': row['high_priority_gaps_count'],
-                'recommendations_count': row['recommendations_count'],
-                'full_report': json.loads(row['full_report_json']) if row['full_report_json'] else None
-            }
-            
+
+        evaluation = evaluator.get_evaluation_by_id(evaluation_id)
+
+        if not evaluation:
             return jsonify({
-                'success': True,
-                'evaluation': evaluation
-            })
-        finally:
-            db.close()
+                'success': False,
+                'error': f'Evaluation {evaluation_id} not found'
+            }), 404
+
+        return jsonify({
+            'success': True,
+            'evaluation': evaluation
+        })
     except Exception as e:
         return jsonify({
             'success': False,
@@ -340,10 +391,10 @@ def get_evaluation_by_id(evaluation_id):
 def get_performance_metrics():
     """
     Get raw performance metrics without running a full evaluation.
-    
+
     Query Parameters:
     - days: Number of days to analyze (default: 7)
-    
+
     Returns:
     - Raw performance metrics from the database
     """
@@ -353,15 +404,15 @@ def get_performance_metrics():
                 'success': False,
                 'error': 'Swarm Self-Evaluation system not available'
             }), 503
-        
+
         days = request.args.get('days', 7, type=int)
         days = min(max(days, 1), 90)  # Clamp between 1 and 90
-        
+
         # Use the performance collector
         from swarm_self_evaluation import PerformanceCollector
         collector = PerformanceCollector()
         metrics = collector.collect_weekly_metrics(days=days)
-        
+
         return jsonify({
             'success': True,
             'period_days': days,
@@ -382,9 +433,9 @@ def get_performance_metrics():
 def get_market_scan():
     """
     Run a market scan for new AI developments.
-    
+
     Note: This uses web search if available, otherwise uses AI knowledge.
-    
+
     Returns:
     - Market findings including new models, updates, and tools
     """
@@ -394,11 +445,11 @@ def get_market_scan():
                 'success': False,
                 'error': 'Swarm Self-Evaluation system not available'
             }), 503
-        
+
         from swarm_self_evaluation import MarketScanner
         scanner = MarketScanner()
         findings = scanner.scan_ai_landscape()
-        
+
         return jsonify({
             'success': True,
             'scan_date': findings.get('scan_date'),
@@ -424,11 +475,11 @@ def get_market_scan():
 def get_gaps_analysis():
     """
     Get current capability gaps analysis.
-    
+
     Query Parameters:
     - days: Number of days to analyze (default: 7)
     - severity: Filter by severity (high/medium/low, optional)
-    
+
     Returns:
     - List of identified gaps with recommendations
     """
@@ -438,29 +489,29 @@ def get_gaps_analysis():
                 'success': False,
                 'error': 'Swarm Self-Evaluation system not available'
             }), 503
-        
+
         days = request.args.get('days', 7, type=int)
         severity_filter = request.args.get('severity')
-        
+
         from swarm_self_evaluation import PerformanceCollector, MarketScanner, GapAnalyzer
-        
+
         # Collect metrics
         collector = PerformanceCollector()
         performance = collector.collect_weekly_metrics(days=days)
-        
+
         # Scan market
         scanner = MarketScanner()
         market = scanner.scan_ai_landscape()
-        
+
         # Analyze gaps
         analyzer = GapAnalyzer(performance, market)
         gaps = analyzer.analyze_gaps()
         prioritized = analyzer.prioritize_gaps()
-        
+
         # Filter by severity if requested
         if severity_filter:
             prioritized = [g for g in prioritized if g.get('severity') == severity_filter.lower()]
-        
+
         return jsonify({
             'success': True,
             'period_days': days,
@@ -487,11 +538,11 @@ def get_gaps_analysis():
 def get_recommendations():
     """
     Get current recommendations based on performance and market analysis.
-    
+
     Query Parameters:
     - days: Number of days to analyze (default: 7)
     - priority: Filter by priority (1/2/3, optional)
-    
+
     Returns:
     - Prioritized list of recommendations
     """
@@ -501,32 +552,32 @@ def get_recommendations():
                 'success': False,
                 'error': 'Swarm Self-Evaluation system not available'
             }), 503
-        
+
         days = request.args.get('days', 7, type=int)
         priority_filter = request.args.get('priority', type=int)
-        
+
         from swarm_self_evaluation import (
             PerformanceCollector, MarketScanner, GapAnalyzer, RecommendationEngine
         )
-        
+
         # Collect and analyze
         collector = PerformanceCollector()
         performance = collector.collect_weekly_metrics(days=days)
-        
+
         scanner = MarketScanner()
         market = scanner.scan_ai_landscape()
-        
+
         analyzer = GapAnalyzer(performance, market)
         gaps = analyzer.prioritize_gaps()
-        
+
         # Generate recommendations
         engine = RecommendationEngine(performance, market, gaps)
         recommendations = engine.generate_recommendations()
-        
+
         # Filter by priority if requested
         if priority_filter:
             recommendations = [r for r in recommendations if r.get('priority') == priority_filter]
-        
+
         return jsonify({
             'success': True,
             'period_days': days,
@@ -553,39 +604,34 @@ def get_recommendations():
 def delete_evaluation(evaluation_id):
     """
     Delete a specific evaluation from the database.
-    
+
     Returns:
     - Success/failure status
+
+    WO-8: now delegates to evaluator.delete_evaluation(), which uses
+    DELETE ... RETURNING id on the migrated db_engine pattern and reports
+    whether a row actually existed. The previous direct-SQLite implementation
+    could never run on PostgreSQL.
     """
     try:
-        if not EVALUATION_AVAILABLE:
+        if not EVALUATION_AVAILABLE or not evaluator:
             return jsonify({
                 'success': False,
                 'error': 'Swarm Self-Evaluation system not available'
             }), 503
-        
-        from database import get_db
-        db = get_db()
-        
-        try:
-            # Check if evaluation exists
-            row = db.execute('SELECT id FROM swarm_evaluations WHERE id = ?', (evaluation_id,)).fetchone()
-            if not row:
-                return jsonify({
-                    'success': False,
-                    'error': f'Evaluation {evaluation_id} not found'
-                }), 404
-            
-            # Delete it
-            db.execute('DELETE FROM swarm_evaluations WHERE id = ?', (evaluation_id,))
-            db.commit()
-            
+
+        existed = evaluator.delete_evaluation(evaluation_id)
+
+        if not existed:
             return jsonify({
-                'success': True,
-                'message': f'Evaluation {evaluation_id} deleted successfully'
-            })
-        finally:
-            db.close()
+                'success': False,
+                'error': f'Evaluation {evaluation_id} not found'
+            }), 404
+
+        return jsonify({
+            'success': True,
+            'message': f'Evaluation {evaluation_id} deleted successfully'
+        })
     except Exception as e:
         return jsonify({
             'success': False,
