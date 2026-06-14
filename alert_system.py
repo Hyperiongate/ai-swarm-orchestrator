@@ -1,9 +1,30 @@
 """
 ALERT SYSTEM - Autonomous Monitoring & Notification Engine
 Created: January 23, 2026
-Last Updated: June 14, 2026 - WO-11 Formspree delivery + create_alert id fix
+Last Updated: June 14, 2026 - WO-11 Formspree sender hardening
 
 CHANGELOG:
+- June 14, 2026: WO-11 FORMSPREE SENDER HARDENING (delivery diagnosis)
+  * Symptom: after the Formspree switch deployed and ENABLE_EMAIL_ALERTS +
+    ALERT_FORMSPREE_ENDPOINT were both set, a direct browser POST to the form
+    returned 200/ok, but the swarm's server-side POST kept failing (alert
+    emailed_at stayed null). That points to Formspree rejecting the server
+    request specifically.
+  * _post_to_formspree() hardened:
+      - Now sends a browser-style User-Agent. Formspree's spam/bot filtering
+        commonly rejects the default 'Python-urllib/x.y' agent, producing a
+        4xx on the server POST even though the same form accepts browser
+        submissions.
+      - Now logs the EXACT Formspree error. urllib raises HTTPError for 4xx/5xx;
+        its response body carries Formspree's real reason (domain restriction,
+        reCAPTCHA, spam, etc.). That body is now read and printed, so the next
+        failed attempt names its own cause instead of being guessed at.
+  * Alert and briefing payloads now include an 'email' field (set to
+    ALERT_FROM_EMAIL). The known-good direct submission included an email
+    field; mirroring it sets a reply-to and makes the server payload look like
+    an ordinary form submission.
+  * No behaviour change on success; all other methods untouched.
+
 - June 14, 2026: WO-11 — FORMSPREE DELIVERY + create_alert id fix
   * Delivery switched from raw SMTP/SendGrid to Formspree. The swarm already
     uses Formspree for the Thomas advisor and the website, so this reuses
@@ -124,6 +145,17 @@ def _post_to_formspree(payload):
     POST a JSON payload to Formspree. Standard-library only (urllib) — no new
     dependency. Returns True on a 2xx response, False otherwise. Never raises;
     failures are logged and reported as False so callers degrade gracefully.
+
+    WO-11 hardening (June 14, 2026):
+      - Sends a browser-style User-Agent. Formspree's spam/bot filtering can
+        reject the default 'Python-urllib/x.y' agent, which shows up as a 4xx
+        on a server-side POST even when the same form accepts browser
+        submissions. A normal User-Agent makes the server request look like an
+        ordinary form submission.
+      - On any non-success, the EXACT HTTP status and Formspree response body
+        are logged (urllib raises HTTPError for 4xx/5xx, whose body carries
+        Formspree's real reason, e.g. domain restriction / reCAPTCHA / spam).
+        This replaces blind guessing with the provider's own error text.
     """
     url = _formspree_url()
     if not url:
@@ -131,6 +163,7 @@ def _post_to_formspree(payload):
         return False
     try:
         import urllib.request
+        import urllib.error
         data = json.dumps(payload).encode('utf-8')
         req = urllib.request.Request(
             url,
@@ -138,14 +171,33 @@ def _post_to_formspree(payload):
             headers={
                 'Content-Type': 'application/json',
                 'Accept': 'application/json',
+                'User-Agent': (
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                    'AppleWebKit/537.36 (KHTML, like Gecko) '
+                    'Chrome/124.0.0.0 Safari/537.36'
+                ),
             },
             method='POST',
         )
         with urllib.request.urlopen(req, timeout=20) as resp:
             ok = 200 <= resp.status < 300
             if not ok:
-                print(f"⚠️  Formspree returned HTTP {resp.status}")
+                body = ''
+                try:
+                    body = resp.read().decode('utf-8', 'replace')[:500]
+                except Exception:
+                    pass
+                print(f"⚠️  Formspree returned HTTP {resp.status}: {body}")
             return ok
+    except urllib.error.HTTPError as e:
+        # 4xx / 5xx land here; the response body holds Formspree's real reason.
+        body = ''
+        try:
+            body = e.read().decode('utf-8', 'replace')[:500]
+        except Exception:
+            pass
+        print(f"⚠️  Formspree POST failed: HTTP {e.code}: {body}")
+        return False
     except Exception as e:
         print(f"⚠️  Formspree POST failed: {e}")
         return False
@@ -442,6 +494,7 @@ class AlertManager:
 
         payload = {
             '_subject': f"[{priority.upper()}] {title} - Shiftwork Solutions Alert",
+            'email': ALERT_FROM_EMAIL,  # WO-11: present in the known-good submission; sets reply-to
             'priority': priority.upper(),
             'category': category,
             'title': title,
@@ -1042,6 +1095,7 @@ class JobScheduler:
 
             payload = {
                 '_subject': f"📰 Daily Intelligence Briefing - {datetime.now().strftime('%B %d, %Y')}",
+                'email': ALERT_FROM_EMAIL,  # WO-11: sets reply-to, mirrors known-good submission
                 'type': 'daily_briefing',
                 'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 'message': message,
