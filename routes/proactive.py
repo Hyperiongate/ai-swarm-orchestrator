@@ -2,7 +2,7 @@
 AI SWARM ORCHESTRATOR - Proactive Agent API Routes
 File: routes/proactive.py
 Created: March 12, 2026
-Last Updated: March 12, 2026 — Phase 6 Deliverable 2: Initial implementation
+Last Updated: June 13, 2026 — WO-10 follow-on: real scheduler status
 
 PURPOSE:
     Flask blueprint exposing all Proactive Agent endpoints.
@@ -30,6 +30,25 @@ ENDPOINTS:
     GET  /api/proactive/status        — overall proactive system status
 
 CHANGELOG:
+- June 13, 2026: WO-10 FOLLOW-ON — REAL SCHEDULER STATUS
+  * /api/proactive/status previously returned a HARDCODED placeholder for the
+    'scheduler' block:
+        {'status': 'not_yet_deployed',
+         'detail': 'Scheduler will be active after Phase 6 Deliverable 5'}
+    That text predates the scheduler, which was actually built and deployed in
+    WO-4 (Phase 6 Deliverable 5). Because the endpoint never called the real
+    status function, the Briefing panel's indicator read a frozen value and
+    always showed a red "Scheduler not running" dot regardless of the true
+    state.
+  * Fix: the 'scheduler' block now calls get_scheduler_status() from
+    proactive/scheduler.py, using the same try/except-on-import pattern used
+    for every other module in this file. A 'job_count' field is derived from
+    the returned 'jobs' list to match exactly what the frontend indicator
+    reads (data.scheduler.running + data.scheduler.job_count), so the dot now
+    reflects reality: green with the live job count when the scheduler is
+    running, red with accurate enabled/running flags when it is not.
+  * No other endpoint changed. All briefing / task / lead / monitor routes are
+    byte-for-byte the same as the March 12 version.
 - March 12, 2026: Phase 6 Deliverable 2 — Initial implementation
   * All briefing endpoints fully functional
   * All task endpoints fully functional
@@ -398,7 +417,7 @@ def defer_task(task_id: int):
 def get_leads():
     """
     GET /api/leads
-    Returns new/unreviewed leads. Active after Deliverable 3 is deployed.
+    Returns new/unreviewed leads.
     """
     try:
         from proactive.lead_scanner import get_new_leads
@@ -421,7 +440,6 @@ def review_lead(lead_id: int):
     """
     PUT /api/leads/<id>/review
     Mark a lead as reviewed, contacted, or dismissed.
-    Active after Deliverable 3 is deployed.
     Body: { "status": "reviewed" | "contacted" | "dismissed" }
     """
     try:
@@ -452,7 +470,6 @@ def get_monitored_services():
     """
     GET /api/monitor/services
     Returns all monitored services with latest health status.
-    Active after Deliverable 4 is deployed.
     """
     try:
         from proactive.app_monitor import get_health_summary
@@ -475,7 +492,6 @@ def register_monitored_service():
     POST /api/monitor/services
     Register a new service to monitor.
     Body: { "service_name": "...", "endpoint_url": "...", "check_interval_minutes": 60 }
-    Active after Deliverable 4 is deployed.
     """
     try:
         from proactive.app_monitor import register_service
@@ -516,17 +532,13 @@ def proactive_status():
     """
     GET /api/proactive/status
 
-    Returns the status of all proactive system components.
-    Shows which modules are live and which are pending future deliverables.
-    Scheduler status will be populated in Deliverable 5.
+    Returns the status of all proactive system components, including the live
+    scheduler state (WO-10 follow-on — previously this 'scheduler' block was a
+    hardcoded placeholder that never reflected reality).
     """
     status = {
         'success': True,
         'modules': {},
-        'scheduler': {
-            'status': 'not_yet_deployed',
-            'detail': 'Scheduler will be active after Phase 6 Deliverable 5',
-        },
     }
 
     # Task Manager
@@ -574,6 +586,33 @@ def proactive_status():
         }
     except Exception as e:
         status['modules']['app_monitor'] = {'status': 'error', 'error': str(e)}
+
+    # Scheduler (WO-10 follow-on) — live status from proactive/scheduler.py.
+    # The frontend indicator reads scheduler.running and scheduler.job_count;
+    # get_scheduler_status() returns a 'jobs' list, so job_count is derived
+    # from it here to satisfy that contract. The whole status dict (enabled,
+    # running, jobs, and any message) is passed through so the readout is
+    # honest whether the scheduler is running, disabled, or uninitialized.
+    try:
+        from proactive.scheduler import get_scheduler_status
+        sched_status = get_scheduler_status()
+        if isinstance(sched_status, dict):
+            sched_status['job_count'] = len(sched_status.get('jobs', []))
+        status['scheduler'] = sched_status
+    except ImportError:
+        status['scheduler'] = {
+            'enabled': False,
+            'running': False,
+            'job_count': 0,
+            'detail': 'proactive/scheduler.py not found',
+        }
+    except Exception as e:
+        status['scheduler'] = {
+            'enabled': False,
+            'running': False,
+            'job_count': 0,
+            'error': str(e),
+        }
 
     return jsonify(status)
 
