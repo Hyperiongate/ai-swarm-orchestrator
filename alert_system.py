@@ -1,9 +1,43 @@
 """
 ALERT SYSTEM - Autonomous Monitoring & Notification Engine
 Created: January 23, 2026
-Last Updated: March 03, 2026 - KEYERROR FIX in get_alert_counts()
+Last Updated: June 14, 2026 - WO-11 Formspree delivery + create_alert id fix
 
 CHANGELOG:
+- June 14, 2026: WO-11 — FORMSPREE DELIVERY + create_alert id fix
+  * Delivery switched from raw SMTP/SendGrid to Formspree. The swarm already
+    uses Formspree for the Thomas advisor and the website, so this reuses
+    working infrastructure instead of requiring a SendGrid account.
+      - Added ALERT_FORMSPREE_ENDPOINT config (read from env). Set it in Render
+        to the Formspree form ID (e.g. 'abcwxyz') or a full https URL. The
+        recipient is configured in the Formspree form itself, so ALERT_TO_EMAIL
+        is now OPTIONAL — it is only included in the payload for reference.
+      - Added module helpers _formspree_url() and _post_to_formspree(payload).
+        _post_to_formspree uses only the Python standard library (urllib) — no
+        new third-party dependency is introduced.
+      - AlertManager.email_enabled now gates on
+            ENABLE_EMAIL_ALERTS and bool(_formspree_url())
+        instead of requiring SMTP_PASSWORD.
+      - _send_alert_email() and _send_briefing_email() now POST a structured
+        payload to Formspree instead of building MIME messages and using
+        smtplib. Behaviour is otherwise the same: single alerts deliver only
+        for CRITICAL/HIGH priority (unchanged gate in create_alert), and the
+        emailed_at timestamp is still recorded on success.
+  * create_alert() id fix: replaced `alert_id = cursor.lastrowid` (which
+    returns None on psycopg2 / PostgreSQL SERIAL tables — the same WO-2/WO-8
+    bug class) with `INSERT ... RETURNING id` + fetchone()['id']. Previously
+    the alert row was created but alert_id came back None, so the email showed
+    "Alert ID: None" and the emailed_at UPDATE (WHERE id = None) matched
+    nothing.
+  * The SMTP_* config vars and the smtplib / email.mime imports are left in
+    place (now unused by the send paths) so the file's surface area is
+    minimally disturbed and SMTP remains trivially restorable if ever needed.
+  * KNOWN, OUT OF SCOPE (flagged, NOT changed): JobScheduler._execute_job()
+    has the identical lastrowid bug (execution_id = cursor.lastrowid). It is
+    in the scan-job path, which is untested and not part of WO-11, so it is
+    intentionally left untouched here and noted for a future work order.
+  * No public API changed. All other methods preserved exactly.
+
 - March 03, 2026: KEYERROR FIX
   * get_alert_counts(): SELECT COUNT(*) had no alias — fetchone()[0] used
     integer index which raises KeyError: 0 on psycopg2 RealDictCursor.
@@ -31,7 +65,7 @@ CHANGELOG:
 PURPOSE:
 This module provides autonomous monitoring and alerting capabilities for the AI Swarm.
 It runs scheduled jobs to monitor various intelligence sources and delivers alerts
-via email and the dashboard.
+via Formspree and the dashboard.
 
 AUTHOR: Jim @ Shiftwork Solutions LLC (managed by Claude)
 """
@@ -51,6 +85,9 @@ from db_engine import get_db_type
 # CONFIGURATION
 # =============================================================================
 
+# SMTP settings are retained for reference / possible future use. As of WO-11
+# (June 14, 2026) the send paths no longer use SMTP — delivery is via Formspree
+# (see ALERT_FORMSPREE_ENDPOINT below).
 SMTP_HOST = os.environ.get('SMTP_HOST', 'smtp.sendgrid.net')
 SMTP_PORT = int(os.environ.get('SMTP_PORT', 587))
 SMTP_USER = os.environ.get('SMTP_USER', 'apikey')
@@ -61,6 +98,57 @@ ALERT_TO_EMAIL = os.environ.get('ALERT_TO_EMAIL', '')
 ALERT_CHECK_INTERVAL_MINUTES = int(os.environ.get('ALERT_CHECK_INTERVAL', 60))
 ENABLE_EMAIL_ALERTS = os.environ.get('ENABLE_EMAIL_ALERTS', 'false').lower() == 'true'
 ENABLE_SCHEDULED_JOBS = os.environ.get('ENABLE_SCHEDULED_JOBS', 'false').lower() == 'true'
+
+# WO-11: Formspree delivery endpoint. Set ALERT_FORMSPREE_ENDPOINT in Render to
+# the Formspree form ID (e.g. 'abcwxyz') or a full https URL. The recipient is
+# configured inside the Formspree form, so ALERT_TO_EMAIL is optional.
+ALERT_FORMSPREE_ENDPOINT = os.environ.get('ALERT_FORMSPREE_ENDPOINT', '')
+
+
+def _formspree_url():
+    """
+    Build the Formspree submission URL from ALERT_FORMSPREE_ENDPOINT.
+    Accepts either a bare form ID or a full http(s) URL. Returns '' when not
+    configured (delivery is then treated as disabled).
+    """
+    ep = (ALERT_FORMSPREE_ENDPOINT or '').strip()
+    if not ep:
+        return ''
+    if ep.startswith('http://') or ep.startswith('https://'):
+        return ep
+    return f'https://formspree.io/f/{ep}'
+
+
+def _post_to_formspree(payload):
+    """
+    POST a JSON payload to Formspree. Standard-library only (urllib) — no new
+    dependency. Returns True on a 2xx response, False otherwise. Never raises;
+    failures are logged and reported as False so callers degrade gracefully.
+    """
+    url = _formspree_url()
+    if not url:
+        print("⚠️  Formspree endpoint not configured (set ALERT_FORMSPREE_ENDPOINT)")
+        return False
+    try:
+        import urllib.request
+        data = json.dumps(payload).encode('utf-8')
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+            },
+            method='POST',
+        )
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            ok = 200 <= resp.status < 300
+            if not ok:
+                print(f"⚠️  Formspree returned HTTP {resp.status}")
+            return ok
+    except Exception as e:
+        print(f"⚠️  Formspree POST failed: {e}")
+        return False
 
 
 class AlertCategory:
@@ -283,32 +371,39 @@ class AlertManager:
     """Manages creation, delivery, and lifecycle of alerts."""
 
     def __init__(self):
-        self.email_enabled = ENABLE_EMAIL_ALERTS and bool(SMTP_PASSWORD) and bool(ALERT_TO_EMAIL)
+        # WO-11: delivery is via Formspree. Enabled when alerts are turned on
+        # AND a Formspree endpoint is configured. ALERT_TO_EMAIL is no longer
+        # required (the Formspree form decides the recipient).
+        self.email_enabled = ENABLE_EMAIL_ALERTS and bool(_formspree_url())
         if self.email_enabled:
-            print(f"✅ Alert email delivery enabled (to: {ALERT_TO_EMAIL})")
+            print("✅ Alert delivery enabled via Formspree")
         else:
-            print("ℹ️  Alert email delivery disabled (configure SMTP settings to enable)")
+            print("ℹ️  Alert delivery disabled "
+                  "(set ENABLE_EMAIL_ALERTS=true and ALERT_FORMSPREE_ENDPOINT to enable)")
 
     def create_alert(self, category, title, summary, priority=AlertPriority.MEDIUM,
                      details=None, source_url=None, source_data=None, metadata=None,
                      send_email=True):
-        """Create a new alert and optionally send email notification."""
+        """Create a new alert and optionally send a notification."""
         _ensure_tables_initialized()
 
         db = get_db()
         try:
-            cursor = db.execute('''
+            # WO-11: INSERT ... RETURNING id (psycopg2 has no usable lastrowid
+            # for SERIAL tables — the old cursor.lastrowid returned None).
+            row = db.execute('''
                 INSERT INTO alerts
                     (category, priority, title, summary, details,
                      source_url, source_data, metadata)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
             ''', (
                 category, priority, title, summary, details,
                 source_url,
                 json.dumps(source_data) if source_data else None,
                 json.dumps(metadata) if metadata else None
-            ))
-            alert_id = cursor.lastrowid
+            )).fetchone()
+            alert_id = row['id'] if row else None
             db.commit()
         finally:
             db.close()
@@ -325,68 +420,44 @@ class AlertManager:
 
     def _send_alert_email(self, alert_id, category, priority, title,
                           summary, details, source_url):
-        """Send email notification for an alert."""
-        try:
-            msg = MIMEMultipart('alternative')
-            msg['Subject'] = f"[{priority.upper()}] {title} - Shiftwork Solutions Alert"
-            msg['From'] = ALERT_FROM_EMAIL
-            msg['To'] = ALERT_TO_EMAIL
+        """
+        Deliver an alert notification via Formspree (WO-11).
 
-            text_content = f"""
-ALERT: {title}
-Priority: {priority.upper()}
-Category: {category}
+        Sends a structured payload; Formspree formats and emails it to the
+        address configured on the form. On success the alert's emailed_at
+        timestamp is recorded.
+        """
+        message = (
+            f"ALERT: {title}\n"
+            f"Priority: {priority.upper()}\n"
+            f"Category: {category}\n\n"
+            f"{summary}\n\n"
+            f"{details or ''}\n\n"
+            f"{('Source: ' + source_url) if source_url else ''}\n\n"
+            f"---\n"
+            f"Alert ID: {alert_id}\n"
+            f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"View all alerts: https://ai-swarm-orchestrator.onrender.com/"
+        )
 
-{summary}
+        payload = {
+            '_subject': f"[{priority.upper()}] {title} - Shiftwork Solutions Alert",
+            'priority': priority.upper(),
+            'category': category,
+            'title': title,
+            'summary': summary,
+            'details': details or '',
+            'source_url': source_url or '',
+            'alert_id': alert_id,
+            'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'message': message,
+        }
+        if ALERT_TO_EMAIL:
+            payload['intended_recipient'] = ALERT_TO_EMAIL
 
-{details or ''}
+        sent = _post_to_formspree(payload)
 
-{f'Source: {source_url}' if source_url else ''}
-
----
-View all alerts: https://ai-swarm-orchestrator.onrender.com/
-"""
-            priority_colors = {
-                'critical': '#d32f2f', 'high': '#f57c00',
-                'medium': '#1976d2', 'low': '#388e3c'
-            }
-            html_content = f"""
-<!DOCTYPE html>
-<html>
-<head>
-    <style>
-        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }}
-        .alert-box {{ max-width:600px; margin:20px auto; border:1px solid #e0e0e0; border-radius:8px; overflow:hidden; }}
-        .alert-header {{ background:{priority_colors.get(priority,'#1976d2')}; color:white; padding:15px 20px; }}
-        .alert-body {{ padding:20px; }}
-        .alert-meta {{ font-size:12px; color:#666; margin-top:15px; }}
-    </style>
-</head>
-<body>
-    <div class="alert-box">
-        <div class="alert-header"><strong>🔔 {priority.upper()} ALERT</strong></div>
-        <div class="alert-body">
-            <h2 style="margin-top:0;">{title}</h2>
-            <p>{summary}</p>
-            {f'<div style="padding:15px; background:#f5f5f5; border-radius:6px; margin:15px 0;">{details}</div>' if details else ''}
-            {f'<p><a href="{source_url}" style="color:#667eea;">🔗 View Source</a></p>' if source_url else ''}
-            <div class="alert-meta">
-                <p>Category: {category}<br>Alert ID: {alert_id}<br>
-                Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
-            </div>
-        </div>
-    </div>
-</body>
-</html>
-"""
-            msg.attach(MIMEText(text_content, 'plain'))
-            msg.attach(MIMEText(html_content, 'html'))
-
-            with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-                server.starttls()
-                server.login(SMTP_USER, SMTP_PASSWORD)
-                server.send_message(msg)
-
+        if sent:
             db = get_db()
             try:
                 db.execute(
@@ -396,11 +467,9 @@ View all alerts: https://ai-swarm-orchestrator.onrender.com/
                 db.commit()
             finally:
                 db.close()
-
-            print(f"📧 Alert email sent to {ALERT_TO_EMAIL}")
-
-        except Exception as e:
-            print(f"⚠️ Failed to send alert email: {e}")
+            print(f"📧 Alert delivered via Formspree (alert {alert_id})")
+        else:
+            print(f"⚠️  Alert {alert_id} not delivered (Formspree send failed)")
 
     def get_alerts(self, category=None, priority=None, unread_only=False,
                    limit=50, include_dismissed=False):
@@ -701,7 +770,15 @@ class JobScheduler:
         return self._execute_job(job)
 
     def _execute_job(self, job):
-        """Execute a single job."""
+        """
+        Execute a single job.
+
+        NOTE (WO-11, June 14, 2026): this method still uses
+        execution_id = cursor.lastrowid, which returns None on PostgreSQL —
+        the same bug class fixed in create_alert(). It is intentionally left
+        untouched here because the scan-job path is out of WO-11 scope and
+        untested; flagged for a future work order.
+        """
         job_type = job['job_type']
         config = job.get('config', {})
 
@@ -928,16 +1005,13 @@ class JobScheduler:
             return 0
 
     def _send_briefing_email(self, alerts_by_category, log):
-        """Send daily briefing email."""
-        try:
-            msg = MIMEMultipart('alternative')
-            msg['Subject'] = (
-                f"📰 Daily Intelligence Briefing - "
-                f"{datetime.now().strftime('%B %d, %Y')}"
-            )
-            msg['From'] = ALERT_FROM_EMAIL
-            msg['To'] = ALERT_TO_EMAIL
+        """
+        Send the daily briefing digest via Formspree (WO-11).
 
+        Composes a plain-text digest and POSTs it; Formspree emails it to the
+        address configured on the form.
+        """
+        try:
             category_titles = {
                 AlertCategory.LEAD: '🎯 New Leads',
                 AlertCategory.COMPETITOR: '🏢 Competitor Activity',
@@ -947,76 +1021,40 @@ class JobScheduler:
                 AlertCategory.SYSTEM: '⚙️ System Alerts'
             }
 
-            html_sections = []
+            lines = [
+                f"Daily Intelligence Briefing - {datetime.now().strftime('%A, %B %d, %Y')}",
+                "",
+            ]
             for category, alerts in alerts_by_category.items():
                 section_title = category_titles.get(category, category)
-                items_html = ''
+                lines.append(section_title)
+                lines.append('=' * 40)
                 for alert in alerts[:5]:
-                    items_html += f'''
-                        <div style="padding:10px; margin:5px 0; background:#f9f9f9;
-                                    border-radius:6px; border-left:3px solid #667eea;">
-                            <strong>{alert['title']}</strong><br>
-                            <span style="font-size:13px; color:#666;">
-                                {str(alert.get('summary',''))[:150]}...
-                            </span>
-                            {f'<br><a href="{alert["source_url"]}" style="font-size:12px; color:#667eea;">Read more</a>'
-                              if alert.get('source_url') else ''}
-                        </div>
-                    '''
-                html_sections.append(f'''
-                    <div style="margin-bottom:25px;">
-                        <h3 style="color:#333; border-bottom:2px solid #667eea;
-                                   padding-bottom:5px;">{section_title}</h3>
-                        {items_html}
-                    </div>
-                ''')
+                    lines.append(f"• {alert['title']}")
+                    summary_text = str(alert.get('summary', ''))[:150]
+                    if summary_text:
+                        lines.append(f"  {summary_text}")
+                    if alert.get('source_url'):
+                        lines.append(f"  {alert['source_url']}")
+                lines.append("")
 
-            html_content = f'''
-<!DOCTYPE html>
-<html>
-<head>
-    <style>body{{ font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }}</style>
-</head>
-<body style="max-width:700px; margin:0 auto; padding:20px;">
-    <div style="background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);
-                color:white; padding:20px; border-radius:8px 8px 0 0;">
-        <h1 style="margin:0;">📰 Daily Intelligence Briefing</h1>
-        <p style="margin:5px 0 0 0; opacity:0.9;">
-            {datetime.now().strftime('%A, %B %d, %Y')}
-        </p>
-    </div>
-    <div style="padding:20px; border:1px solid #e0e0e0; border-top:none;
-                border-radius:0 0 8px 8px;">
-        {''.join(html_sections)}
-        <hr style="border:none; border-top:1px solid #e0e0e0; margin:20px 0;">
-        <p style="font-size:12px; color:#666; text-align:center;">
-            View all alerts and manage subscriptions in the AI Swarm dashboard.
-        </p>
-    </div>
-</body>
-</html>
-'''
-            text_content = (
-                f"Daily Intelligence Briefing - "
-                f"{datetime.now().strftime('%B %d, %Y')}\n\n"
-            )
-            for category, alerts in alerts_by_category.items():
-                text_content += f"\n{category.upper()}\n{'='*40}\n"
-                for alert in alerts[:5]:
-                    text_content += (
-                        f"\n• {alert['title']}\n"
-                        f"  {str(alert.get('summary',''))[:100]}...\n"
-                    )
+            message = "\n".join(lines)
 
-            msg.attach(MIMEText(text_content, 'plain'))
-            msg.attach(MIMEText(html_content, 'html'))
+            payload = {
+                '_subject': f"📰 Daily Intelligence Briefing - {datetime.now().strftime('%B %d, %Y')}",
+                'type': 'daily_briefing',
+                'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'message': message,
+            }
+            if ALERT_TO_EMAIL:
+                payload['intended_recipient'] = ALERT_TO_EMAIL
 
-            with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-                server.starttls()
-                server.login(SMTP_USER, SMTP_PASSWORD)
-                server.send_message(msg)
+            sent = _post_to_formspree(payload)
 
-            log.append(f"Daily briefing sent to {ALERT_TO_EMAIL}")
+            if sent:
+                log.append("Daily briefing delivered via Formspree")
+            else:
+                log.append("Daily briefing not delivered (Formspree send failed)")
 
         except Exception as e:
             log.append(f"Failed to send briefing: {e}")
