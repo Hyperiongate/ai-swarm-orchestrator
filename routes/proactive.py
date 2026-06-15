@@ -2,7 +2,7 @@
 AI SWARM ORCHESTRATOR - Proactive Agent API Routes
 File: routes/proactive.py
 Created: March 12, 2026
-Last Updated: June 14, 2026 — WO-13 Phase 1: canary endpoints + status block
+Last Updated: June 14, 2026 — WO-13 Phase 3: /api/canaries/run runs full routine
 
 PURPOSE:
     Flask blueprint exposing all Proactive Agent endpoints.
@@ -33,6 +33,13 @@ ENDPOINTS:
     GET  /api/proactive/status        — overall proactive system status
 
 CHANGELOG:
+- June 14, 2026: WO-13 PHASE 3 — /api/canaries/run RUNS FULL DAILY ROUTINE
+  * POST /api/canaries/run now calls run_daily_self_tests() (canaries +
+    anomaly checks) instead of run_all_canaries(), so the on-demand endpoint
+    exercises exactly what the scheduler's daily JOB 6 runs. Response gains an
+    'anomalies' block alongside the existing 'summary'; status is 200 only when
+    every canary passed AND no anomaly fired, else 207. Backward compatible —
+    the 'summary' key is unchanged. No other endpoint touched.
 - June 14, 2026: WO-13 PHASE 1 — SELF-TEST CANARY ENDPOINTS
   * Added two endpoints on this (already-registered) blueprint, so no change
     to app.py was required:
@@ -548,21 +555,28 @@ def run_canaries():
     """
     POST /api/canaries/run
 
-    Run all registered self-test canaries now and return the summary.
-    Each canary performs a SEMANTIC check (did the thing actually happen),
-    records its result, and — for canaries that don't test the email channel
-    itself — emails any failure via the alert system.
+    Run the full daily self-monitoring routine now and return the summary:
+    every canary (each a SEMANTIC check — did the thing actually happen) plus
+    every anomaly check (metric-trend analysis). This is exactly what the
+    scheduler's daily JOB 6 runs, so an on-demand call exercises the same work.
 
     NOTE: the alert-delivery canary creates a real test alert and (if delivery
     is healthy) sends one '[CANARY]' email each time this runs. That IS the
-    test. On-demand use is fine; Phase 3 will schedule it at a sensible cadence.
+    test. Detected anomalies also email a consolidated alert.
     """
     try:
-        from proactive.canaries import run_all_canaries
-        summary = run_all_canaries()
-        # 200 if everything passed, 207 (Multi-Status) if any canary failed
-        status_code = 200 if summary.get('failed', 0) == 0 else 207
-        return jsonify({'success': True, 'summary': summary}), status_code
+        from proactive.canaries import run_daily_self_tests
+        result = run_daily_self_tests()
+        summary   = result.get('canaries', {})
+        anomalies = result.get('anomalies', {})
+        # 200 only if every canary passed AND no anomaly was detected
+        clean = summary.get('failed', 0) == 0 and anomalies.get('count', 0) == 0
+        status_code = 200 if clean else 207
+        return jsonify({
+            'success': True,
+            'summary': summary,
+            'anomalies': anomalies,
+        }), status_code
     except ImportError:
         return jsonify({
             'success': False,
