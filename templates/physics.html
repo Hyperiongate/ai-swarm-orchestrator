@@ -3,13 +3,15 @@
   FeynmanLab — Physics Thinking Partner UI
   File: templates/physics.html
   Created: June 14, 2026
-  Last Updated: June 14, 2026 — WO-14 Phase 1: lab interface
+  Last Updated: June 14, 2026 — WO-14 Phase 4: render figures under replies
 
   Self-contained: vanilla HTML/CSS/JS, no build step. Talks to the
   /api/physics/* endpoints in routes/physics.py. Math is rendered with MathJax
   (LaTeX $...$ inline, $$...$$ display); if the CDN is blocked the math degrades
   to readable raw TeX. Replies are HTML-escaped before insertion (no XSS), then
-  paragraph/line breaks applied, then MathJax typesets.
+  paragraph/line breaks applied, then MathJax typesets. Phase 4: any figures the
+  partner saves arrive as image URLs (message.images / response.images) and render
+  beneath the reply, each linking to the full-size image.
 
   I did no harm and this file is not truncated
 -->
@@ -111,6 +113,12 @@
   }
   .msg.lab .bubble p { margin: 0 0 12px; }
   .msg.lab .bubble p:last-child { margin-bottom: 0; }
+  .figs { margin-top: 12px; display: flex; flex-direction: column; gap: 12px; }
+  .fig {
+    max-width: 100%; display: block; border: 1px solid var(--line);
+    border-radius: 8px; background: #fff;
+  }
+  .figs a { line-height: 0; }
   .thinking { color: var(--ink-dim); font-size: 14px; font-style: italic; }
   .thinking::after { content: "▋"; animation: blink 1s steps(2) infinite; }
   @keyframes blink { 50% { opacity: 0; } }
@@ -260,7 +268,7 @@
     if (!data.session.messages.length) {
       wrap.innerHTML = '<div class="thinking" style="font-style:normal">Pose the first problem.</div>';
     } else {
-      data.session.messages.forEach(m => appendMessage(m.role, m.content, wrap));
+      data.session.messages.forEach(m => appendMessage(m.role, m.content, wrap, m.images));
     }
     typeset(thread);
     scrollDown();
@@ -268,7 +276,7 @@
   }
 
   // ---------- messages ----------
-  function appendMessage(role, content, wrap) {
+  function appendMessage(role, content, wrap, images) {
     wrap = wrap || document.querySelector("#thread .wrap");
     if (!wrap) {
       const t = document.getElementById("thread");
@@ -283,7 +291,14 @@
       div.innerHTML = '<div class="who">You</div><div class="bubble">' + esc(content) + '</div>';
     } else {
       div.className = "msg lab";
-      div.innerHTML = '<div class="who">FeynmanLab</div><div class="bubble">' + renderLab(content) + '</div>';
+      let html = '<div class="who">FeynmanLab</div><div class="bubble">' + renderLab(content) + '</div>';
+      if (images && images.length) {
+        html += '<div class="figs">' + images.map(u =>
+          '<a href="' + esc(u) + '" target="_blank" rel="noopener">' +
+          '<img class="fig" src="' + esc(u) + '" alt="figure" loading="lazy"></a>'
+        ).join('') + '</div>';
+      }
+      div.innerHTML = html;
     }
     wrap.appendChild(div);
     return div;
@@ -320,7 +335,7 @@
         { session_id: currentSession, content: text });
       thinking.remove();
       if (data.success) {
-        const el = appendMessage("assistant", data.reply);
+        const el = appendMessage("assistant", data.reply, null, data.images);
         typeset(el);
         loadSessions();
       } else {
