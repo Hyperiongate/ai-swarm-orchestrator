@@ -2,7 +2,7 @@
 FeynmanLab — Physics Thinking Partner Engine
 File: physics_lab.py
 Created: June 14, 2026
-Last Updated: June 14, 2026 — WO-14 Phase 1: persona tuning (accessibility)
+Last Updated: June 14, 2026 — WO-14 Phase 2: research (web search via tool-use)
 
 PURPOSE:
     The reasoning engine for FeynmanLab, a physics thinking partner for Jim:
@@ -38,6 +38,23 @@ DATABASE TABLES (PostgreSQL, lazy-created on first use):
         created_at  TIMESTAMP DEFAULT NOW()
 
 CHANGELOG:
+- June 14, 2026: WO-14 PHASE 2 — RESEARCH (web search via tool-use)
+  * The partner can now search the web. ask() gained a tool-use loop (_converse):
+    Opus is offered a single search_web tool; when it calls it, _run_search_tool
+    runs the query through the swarm's existing research_agent (Tavily, advanced
+    depth) and feeds the results back, up to MAX_TOOL_ROUNDS=4, after which the
+    final turn is made tool-free to force a written answer.
+  * SYSTEM_PROMPT: added the research-discipline paragraph (search only when an
+    answer hinges on a real-world number/finding; report what the source says,
+    keep it distinct from reasoning, cite the URL, never fabricate; research never
+    softens the verdict). Split the old "flag it" line so compute stays flag-only
+    (Phase 3) while data/literature is now searchable.
+  * Sources the partner actually pulled are appended as a "Sources consulted"
+    footer (deduped URLs) for verifiable provenance.
+  * GRACEFUL DEGRADE: if research_agent has no Tavily key, no tool is offered and
+    behavior is byte-for-byte the Phase 1 text path. Intermediate tool_use /
+    tool_result blocks are NOT persisted, so the stored thread stays clean. No
+    schema change, no new env var, no existing file touched. Rule 1 preserved.
 - June 14, 2026: WO-14 PHASE 1 — PERSONA TUNING (accessibility)
   * SYSTEM_PROMPT only. Reframed the "talking with Jim" paragraph: Jim is a sharp
     thinker but NOT a professional physicist, so the partner now defaults to plain
@@ -71,6 +88,40 @@ PARTNER_NAME = "FeynmanLab"
 # Full history is sent each turn (Opus has a large context window). This cap is
 # a safety valve for very long sessions — it keeps the most recent N messages.
 MAX_HISTORY_MESSAGES = 60
+
+# Phase 2 (research): the most search round-trips the partner may take within a
+# single ask(). After this many, the next model turn is made WITHOUT tools, which
+# forces a final written answer — bounding latency and cost.
+MAX_TOOL_ROUNDS = 4
+
+# The web-search tool the partner may reach for. The description carries the
+# "autonomous but restrained" rule: search only when an answer genuinely hinges
+# on a real-world number or finding, not on textbook physics it already knows.
+SEARCH_TOOL = {
+    "name": "search_web",
+    "description": (
+        "Search the web for current data, a specific measured value, a recent "
+        "observational result, or what the scientific literature actually reports. "
+        "Use this ONLY when an answer genuinely turns on a real-world number or "
+        "finding you should not guess at — e.g. the latest measured value of a "
+        "constant, a particular survey's result, what a recent paper found. Do NOT "
+        "use it for established textbook physics you already know cold. Returns a "
+        "summary plus source results with URLs you can cite."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": (
+                    "A specific search query — name the quantity, object, survey, "
+                    "or paper you are after, not a vague topic."
+                ),
+            }
+        },
+        "required": ["query"],
+    },
+}
 
 # Anthropic client — created directly here (clean, no swarm injection).
 _client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY) if config.ANTHROPIC_API_KEY else None
@@ -128,10 +179,20 @@ $$...$$ — so it renders cleanly.
 
 You also clarify when asked (explain with concrete physical pictures, not jargon), suggest \
 variations and follow-on experiments, and point to what would be worth computing or checking \
-next. When a question would genuinely benefit from a calculation you should actually run, or \
-from current data or the literature you should actually look up, say so explicitly — e.g. \
-"here's where we'd want to run the real numbers" or "this turns on what the measurements \
-actually say" — but keep that brief and only when it matters.
+next. When a question would genuinely benefit from a calculation you should actually run, say \
+so explicitly — e.g. "here's where we'd want to run the real numbers" — but keep that brief \
+and only when it matters. (Running real computations is a capability you do not have yet, so \
+for now you flag the moment rather than execute it.)
+
+YOU HAVE A WEB SEARCH TOOL. When an answer genuinely turns on current data, a specific \
+measured value, a recent observational result, or what the literature actually reports — \
+something you should not reconstruct from memory — search for it rather than guess. Report \
+what the source actually says, keep that clearly distinct from your own reasoning, and cite \
+the source (name it, give the URL) so it can be checked. If a search comes back thin, stale, \
+or empty, say so plainly rather than filling the gap. Stay restrained: do NOT search \
+established textbook physics you know cold — reach for the tool only when the question hinges \
+on a real-world number or finding. Research is ammunition for the challenge and a way to \
+check your own claims; it never softens the verdict.
 
 This is a conversation, not a lecture. Be substantive but don't over-explain — one sharp \
 challenge or one clean derivation beats a survey. Build on the thread as it develops. It is \
@@ -344,28 +405,175 @@ def ask(session_id: int, user_message: str) -> Dict[str, Any]:
     history = _load_history(session_id)
     api_messages = [{'role': m['role'], 'content': m['content']} for m in history]
 
+    # Phase 2: the partner may search the web. Offer the tool only if the swarm's
+    # research agent has a Tavily key; otherwise this is exactly the Phase 1
+    # text-only path — no behavior change at all without a key (graceful degrade).
+    research_on = _research_available()
+
     try:
-        response = _client.messages.create(
-            model=config.CLAUDE_OPUS_MODEL,
-            max_tokens=4000,
-            system=SYSTEM_PROMPT,
-            messages=api_messages,
-            timeout=config.ANTHROPIC_TIMEOUT,
-        )
-        reply = response.content[0].text
+        reply, sources = _converse(api_messages, research_on)
     except Exception as e:
         logger.error(f"[FeynmanLab] Opus call failed: {e}")
         return {'success': False, 'error': f'Model call failed: {e}', 'session_id': session_id}
 
+    if sources:
+        reply = reply.rstrip() + "\n\n🔎 Sources consulted:\n" + "\n".join(
+            f"- {s['title']}: {s['url']}" for s in sources
+        )
+
     _add_message(session_id, 'assistant', reply)
     _touch_session(session_id)
 
-    return {'success': True, 'reply': reply, 'session_id': session_id}
+    return {
+        'success': True,
+        'reply': reply,
+        'session_id': session_id,
+        'searched': bool(sources),
+    }
+
+
+def _converse(api_messages: List[Dict[str, Any]], research_on: bool):
+    """
+    Run the model turn(s) for one ask().
+
+    If research is on, the partner may call the search tool up to MAX_TOOL_ROUNDS
+    times; after that the next turn is made WITHOUT tools, forcing a written
+    answer. Intermediate tool_use / tool_result blocks live only inside this call
+    — they are never persisted, so the stored thread stays a clean user/assistant
+    text alternation. Returns (final_text, deduped_sources).
+    """
+    messages = list(api_messages)
+    sources: List[Dict[str, str]] = []
+    rounds = 0
+    final_text = ""
+
+    while True:
+        kwargs = dict(
+            model=config.CLAUDE_OPUS_MODEL,
+            max_tokens=4000,
+            system=SYSTEM_PROMPT,
+            messages=messages,
+            timeout=config.ANTHROPIC_TIMEOUT,
+        )
+        if research_on and rounds < MAX_TOOL_ROUNDS:
+            kwargs['tools'] = [SEARCH_TOOL]
+
+        response = _client.messages.create(**kwargs)
+
+        tool_uses = [b for b in response.content if getattr(b, 'type', None) == 'tool_use']
+        if not tool_uses:
+            final_text = "\n\n".join(
+                b.text for b in response.content if getattr(b, 'type', None) == 'text'
+            ).strip()
+            break
+
+        # Append the assistant turn (any text + the tool_use blocks) as dicts.
+        assistant_content: List[Dict[str, Any]] = []
+        for b in response.content:
+            btype = getattr(b, 'type', None)
+            if btype == 'text':
+                assistant_content.append({'type': 'text', 'text': b.text})
+            elif btype == 'tool_use':
+                assistant_content.append({
+                    'type': 'tool_use', 'id': b.id, 'name': b.name, 'input': b.input,
+                })
+        messages.append({'role': 'assistant', 'content': assistant_content})
+
+        # Execute each requested search; feed the results back as tool_result.
+        tool_results = []
+        for tu in tool_uses:
+            result_text, used = _run_search_tool(tu.input or {})
+            sources.extend(used)
+            tool_results.append({
+                'type': 'tool_result',
+                'tool_use_id': tu.id,
+                'content': result_text,
+            })
+        messages.append({'role': 'user', 'content': tool_results})
+        rounds += 1
+
+    if not final_text:
+        final_text = "(No response was generated.)"
+
+    # Dedupe sources by URL, preserving first-seen order.
+    seen = set()
+    deduped = []
+    for s in sources:
+        u = s.get('url')
+        if u and u not in seen:
+            seen.add(u)
+            deduped.append(s)
+    return final_text, deduped
 
 
 # ============================================================================
 # PRIVATE HELPERS
 # ============================================================================
+
+def _research_available() -> bool:
+    """True if the swarm's research agent has a working Tavily key."""
+    try:
+        from research_agent import get_research_agent
+        return bool(get_research_agent().is_available)
+    except Exception as e:
+        logger.warning(f"[FeynmanLab] research agent unavailable: {e}")
+        return False
+
+
+def _run_search_tool(tool_input: Dict[str, Any]):
+    """
+    Execute one web search via the swarm's research agent and format the results
+    for the model. Returns (result_text, sources) where sources is a list of
+    {'title','url'}. Never raises — a failure comes back as a plain message so the
+    partner can react ("the search came back empty") rather than crash the turn.
+    """
+    query = (tool_input.get('query') or '').strip()
+    if not query:
+        return ("Search not run: empty query.", [])
+
+    try:
+        from research_agent import get_research_agent
+        result = get_research_agent().search(
+            query=query,
+            search_depth="advanced",
+            max_results=6,
+            exclude_domains=["pinterest.com", "facebook.com", "twitter.com", "x.com"],
+        )
+    except Exception as e:
+        logger.error(f"[FeynmanLab] search failed: {e}")
+        return (f"Search for '{query}' failed: {e}", [])
+
+    if not result.get('success'):
+        return (
+            f"Search for '{query}' returned no results "
+            f"({result.get('error', 'unknown error')}).",
+            [],
+        )
+
+    results = result.get('results', []) or []
+    summary = (result.get('summary') or '').strip()
+
+    lines = [f"Search results for: {query}"]
+    if summary:
+        lines.append(f"\nSummary: {summary}")
+
+    sources: List[Dict[str, str]] = []
+    if results:
+        lines.append("\nSources:")
+        for i, r in enumerate(results, 1):
+            title = (r.get('title') or 'Untitled').strip()
+            url = (r.get('url') or '').strip()
+            content = (r.get('content') or '').strip()
+            if len(content) > 600:
+                content = content[:600] + "…"
+            lines.append(f"[{i}] {title}\n    {url}\n    {content}")
+            if url:
+                sources.append({'title': title, 'url': url})
+    else:
+        lines.append("\n(No source documents returned.)")
+
+    return ("\n".join(lines), sources)
+
 
 def _add_message(session_id: int, role: str, content: str) -> None:
     conn = get_db_connection()
