@@ -2,7 +2,7 @@
 FeynmanLab — Physics Thinking Partner Engine
 File: physics_lab.py
 Created: June 14, 2026
-Last Updated: June 14, 2026 — WO-14 Phase 4: visualization (figure capture + serving)
+Last Updated: June 14, 2026 — WO-14 Phase 5: voice (Whisper STT + ElevenLabs TTS)
 
 PURPOSE:
     The reasoning engine for FeynmanLab, a physics thinking partner for Jim:
@@ -38,6 +38,22 @@ DATABASE TABLES (PostgreSQL, lazy-created on first use):
         created_at  TIMESTAMP DEFAULT NOW()
 
 CHANGELOG:
+- June 14, 2026: WO-14 PHASE 5 — VOICE (Whisper STT + ElevenLabs TTS)
+  * Hands-free conversation. ask() gained voice=False; when True it appends
+    VOICE_ADDENDUM (the model adds a plain-spoken 'SPOKEN:' summary after its full
+    written answer), _split_spoken() separates the two, and ask() returns 'spoken'
+    (with _fallback_spoken() if the marker is missing). The full reply — LaTeX and
+    figures — is still what gets stored and displayed.
+  * New helpers transcribe_audio() (OpenAI Whisper) and synthesize_speech()
+    (ElevenLabs REST, voice FEYNMANLAB_VOICE_ID env or Thomas's default). Keys read
+    from the environment; TTS returns None on any failure so the client can fall
+    back to the browser voice. _converse() now takes a system param so the voice
+    addendum threads through without touching the text path.
+  * Deliberately NOT routed through the swarm's OpenAI Realtime socket — that is
+    GPT-4o's brain; voice wraps the existing Opus+tools ask() instead. Route
+    POST /api/physics/voice added (routes/physics.py). Audio is not stored (the
+    transcript text is). No schema change. Text-mode behavior is byte-identical
+    (voice defaults False). Rule 1 preserved.
 - June 14, 2026: WO-14 PHASE 4 — VISUALIZATION (figure capture + serving)
   * The partner can now plot. Any image file (png/jpg/svg/webp) its run_python
     code saves is captured from the sandbox workdir (_collect_images, read into
@@ -190,6 +206,16 @@ IMAGE_MIME_BY_EXT = {
     '.svg': 'image/svg+xml',
 }
 
+# ----------------------------------------------------------------------------
+# Phase 5 (voice): speech-in via OpenAI Whisper, speech-out via ElevenLabs.
+# Keys are read from the environment (same pattern as the research agent).
+# ----------------------------------------------------------------------------
+WHISPER_MODEL = "whisper-1"
+ELEVENLABS_TTS_MODEL = "eleven_turbo_v2_5"   # low-latency, good for conversation
+ELEVENLABS_VOICE_ID = os.environ.get("FEYNMANLAB_VOICE_ID", "sB7vwSCyX0tQmU24cW2C")
+ELEVENLABS_TTS_URL = "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+MAX_SPOKEN_CHARS = 1200   # cap the text sent to TTS
+
 # Prepended to every snippet so the partner can just write physics. The scientific
 # stack is imported here; scipy/sympy are soft (the tool still works on numpy +
 # stdlib if a build ever lacks them).
@@ -320,6 +346,18 @@ challenge or one clean derivation beats a survey. Build on the thread as it deve
 entirely fine, and often best, to say "I don't know," "that's beyond what's settled," or \
 "let's actually work that out before either of us trusts the intuition."
 """
+
+
+# Appended to the system prompt when the user is talking, not typing (Phase 5).
+VOICE_ADDENDUM = """
+
+VOICE MODE: The user is LISTENING, not reading, and will ALSO see your full written answer \
+— with any equations and figures — on the screen. Write your normal answer as usual. Then, \
+as the very last thing in your reply, add a line beginning exactly with "SPOKEN:" followed \
+by a tight, plain-spoken version for text-to-speech: conversational, NO LaTeX or equations \
+read aloud (state results in words, e.g. "about six nanokelvin," and say the math or the \
+plot is on screen), no "see figure 1," roughly 40-120 words. That SPOKEN line is what gets \
+read aloud, so it must stand on its own as the spoken reply."""
 
 
 # ============================================================================
@@ -512,12 +550,16 @@ def delete_session(session_id: int) -> bool:
 # THE PARTNER
 # ============================================================================
 
-def ask(session_id: int, user_message: str) -> Dict[str, Any]:
+def ask(session_id: int, user_message: str, voice: bool = False) -> Dict[str, Any]:
     """
     Send a user message to FeynmanLab within a session, persist both the user
     message and the partner's reply, and return the reply.
 
-    Returns dict: {success, reply, session_id} on success, or
+    When voice=True, the partner also emits a short plain-spoken version (no
+    equations read aloud); it is returned as 'spoken' for text-to-speech, while
+    the full written reply (with LaTeX/figures) is what gets stored and shown.
+
+    Returns dict: {success, reply, session_id, ...} on success, or
     {success: False, error} on failure. The user message is persisted even if
     the model call fails, so the thread is never silently lost.
     """
@@ -548,11 +590,18 @@ def ask(session_id: int, user_message: str) -> Dict[str, Any]:
     # text-only path — no behavior change at all without a key (graceful degrade).
     research_on = _research_available()
 
+    # Phase 5: in voice mode, ask for a spoken summary on top of the full answer.
+    system = SYSTEM_PROMPT + (VOICE_ADDENDUM if voice else "")
+
     try:
-        reply, sources, computed, images = _converse(api_messages, research_on)
+        reply, sources, computed, images = _converse(api_messages, research_on, system=system)
     except Exception as e:
         logger.error(f"[FeynmanLab] Opus call failed: {e}")
         return {'success': False, 'error': f'Model call failed: {e}', 'session_id': session_id}
+
+    spoken = ""
+    if voice:
+        reply, spoken = _split_spoken(reply)
 
     if sources:
         reply = reply.rstrip() + "\n\n🔎 Sources consulted:\n" + "\n".join(
@@ -571,6 +620,9 @@ def ask(session_id: int, user_message: str) -> Dict[str, Any]:
 
     _touch_session(session_id)
 
+    if voice and not spoken:
+        spoken = _fallback_spoken(reply)
+
     return {
         'success': True,
         'reply': reply,
@@ -578,10 +630,11 @@ def ask(session_id: int, user_message: str) -> Dict[str, Any]:
         'searched': bool(sources),
         'computed': computed,
         'images': image_urls,
+        'spoken': spoken,
     }
 
 
-def _converse(api_messages: List[Dict[str, Any]], research_on: bool):
+def _converse(api_messages: List[Dict[str, Any]], research_on: bool, system: str = None):
     """
     Run the model turn(s) for one ask().
 
@@ -599,6 +652,8 @@ def _converse(api_messages: List[Dict[str, Any]], research_on: bool):
     used_compute = False
     rounds = 0
     final_text = ""
+    if system is None:
+        system = SYSTEM_PROMPT
 
     tools = []
     if research_on:
@@ -609,7 +664,7 @@ def _converse(api_messages: List[Dict[str, Any]], research_on: bool):
         kwargs = dict(
             model=config.CLAUDE_OPUS_MODEL,
             max_tokens=4000,
-            system=SYSTEM_PROMPT,
+            system=system,
             messages=messages,
             timeout=config.ANTHROPIC_TIMEOUT,
         )
@@ -997,6 +1052,92 @@ def _images_for_messages(session_id: int) -> Dict[int, List[str]]:
             continue
         out.setdefault(mid, []).append(_image_url(r['id']))
     return out
+
+
+# ============================================================================
+# VOICE (Phase 5)
+# ============================================================================
+
+def _split_spoken(text: str):
+    """Split a voice-mode reply into (display_text, spoken_text) on the last
+    'SPOKEN:' marker. If the marker is absent, returns (text, '')."""
+    if not text:
+        return text, ""
+    idx = text.rfind("SPOKEN:")
+    if idx == -1:
+        return text.strip(), ""
+    display = text[:idx].rstrip()
+    spoken = text[idx + len("SPOKEN:"):].strip()
+    return display, spoken
+
+
+def _fallback_spoken(text: str) -> str:
+    """Rough spoken version when the model didn't emit a SPOKEN line: strip the
+    sources footer, replace math with a spoken placeholder, drop markdown, and
+    take the first chunk."""
+    import re
+    t = (text or "").split("🔎 Sources consulted:")[0]
+    t = re.sub(r"\$\$.*?\$\$", " (equation on screen) ", t, flags=re.DOTALL)
+    t = re.sub(r"\$[^$]*\$", " (term on screen) ", t)
+    t = re.sub(r"[*_#>`]", "", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    words = t.split()
+    if len(words) > 120:
+        t = " ".join(words[:120]) + "…"
+    return t
+
+
+def transcribe_audio(audio_bytes: bytes, filename: str = "voice.webm") -> Dict[str, Any]:
+    """Speech-to-text via OpenAI Whisper. Returns {'success', 'text'} or
+    {'success': False, 'error'}. Never raises."""
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        return {'success': False, 'error': 'OPENAI_API_KEY not configured'}
+    if not audio_bytes:
+        return {'success': False, 'error': 'empty audio'}
+    try:
+        import io
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
+        buf = io.BytesIO(audio_bytes)
+        buf.name = filename or "voice.webm"
+        tr = client.audio.transcriptions.create(model=WHISPER_MODEL, file=buf)
+        return {'success': True, 'text': (getattr(tr, 'text', '') or '').strip()}
+    except Exception as e:
+        logger.error(f"[FeynmanLab] transcription failed: {e}")
+        return {'success': False, 'error': str(e)}
+
+
+def synthesize_speech(text: str) -> Optional[bytes]:
+    """Text-to-speech via ElevenLabs. Returns mp3 bytes, or None on failure or
+    missing key (caller falls back to the browser's built-in voice). Never raises."""
+    api_key = os.environ.get("ELEVENLABS_API_KEY")
+    text = (text or "").strip()
+    if not api_key or not text:
+        return None
+    text = text[:MAX_SPOKEN_CHARS]
+    try:
+        import requests
+        url = ELEVENLABS_TTS_URL.format(voice_id=ELEVENLABS_VOICE_ID)
+        resp = requests.post(
+            url,
+            headers={
+                'xi-api-key': api_key,
+                'Content-Type': 'application/json',
+                'Accept': 'audio/mpeg',
+            },
+            json={
+                'text': text,
+                'model_id': ELEVENLABS_TTS_MODEL,
+                'voice_settings': {'stability': 0.5, 'similarity_boost': 0.75},
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.content
+    except Exception as e:
+        logger.error(f"[FeynmanLab] TTS failed: {e}")
+        return None
 
 
 def _iso(value) -> Optional[str]:
