@@ -2,7 +2,7 @@
 FeynmanLab — Flask Routes
 File: routes/physics.py
 Created: June 14, 2026
-Last Updated: June 14, 2026 — WO-14 Phase 4: figure-serving route
+Last Updated: June 14, 2026 — WO-14 Phase 5: voice endpoint
 
 PURPOSE:
     Flask blueprint for FeynmanLab, the physics thinking partner.
@@ -19,8 +19,14 @@ ENDPOINTS:
     DELETE /api/physics/session/<id>      — delete a session
     POST   /api/physics/message           — ask the partner   {session_id, content}
     GET    /api/physics/image/<id>        — serve a stored figure (Phase 4)
+    POST   /api/physics/voice             — hands-free turn (Phase 5) audio+session_id
 
 CHANGELOG:
+- June 14, 2026: WO-14 PHASE 5 — VOICE ENDPOINT
+  * Added POST /api/physics/voice: takes a recorded audio clip + session_id,
+    transcribes (Whisper), runs the partner in voice mode, and returns the
+    transcript, the full written reply, figures, and base64 TTS audio (ElevenLabs)
+    when available. Additive only; the text endpoints are untouched.
 - June 14, 2026: WO-14 PHASE 4 — FIGURE-SERVING ROUTE
   * Added GET /api/physics/image/<id>, which streams a stored figure's bytes with
     its mime type (engine get_image()). The message and session payloads already
@@ -199,6 +205,70 @@ def get_physics_image(image_id: int):
         return _not_ready()
     except Exception as e:
         logger.error(f"GET /api/physics/image/{image_id} failed: {e}")
+        return _error(e)
+
+
+# ============================================================================
+# VOICE (Phase 5)
+# ============================================================================
+
+@physics_bp.route('/api/physics/voice', methods=['POST'])
+def physics_voice():
+    """
+    Hands-free turn. Multipart form: audio=<file>, session_id=<int>.
+    Transcribes the audio (Whisper), runs it through the partner in voice mode,
+    synthesizes the spoken reply (ElevenLabs), and returns:
+      { success, transcript, reply, spoken, images, computed, searched,
+        audio_b64?, audio_mime? }
+    If TTS is unavailable, audio_b64 is omitted and the client speaks the reply
+    with the browser's built-in voice instead.
+    """
+    try:
+        lab = _lab()
+
+        if 'audio' not in request.files:
+            return jsonify({'success': False, 'error': 'no audio uploaded'}), 400
+        audio_file = request.files['audio']
+        audio_bytes = audio_file.read()
+        if not audio_bytes:
+            return jsonify({'success': False, 'error': 'empty audio'}), 400
+
+        session_id = request.form.get('session_id')
+        if session_id is None:
+            return jsonify({'success': False, 'error': 'session_id is required'}), 400
+        try:
+            session_id = int(session_id)
+        except (ValueError, TypeError):
+            return jsonify({'success': False, 'error': 'session_id must be an integer'}), 400
+
+        filename = audio_file.filename or 'voice.webm'
+        tr = lab.transcribe_audio(audio_bytes, filename)
+        if not tr.get('success'):
+            return jsonify({'success': False,
+                            'error': 'transcription failed: ' + tr.get('error', '')}), 502
+        transcript = tr.get('text', '')
+        if not transcript:
+            return jsonify({'success': False, 'error': 'no speech detected',
+                            'transcript': ''}), 200
+
+        result = lab.ask(session_id, transcript, voice=True)
+        result['transcript'] = transcript
+        if not result.get('success'):
+            err = result.get('error', 'Unknown error')
+            status = 404 if 'not found' in err.lower() else 500
+            return jsonify(result), status
+
+        spoken = result.get('spoken') or result.get('reply', '')
+        audio = lab.synthesize_speech(spoken)
+        if audio:
+            import base64
+            result['audio_b64'] = base64.b64encode(audio).decode('ascii')
+            result['audio_mime'] = 'audio/mpeg'
+        return jsonify(result)
+    except ImportError:
+        return _not_ready()
+    except Exception as e:
+        logger.error(f"POST /api/physics/voice failed: {e}")
         return _error(e)
 
 
