@@ -2,9 +2,25 @@
 AI SWARM ORCHESTRATOR - Proactive Scheduler
 File: proactive/scheduler.py
 Created: June 01, 2026
-Last Updated: June 13, 2026 — WO-10 Add Daily Briefing Job
+Last Updated: June 14, 2026 — WO-13 Phase 3: Daily Canary Suite Job (now 6 jobs)
 
 CHANGELOG:
+- June 14, 2026: WO-13 PHASE 3 — ADD DAILY CANARY SUITE JOB (now 6 jobs)
+  * Added JOB 6: canary_suite_daily — runs EVERY day at 6:45 AM Pacific,
+    calling run_daily_self_tests() from proactive/canaries.py (all canaries +
+    all anomaly checks).
+  * Why 6:45 AM Pacific: 15 minutes after the morning briefing job (JOB 5 at
+    6:30), so the briefing canary doubles as verification that the morning
+    generation actually worked. Uses America/Los_Angeles for the same
+    stable-local-time / automatic-DST reason as JOB 5.
+  * Pattern preserved: JOB 6 follows the established pattern exactly — a
+    standalone no-argument function (_job_canary_suite), import performed
+    inside the function body, and a full try/except so a canary failure never
+    affects the other jobs or the running app. Same job_defaults apply.
+  * Still gated on ENABLE_SCHEDULED_JOBS=true. NO existing job was changed —
+    the five prior jobs are byte-for-byte the same. Rule 1 (do no harm)
+    preserved.
+
 - June 13, 2026: WO-10 — ADD DAILY BRIEFING JOB (now 5 jobs)
   * Added JOB 5: daily_briefing_morning — runs EVERY day at 6:30 AM Pacific,
     calling generate_daily_briefing() from proactive/daily_briefing.py.
@@ -100,6 +116,14 @@ HEALTH_CHECK_INTERVAL_MINUTES = 30  # every 30 minutes, matches app_monitor.py d
 BRIEFING_TIMEZONE = 'America/Los_Angeles'
 BRIEFING_HOUR     = 6
 BRIEFING_MINUTE   = 30  # 6:30 AM Pacific, every day
+
+# WO-13 Phase 3: daily self-test canaries + anomaly detection. Fires 15 minutes
+# after the morning briefing (also Pacific) so the briefing canary doubles as
+# verification that the 6:30 AM generation worked. Pacific time for the same
+# stable-local-time / automatic-DST reason as the briefing job.
+CANARY_TIMEZONE = 'America/Los_Angeles'
+CANARY_HOUR     = 6
+CANARY_MINUTE   = 45  # 6:45 AM Pacific, every day
 
 
 # ============================================================================
@@ -213,6 +237,39 @@ def _job_daily_briefing():
         print(f"[Scheduler] Daily briefing failed: {e}")
 
 
+def _job_canary_suite():
+    """
+    WO-13 Phase 3: Daily self-test canaries + anomaly detection — runs every
+    day at 6:45 AM Pacific, 15 minutes after the morning briefing job.
+
+    Calls run_daily_self_tests() from proactive/canaries.py, which runs every
+    canary (alert delivery, briefing generation, eval metrics) and then every
+    anomaly check (eval score slide, eval staleness, briefing collapse). Canary
+    failures and detected anomalies email Jim via the alert system; the
+    alert-delivery canary's own result is recorded for /api/canaries/status,
+    since that canary cannot report itself by email.
+
+    The import is performed inside this function (matching the other jobs) so
+    that, if proactive/canaries.py is ever unavailable at runtime, this job
+    logs and returns without disturbing the scheduler or other jobs.
+    """
+    logger.info("[Scheduler] Starting daily self-test canary suite")
+    print(f"[Scheduler] {datetime.utcnow().isoformat()} — daily canary suite starting (6:45 AM Pacific)")
+    try:
+        from proactive.canaries import run_daily_self_tests
+        result = run_daily_self_tests()
+        c = result.get('canaries', {}) if isinstance(result, dict) else {}
+        a = result.get('anomalies', {}) if isinstance(result, dict) else {}
+        print(f"[Scheduler] Canary suite complete — "
+              f"{c.get('passed', 0)}/{c.get('total', 0)} passed, "
+              f"{a.get('count', 0)} anomaly(ies)")
+        logger.info(f"[Scheduler] Canary suite: {c.get('passed', 0)}/{c.get('total', 0)} passed, "
+                    f"{a.get('count', 0)} anomalies")
+    except Exception as e:
+        logger.error(f"[Scheduler] Canary suite failed: {e}")
+        print(f"[Scheduler] Canary suite failed: {e}")
+
+
 # ============================================================================
 # SCHEDULER INIT
 # ============================================================================
@@ -244,6 +301,7 @@ def init_scheduler(app):
         introspection_monthly    — First Wednesday of month 08:30 UTC
         service_health_check     — Every 30 minutes
         daily_briefing_morning   — Every day 06:30 America/Los_Angeles (WO-10)
+        canary_suite_daily       — Every day 06:45 America/Los_Angeles (WO-13)
 
     Args:
         app: The Flask application instance (passed for context if needed
@@ -355,18 +413,35 @@ def init_scheduler(app):
             replace_existing=True,
         )
 
+        # ------------------------------------------------------------------
+        # JOB 6: Daily Self-Test Canaries + Anomaly Detection  (WO-13 Phase 3)
+        # Every day at 06:45 America/Los_Angeles — 15 minutes after the morning
+        # briefing (JOB 5) so the briefing canary doubles as proof the 6:30
+        # generation worked. Uses Pacific time like JOB 5 (see config note).
+        # ------------------------------------------------------------------
+        scheduler.add_job(
+            func=_job_canary_suite,
+            trigger=CronTrigger(hour=CANARY_HOUR,
+                                minute=CANARY_MINUTE,
+                                timezone=CANARY_TIMEZONE),
+            id='canary_suite_daily',
+            name='Daily Self-Test Canaries',
+            replace_existing=True,
+        )
+
         scheduler.start()
         _scheduler = scheduler
 
         print(
-            f"[Scheduler] Started — 5 jobs active:\n"
+            f"[Scheduler] Started — 6 jobs active:\n"
             f"  swarm_evaluation_weekly  : Wednesday 08:05 UTC\n"
             f"  introspection_weekly     : Wednesday 08:15 UTC\n"
             f"  introspection_monthly    : First Wednesday 08:30 UTC\n"
             f"  service_health_check     : every {HEALTH_CHECK_INTERVAL_MINUTES} minutes\n"
-            f"  daily_briefing_morning   : every day 06:30 {BRIEFING_TIMEZONE}"
+            f"  daily_briefing_morning   : every day 06:30 {BRIEFING_TIMEZONE}\n"
+            f"  canary_suite_daily       : every day 06:45 {CANARY_TIMEZONE}"
         )
-        logger.info("[Scheduler] BackgroundScheduler started with 5 jobs")
+        logger.info("[Scheduler] BackgroundScheduler started with 6 jobs")
 
     except ImportError:
         print(
