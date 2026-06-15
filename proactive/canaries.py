@@ -2,7 +2,7 @@
 AI SWARM ORCHESTRATOR - Self-Test Canaries
 File: proactive/canaries.py
 Created: June 14, 2026
-Last Updated: June 14, 2026 — WO-13 Phase 1: framework + alert-delivery canary
+Last Updated: June 14, 2026 — WO-13 Phase 2: briefing + eval canaries
 
 PURPOSE:
     Automated SEMANTIC self-tests for the swarm. A canary does not just check
@@ -17,9 +17,8 @@ PURPOSE:
     Formspree delivery was broken; the only proof of delivery is the alert
     row's emailed_at timestamp).
 
-    Phase 2 adds briefing + evaluation canaries (needs daily_briefing.py and
-    swarm_self_evaluation.py). Phase 3 schedules these via the scheduler and
-    adds metric-trend anomaly detection.
+    Phase 2 adds the briefing and evaluation canaries. Phase 3 schedules these
+    via the scheduler and adds metric-trend anomaly detection.
 
 DESIGN — why a canary can't always email its own failure:
     The alert-delivery canary tests the EMAIL channel itself. If that channel
@@ -30,6 +29,22 @@ DESIGN — why a canary can't always email its own failure:
     point delivery has been independently verified).
 
 CHANGELOG:
+- June 14, 2026: WO-13 PHASE 2 — BRIEFING + EVALUATION CANARIES
+  * _canary_briefing_generation(): calls generate_daily_briefing() and passes
+    only if it stored a row (success=True) AND produced non-empty content.
+    A Sonnet outage that falls back to plain text still passes (graceful
+    degradation is by design); an exception, storage failure, or empty content
+    fails. can_alert_by_email=True. Cost: one Sonnet call + an idempotent
+    overwrite of today's briefing per run.
+  * _canary_eval_metrics(): runs PerformanceCollector.collect_weekly_metrics()
+    (the migrated PostgreSQL reads that WO-8 repaired) and scores them with
+    SwarmReportGenerator, passing if the health score lands in 0–100. It
+    deliberately skips MarketScanner.scan_ai_landscape() so the canary makes
+    NO Sonnet/Tavily calls. An idle (zero-task) period is a valid pass.
+    can_alert_by_email=True.
+  * Both registered in _CANARIES after the alert-delivery canary. No existing
+    canary or behaviour changed; daily_briefing.py and swarm_self_evaluation.py
+    are only called, never modified. Rule 1 (do no harm) preserved.
 - June 14, 2026: WO-13 PHASE 1 — INITIAL IMPLEMENTATION
   * New file. Defines the canary framework: a canary_results table (lazy
     init, SERIAL PK, %s placeholders — PostgreSQL), _record_result(),
@@ -167,13 +182,120 @@ def _canary_alert_delivery():
                 'can_alert_by_email': False}
 
 
+def _canary_briefing_generation():
+    """
+    Daily briefing generation.
+
+    Actively calls generate_daily_briefing() and verifies it both stored a row
+    (result['success']) and produced real content. generate_daily_briefing()
+    degrades gracefully — if Sonnet is unavailable it returns a plain-text
+    fallback, which is by design and still counts as healthy — so this canary
+    treats only an exception, success=False (storage failed), or empty content
+    as a failure. Storage failure is exactly the WO-8-class silent break this
+    is meant to catch.
+
+    can_alert_by_email=True — a briefing failure does not involve the email
+    channel, so it is safe to report by email.
+
+    Cost note: each run makes one Sonnet call and overwrites today's briefing
+    (idempotent UPSERT on briefing_date). Phase 3 schedules this once daily,
+    shortly after the morning briefing job, so it doubles as verification that
+    the morning generation worked.
+    """
+    name = 'briefing_generation'
+    try:
+        from proactive.daily_briefing import generate_daily_briefing
+        result = generate_daily_briefing() or {}
+        content = (result.get('content') or '').strip()
+        stored = bool(result.get('success'))
+        passed = stored and len(content) >= 50
+
+        if passed:
+            detail = (f"briefing {result.get('briefing_date', 'today')} generated "
+                      f"and stored ({len(content)} chars)")
+        elif not stored:
+            detail = (f"briefing generated but storage failed: "
+                      f"{result.get('error', 'unknown error')}")
+        else:
+            detail = f"briefing stored but content too short ({len(content)} chars)"
+
+        _record_result(name, passed, detail)
+        return {'name': name, 'passed': passed, 'detail': detail,
+                'can_alert_by_email': True}
+
+    except Exception as e:
+        detail = f'canary raised an exception: {e}'
+        _record_result(name, False, detail)
+        return {'name': name, 'passed': False, 'detail': detail,
+                'can_alert_by_email': True}
+
+
+def _canary_eval_metrics():
+    """
+    Swarm evaluation — metrics collection + scoring.
+
+    Exercises the part of the evaluation engine that actually broke before
+    (WO-8): PerformanceCollector.collect_weekly_metrics() runs the migrated
+    PostgreSQL reads, and SwarmReportGenerator turns those metrics into a
+    health score. This deliberately SKIPS MarketScanner.scan_ai_landscape(),
+    which makes Sonnet/Tavily calls and would make the canary slow and costly
+    to run often. An empty market dict is passed to the report generator, which
+    handles it cleanly.
+
+    Passes when metrics collect without an internal error and scoring yields a
+    health score in 0–100. An idle period (zero tasks) is a valid, healthy
+    outcome — the WO-8 fix scores it as neutral, not failing — so it still
+    passes.
+
+    can_alert_by_email=True — does not involve the email channel.
+    """
+    name = 'eval_metrics'
+    try:
+        from swarm_self_evaluation import PerformanceCollector, SwarmReportGenerator
+        collector = PerformanceCollector()
+        metrics = collector.collect_weekly_metrics(days=7)
+
+        # collect_weekly_metrics isolates each block; a failed block leaves an
+        # {'error': ...} marker rather than raising. Treat a tasks-block error
+        # (the core metric) as a canary failure.
+        tasks = metrics.get('tasks', {}) if isinstance(metrics, dict) else {}
+        if isinstance(tasks, dict) and 'error' in tasks:
+            detail = f"metrics collection error: {tasks['error']}"
+            _record_result(name, False, detail)
+            return {'name': name, 'passed': False, 'detail': detail,
+                    'can_alert_by_email': True}
+
+        # Score the real metrics with an empty market scan (no API calls).
+        report = SwarmReportGenerator(metrics, {}, [], []).generate_report()
+        score = report.get('health_score', {}).get('overall')
+        passed = isinstance(score, (int, float)) and 0 <= score <= 100
+
+        if passed:
+            detail = (f"metrics collected and scored — health {score}/100"
+                      + (" (idle period)" if report.get('idle_period') else ""))
+        else:
+            detail = f"scoring produced an invalid health score: {score!r}"
+
+        _record_result(name, passed, detail)
+        return {'name': name, 'passed': passed, 'detail': detail,
+                'can_alert_by_email': True}
+
+    except Exception as e:
+        detail = f'canary raised an exception: {e}'
+        _record_result(name, False, detail)
+        return {'name': name, 'passed': False, 'detail': detail,
+                'can_alert_by_email': True}
+
+
 # ============================================================================
 # RUNNER + READBACK
 # ============================================================================
 
-# Registry of canaries to run. Phase 2 appends the briefing and eval canaries.
+# Registry of canaries to run.
 _CANARIES = [
     _canary_alert_delivery,
+    _canary_briefing_generation,
+    _canary_eval_metrics,
 ]
 
 
