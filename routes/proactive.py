@@ -2,13 +2,13 @@
 AI SWARM ORCHESTRATOR - Proactive Agent API Routes
 File: routes/proactive.py
 Created: March 12, 2026
-Last Updated: June 13, 2026 — WO-10 follow-on: real scheduler status
+Last Updated: June 14, 2026 — WO-13 Phase 1: canary endpoints + status block
 
 PURPOSE:
     Flask blueprint exposing all Proactive Agent endpoints.
-    Covers briefings, tasks, leads (stub), and monitor (stub).
-    Leads and monitor stubs return 503 with a clear message until those
-    modules are deployed in Deliverables 3 and 4.
+    Covers briefings, tasks, leads (stub), monitor (stub), and self-test
+    canaries. Leads and monitor stubs return 503 with a clear message until
+    those modules are deployed in Deliverables 3 and 4.
 
 ENDPOINTS:
     GET  /api/briefing                — latest briefing (generates on-demand if none today)
@@ -27,9 +27,25 @@ ENDPOINTS:
     GET  /api/monitor/services        — monitored services health (stub until Deliverable 4)
     POST /api/monitor/services        — register a service to monitor (stub)
 
+    POST /api/canaries/run            — run all self-test canaries now (WO-13)
+    GET  /api/canaries/status         — latest canary results (WO-13)
+
     GET  /api/proactive/status        — overall proactive system status
 
 CHANGELOG:
+- June 14, 2026: WO-13 PHASE 1 — SELF-TEST CANARY ENDPOINTS
+  * Added two endpoints on this (already-registered) blueprint, so no change
+    to app.py was required:
+      - POST /api/canaries/run     -> proactive.canaries.run_all_canaries()
+      - GET  /api/canaries/status  -> proactive.canaries.get_latest_canary_results()
+    Both import proactive.canaries lazily inside the handler (matching the
+    import-in-body pattern used for every other module here); if the module
+    is somehow unavailable the endpoints return a clean 503 rather than 500.
+  * /api/proactive/status now includes a 'canaries' block (latest pass/fail
+    per canary) via get_canary_health(), so the status readout you already
+    poll shows self-test health at a glance. This block is purely additive
+    and wrapped in its own try/except — every existing block in the status
+    response is byte-for-byte unchanged. Rule 1 (do no harm) preserved.
 - June 13, 2026: WO-10 FOLLOW-ON — REAL SCHEDULER STATUS
   * /api/proactive/status previously returned a HARDCODED placeholder for the
     'scheduler' block:
@@ -524,6 +540,85 @@ def register_monitored_service():
 
 
 # ============================================================================
+# CANARY ENDPOINTS (WO-13 Phase 1: proactive/canaries.py)
+# ============================================================================
+
+@proactive_bp.route('/api/canaries/run', methods=['POST'])
+def run_canaries():
+    """
+    POST /api/canaries/run
+
+    Run all registered self-test canaries now and return the summary.
+    Each canary performs a SEMANTIC check (did the thing actually happen),
+    records its result, and — for canaries that don't test the email channel
+    itself — emails any failure via the alert system.
+
+    NOTE: the alert-delivery canary creates a real test alert and (if delivery
+    is healthy) sends one '[CANARY]' email each time this runs. That IS the
+    test. On-demand use is fine; Phase 3 will schedule it at a sensible cadence.
+    """
+    try:
+        from proactive.canaries import run_all_canaries
+        summary = run_all_canaries()
+        # 200 if everything passed, 207 (Multi-Status) if any canary failed
+        status_code = 200 if summary.get('failed', 0) == 0 else 207
+        return jsonify({'success': True, 'summary': summary}), status_code
+    except ImportError:
+        return jsonify({
+            'success': False,
+            'error': 'Canary module not available',
+            'detail': 'proactive/canaries.py is not deployed.',
+        }), 503
+    except Exception as e:
+        logger.error(f"POST /api/canaries/run failed: {e}")
+        import traceback
+        return jsonify({
+            'success': False, 'error': str(e),
+            'traceback': traceback.format_exc(),
+        }), 500
+
+
+@proactive_bp.route('/api/canaries/status', methods=['GET'])
+def canaries_status():
+    """
+    GET /api/canaries/status?limit=20
+
+    Returns the most recent canary results (newest first). This is the
+    non-email surface for canary outcomes — in particular it is how the
+    alert-delivery canary's own failures are seen, since that canary cannot
+    report itself by email.
+    """
+    try:
+        limit = int(request.args.get('limit', 20))
+    except (ValueError, TypeError):
+        limit = 20
+
+    try:
+        from proactive.canaries import get_latest_canary_results, get_canary_health
+        results = get_latest_canary_results(limit=limit)
+        health  = get_canary_health()
+        return jsonify({
+            'success': True,
+            'healthy': health.get('healthy'),
+            'canaries': health.get('canaries', {}),
+            'recent':  results,
+        })
+    except ImportError:
+        return jsonify({
+            'success': False,
+            'error': 'Canary module not available',
+            'detail': 'proactive/canaries.py is not deployed.',
+        }), 503
+    except Exception as e:
+        logger.error(f"GET /api/canaries/status failed: {e}")
+        import traceback
+        return jsonify({
+            'success': False, 'error': str(e),
+            'traceback': traceback.format_exc(),
+        }), 500
+
+
+# ============================================================================
 # PROACTIVE STATUS ENDPOINT
 # ============================================================================
 
@@ -533,8 +628,7 @@ def proactive_status():
     GET /api/proactive/status
 
     Returns the status of all proactive system components, including the live
-    scheduler state (WO-10 follow-on — previously this 'scheduler' block was a
-    hardcoded placeholder that never reflected reality).
+    scheduler state (WO-10 follow-on) and self-test canary health (WO-13).
     """
     status = {
         'success': True,
@@ -611,6 +705,27 @@ def proactive_status():
             'enabled': False,
             'running': False,
             'job_count': 0,
+            'error': str(e),
+        }
+
+    # Canaries (WO-13 Phase 1) — latest pass/fail per self-test canary.
+    # Purely additive: wrapped in its own try/except so a canary-module issue
+    # can never affect the rest of this status response. 'healthy' is True if
+    # every canary's most recent result passed, False if any failed, and None
+    # if no canary has ever run yet.
+    try:
+        from proactive.canaries import get_canary_health
+        status['canaries'] = get_canary_health()
+    except ImportError:
+        status['canaries'] = {
+            'healthy': None,
+            'canaries': {},
+            'detail': 'proactive/canaries.py not found',
+        }
+    except Exception as e:
+        status['canaries'] = {
+            'healthy': None,
+            'canaries': {},
             'error': str(e),
         }
 
