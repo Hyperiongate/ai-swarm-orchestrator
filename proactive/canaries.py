@@ -2,7 +2,7 @@
 AI SWARM ORCHESTRATOR - Self-Test Canaries
 File: proactive/canaries.py
 Created: June 14, 2026
-Last Updated: June 14, 2026 — WO-13 Phase 2: briefing + eval canaries
+Last Updated: June 14, 2026 — WO-13 Phase 3: anomaly detection + daily routine
 
 PURPOSE:
     Automated SEMANTIC self-tests for the swarm. A canary does not just check
@@ -17,8 +17,8 @@ PURPOSE:
     Formspree delivery was broken; the only proof of delivery is the alert
     row's emailed_at timestamp).
 
-    Phase 2 adds the briefing and evaluation canaries. Phase 3 schedules these
-    via the scheduler and adds metric-trend anomaly detection.
+    Phase 3 adds anomaly detection (passive metric-trend analysis) and the
+    combined daily routine the scheduler runs.
 
 DESIGN — why a canary can't always email its own failure:
     The alert-delivery canary tests the EMAIL channel itself. If that channel
@@ -29,6 +29,24 @@ DESIGN — why a canary can't always email its own failure:
     point delivery has been independently verified).
 
 CHANGELOG:
+- June 14, 2026: WO-13 PHASE 3 — ANOMALY DETECTION + DAILY ROUTINE
+  * Added passive anomaly checks (trend analysis on already-stored data):
+      - _anomaly_eval_score_slide(): latest active eval health score >= 15
+        points below its trailing average (needs >= 3 active evals).
+      - _anomaly_eval_stale(): no evaluation stored in > 8 days (the weekly
+        eval job may have stopped). The eval canary does NOT save eval rows,
+        so this signal is not masked by canary activity.
+      - _anomaly_briefing_collapse(): latest briefing content far below its
+        trailing average (needs >= 3 briefings) — data sources failing.
+    Each check is isolated and no-ops quietly until enough history exists, so
+    none false-fire on a fresh system.
+  * run_anomaly_checks(): runs all checks and emails ONE consolidated alert if
+    any fire (anomalies don't involve the email channel, so emailing directly
+    is safe). Once-daily cadence => at most one reminder per day per anomaly.
+  * run_daily_self_tests(): canaries + anomalies in one call — what the
+    scheduler's JOB 6 and POST /api/canaries/run both invoke, so on-demand and
+    scheduled runs do exactly the same work.
+  * Purely additive; no existing canary or function changed. Rule 1 preserved.
 - June 14, 2026: WO-13 PHASE 2 — BRIEFING + EVALUATION CANARIES
   * _canary_briefing_generation(): calls generate_daily_briefing() and passes
     only if it stored a row (success=True) AND produced non-empty content.
@@ -407,6 +425,165 @@ def get_canary_health():
             }
     healthy = all(v['passed'] for v in by_name.values()) if by_name else None
     return {'healthy': healthy, 'canaries': by_name}
+
+
+# ============================================================================
+# ANOMALY DETECTION (WO-13 Phase 3)
+# Passive trend analysis on data already stored. Unlike canaries (which
+# actively test that something works right now), anomaly checks look for
+# worrying CHANGES over time and alert on them. Each check is isolated; one
+# failing check never blocks the others. Checks no-op quietly until there is
+# enough history, so they never false-fire on a fresh system.
+# ============================================================================
+
+def _as_date(value):
+    """Best-effort parse of a date/timestamp value to a datetime.date, else None."""
+    if value is None:
+        return None
+    try:
+        from datetime import date as _date
+        if hasattr(value, 'year') and hasattr(value, 'month'):  # date/datetime
+            return value if not hasattr(value, 'date') else value.date()
+        s = str(value).strip()[:10]  # 'YYYY-MM-DD' prefix of a date or timestamp
+        return _date.fromisoformat(s)
+    except Exception:
+        return None
+
+
+def _anomaly_eval_score_slide():
+    """Eval health score sliding: latest active eval well below its trailing average."""
+    try:
+        from swarm_self_evaluation import get_swarm_evaluator
+        hist = get_swarm_evaluator().get_evaluation_history(limit=6)  # newest-first
+        active = [h for h in (hist or [])
+                  if not h.get('idle_period') and isinstance(h.get('health_score'), (int, float))]
+        if len(active) < 3:
+            return None
+        latest = active[0]['health_score']
+        prior = [h['health_score'] for h in active[1:]]
+        baseline = sum(prior) / len(prior)
+        drop = baseline - latest
+        if baseline > 0 and drop >= 15:
+            return {
+                'check': 'eval_score_slide',
+                'detail': (f"swarm health score fell to {latest:.0f}/100 vs a trailing "
+                           f"average of {baseline:.0f}/100 ({drop:.0f}-point drop)"),
+            }
+    except Exception as e:
+        logger.warning(f"[Anomaly] eval_score_slide check failed (non-fatal): {e}")
+    return None
+
+
+def _anomaly_eval_stale():
+    """No evaluation stored in over 8 days — the weekly eval job may have stopped."""
+    try:
+        from datetime import date
+        from swarm_self_evaluation import get_swarm_evaluator
+        latest = get_swarm_evaluator().get_latest_evaluation()
+        if not latest:
+            return None  # no evals yet — not an anomaly (system may be new)
+        d = _as_date(latest.get('evaluation_date'))
+        if d is None:
+            return None
+        gap = (date.today() - d).days
+        if gap > 8:  # weekly cadence is ~7 days; >8 means a Wednesday was missed
+            return {
+                'check': 'eval_stale',
+                'detail': (f"no swarm evaluation in {gap} days (last: {d.isoformat()}) — "
+                           f"the weekly evaluation job may have stopped firing"),
+            }
+    except Exception as e:
+        logger.warning(f"[Anomaly] eval_stale check failed (non-fatal): {e}")
+    return None
+
+
+def _anomaly_briefing_collapse():
+    """Briefing content collapsing: latest briefing far smaller than its trailing average."""
+    try:
+        from proactive.daily_briefing import get_briefing_history
+        briefs = get_briefing_history(days=14)  # newest-first
+        sizes = [len((b.get('content') or '')) for b in (briefs or [])]
+        if len(sizes) < 3:
+            return None
+        latest = sizes[0]
+        prior = sizes[1:]
+        baseline = sum(prior) / len(prior)
+        floor = max(50, 0.4 * baseline)
+        if baseline > 0 and latest < floor:
+            return {
+                'check': 'briefing_collapse',
+                'detail': (f"latest briefing is {latest} chars vs a trailing average of "
+                           f"{baseline:.0f} — content has collapsed (data sources may be failing)"),
+            }
+    except Exception as e:
+        logger.warning(f"[Anomaly] briefing_collapse check failed (non-fatal): {e}")
+    return None
+
+
+_ANOMALY_CHECKS = [
+    _anomaly_eval_score_slide,
+    _anomaly_eval_stale,
+    _anomaly_briefing_collapse,
+]
+
+
+def run_anomaly_checks():
+    """
+    Run every anomaly check and, if any fired, email a single consolidated
+    alert (anomalies don't involve the email channel, so they're safe to
+    email directly). Returns {checked_at, count, anomalies}.
+
+    Cadence note: this runs once daily via the scheduler, so a persistent
+    anomaly produces at most one alert per day — a daily reminder, not a flood.
+    If persistent-anomaly fatigue ever becomes an issue, add signature-based
+    dedup here. Never raises into the caller.
+    """
+    anomalies = []
+    for check in _ANOMALY_CHECKS:
+        try:
+            hit = check()
+            if hit:
+                anomalies.append(hit)
+        except Exception as e:
+            logger.warning(f"[Anomaly] a check raised (non-fatal): {e}")
+
+    if anomalies:
+        try:
+            from alert_system import get_alert_manager, AlertCategory, AlertPriority
+            body = "\n".join(f"- {a['check']}: {a['detail']}" for a in anomalies)
+            get_alert_manager().create_alert(
+                category=AlertCategory.SYSTEM,
+                title=f"Swarm anomaly detected ({len(anomalies)})",
+                summary="Self-monitoring detected a worrying trend in stored metrics.",
+                priority=AlertPriority.HIGH,
+                details=body,
+                send_email=True,
+            )
+        except Exception as e:
+            logger.error(f"[Anomaly] failed to send anomaly alert: {e}")
+
+    if anomalies:
+        print(f"[Anomaly] {len(anomalies)} detected: {[a['check'] for a in anomalies]}")
+    else:
+        print("[Anomaly] no anomalies detected")
+
+    return {
+        'checked_at': datetime.now().isoformat(),
+        'count': len(anomalies),
+        'anomalies': anomalies,
+    }
+
+
+def run_daily_self_tests():
+    """
+    The full daily self-monitoring routine: run every canary, then every
+    anomaly check. This is what the scheduler's JOB 6 calls, and what the
+    POST /api/canaries/run endpoint runs, so an on-demand test exercises
+    exactly what the scheduled run does. Returns both summaries.
+    """
+    canary_summary = run_all_canaries()
+    anomaly_summary = run_anomaly_checks()
+    return {'canaries': canary_summary, 'anomalies': anomaly_summary}
 
 
 # I did no harm and this file is not truncated
