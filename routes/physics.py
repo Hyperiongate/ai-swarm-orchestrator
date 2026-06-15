@@ -2,7 +2,7 @@
 FeynmanLab — Flask Routes
 File: routes/physics.py
 Created: June 14, 2026
-Last Updated: June 14, 2026 — WO-14 Phase 1: page + session/message API
+Last Updated: June 14, 2026 — WO-14 Phase 4: figure-serving route
 
 PURPOSE:
     Flask blueprint for FeynmanLab, the physics thinking partner.
@@ -18,8 +18,14 @@ ENDPOINTS:
     PUT    /api/physics/session/<id>      — rename a session             {title}
     DELETE /api/physics/session/<id>      — delete a session
     POST   /api/physics/message           — ask the partner   {session_id, content}
+    GET    /api/physics/image/<id>        — serve a stored figure (Phase 4)
 
 CHANGELOG:
+- June 14, 2026: WO-14 PHASE 4 — FIGURE-SERVING ROUTE
+  * Added GET /api/physics/image/<id>, which streams a stored figure's bytes with
+    its mime type (engine get_image()). The message and session payloads already
+    carry image URLs (engine change), so no other route needed touching.
+    Additive only; Rule 1 preserved.
 - June 14, 2026: WO-14 PHASE 1 — INITIAL IMPLEMENTATION
   * New blueprint physics_bp. Page route + session CRUD + the message endpoint.
   * Registered in app.py (see app.py changelog). No existing route touched.
@@ -29,7 +35,7 @@ AUTHOR: Jim @ Shiftwork Solutions LLC (managed by Claude)
 """
 
 import logging
-from flask import Blueprint, jsonify, request, render_template
+from flask import Blueprint, jsonify, request, render_template, Response
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +178,27 @@ def physics_message():
         return _not_ready()
     except Exception as e:
         logger.error(f"POST /api/physics/message failed: {e}")
+        return _error(e)
+
+
+# ============================================================================
+# FIGURE SERVING (Phase 4)
+# ============================================================================
+
+@physics_bp.route('/api/physics/image/<int:image_id>', methods=['GET'])
+def get_physics_image(image_id: int):
+    """Stream a stored figure's bytes with its mime type."""
+    try:
+        img = _lab().get_image(image_id)
+        if img is None:
+            return jsonify({'success': False, 'error': f'Image {image_id} not found'}), 404
+        resp = Response(img['data'], mimetype=img['mime'])
+        resp.headers['Cache-Control'] = 'private, max-age=86400'
+        return resp
+    except ImportError:
+        return _not_ready()
+    except Exception as e:
+        logger.error(f"GET /api/physics/image/{image_id} failed: {e}")
         return _error(e)
 
 
