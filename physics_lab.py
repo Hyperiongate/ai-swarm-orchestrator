@@ -2,7 +2,7 @@
 FeynmanLab — Physics Thinking Partner Engine
 File: physics_lab.py
 Created: June 14, 2026
-Last Updated: June 14, 2026 — WO-14 Phase 3: compute (sandboxed Python execution)
+Last Updated: June 14, 2026 — WO-14 Phase 4: visualization (figure capture + serving)
 
 PURPOSE:
     The reasoning engine for FeynmanLab, a physics thinking partner for Jim:
@@ -38,6 +38,23 @@ DATABASE TABLES (PostgreSQL, lazy-created on first use):
         created_at  TIMESTAMP DEFAULT NOW()
 
 CHANGELOG:
+- June 14, 2026: WO-14 PHASE 4 — VISUALIZATION (figure capture + serving)
+  * The partner can now plot. Any image file (png/jpg/svg/webp) its run_python
+    code saves is captured from the sandbox workdir (_collect_images, read into
+    memory before cleanup), stored in a new physics_images table (bytea), and
+    surfaced as a URL the UI renders beneath the reply.
+  * ask() now returns 'images': [url,...]; _converse returns figures too;
+    _run_code_tool returns (text, images); _add_message returns the new message id
+    so figures link to their message. get_session attaches per-message image URLs;
+    delete_session cleans up a session's figures. New get_image() + the route
+    GET /api/physics/image/<id> (routes/physics.py) serve the bytes on demand.
+  * WHY stored-and-served, not inline base64: keeps the stored message text small
+    and keeps image bytes OUT of the model's replayed context (it can't read them
+    anyway) — the proper fix, not the duct-tape inline approach.
+  * Caps: MAX_IMAGES_PER_RUN=6, MAX_IMAGE_BYTES=5MB. The sandbox already set
+    MPLBACKEND=Agg in Phase 3, so headless matplotlib just works. New table is
+    lazy-created; no migration, no new env var. Search/compute paths unchanged.
+    Rule 1 preserved.
 - June 14, 2026: WO-14 PHASE 3 — COMPUTE (sandboxed Python execution)
   * The partner can now actually run math. Added a second tool, run_python, that
     executes a self-contained snippet (numpy as np, scipy, sympy as sp, stdlib)
@@ -162,6 +179,17 @@ CODE_FSIZE_LIMIT_MB = 16
 # Largest tool_result we hand back to the model (keeps context bounded).
 CODE_OUTPUT_CHAR_CAP = 6000
 
+# Phase 4 (visualization): figures the sandbox code writes are captured and shown.
+MAX_IMAGES_PER_RUN = 6              # most figures captured from one code run
+MAX_IMAGE_BYTES = 5 * 1024 * 1024  # skip anything bigger than this
+IMAGE_MIME_BY_EXT = {
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.webp': 'image/webp',
+    '.svg': 'image/svg+xml',
+}
+
 # Prepended to every snippet so the partner can just write physics. The scientific
 # stack is imported here; scipy/sympy are soft (the tool still works on numpy +
 # stdlib if a build ever lacks them).
@@ -187,8 +215,12 @@ RUN_CODE_TOOL = {
         "core you should not do by hand or guess. numpy is available as np, scipy "
         "as scipy, and sympy as sp; the standard math/statistics/etc. modules are "
         "imported. print() whatever you want to see — only stdout/stderr come back. "
-        "The code runs in an isolated sandbox with a time and memory limit and no "
-        "network or database access, so keep each run self-contained."
+        "TO SHOW A PLOT: use matplotlib (import matplotlib.pyplot as plt) and save "
+        "it with plt.savefig('figure.png') — any image file you save is shown to the "
+        "user beneath your reply, so only save figures you actually want displayed, "
+        "and refer to them in your text. The code runs in an isolated sandbox with a "
+        "time and memory limit and no network or database access, so keep each run "
+        "self-contained."
     ),
     "input_schema": {
         "type": "object",
@@ -326,6 +358,20 @@ def _ensure_tables():
             CREATE INDEX IF NOT EXISTS idx_physics_messages_session
             ON physics_messages (session_id, id)
         ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS physics_images (
+                id          SERIAL PRIMARY KEY,
+                session_id  INTEGER NOT NULL,
+                message_id  INTEGER,
+                mime        TEXT NOT NULL,
+                data        BYTEA NOT NULL,
+                created_at  TIMESTAMP DEFAULT NOW()
+            )
+        ''')
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_physics_images_message
+            ON physics_images (message_id, id)
+        ''')
         conn.commit()
         _tables_initialized = True
     finally:
@@ -404,6 +450,7 @@ def get_session(session_id: int) -> Optional[Dict[str, Any]]:
             (session_id,)
         )
         msgs = cursor.fetchall()
+        img_map = _images_for_messages(session_id)
         return {
             'id': s['id'],
             'title': s['title'],
@@ -414,6 +461,7 @@ def get_session(session_id: int) -> Optional[Dict[str, Any]]:
                 'role': m['role'],
                 'content': m['content'],
                 'created_at': _iso(m['created_at']),
+                'images': img_map.get(m['id'], []),
             } for m in msgs],
         }
     finally:
@@ -442,11 +490,12 @@ def rename_session(session_id: int, title: str) -> bool:
 
 
 def delete_session(session_id: int) -> bool:
-    """Delete a session and its messages. Returns True if the session existed."""
+    """Delete a session and its messages and figures. Returns True if it existed."""
     _ensure_tables()
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
+        cursor.execute('DELETE FROM physics_images WHERE session_id = %s', (session_id,))
         cursor.execute('DELETE FROM physics_messages WHERE session_id = %s', (session_id,))
         cursor.execute(
             'DELETE FROM physics_sessions WHERE id = %s RETURNING id',
@@ -500,7 +549,7 @@ def ask(session_id: int, user_message: str) -> Dict[str, Any]:
     research_on = _research_available()
 
     try:
-        reply, sources, computed = _converse(api_messages, research_on)
+        reply, sources, computed, images = _converse(api_messages, research_on)
     except Exception as e:
         logger.error(f"[FeynmanLab] Opus call failed: {e}")
         return {'success': False, 'error': f'Model call failed: {e}', 'session_id': session_id}
@@ -510,7 +559,16 @@ def ask(session_id: int, user_message: str) -> Dict[str, Any]:
             f"- {s['title']}: {s['url']}" for s in sources
         )
 
-    _add_message(session_id, 'assistant', reply)
+    message_id = _add_message(session_id, 'assistant', reply)
+
+    image_urls = []
+    for img in images:
+        try:
+            image_id = _store_image(session_id, message_id, img['mime'], img['data'])
+            image_urls.append(_image_url(image_id))
+        except Exception as e:
+            logger.error(f"[FeynmanLab] failed to store figure: {e}")
+
     _touch_session(session_id)
 
     return {
@@ -519,6 +577,7 @@ def ask(session_id: int, user_message: str) -> Dict[str, Any]:
         'session_id': session_id,
         'searched': bool(sources),
         'computed': computed,
+        'images': image_urls,
     }
 
 
@@ -531,10 +590,12 @@ def _converse(api_messages: List[Dict[str, Any]], research_on: bool):
     is made WITHOUT tools, forcing a written answer. Intermediate tool_use /
     tool_result blocks live only inside this call — they are never persisted, so
     the stored thread stays a clean user/assistant text alternation. Returns
-    (final_text, deduped_sources, used_compute).
+    (final_text, deduped_sources, used_compute, images) where images is a list of
+    {'mime','data'} figures the partner produced.
     """
     messages = list(api_messages)
     sources: List[Dict[str, str]] = []
+    images: List[Dict[str, Any]] = []
     used_compute = False
     rounds = 0
     final_text = ""
@@ -582,9 +643,11 @@ def _converse(api_messages: List[Dict[str, Any]], research_on: bool):
             tname = getattr(tu, 'name', '')
             tinput = tu.input or {}
             if tname == RUN_CODE_TOOL['name']:
-                result_text = _run_code_tool(tinput)
+                result_text, imgs = _run_code_tool(tinput)
                 used = []
                 used_compute = True
+                if imgs:
+                    images.extend(imgs)
             elif tname == SEARCH_TOOL['name']:
                 result_text, used = _run_search_tool(tinput)
             else:
@@ -609,7 +672,7 @@ def _converse(api_messages: List[Dict[str, Any]], research_on: bool):
         if u and u not in seen:
             seen.add(u)
             deduped.append(s)
-    return final_text, deduped, used_compute
+    return final_text, deduped, used_compute, images[:MAX_IMAGES_PER_RUN]
 
 
 # ============================================================================
@@ -692,10 +755,11 @@ def _set_code_limits():
     resource.setrlimit(resource.RLIMIT_FSIZE, (fsize, fsize))
 
 
-def _run_code_tool(tool_input: Dict[str, Any]) -> str:
+def _run_code_tool(tool_input: Dict[str, Any]):
     """
     Run one self-contained Python snippet in an isolated sandbox subprocess and
-    return its stdout/stderr as text for the model. Never raises.
+    return (text, images): stdout/stderr text for the model, plus any figures the
+    code saved (list of {'mime','data'}). Never raises.
 
     Isolation (do-no-harm to the swarm):
       * separate process — a crash, hang, or OOM kills only the child, never the
@@ -708,7 +772,7 @@ def _run_code_tool(tool_input: Dict[str, Any]) -> str:
     """
     code = (tool_input.get('code') or '').strip()
     if not code:
-        return "No code was provided to run."
+        return ("No code was provided to run.", [])
 
     program = CODE_PREAMBLE + "\n# ---- partner code ----\n" + code
 
@@ -728,6 +792,7 @@ def _run_code_tool(tool_input: Dict[str, Any]) -> str:
     safe_env["HOME"] = workdir
     preexec = _set_code_limits if hasattr(os, 'fork') else None
 
+    images = []
     try:
         proc = subprocess.run(
             [sys.executable, "-I", "-c", program],
@@ -738,15 +803,18 @@ def _run_code_tool(tool_input: Dict[str, Any]) -> str:
             env=safe_env,
             preexec_fn=preexec,
         )
+        # Read any saved figures into memory BEFORE the workdir is removed.
+        images = _collect_images(workdir)
     except subprocess.TimeoutExpired:
         return (
             f"Execution timed out after {CODE_TIMEOUT_SECONDS}s — likely an infinite "
             f"loop or a computation too heavy for the sandbox. Simplify it or reduce "
-            f"the problem size and try again."
+            f"the problem size and try again.",
+            [],
         )
     except Exception as e:
         logger.error(f"[FeynmanLab] code sandbox failed to start: {e}")
-        return f"The sandbox could not run the code: {e}"
+        return (f"The sandbox could not run the code: {e}", [])
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
@@ -763,6 +831,10 @@ def _run_code_tool(tool_input: Dict[str, Any]) -> str:
     elif err:
         parts.append("STDERR (warnings):\n" + err)
 
+    if images:
+        n = len(images)
+        parts.append(f"[{n} figure{'s' if n != 1 else ''} saved and shown to the user.]")
+
     if not parts:
         result = (
             "(The code ran successfully but produced no output. "
@@ -773,18 +845,53 @@ def _run_code_tool(tool_input: Dict[str, Any]) -> str:
 
     if len(result) > CODE_OUTPUT_CHAR_CAP:
         result = result[:CODE_OUTPUT_CHAR_CAP] + "\n…[output truncated]"
-    return result
+    return (result, images)
 
 
-def _add_message(session_id: int, role: str, content: str) -> None:
+def _collect_images(workdir: str) -> List[Dict[str, Any]]:
+    """Read image files the sandbox code wrote, into memory, before cleanup.
+
+    Returns a list of {'mime','data'} sorted by filename (deterministic order),
+    skipping anything too large and capping the count.
+    """
+    found = []
+    try:
+        names = sorted(os.listdir(workdir))
+    except Exception:
+        return found
+    for name in names:
+        ext = os.path.splitext(name)[1].lower()
+        mime = IMAGE_MIME_BY_EXT.get(ext)
+        if not mime:
+            continue
+        path = os.path.join(workdir, name)
+        try:
+            if not os.path.isfile(path):
+                continue
+            if os.path.getsize(path) > MAX_IMAGE_BYTES:
+                logger.warning(f"[FeynmanLab] skipping oversized figure {name}")
+                continue
+            with open(path, 'rb') as fh:
+                found.append({'mime': mime, 'data': fh.read()})
+        except Exception as e:
+            logger.warning(f"[FeynmanLab] could not read figure {name}: {e}")
+        if len(found) >= MAX_IMAGES_PER_RUN:
+            break
+    return found
+
+
+def _add_message(session_id: int, role: str, content: str) -> int:
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
         cursor.execute(
-            'INSERT INTO physics_messages (session_id, role, content) VALUES (%s, %s, %s)',
+            'INSERT INTO physics_messages (session_id, role, content) '
+            'VALUES (%s, %s, %s) RETURNING id',
             (session_id, role, content)
         )
+        new_id = cursor.fetchone()['id']
         conn.commit()
+        return new_id
     finally:
         conn.close()
 
@@ -823,6 +930,73 @@ def _touch_session(session_id: int) -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def _image_url(image_id: int) -> str:
+    """Relative URL the front-end uses to fetch a stored figure."""
+    return f"/api/physics/image/{image_id}"
+
+
+def _store_image(session_id: int, message_id: Optional[int], mime: str, data: bytes) -> int:
+    """Persist one figure (bytea) and return its id."""
+    import psycopg2
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            'INSERT INTO physics_images (session_id, message_id, mime, data) '
+            'VALUES (%s, %s, %s, %s) RETURNING id',
+            (session_id, message_id, mime, psycopg2.Binary(data))
+        )
+        new_id = cursor.fetchone()['id']
+        conn.commit()
+        return new_id
+    finally:
+        conn.close()
+
+
+def get_image(image_id: int) -> Optional[Dict[str, Any]]:
+    """Return {'mime','data'} for a stored figure, or None. Used by the route."""
+    _ensure_tables()
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            'SELECT mime, data FROM physics_images WHERE id = %s', (image_id,)
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        data = row['data']
+        if isinstance(data, memoryview):
+            data = data.tobytes()
+        elif isinstance(data, (bytearray,)):
+            data = bytes(data)
+        return {'mime': row['mime'], 'data': data}
+    finally:
+        conn.close()
+
+
+def _images_for_messages(session_id: int) -> Dict[int, List[str]]:
+    """Map message_id -> [image_url, ...] for one session (for get_session)."""
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            'SELECT id, message_id FROM physics_images '
+            'WHERE session_id = %s ORDER BY id ASC',
+            (session_id,)
+        )
+        rows = cursor.fetchall()
+    finally:
+        conn.close()
+    out: Dict[int, List[str]] = {}
+    for r in rows:
+        mid = r['message_id']
+        if mid is None:
+            continue
+        out.setdefault(mid, []).append(_image_url(r['id']))
+    return out
 
 
 def _iso(value) -> Optional[str]:
