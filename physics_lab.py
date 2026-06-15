@@ -2,7 +2,7 @@
 FeynmanLab — Physics Thinking Partner Engine
 File: physics_lab.py
 Created: June 14, 2026
-Last Updated: June 14, 2026 — WO-14 Phase 2: research (web search via tool-use)
+Last Updated: June 14, 2026 — WO-14 Phase 3: compute (sandboxed Python execution)
 
 PURPOSE:
     The reasoning engine for FeynmanLab, a physics thinking partner for Jim:
@@ -38,6 +38,24 @@ DATABASE TABLES (PostgreSQL, lazy-created on first use):
         created_at  TIMESTAMP DEFAULT NOW()
 
 CHANGELOG:
+- June 14, 2026: WO-14 PHASE 3 — COMPUTE (sandboxed Python execution)
+  * The partner can now actually run math. Added a second tool, run_python, that
+    executes a self-contained snippet (numpy as np, scipy, sympy as sp, stdlib)
+    and returns stdout/stderr. _converse now offers both tools and dispatches by
+    name; ask() also reports a 'computed' flag.
+  * SANDBOX (do-no-harm to the swarm): code runs in a SEPARATE subprocess, not
+    in-process — so a crash/hang/OOM kills only the child. 20s wall-clock timeout,
+    RLIMIT_AS 2GB / RLIMIT_CPU / RLIMIT_FSIZE caps, a minimal env that withholds
+    the swarm's secrets (API keys, DATABASE_URL) from the child, '-I' isolated
+    mode, and a throwaway working dir. No DB access from executed code.
+  * SYSTEM_PROMPT: replaced the old "you cannot run computations yet" line with
+    the compute discipline — run real math rather than guess, show the work and
+    units, sanity-check, never report an estimate as computed, never paper over a
+    failed run.
+  * MAX_TOOL_ROUNDS 4 -> 6 (room for mixed search+compute sequences).
+  * Requires scipy + sympy in requirements.txt (added same date). numpy was
+    already present via pandas/matplotlib. No schema change, no new env var, no
+    other source file touched. Rule 1 preserved.
 - June 14, 2026: WO-14 PHASE 2 — RESEARCH (web search via tool-use)
   * The partner can now search the web. ask() gained a tool-use loop (_converse):
     Opus is offered a single search_web tool; when it calls it, _run_search_tool
@@ -74,6 +92,12 @@ AUTHOR: Jim @ Shiftwork Solutions LLC (managed by Claude)
 """
 
 import logging
+import os
+import sys
+import shutil
+import textwrap
+import tempfile
+import subprocess
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 
@@ -89,10 +113,10 @@ PARTNER_NAME = "FeynmanLab"
 # a safety valve for very long sessions — it keeps the most recent N messages.
 MAX_HISTORY_MESSAGES = 60
 
-# Phase 2 (research): the most search round-trips the partner may take within a
-# single ask(). After this many, the next model turn is made WITHOUT tools, which
-# forces a final written answer — bounding latency and cost.
-MAX_TOOL_ROUNDS = 4
+# Phase 2 (research) / Phase 3 (compute): the most tool round-trips the partner
+# may take within a single ask(). After this many, the next model turn is made
+# WITHOUT tools, which forces a final written answer — bounding latency and cost.
+MAX_TOOL_ROUNDS = 6
 
 # The web-search tool the partner may reach for. The description carries the
 # "autonomous but restrained" rule: search only when an answer genuinely hinges
@@ -120,6 +144,64 @@ SEARCH_TOOL = {
             }
         },
         "required": ["query"],
+    },
+}
+
+# ----------------------------------------------------------------------------
+# Phase 3 (compute): the partner can run Python to actually do the math.
+# ----------------------------------------------------------------------------
+
+# Hard wall-clock limit for one code run (kills infinite loops / runaway work).
+CODE_TIMEOUT_SECONDS = 20
+# Address-space (virtual memory) cap for the child. Generous enough that numpy /
+# scipy import and work normally, tight enough to stop a memory bomb. The child
+# is a SEPARATE process, so hitting this kills only the child, never the swarm.
+CODE_MEM_LIMIT_MB = 2048
+# Cap on bytes the child may write to disk (no filling the box).
+CODE_FSIZE_LIMIT_MB = 16
+# Largest tool_result we hand back to the model (keeps context bounded).
+CODE_OUTPUT_CHAR_CAP = 6000
+
+# Prepended to every snippet so the partner can just write physics. The scientific
+# stack is imported here; scipy/sympy are soft (the tool still works on numpy +
+# stdlib if a build ever lacks them).
+CODE_PREAMBLE = textwrap.dedent('''
+    import math, cmath, statistics, itertools, functools, fractions, decimal, random
+    import numpy as np
+    try:
+        import scipy
+    except Exception:
+        scipy = None
+    try:
+        import sympy as sp
+    except Exception:
+        sp = None
+''')
+
+RUN_CODE_TOOL = {
+    "name": "run_python",
+    "description": (
+        "Run Python to actually compute something — numerically integrate, solve "
+        "an ODE, do linear algebra, run a Monte Carlo, or carry a symbolic "
+        "derivation. Use this whenever an answer has a real numerical or symbolic "
+        "core you should not do by hand or guess. numpy is available as np, scipy "
+        "as scipy, and sympy as sp; the standard math/statistics/etc. modules are "
+        "imported. print() whatever you want to see — only stdout/stderr come back. "
+        "The code runs in an isolated sandbox with a time and memory limit and no "
+        "network or database access, so keep each run self-contained."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "code": {
+                "type": "string",
+                "description": (
+                    "Self-contained Python. print() the results you want to read "
+                    "back. Do not rely on state from previous runs."
+                ),
+            }
+        },
+        "required": ["code"],
     },
 }
 
@@ -179,10 +261,17 @@ $$...$$ — so it renders cleanly.
 
 You also clarify when asked (explain with concrete physical pictures, not jargon), suggest \
 variations and follow-on experiments, and point to what would be worth computing or checking \
-next. When a question would genuinely benefit from a calculation you should actually run, say \
-so explicitly — e.g. "here's where we'd want to run the real numbers" — but keep that brief \
-and only when it matters. (Running real computations is a capability you do not have yet, so \
-for now you flag the moment rather than execute it.)
+next.
+
+YOU CAN RUN PYTHON to actually compute. When an answer has a real numerical or symbolic core \
+— integrating a rotation curve, solving an orbit or an ODE, doing linear algebra, a Monte \
+Carlo, a sympy derivation, an order-of-magnitude estimate you'd rather not eyeball — use the \
+run_python tool to get the number instead of hand-waving or guessing. numpy is np, scipy is \
+scipy, sympy is sp. Then SHOW YOUR WORK: state what you computed, give the result with units, \
+and sanity-check it (limiting cases, orders of magnitude, does it match a known value). Never \
+report a figure as computed if you only estimated it, and never invent a number you could \
+have actually run. If the sandbox errors or times out, say so and adjust — don't paper over a \
+failed run with a guessed answer.
 
 YOU HAVE A WEB SEARCH TOOL. When an answer genuinely turns on current data, a specific \
 measured value, a recent observational result, or what the literature actually reports — \
@@ -411,7 +500,7 @@ def ask(session_id: int, user_message: str) -> Dict[str, Any]:
     research_on = _research_available()
 
     try:
-        reply, sources = _converse(api_messages, research_on)
+        reply, sources, computed = _converse(api_messages, research_on)
     except Exception as e:
         logger.error(f"[FeynmanLab] Opus call failed: {e}")
         return {'success': False, 'error': f'Model call failed: {e}', 'session_id': session_id}
@@ -429,6 +518,7 @@ def ask(session_id: int, user_message: str) -> Dict[str, Any]:
         'reply': reply,
         'session_id': session_id,
         'searched': bool(sources),
+        'computed': computed,
     }
 
 
@@ -436,16 +526,23 @@ def _converse(api_messages: List[Dict[str, Any]], research_on: bool):
     """
     Run the model turn(s) for one ask().
 
-    If research is on, the partner may call the search tool up to MAX_TOOL_ROUNDS
-    times; after that the next turn is made WITHOUT tools, forcing a written
-    answer. Intermediate tool_use / tool_result blocks live only inside this call
-    — they are never persisted, so the stored thread stays a clean user/assistant
-    text alternation. Returns (final_text, deduped_sources).
+    The partner is offered the search tool (when research is on) and the compute
+    tool, and may call them up to MAX_TOOL_ROUNDS times; after that the next turn
+    is made WITHOUT tools, forcing a written answer. Intermediate tool_use /
+    tool_result blocks live only inside this call — they are never persisted, so
+    the stored thread stays a clean user/assistant text alternation. Returns
+    (final_text, deduped_sources, used_compute).
     """
     messages = list(api_messages)
     sources: List[Dict[str, str]] = []
+    used_compute = False
     rounds = 0
     final_text = ""
+
+    tools = []
+    if research_on:
+        tools.append(SEARCH_TOOL)
+    tools.append(RUN_CODE_TOOL)
 
     while True:
         kwargs = dict(
@@ -455,8 +552,8 @@ def _converse(api_messages: List[Dict[str, Any]], research_on: bool):
             messages=messages,
             timeout=config.ANTHROPIC_TIMEOUT,
         )
-        if research_on and rounds < MAX_TOOL_ROUNDS:
-            kwargs['tools'] = [SEARCH_TOOL]
+        if tools and rounds < MAX_TOOL_ROUNDS:
+            kwargs['tools'] = tools
 
         response = _client.messages.create(**kwargs)
 
@@ -479,10 +576,19 @@ def _converse(api_messages: List[Dict[str, Any]], research_on: bool):
                 })
         messages.append({'role': 'assistant', 'content': assistant_content})
 
-        # Execute each requested search; feed the results back as tool_result.
+        # Execute each requested tool; feed the results back as tool_result.
         tool_results = []
         for tu in tool_uses:
-            result_text, used = _run_search_tool(tu.input or {})
+            tname = getattr(tu, 'name', '')
+            tinput = tu.input or {}
+            if tname == RUN_CODE_TOOL['name']:
+                result_text = _run_code_tool(tinput)
+                used = []
+                used_compute = True
+            elif tname == SEARCH_TOOL['name']:
+                result_text, used = _run_search_tool(tinput)
+            else:
+                result_text, used = f"Unknown tool requested: {tname}", []
             sources.extend(used)
             tool_results.append({
                 'type': 'tool_result',
@@ -503,7 +609,7 @@ def _converse(api_messages: List[Dict[str, Any]], research_on: bool):
         if u and u not in seen:
             seen.add(u)
             deduped.append(s)
-    return final_text, deduped
+    return final_text, deduped, used_compute
 
 
 # ============================================================================
@@ -573,6 +679,101 @@ def _run_search_tool(tool_input: Dict[str, Any]):
         lines.append("\n(No source documents returned.)")
 
     return ("\n".join(lines), sources)
+
+
+def _set_code_limits():
+    """Apply resource limits inside the child process (POSIX only)."""
+    import resource
+    mem = CODE_MEM_LIMIT_MB * 1024 * 1024
+    resource.setrlimit(resource.RLIMIT_AS, (mem, mem))
+    cpu = CODE_TIMEOUT_SECONDS + 2
+    resource.setrlimit(resource.RLIMIT_CPU, (cpu, cpu))
+    fsize = CODE_FSIZE_LIMIT_MB * 1024 * 1024
+    resource.setrlimit(resource.RLIMIT_FSIZE, (fsize, fsize))
+
+
+def _run_code_tool(tool_input: Dict[str, Any]) -> str:
+    """
+    Run one self-contained Python snippet in an isolated sandbox subprocess and
+    return its stdout/stderr as text for the model. Never raises.
+
+    Isolation (do-no-harm to the swarm):
+      * separate process — a crash, hang, or OOM kills only the child, never the
+        Flask worker that runs the swarm;
+      * wall-clock timeout + CPU rlimit — infinite loops die on their own;
+      * RLIMIT_AS memory cap + RLIMIT_FSIZE — no memory or disk bombs;
+      * minimal env — the swarm's secrets (API keys, DATABASE_URL, ...) are NOT
+        passed in, so executed code cannot read them;
+      * '-I' isolated mode + throwaway working dir — no inherited path or state.
+    """
+    code = (tool_input.get('code') or '').strip()
+    if not code:
+        return "No code was provided to run."
+
+    program = CODE_PREAMBLE + "\n# ---- partner code ----\n" + code
+
+    # Minimal environment: strips secrets; pins numeric libs single-threaded.
+    safe_env = {
+        "PATH": "/usr/bin:/bin",
+        "MPLBACKEND": "Agg",
+        "OPENBLAS_NUM_THREADS": "1",
+        "OMP_NUM_THREADS": "1",
+        "MKL_NUM_THREADS": "1",
+        "NUMEXPR_NUM_THREADS": "1",
+        "LC_ALL": "C.UTF-8",
+        "LANG": "C.UTF-8",
+    }
+
+    workdir = tempfile.mkdtemp(prefix="flab_")
+    safe_env["HOME"] = workdir
+    preexec = _set_code_limits if hasattr(os, 'fork') else None
+
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-I", "-c", program],
+            capture_output=True,
+            text=True,
+            timeout=CODE_TIMEOUT_SECONDS,
+            cwd=workdir,
+            env=safe_env,
+            preexec_fn=preexec,
+        )
+    except subprocess.TimeoutExpired:
+        return (
+            f"Execution timed out after {CODE_TIMEOUT_SECONDS}s — likely an infinite "
+            f"loop or a computation too heavy for the sandbox. Simplify it or reduce "
+            f"the problem size and try again."
+        )
+    except Exception as e:
+        logger.error(f"[FeynmanLab] code sandbox failed to start: {e}")
+        return f"The sandbox could not run the code: {e}"
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+    out = (proc.stdout or "").strip()
+    err = (proc.stderr or "").strip()
+
+    parts = []
+    if out:
+        parts.append("STDOUT:\n" + out)
+    if proc.returncode != 0:
+        parts.append(f"[exited with code {proc.returncode}]")
+        if err:
+            parts.append("STDERR:\n" + err)
+    elif err:
+        parts.append("STDERR (warnings):\n" + err)
+
+    if not parts:
+        result = (
+            "(The code ran successfully but produced no output. "
+            "Use print() to see the values you care about.)"
+        )
+    else:
+        result = "\n\n".join(parts)
+
+    if len(result) > CODE_OUTPUT_CHAR_CAP:
+        result = result[:CODE_OUTPUT_CHAR_CAP] + "\n…[output truncated]"
+    return result
 
 
 def _add_message(session_id: int, role: str, content: str) -> None:
