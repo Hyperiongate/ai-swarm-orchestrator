@@ -1,7 +1,14 @@
 # AI SWARM ORCHESTRATOR - Requirements
-# Last Updated: April 21, 2026
+# Last Updated: June 14, 2026
 #
 # CHANGES:
+# - June 14, 2026: FEYNMANLAB PHASE 3 — PHYSICS COMPUTE
+#   * Added scipy>=1.14.0 (ODE integration, optimization, linear algebra,
+#     special functions) and sympy>=1.13.0 (symbolic mathematics, pure Python)
+#     for FeynmanLab's run_python sandbox tool (physics_lab.py).
+#   * numpy was already present transitively via pandas/matplotlib; adding scipy
+#     pins it as a direct need. Purely additive — no version changes to any
+#     existing package. Both floors are Python 3.13 compatible.
 # - April 21, 2026: ASSESSMENT PDF GENERATOR
 #   * Added reportlab>=4.0.0 (ReportLab PDF generation for the
 #     Shiftwork Operations Assessment download endpoint)
@@ -90,4 +97,11 @@ google-auth>=2.0.0
 # ==========================================
 reportlab>=4.0.0            # PDF generation for downloadable Shiftwork Operations Assessment
 resend>=0.7.0               # Resend email SDK — emails a copy of each PDF to Contact@shift-work.com
+# ==========================================
+# PHYSICS COMPUTE — FeynmanLab Phase 3 (Added June 14, 2026)
+# Supports physics_lab.py run_python sandbox tool.
+# numpy is already present (transitively via pandas / matplotlib above).
+# ==========================================
+scipy>=1.14.0              # ODE integration, optimization, linear algebra, special functions
+sympy>=1.13.0              # symbolic mathematics (pure Python)
 # I did no harm and this file is not truncated
