@@ -1374,6 +1374,18 @@ except ImportError as e:
 except Exception as e:
     print(f"Proactive Agent registration failed: {e}")
 
+# ----------------------------------------------------------------------------
+# FeynmanLab — Physics Thinking Partner (WO-14)
+# ----------------------------------------------------------------------------
+try:
+    from routes.physics import physics_bp
+    app.register_blueprint(physics_bp)
+    print("FeynmanLab (Physics Lab) API registered")
+except ImportError as e:
+    print(f"FeynmanLab routes not found: {e}")
+except Exception as e:
+    print(f"FeynmanLab registration failed: {e}")
+
 try:
     from routes.newsletter import newsletter_bp
     app.register_blueprint(newsletter_bp)
