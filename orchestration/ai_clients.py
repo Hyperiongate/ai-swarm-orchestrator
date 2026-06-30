@@ -1,9 +1,38 @@
 """
 AI Clients Module
 Created: January 21, 2026
-Last Updated: March 06, 2026 - ADDED call_claude_sonnet_raw() FOR MEMORY EXTRACTION
+Last Updated: June 30, 2026 - ADDED call_local_gemma() FOR LOCAL OFFLINE MODEL (Phase 5)
 
 CHANGELOG:
+- June 30, 2026: ADDED call_local_gemma() — LOCAL OFFLINE MODEL CLIENT
+  * Purpose: Wire the locally-hosted Gemma model (running in LM Studio on Jim's
+    LG Gram, exposed to the internet via an ngrok tunnel) into the swarm as a
+    callable model, exactly like the other specialists. This is the "local
+    engine" node of the Local AI Engine project — free, private, offline-capable
+    inference that the swarm can call instead of (or before) a paid cloud API.
+  * Design: Gemma is served by LM Studio over an OpenAI-COMPATIBLE endpoint, so
+    call_local_gemma() is modeled directly on call_deepseek() — same OpenAI()
+    client pattern, same role='system' identity injection, same return shape
+    ({'content', 'usage', 'error'}). It behaves as a true sibling of the other
+    client functions.
+  * Connection details all come from config.py (which reads them from Render
+    environment variables) — NOTHING is hardcoded:
+      - config.LOCAL_GEMMA_BASE_URL   the ngrok URL + /v1
+      - config.LOCAL_GEMMA_MODEL      "google/gemma-4-e4b"
+      - config.LOCAL_GEMMA_API_KEY    dummy/door-password (LM Studio ignores it
+                                      unless a lock is set; ngrok basic-auth, if
+                                      enabled later, is carried separately)
+      - config.LOCAL_GEMMA_TIMEOUT    longer than cloud APIs (laptop is slower)
+      - config.LOCAL_GEMMA_SKIP_NGROK_WARNING_HEADER  the header dict that tells
+                                      ngrok's free tier NOT to serve the browser
+                                      interstitial warning page to automated calls
+  * Graceful absence: if LOCAL_GEMMA_BASE_URL is not configured, the module-level
+    client is None and call_local_gemma() returns a clean error dict — it never
+    crashes the swarm. Identical safety pattern to deepseek_client / openai_client.
+  * PURELY ADDITIVE. One new client initializer (local_gemma_client) and one new
+    function (call_local_gemma). Every pre-existing function is byte-for-byte
+    unchanged. Rule 1 (do no harm) fully preserved.
+
 - March 06, 2026: ADDED call_claude_sonnet_raw()
   * Root cause: Memory extraction thread was silently dying after "🧠 Memory
     extraction starting..." because call_claude_sonnet() injects thousands of
@@ -57,6 +86,39 @@ deepseek_client = OpenAI(
     api_key=config.DEEPSEEK_API_KEY,
     base_url=config.DEEPSEEK_BASE_URL
 ) if config.DEEPSEEK_API_KEY else None
+
+# ============================================================================
+# Initialize Local Gemma client (Added June 30, 2026)
+# ----------------------------------------------------------------------------
+# Gemma runs in LM Studio on Jim's laptop and is exposed via an ngrok tunnel.
+# LM Studio serves an OpenAI-COMPATIBLE endpoint, so we use the same OpenAI()
+# client class as DeepSeek, just pointed at the local/tunnel base URL.
+#
+# Two extras vs. the DeepSeek client:
+#   1. default_headers carries the ngrok-skip-browser-warning header so ngrok's
+#      free tier does NOT serve its HTML interstitial warning page to our
+#      automated JSON calls (which would otherwise break parsing).
+#   2. api_key uses LOCAL_GEMMA_API_KEY. LM Studio ignores this unless a lock is
+#      configured; it is sent so that, if a key-style lock is added later, the
+#      code already carries it — no future edit to this file needed.
+#
+# If LOCAL_GEMMA_BASE_URL is not set in the environment, this stays None and
+# call_local_gemma() returns a clean error dict (never crashes the swarm).
+# ============================================================================
+local_gemma_client = None
+try:
+    if getattr(config, 'LOCAL_GEMMA_BASE_URL', None):
+        local_gemma_client = OpenAI(
+            api_key=getattr(config, 'LOCAL_GEMMA_API_KEY', 'lm-studio'),
+            base_url=config.LOCAL_GEMMA_BASE_URL,
+            default_headers=getattr(config, 'LOCAL_GEMMA_SKIP_NGROK_WARNING_HEADER', None),
+        )
+        print(f"Local Gemma client initialized -> {config.LOCAL_GEMMA_BASE_URL}")
+    else:
+        print("Local Gemma client NOT initialized (LOCAL_GEMMA_BASE_URL not set) - local model disabled")
+except Exception as _local_gemma_init_err:
+    print(f"Local Gemma client init failed (non-fatal): {_local_gemma_init_err}")
+    local_gemma_client = None
 
 # Initialize Google Gemini
 if config.GOOGLE_API_KEY:
@@ -449,6 +511,85 @@ def call_deepseek(prompt, max_tokens=4000):
     except Exception as e:
         return {
             'content': f"ERROR: DeepSeek call failed: {str(e)}",
+            'usage': {'input_tokens': 0, 'output_tokens': 0},
+            'error': True
+        }
+
+
+def call_local_gemma(prompt, max_tokens=4000):
+    """
+    Call the LOCAL Gemma model (offline / local engine).
+
+    Gemma runs in LM Studio on Jim's laptop and is reachable over the internet
+    through an ngrok tunnel. LM Studio exposes an OpenAI-COMPATIBLE endpoint, so
+    this function mirrors call_deepseek() almost exactly: same OpenAI() client
+    pattern, same role='system' identity injection, same return shape.
+
+    WHY THIS EXISTS (Local AI Engine project):
+        Gives the swarm a free, private, offline-capable model node it can call
+        instead of (or before) a paid cloud API. The swarm decides WHEN to use it;
+        this function just makes the call when asked.
+
+    CONNECTION (all from config.py / Render env vars — nothing hardcoded):
+        config.LOCAL_GEMMA_BASE_URL    ngrok URL + /v1
+        config.LOCAL_GEMMA_MODEL       "google/gemma-4-e4b"
+        config.LOCAL_GEMMA_TIMEOUT     longer than cloud (laptop inference is slower)
+        ngrok-skip-browser-warning header is set on the client (see top of file)
+        so ngrok's free tier does not serve its HTML interstitial to API calls.
+
+    GRACEFUL ABSENCE:
+        If LOCAL_GEMMA_BASE_URL is not configured, local_gemma_client is None and
+        this returns a clean error dict. The swarm keeps running whether the
+        tunnel/laptop is up or down — exactly like the other optional clients.
+
+    Added: June 30, 2026
+
+    Returns dict with 'content' and 'usage'
+    """
+    if not local_gemma_client:
+        return {
+            'content': "ERROR: Local Gemma not configured (LOCAL_GEMMA_BASE_URL not set, "
+                       "or the laptop/ngrok tunnel is offline)",
+            'usage': {'input_tokens': 0, 'output_tokens': 0},
+            'error': True
+        }
+
+    capabilities = get_system_capabilities_prompt() if CAPABILITIES_AVAILABLE else ""
+    identity = get_identity_system_message() if CAPABILITIES_AVAILABLE else ""
+    enhanced_prompt = f"{capabilities}\n\n{prompt}"
+
+    try:
+        response = local_gemma_client.chat.completions.create(
+            model=config.LOCAL_GEMMA_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": identity
+                },
+                {
+                    "role": "user",
+                    "content": enhanced_prompt
+                }
+            ],
+            max_tokens=max_tokens,
+            timeout=getattr(config, 'LOCAL_GEMMA_TIMEOUT', 300)
+        )
+
+        # LM Studio returns OpenAI-compatible usage; guard in case it is absent.
+        usage_obj = getattr(response, 'usage', None)
+        input_tokens = getattr(usage_obj, 'prompt_tokens', 0) if usage_obj else 0
+        output_tokens = getattr(usage_obj, 'completion_tokens', 0) if usage_obj else 0
+
+        return {
+            'content': response.choices[0].message.content,
+            'usage': {
+                'input_tokens': input_tokens,
+                'output_tokens': output_tokens
+            }
+        }
+    except Exception as e:
+        return {
+            'content': f"ERROR: Local Gemma call failed: {str(e)}",
             'usage': {'input_tokens': 0, 'output_tokens': 0},
             'error': True
         }
