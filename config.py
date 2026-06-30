@@ -1,9 +1,31 @@
 """
 AI SWARM ORCHESTRATOR - Configuration
 Created: January 18, 2026
-Last Updated: March 02, 2026 - POSTGRESQL MIGRATION (Phase 1)
+Last Updated: June 30, 2026 - ADDED LOCAL GEMMA SETTINGS (Local AI Engine, Phase 5)
 
 CHANGELOG:
+- June 30, 2026: ADDED LOCAL GEMMA SETTINGS — LOCAL OFFLINE MODEL
+  * Purpose: Configure the locally-hosted Gemma model (running in LM Studio on
+    Jim's LG Gram, exposed to the internet via an ngrok tunnel) so the swarm can
+    call it through orchestration/ai_clients.py -> call_local_gemma(). This is
+    the "local engine" node of the Local AI Engine project: free, private,
+    offline-capable inference.
+  * Mirrors the existing DeepSeek provider pattern exactly — its pieces live in
+    the matching sections of this file:
+      - API KEYS section .......... LOCAL_GEMMA_API_KEY (dummy/door-password)
+      - API TIMEOUTS section ...... LOCAL_GEMMA_TIMEOUT (longer than cloud APIs)
+      - MODEL CONFIGURATIONS ...... LOCAL_GEMMA_MODEL ("google/gemma-4-e4b")
+      - NEW dedicated block ....... LOCAL GEMMA CONFIGURATION
+                                    (LOCAL_GEMMA_BASE_URL + ngrok header dict)
+  * LOCAL_GEMMA_BASE_URL is read from a Render environment variable and defaults
+    to None. When it is None, ai_clients.py leaves the local client disabled and
+    call_local_gemma() returns a clean error dict — the swarm runs normally
+    whether the laptop/tunnel is up or down.
+  * NOTHING hardcoded. The ngrok URL and the optional door-password are read from
+    the environment, exactly like every other secret in this file.
+  * PURELY ADDITIVE. No existing variable, value, or line was changed or removed.
+    Rule 1 (do no harm) preserved.
+
 - March 02, 2026: POSTGRESQL MIGRATION
   * Removed hardcoded DATABASE = '/mnt/project/swarm_intelligence.db'
   * DATABASE now set based on DATABASE_URL env var (PostgreSQL) or SQLite fallback
@@ -56,6 +78,18 @@ OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
 DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY')
 GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY')
 GROQ_API_KEY = os.environ.get('GROQ_API_KEY')
+
+# ----------------------------------------------------------------------------
+# Local Gemma "API key" (Added June 30, 2026)
+# ----------------------------------------------------------------------------
+# LM Studio does NOT require an API key by default, but the OpenAI client class
+# we use to call it requires a non-empty string. So this defaults to the
+# harmless placeholder 'lm-studio'.
+#
+# DOOR-PASSWORD (optional, future): if you later put a key-style lock on the
+# tunnel/server, set the LOCAL_GEMMA_API_KEY environment variable in Render to
+# that secret and the swarm will send it automatically — no code change needed.
+LOCAL_GEMMA_API_KEY = os.environ.get('LOCAL_GEMMA_API_KEY', 'lm-studio')
 
 # Tavily API (Research Agent)
 TAVILY_API_KEY = os.environ.get('TAVILY_API_KEY')
@@ -115,6 +149,12 @@ OPENAI_TIMEOUT = 120
 DEEPSEEK_TIMEOUT = 120
 GEMINI_TIMEOUT = 120
 
+# Local Gemma timeout (Added June 30, 2026)
+# Set higher than the cloud APIs: the laptop generates ~5-15 tokens/sec, and the
+# request also travels through the ngrok tunnel, so a generous ceiling avoids
+# premature timeouts on longer answers. Overridable via env var.
+LOCAL_GEMMA_TIMEOUT = int(os.environ.get('LOCAL_GEMMA_TIMEOUT', 300))
+
 # ============================================================================
 # MODEL CONFIGURATIONS
 # ============================================================================
@@ -124,6 +164,12 @@ CLAUDE_OPUS_MODEL = "claude-opus-4-5-20251101"
 GPT4_MODEL = "gpt-4-turbo-preview"
 DEEPSEEK_MODEL = "deepseek-chat"
 GEMINI_MODEL = "gemini-1.5-pro"
+
+# Local Gemma model identifier (Added June 30, 2026)
+# This must match the "API Model Identifier" shown in LM Studio's Developer panel
+# exactly. Overridable via env var in case the local model is swapped later
+# (e.g. to a Qwen3 model) without a code change.
+LOCAL_GEMMA_MODEL = os.environ.get('LOCAL_GEMMA_MODEL', 'google/gemma-4-e4b')
 
 # ============================================================================
 # DEFAULT TOKENS
@@ -152,6 +198,25 @@ ENABLE_CONSENSUS_BY_DEFAULT = True
 # ============================================================================
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+
+# ============================================================================
+# LOCAL GEMMA CONFIGURATION (LOCAL OFFLINE MODEL)  — Added June 30, 2026
+# ============================================================================
+# Gemma runs in LM Studio on Jim's laptop and is reachable over the internet via
+# an ngrok tunnel. LM Studio serves an OpenAI-COMPATIBLE endpoint, so ai_clients.py
+# talks to it with the same OpenAI() client class used for DeepSeek.
+#
+# LOCAL_GEMMA_BASE_URL must be the ngrok HTTPS URL with /v1 on the end, e.g.:
+#       https://isolated-museum-likewise.ngrok-free.dev/v1
+# It is read from the environment (set it in Render) and defaults to None. When
+# None, the local client stays disabled and the swarm is completely unaffected.
+LOCAL_GEMMA_BASE_URL = os.environ.get('LOCAL_GEMMA_BASE_URL')
+
+# ngrok's FREE tier serves an HTML "browser warning" interstitial before letting
+# a request through. That breaks automated JSON API calls. Sending this header
+# tells ngrok to skip the interstitial and pass the request straight through.
+# ai_clients.py attaches this as default_headers on the local Gemma client.
+LOCAL_GEMMA_SKIP_NGROK_WARNING_HEADER = {"ngrok-skip-browser-warning": "true"}
 
 # ============================================================================
 # KNOWLEDGE BASE
