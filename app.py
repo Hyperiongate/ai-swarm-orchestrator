@@ -1,9 +1,22 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: June 12, 2026 — Assessment AI Proxy (server-side Anthropic calls for the Shiftwork Operations Assessment)
+Last Updated: June 30, 2026 — Local Gemma Test Endpoint (browser diagnostic for the local offline model)
 
 CHANGELOG:
+- June 30, 2026: LOCAL GEMMA TEST ENDPOINT — ONE CHANGE ONLY:
+  1. BLUEPRINT: Registered local_gemma_test_bp from routes/local_gemma_test.py.
+     Placed immediately AFTER the orchestration_bp registration block.
+     Provides GET /api/admin/test-local-gemma — a read-only browser diagnostic
+     that calls the locally-hosted Gemma model (LM Studio on Jim's laptop via an
+     ngrok tunnel) through orchestration/ai_clients.py -> call_local_gemma() and
+     returns the result as JSON. Part of the Local AI Engine project (Phase 5).
+     The endpoint is read-only and self-contained; it writes nothing and touches
+     no existing functionality.
+  NO OTHER CHANGES. All migrations, blueprints, routes, helper code, and the
+  entire startup sequence are otherwise completely untouched. Rule 1 (do no harm)
+  preserved.
+
 - June 12, 2026: ASSESSMENT AI PROXY — TWO CHANGES ONLY:
   1. BLUEPRINT: Registered assessment_ai_bp from routes/assessment_ai.py.
      Placed immediately AFTER the assessment_pdf_bp registration block.
@@ -1103,6 +1116,11 @@ def health():
             'model': 'claude-sonnet-4-6',
             'note': 'Server-side Anthropic calls for the Shiftwork Operations Assessment (added Jun 12, 2026)',
         },
+        'local_gemma_test': {
+            'status': 'enabled',
+            'test_url': '/api/admin/test-local-gemma',
+            'note': 'Browser diagnostic for the local offline Gemma model via ngrok tunnel (added Jun 30, 2026)',
+        },
         'site_events': {
             'status': 'enabled',
             'log_url': '/api/events/log',
@@ -1137,6 +1155,21 @@ app.register_blueprint(survey_bp)
 from routes.orchestration_handler import orchestration_bp
 app.register_blueprint(orchestration_bp)
 print("Orchestration Handler API registered")
+
+# ----------------------------------------------------------------------------
+# Local Gemma Test — browser diagnostic for the local offline model
+# Added: June 30, 2026
+# Provides GET /api/admin/test-local-gemma. Read-only; calls call_local_gemma()
+# and returns the result as JSON. Part of the Local AI Engine project (Phase 5).
+# ----------------------------------------------------------------------------
+try:
+    from routes.local_gemma_test import local_gemma_test_bp
+    app.register_blueprint(local_gemma_test_bp)
+    print("Local Gemma Test API registered")
+except ImportError as e:
+    print(f"Local Gemma Test routes not found: {e}")
+except Exception as e:
+    print(f"Local Gemma Test registration failed: {e}")
 
 print("DEBUG: About to import bulletproof project routes...")
 try:
