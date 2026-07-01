@@ -1,9 +1,30 @@
 """
 AI Clients Module
 Created: January 21, 2026
-Last Updated: June 30, 2026 - ADDED call_local_gemma_raw() LEAN DIAGNOSTIC CALL (Phase 5)
+Last Updated: June 30, 2026 - STREAMING for local calls (beats ngrok idle timeout)
 
 CHANGELOG:
+- June 30, 2026 (later same day, #2): STREAMING FOR LOCAL GEMMA CALLS
+  * Problem: Even the lean call timed out through the tunnel. Direct testing
+    proved the cause precisely: a direct localhost call to Gemma completed fine
+    in 28s, but the SAME call through the ngrok tunnel was force-closed at ~6s
+    ("connection closed unexpectedly"). Root cause: ngrok's FREE tier closes a
+    connection that sits idle with no data flowing — and in non-streaming mode
+    nothing comes back until the whole answer is done (~20-30s), so the tunnel
+    goes silent and ngrok kills it. LM Studio and the model are healthy; the
+    tunnel was the bottleneck.
+  * Fix: Both call_local_gemma() and call_local_gemma_raw() now request the
+    response as a TOKEN STREAM (stream=True). Tokens flow back continuously as
+    the model generates them, so the tunnel connection is never idle and ngrok
+    does not close it. The streamed chunks are re-assembled into the SAME return
+    dict shape ({'content', 'usage', 'error'}) every caller already expects —
+    so nothing downstream changes. stream_options include_usage is requested so
+    token counts still populate (they arrive on the final chunk).
+  * This also future-proofs the local model against any tunnel's idle limits and
+    makes it feel responsive once escalation is wired.
+  * Change confined to the two local-gemma functions. Every other function is
+    untouched. Rule 1 preserved.
+
 - June 30, 2026 (later same day): ADDED call_local_gemma_raw() — LEAN LOCAL CALL
   * Problem: The first diagnostic test of the local model timed out at Render's
     HTTP gateway (Bad Gateway). Root cause confirmed from the ngrok request log:
@@ -578,8 +599,13 @@ def call_local_gemma(prompt, max_tokens=4000):
     identity = get_identity_system_message() if CAPABILITIES_AVAILABLE else ""
     enhanced_prompt = f"{capabilities}\n\n{prompt}"
 
+    # STREAMING (added June 30, 2026): request the response as a token stream so
+    # data flows continuously through the ngrok tunnel. This prevents ngrok's
+    # free-tier idle-connection timeout from closing the connection while the
+    # local model is still generating. The streamed chunks are re-assembled into
+    # the SAME dict shape callers already expect — nothing downstream changes.
     try:
-        response = local_gemma_client.chat.completions.create(
+        stream = local_gemma_client.chat.completions.create(
             model=config.LOCAL_GEMMA_MODEL,
             messages=[
                 {
@@ -592,16 +618,30 @@ def call_local_gemma(prompt, max_tokens=4000):
                 }
             ],
             max_tokens=max_tokens,
-            timeout=getattr(config, 'LOCAL_GEMMA_TIMEOUT', 300)
+            timeout=getattr(config, 'LOCAL_GEMMA_TIMEOUT', 300),
+            stream=True,
+            stream_options={"include_usage": True},
         )
 
-        # LM Studio returns OpenAI-compatible usage; guard in case it is absent.
-        usage_obj = getattr(response, 'usage', None)
-        input_tokens = getattr(usage_obj, 'prompt_tokens', 0) if usage_obj else 0
-        output_tokens = getattr(usage_obj, 'completion_tokens', 0) if usage_obj else 0
+        content_parts = []
+        input_tokens = 0
+        output_tokens = 0
+        for chunk in stream:
+            # Usage totals arrive on a final chunk whose choices list is empty.
+            chunk_usage = getattr(chunk, 'usage', None)
+            if chunk_usage:
+                input_tokens = getattr(chunk_usage, 'prompt_tokens', 0) or input_tokens
+                output_tokens = getattr(chunk_usage, 'completion_tokens', 0) or output_tokens
+            choices = getattr(chunk, 'choices', None)
+            if choices:
+                delta = getattr(choices[0], 'delta', None)
+                if delta is not None:
+                    piece = getattr(delta, 'content', None)
+                    if piece:
+                        content_parts.append(piece)
 
         return {
-            'content': response.choices[0].message.content,
+            'content': "".join(content_parts),
             'usage': {
                 'input_tokens': input_tokens,
                 'output_tokens': output_tokens
@@ -662,21 +702,38 @@ def call_local_gemma_raw(prompt, max_tokens=512, system_prompt=None):
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
 
+    # STREAMING (added June 30, 2026): stream tokens so data flows continuously
+    # through the ngrok tunnel and its free-tier idle timeout never fires. The
+    # streamed chunks are collected back into the same return dict shape.
     try:
-        response = local_gemma_client.chat.completions.create(
+        stream = local_gemma_client.chat.completions.create(
             model=config.LOCAL_GEMMA_MODEL,
             messages=messages,
             max_tokens=max_tokens,
-            timeout=getattr(config, 'LOCAL_GEMMA_TIMEOUT', 300)
+            timeout=getattr(config, 'LOCAL_GEMMA_TIMEOUT', 300),
+            stream=True,
+            stream_options={"include_usage": True},
         )
 
-        # LM Studio returns OpenAI-compatible usage; guard in case it is absent.
-        usage_obj = getattr(response, 'usage', None)
-        input_tokens = getattr(usage_obj, 'prompt_tokens', 0) if usage_obj else 0
-        output_tokens = getattr(usage_obj, 'completion_tokens', 0) if usage_obj else 0
+        content_parts = []
+        input_tokens = 0
+        output_tokens = 0
+        for chunk in stream:
+            # Usage totals arrive on a final chunk whose choices list is empty.
+            chunk_usage = getattr(chunk, 'usage', None)
+            if chunk_usage:
+                input_tokens = getattr(chunk_usage, 'prompt_tokens', 0) or input_tokens
+                output_tokens = getattr(chunk_usage, 'completion_tokens', 0) or output_tokens
+            choices = getattr(chunk, 'choices', None)
+            if choices:
+                delta = getattr(choices[0], 'delta', None)
+                if delta is not None:
+                    piece = getattr(delta, 'content', None)
+                    if piece:
+                        content_parts.append(piece)
 
         return {
-            'content': response.choices[0].message.content,
+            'content': "".join(content_parts),
             'usage': {
                 'input_tokens': input_tokens,
                 'output_tokens': output_tokens
