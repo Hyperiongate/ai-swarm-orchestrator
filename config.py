@@ -1,7 +1,29 @@
 """
 AI SWARM ORCHESTRATOR - Configuration
 Created: January 18, 2026
-Last Updated: June 30, 2026 - ADDED LOCAL GEMMA SETTINGS (Local AI Engine, Phase 5)
+Last Updated: July 01, 2026 - FIXED RETIRED ANTHROPIC MODEL STRINGS (404 not_found_error)
+
+CHANGELOG:
+- July 01, 2026: FIXED RETIRED ANTHROPIC MODEL STRINGS
+  * Problem: CLAUDE_SONNET_MODEL was "claude-sonnet-4-20250514", which Anthropic
+    has RETIRED. Live calls returned HTTP 404 not_found_error. Because every
+    orchestration request goes through analyze_task_with_sonnet() (a Sonnet call)
+    FIRST, this broke the entire swarm's orchestration, not just one path.
+  * Fix: CLAUDE_SONNET_MODEL -> "claude-sonnet-4-6" (current valid string,
+    verified against Anthropic's model list; matches app.py's health check).
+  * Also fixed CLAUDE_OPUS_MODEL: "claude-opus-4-5-20251101" -> "claude-opus-4-8"
+    (current flagship). The old Opus snapshot date was almost certainly invalid
+    and would have 404'd on the next escalation to Opus.
+  * Both are now os.environ.get(...) with the current strings as defaults, so a
+    future model retirement can be handled by setting a Render env var
+    (CLAUDE_SONNET_MODEL / CLAUDE_OPUS_MODEL) instead of a code deploy.
+  * GPT4_MODEL ("gpt-4-turbo-preview") and GEMINI_MODEL ("gemini-1.5-pro") are
+    likely also stale but are NOT the cause of this error and only run if a task
+    is routed to those specialists. Left unchanged pending verification of the
+    current OpenAI/Google strings.
+  * PURELY CORRECTIVE. No other setting changed. Rule 1 preserved.
+
+- June 30, 2026 - ADDED LOCAL GEMMA SETTINGS (Local AI Engine, Phase 5)
 
 CHANGELOG:
 - June 30, 2026: ADDED LOCAL GEMMA SETTINGS — LOCAL OFFLINE MODEL
@@ -159,8 +181,23 @@ LOCAL_GEMMA_TIMEOUT = int(os.environ.get('LOCAL_GEMMA_TIMEOUT', 300))
 # MODEL CONFIGURATIONS
 # ============================================================================
 
-CLAUDE_SONNET_MODEL = "claude-sonnet-4-20250514"
-CLAUDE_OPUS_MODEL = "claude-opus-4-5-20251101"
+# Anthropic model strings (Updated July 01, 2026).
+# FIX: "claude-sonnet-4-20250514" was RETIRED by Anthropic and returned a 404
+# ("not_found_error"), which broke Sonnet — and because every orchestration
+# request goes through Sonnet classification first, it broke the whole swarm.
+# Corrected to the current valid string "claude-sonnet-4-6" (verified against
+# Anthropic's model list; this is the same string app.py's health check already
+# uses). Opus updated to the current flagship "claude-opus-4-8" — the old
+# "claude-opus-4-5-20251101" snapshot date was almost certainly invalid too and
+# would have 404'd on the next escalation. Both are now read from environment
+# variables so a future model retirement is a Render env-var change, not a code
+# deploy. Defaults are the current valid strings.
+CLAUDE_SONNET_MODEL = os.environ.get('CLAUDE_SONNET_MODEL', 'claude-sonnet-4-6')
+CLAUDE_OPUS_MODEL = os.environ.get('CLAUDE_OPUS_MODEL', 'claude-opus-4-8')
+# NOTE (July 01, 2026): GPT4_MODEL and GEMINI_MODEL below are likely also stale
+# ("gpt-4-turbo-preview" and "gemini-1.5-pro" are older strings). They are NOT
+# causing the current error and only run if a task is routed to those specialists.
+# Left unchanged pending verification of the current OpenAI/Google strings.
 GPT4_MODEL = "gpt-4-turbo-preview"
 DEEPSEEK_MODEL = "deepseek-chat"
 GEMINI_MODEL = "gemini-1.5-pro"
