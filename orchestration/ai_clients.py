@@ -1,9 +1,26 @@
 """
 AI Clients Module
 Created: January 21, 2026
-Last Updated: June 30, 2026 - STREAMING for local calls (beats ngrok idle timeout)
+Last Updated: July 01, 2026 - GPT-5.5 support in call_gpt4 (max_completion_tokens)
 
 CHANGELOG:
+- July 01, 2026: GPT-5.5 SUPPORT IN call_gpt4()
+  * config.GPT4_MODEL moved from the retired "gpt-4-turbo-preview" to the current
+    OpenAI flagship "gpt-5.5" (see config.py). The GPT-5 series REQUIRES
+    'max_completion_tokens' on the chat.completions endpoint and rejects the old
+    'max_tokens' parameter with HTTP 400. call_gpt4() was updated: the single
+    argument to the create() call changed from max_tokens=max_tokens to
+    max_completion_tokens=max_tokens. The value passed in is unchanged.
+  * NOTE for future tuning: GPT-5 is a reasoning model, and reasoning tokens count
+    against max_completion_tokens. If GPT-4-specialist outputs ever come back
+    short/empty, the knobs are (a) raise the max_tokens passed in, or (b) add
+    reasoning_effort="low" to the create() call. Not added now to keep this a
+    minimal, certain change with no new failure mode.
+  * ONLY call_gpt4() changed. call_gemini() is being migrated to the new
+    google-genai SDK as a SEPARATE step (needs a requirements.txt change) and is
+    intentionally untouched here. Every other function is byte-for-byte identical.
+    Rule 1 (do no harm) preserved.
+
 - June 30, 2026 (later same day, #2): STREAMING FOR LOCAL GEMMA CALLS
   * Problem: Even the lean call timed out through the tunnel. Direct testing
     proved the cause precisely: a direct localhost call to Gemma completed fine
@@ -485,7 +502,13 @@ def call_gpt4(prompt, max_tokens=4000):
                     "content": enhanced_prompt
                 }
             ],
-            max_tokens=max_tokens,
+            # NOTE (July 01, 2026): config.GPT4_MODEL is now "gpt-5.5" (the current
+            # OpenAI flagship; "gpt-4-turbo-preview" was stale). The GPT-5 series
+            # requires 'max_completion_tokens' on the chat.completions endpoint and
+            # REJECTS the old 'max_tokens' parameter (HTTP 400). This line was
+            # changed from max_tokens=max_tokens to max_completion_tokens=max_tokens.
+            # The value passed in is unchanged, so callers are unaffected.
+            max_completion_tokens=max_tokens,
             timeout=config.OPENAI_TIMEOUT
         )
 
