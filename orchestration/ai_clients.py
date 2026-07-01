@@ -1,9 +1,29 @@
 """
 AI Clients Module
 Created: January 21, 2026
-Last Updated: June 30, 2026 - ADDED call_local_gemma() FOR LOCAL OFFLINE MODEL (Phase 5)
+Last Updated: June 30, 2026 - ADDED call_local_gemma_raw() LEAN DIAGNOSTIC CALL (Phase 5)
 
 CHANGELOG:
+- June 30, 2026 (later same day): ADDED call_local_gemma_raw() — LEAN LOCAL CALL
+  * Problem: The first diagnostic test of the local model timed out at Render's
+    HTTP gateway (Bad Gateway). Root cause confirmed from the ngrok request log:
+    GET /v1/models returned 200 instantly, but POST /v1/chat/completions never
+    completed in time. call_local_gemma() injects the full system-capabilities
+    prompt (thousands of tokens) into every call — harmless on a fast cloud API,
+    but on the laptop (~9 tokens/sec) the model must first ingest all that prompt
+    bloat before it even starts answering, pushing a single response past Render's
+    ~100-second gateway limit.
+  * Fix: Added call_local_gemma_raw(prompt, max_tokens, system_prompt=None) — a
+    lean call with NO capabilities injection and NO identity block, sending only
+    the prompt (and an optional system message). This is the SAME proven pattern
+    already used by call_claude_sonnet_raw() for background memory extraction,
+    which had the identical "prompt bloat causes timeout" problem.
+  * call_local_gemma() is UNCHANGED — the full-context version is still the right
+    one for real orchestration once escalation is wired. call_local_gemma_raw()
+    is used by the diagnostic endpoint (routes/local_gemma_test.py) to prove the
+    pipe works fast and cleanly within Render's gateway window.
+  * PURELY ADDITIVE. One new function. Nothing else changed. Rule 1 preserved.
+
 - June 30, 2026: ADDED call_local_gemma() — LOCAL OFFLINE MODEL CLIENT
   * Purpose: Wire the locally-hosted Gemma model (running in LM Studio on Jim's
     LG Gram, exposed to the internet via an ngrok tunnel) into the swarm as a
@@ -590,6 +610,81 @@ def call_local_gemma(prompt, max_tokens=4000):
     except Exception as e:
         return {
             'content': f"ERROR: Local Gemma call failed: {str(e)}",
+            'usage': {'input_tokens': 0, 'output_tokens': 0},
+            'error': True
+        }
+
+
+def call_local_gemma_raw(prompt, max_tokens=512, system_prompt=None):
+    """
+    Call the LOCAL Gemma model with NO capabilities injection, NO identity block.
+
+    This is the LEAN counterpart to call_local_gemma(), designed for speed on the
+    laptop. call_local_gemma() prepends the full system-capabilities prompt
+    (thousands of tokens) to every request. On a fast cloud API that is fine, but
+    on the local model (~9 tokens/sec) the model must ingest all that prompt bloat
+    before it starts answering — which pushed the first diagnostic test past
+    Render's ~100-second HTTP gateway limit and produced a Bad Gateway.
+
+    This function sends ONLY the prompt (and an optional system message), exactly
+    the way call_claude_sonnet_raw() does for background memory extraction — the
+    same proven fix for the same "prompt bloat causes timeout" problem.
+
+    Used by: routes/local_gemma_test.py (the browser diagnostic). It is the
+    appropriate call for reachability/latency checks, where the capabilities
+    payload is irrelevant. Real orchestration can still use the full-context
+    call_local_gemma() once escalation is wired.
+
+    Args:
+        prompt (str):        The user prompt to send.
+        max_tokens (int):    Max response tokens (default 512 — small and fast).
+        system_prompt (str): Optional system message. Defaults to None (leanest).
+
+    GRACEFUL ABSENCE:
+        If LOCAL_GEMMA_BASE_URL is not configured, local_gemma_client is None and
+        this returns a clean error dict — never crashes.
+
+    Added: June 30, 2026
+
+    Returns dict with 'content' and 'usage'
+    """
+    if not local_gemma_client:
+        return {
+            'content': "ERROR: Local Gemma not configured (LOCAL_GEMMA_BASE_URL not set, "
+                       "or the laptop/ngrok tunnel is offline)",
+            'usage': {'input_tokens': 0, 'output_tokens': 0},
+            'error': True
+        }
+
+    # Build a minimal messages array — no capabilities, no identity bloat.
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+
+    try:
+        response = local_gemma_client.chat.completions.create(
+            model=config.LOCAL_GEMMA_MODEL,
+            messages=messages,
+            max_tokens=max_tokens,
+            timeout=getattr(config, 'LOCAL_GEMMA_TIMEOUT', 300)
+        )
+
+        # LM Studio returns OpenAI-compatible usage; guard in case it is absent.
+        usage_obj = getattr(response, 'usage', None)
+        input_tokens = getattr(usage_obj, 'prompt_tokens', 0) if usage_obj else 0
+        output_tokens = getattr(usage_obj, 'completion_tokens', 0) if usage_obj else 0
+
+        return {
+            'content': response.choices[0].message.content,
+            'usage': {
+                'input_tokens': input_tokens,
+                'output_tokens': output_tokens
+            }
+        }
+    except Exception as e:
+        return {
+            'content': f"ERROR: Local Gemma raw call failed: {str(e)}",
             'usage': {'input_tokens': 0, 'output_tokens': 0},
             'error': True
         }
