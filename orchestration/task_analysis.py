@@ -1,9 +1,38 @@
 """
 Task Analysis Module - WITH UNIFIED KNOWLEDGE BASE (Project Files + Knowledge Management)
 Created: January 21, 2026
-Last Updated: March 09, 2026 — Phase 5: Prompt enhancement injection
+Last Updated: July 01, 2026 — Phase 6: local_gemma added as an explicit specialist
 
 CHANGELOG:
+- July 01, 2026: PHASE 6 — LOCAL GEMMA AS AN EXPLICIT SPECIALIST (Option 1)
+  WHAT CHANGED (purely additive — nothing existing altered or removed):
+  - execute_specialist_task(): added "local_gemma" to the specialist_map, and
+    added call_local_gemma to the local import from orchestration.ai_clients.
+    Sonnet/Opus can now route a task to the locally-hosted Gemma model exactly
+    the way they route to gpt4/deepseek/gemini. When chosen, Gemma's answer flows
+    back through the existing handler machinery with no handler changes.
+  - SPECIALIST_ROUTING_RULES: added a "local_gemma" section describing WHEN to
+    use it. Deliberately CONSERVATIVE: use local_gemma ONLY when the user
+    explicitly asks for the local/offline/private model, or for trivial,
+    low-stakes, internal scratch work. NEVER for client-facing deliverables,
+    knowledge-base-dependent answers, or anything accuracy-critical — those stay
+    with Sonnet/Opus. This keeps production quality unchanged (safe first step).
+  - Valid-specialist enumerations updated in both prompts (analyze_task_with_sonnet
+    and handle_with_opus) and their JSON schemas so the classifier knows
+    "local_gemma" is a legal value.
+  - execute_specialist_task() docstring updated to list local_gemma.
+  WHY OPTION 1: This adds Gemma to the swarm with ZERO risk to existing behavior.
+    Nothing routes to Gemma automatically; it only runs when explicitly chosen.
+    A later, separately-tested step can add automatic Gemma-first routing if
+    desired. One variable at a time.
+  NOTE ON SPEED: routing a task to local_gemma will be slow (local model speed
+    plus the standard specialist prompt overhead), but streaming in ai_clients.py
+    keeps the ngrok connection alive so it will not time out.
+  NO OTHER CHANGES: All other function signatures, routing logic, specialist
+    dispatch, time-sensitive override, knowledge base integration, JSON
+    extraction, file handling, memory injection, and enhancement injection are
+    completely unchanged. Rule 1 (do no harm) preserved.
+
 - March 09, 2026: Phase 5 — PROMPT ENHANCEMENT INJECTION
   WHAT CHANGED:
   - Added _detect_task_category() helper function (placed after
@@ -193,6 +222,7 @@ def call_research_agent(prompt, max_tokens=4000):
 # ============================================================================
 # SPECIALIST ROUTING RULES
 # Added February 20, 2026
+# Updated July 01, 2026: added local_gemma specialist (Phase 6, Option 1)
 # ============================================================================
 
 SPECIALIST_ROUTING_RULES = """
@@ -234,6 +264,26 @@ SPECIALIST: gemini (Google Gemini - multimodal specialist)
   - Task involves analyzing images or visual content
   - User uploads an image and asks questions about it
   EXAMPLES: "What does this chart show?", "Analyze this image..."
+
+SPECIALIST: local_gemma (locally-hosted Gemma model — private / offline / low-cost)
+  This runs on Jim's own laptop, not a cloud API. It is a small model, so it is
+  LOWER QUALITY than the others. Use it SPARINGLY and ONLY in these cases:
+  USE WHEN:
+  - The user EXPLICITLY asks to use the "local", "offline", "private", "on-prem",
+    or "my own" model (e.g. "draft this with the local model", "use Gemma for this")
+  - The task is trivial, low-stakes, and internal — a quick scratch draft,
+    a casual rewrite, a simple brainstorm, or a throwaway note where top quality
+    is not important and privacy or zero API cost is the point
+  DO NOT USE FOR (send these to Sonnet/Opus instead):
+  - Any client-facing deliverable (contracts, proposals, executive summaries,
+    surveys, reports the client will see)
+  - Anything that depends on the knowledge base or proprietary Shiftwork data
+  - Analysis, calculations, or recommendations where accuracy matters
+  - Anything high-stakes or affecting real decisions
+  When in doubt, DO NOT pick local_gemma — leave it to Sonnet/Opus.
+  EXAMPLES: "Use the local model to jot a quick internal note about...",
+    "Draft a rough throwaway paragraph with Gemma", "Offline: brainstorm a few
+    casual subject lines"
 
 ESCALATE TO OPUS (escalate_to_opus: true) WHEN:
   - Request requires deep multi-step strategic planning
@@ -1208,8 +1258,10 @@ KNOWLEDGE BASE STATUS:
 Analyze this request and determine:
 1. Task type (strategy, schedule_design, implementation, survey, content, code, analysis, complex)
 2. Your confidence (0.0-1.0)
-3. Required specialists - valid values: "research_agent", "gpt4", "deepseek", "gemini", or []
+3. Required specialists - valid values: "research_agent", "gpt4", "deepseek", "gemini", "local_gemma", or []
    Use the SPECIALIST ROUTING RULES above to decide. Be specific - don't default to empty.
+   (Reminder: only pick "local_gemma" when the user explicitly asks for the local/offline model,
+    or for trivial low-stakes internal scratch work. Never for client-facing or accuracy-critical work.)
 4. Escalate to Opus? (true/false) - use the escalation rules above
 5. Reasoning
 
@@ -1217,7 +1269,7 @@ Respond ONLY with valid JSON:
 {
     "task_type": "string",
     "confidence": 0.0-1.0,
-    "specialists_needed": ["research_agent"|"gpt4"|"deepseek"|"gemini", ...],
+    "specialists_needed": ["research_agent"|"gpt4"|"deepseek"|"gemini"|"local_gemma", ...],
     "escalate_to_opus": boolean,
     "reasoning": "string",
     "knowledge_applied": boolean
@@ -1481,7 +1533,9 @@ SONNET'S ANALYSIS:
 
 Provide strategic response with:
 1. Deep analysis (reference specific projects/documents when relevant)
-2. Specialist assignments - valid values: "research_agent", "gpt4", "deepseek", "gemini"
+2. Specialist assignments - valid values: "research_agent", "gpt4", "deepseek", "gemini", "local_gemma"
+   (Reminder: only assign "local_gemma" when the user explicitly asks for the local/offline model,
+    or for trivial low-stakes internal scratch work. Never for client-facing or accuracy-critical work.)
 3. Expected workflow
 4. Learning for Sonnet
 5. Methodology applied
@@ -1489,7 +1543,7 @@ Provide strategic response with:
 Respond in JSON:
 {{
     "strategic_analysis": "string",
-    "specialist_assignments": [{{"ai": "research_agent"|"gpt4"|"deepseek"|"gemini", "task": "description", "reason": "why"}}],
+    "specialist_assignments": [{{"ai": "research_agent"|"gpt4"|"deepseek"|"gemini"|"local_gemma", "task": "description", "reason": "why"}}],
     "workflow": ["step1", "step2"],
     "learning_for_sonnet": "pattern to learn",
     "methodology_applied": "principles used"
@@ -1547,16 +1601,17 @@ def execute_specialist_task(specialist_ai, task_description, knowledge_context="
     Execute task with specialist AI.
 
     UPDATED February 20, 2026: Added "research_agent" to specialist_map.
+    UPDATED July 01, 2026: Added "local_gemma" to specialist_map (Phase 6, Option 1).
 
     Args:
         specialist_ai (str): Valid: "research_agent", "gpt4", "deepseek",
-                                   "gemini", "sonnet", "opus"
+                                   "gemini", "local_gemma", "sonnet", "opus"
         task_description (str): Description of the task
         knowledge_context (str): Optional knowledge context
         file_paths (list): Optional list of attached file paths
         file_contents (str): Optional extracted file contents
     """
-    from orchestration.ai_clients import call_gpt4, call_deepseek, call_gemini
+    from orchestration.ai_clients import call_gpt4, call_deepseek, call_gemini, call_local_gemma
 
     from orchestration.system_capabilities import get_system_capabilities_prompt
     capabilities = get_system_capabilities_prompt()
@@ -1566,6 +1621,7 @@ def execute_specialist_task(specialist_ai, task_description, knowledge_context="
         "gpt4": call_gpt4,
         "deepseek": call_deepseek,
         "gemini": call_gemini,
+        "local_gemma": call_local_gemma,
         "sonnet": call_claude_sonnet,
         "opus": call_claude_opus
     }
