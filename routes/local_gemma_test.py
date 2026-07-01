@@ -3,6 +3,15 @@ Local Gemma Test — Browser Diagnostic Endpoint
 Created: June 30, 2026
 
 CHANGELOG:
+- June 30, 2026 (later same day): SWITCHED TO LEAN CALL
+  * The first live test timed out at Render's HTTP gateway (Bad Gateway). The
+    ngrok log confirmed POST /v1/chat/completions never completed in time: the
+    full call_local_gemma() injects thousands of tokens of capabilities prompt,
+    which the laptop model (~9 tokens/sec) must ingest before answering — past
+    Render's ~100s gateway limit. Switched this diagnostic to the lean
+    call_local_gemma_raw() (max_tokens=256, no capabilities/identity) so it
+    proves reachability quickly and cleanly. No other change.
+
 - June 30, 2026: INITIAL BUILD (Local AI Engine, Phase 5)
   * Purpose: A browser-visitable diagnostic that proves the cloud Swarm can
     reach the locally-hosted Gemma model (running in LM Studio on Jim's laptop,
@@ -84,20 +93,24 @@ def test_local_gemma():
     prompt = request.args.get('q') or "In one sentence, what is shift work scheduling?"
 
     # Import the client function and make the call, timing the round trip.
+    # Use the LEAN call (call_local_gemma_raw): no capabilities/identity injection,
+    # so the local model answers fast and finishes well within Render's HTTP
+    # gateway window. The full-context call_local_gemma() is for real orchestration;
+    # a reachability/latency check does not need the capabilities payload.
     try:
-        from orchestration.ai_clients import call_local_gemma
+        from orchestration.ai_clients import call_local_gemma_raw
     except Exception as import_err:
         return jsonify({
             'success': False,
             'configured': True,
             'base_url': base_url,
             'model': model,
-            'error': f'Could not import call_local_gemma: {import_err}',
+            'error': f'Could not import call_local_gemma_raw: {import_err}',
         }), 500
 
     start = time.time()
     try:
-        result = call_local_gemma(prompt)
+        result = call_local_gemma_raw(prompt, max_tokens=256)
     except Exception as call_err:
         # call_local_gemma already guards itself, but double-protect the endpoint.
         return jsonify({
