@@ -1,9 +1,18 @@
 """
 AI SWARM ORCHESTRATOR - Configuration
 Created: January 18, 2026
-Last Updated: July 01, 2026 - FIXED RETIRED ANTHROPIC MODEL STRINGS (404 not_found_error)
+Last Updated: July 01, 2026 - GPT4_MODEL -> gpt-5.5 (current OpenAI flagship)
 
 CHANGELOG:
+- July 01, 2026 (later same day): GPT4_MODEL -> "gpt-5.5"
+  * "gpt-4-turbo-preview" was stale. GPT4_MODEL now defaults to the current OpenAI
+    flagship "gpt-5.5" and is env-overridable via the GPT4_MODEL environment var.
+  * PAIRED CODE CHANGE: call_gpt4() in ai_clients.py switched from 'max_tokens' to
+    'max_completion_tokens' because the GPT-5 series rejects 'max_tokens' (HTTP 400).
+  * GEMINI_MODEL intentionally left as-is: "gemini-1.5-pro" is shut down (404) and
+    its SDK is deprecated; that fix is a separate google-genai migration step.
+  * PURELY CORRECTIVE. No other setting changed. Rule 1 preserved.
+
 - July 01, 2026: FIXED RETIRED ANTHROPIC MODEL STRINGS
   * Problem: CLAUDE_SONNET_MODEL was "claude-sonnet-4-20250514", which Anthropic
     has RETIRED. Live calls returned HTTP 404 not_found_error. Because every
@@ -194,12 +203,20 @@ LOCAL_GEMMA_TIMEOUT = int(os.environ.get('LOCAL_GEMMA_TIMEOUT', 300))
 # deploy. Defaults are the current valid strings.
 CLAUDE_SONNET_MODEL = os.environ.get('CLAUDE_SONNET_MODEL', 'claude-sonnet-4-6')
 CLAUDE_OPUS_MODEL = os.environ.get('CLAUDE_OPUS_MODEL', 'claude-opus-4-8')
-# NOTE (July 01, 2026): GPT4_MODEL and GEMINI_MODEL below are likely also stale
-# ("gpt-4-turbo-preview" and "gemini-1.5-pro" are older strings). They are NOT
-# causing the current error and only run if a task is routed to those specialists.
-# Left unchanged pending verification of the current OpenAI/Google strings.
-GPT4_MODEL = "gpt-4-turbo-preview"
+# GPT4_MODEL -> "gpt-5.5" (Updated July 01, 2026, later same day).
+# "gpt-4-turbo-preview" was stale. GPT4_MODEL now defaults to the current OpenAI
+# flagship "gpt-5.5" and is env-overridable (set GPT4_MODEL in Render to change it
+# without a code deploy). IMPORTANT: the GPT-5 series requires
+# 'max_completion_tokens' instead of 'max_tokens' on the chat.completions endpoint
+# — call_gpt4() in ai_clients.py was updated in the same change to send that.
+GPT4_MODEL = os.environ.get('GPT4_MODEL', 'gpt-5.5')
 DEEPSEEK_MODEL = "deepseek-chat"
+# GEMINI_MODEL: "gemini-1.5-pro" is SHUT DOWN by Google (requests return 404) and
+# the old google-generativeai SDK that call_gemini() uses is deprecated. Fixing
+# Gemini requires migrating to the new google-genai SDK + a current model
+# ("gemini-2.5-flash") + a requirements.txt change — that is a SEPARATE step and is
+# intentionally NOT done here so this change stays GPT-5.5-only and nothing
+# half-changes. Left exactly as-is until the Gemini migration lands.
 GEMINI_MODEL = "gemini-1.5-pro"
 
 # Local Gemma model identifier (Added June 30, 2026)
