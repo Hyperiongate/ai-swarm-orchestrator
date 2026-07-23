@@ -2,9 +2,32 @@
 AI SWARM ORCHESTRATOR - Proactive Scheduler
 File: proactive/scheduler.py
 Created: June 01, 2026
-Last Updated: June 14, 2026 — WO-13 Phase 3: Daily Canary Suite Job (now 6 jobs)
+Last Updated: July 23, 2026 — Add Daily Contact-Form Self-Test job (now 7 jobs)
 
 CHANGELOG:
+- July 23, 2026: ADD DAILY CONTACT-FORM SELF-TEST JOB (now 7 jobs)
+  * Added JOB 7: contact_selftest_daily — runs EVERY day at 6:50 AM Pacific,
+    calling run_contact_selftest() from proactive/contact_selftest.py. Sends
+    Jim one clearly-labeled "the contact pipeline is working" heartbeat email
+    through the real contact Formspree form (-> Contact@shift-work.com), so a
+    real submission's server -> Formspree -> inbox path is proven daily.
+  * Why 6:50 AM Pacific: 5 minutes after the canary suite (JOB 6 at 6:45) and
+    20 after the briefing (JOB 5 at 6:30), so the three morning jobs run in a
+    clean, non-overlapping sequence. Uses America/Los_Angeles for the same
+    stable-local-time / automatic-DST reason as JOBs 5 and 6.
+  * Idempotent + multi-worker-safe: run_contact_selftest() claims each day in
+    the contact_selftest_log table before sending, so two gunicorn workers
+    firing the same minute still produce exactly ONE email.
+  * Additionally gated on ENABLE_CONTACT_SELFTEST (default true) so this one
+    heartbeat can be toggled WITHOUT touching the other six jobs. The scheduler
+    itself is still gated on ENABLE_SCHEDULED_JOBS=true.
+  * Pattern preserved: JOB 7 follows the established pattern exactly — a
+    standalone no-argument wrapper (_job_contact_selftest), import performed
+    inside the function body, full try/except so a failure never affects the
+    other jobs or the running app. Same job_defaults apply. NO existing job was
+    changed — the six prior jobs are byte-for-byte the same. Rule 1 (do no
+    harm) preserved.
+
 - June 14, 2026: WO-13 PHASE 3 — ADD DAILY CANARY SUITE JOB (now 6 jobs)
   * Added JOB 6: canary_suite_daily — runs EVERY day at 6:45 AM Pacific,
     calling run_daily_self_tests() from proactive/canaries.py (all canaries +
@@ -124,6 +147,14 @@ BRIEFING_MINUTE   = 30  # 6:30 AM Pacific, every day
 CANARY_TIMEZONE = 'America/Los_Angeles'
 CANARY_HOUR     = 6
 CANARY_MINUTE   = 45  # 6:45 AM Pacific, every day
+
+# 2026-07-23: Daily contact-form self-test heartbeat. Fires 5 minutes after the
+# canary suite (also Pacific) so the three morning jobs run back-to-back without
+# overlapping. Sends Jim one "contact pipeline is working" email each morning
+# through the real contact Formspree form. See proactive/contact_selftest.py.
+SELFTEST_TIMEZONE = 'America/Los_Angeles'
+SELFTEST_HOUR     = 6
+SELFTEST_MINUTE   = 50  # 6:50 AM Pacific, every day
 
 
 # ============================================================================
@@ -270,6 +301,40 @@ def _job_canary_suite():
         print(f"[Scheduler] Canary suite failed: {e}")
 
 
+def _job_contact_selftest():
+    """
+    2026-07-23: Daily contact-form self-test — runs every day at 6:50 AM
+    Pacific, 5 minutes after the canary suite.
+
+    Calls run_contact_selftest() from proactive/contact_selftest.py, which
+    sends Jim one clearly-labeled "the contact pipeline is working" heartbeat
+    email through the real contact Formspree form. That function is idempotent
+    per day (it claims the day in contact_selftest_log before sending), so even
+    with 2 gunicorn workers firing this minute, exactly one email goes out.
+
+    The import is performed inside this function (matching the other jobs) so
+    that, if proactive/contact_selftest.py is ever unavailable at runtime, this
+    job logs and returns without disturbing the scheduler or other jobs.
+    """
+    logger.info("[Scheduler] Starting daily contact-form self-test")
+    print(f"[Scheduler] {datetime.utcnow().isoformat()} — contact self-test starting (6:50 AM Pacific)")
+    try:
+        from proactive.contact_selftest import run_contact_selftest
+        result = run_contact_selftest()
+        if isinstance(result, dict) and result.get('skipped'):
+            logger.info(f"[Scheduler] Contact self-test skipped: {result.get('detail')}")
+        elif isinstance(result, dict) and result.get('success'):
+            print("[Scheduler] Contact self-test email sent OK")
+            logger.info("[Scheduler] Contact self-test email sent OK")
+        else:
+            err = result.get('detail') if isinstance(result, dict) else 'unknown result'
+            print(f"[Scheduler] Contact self-test did NOT send: {err}")
+            logger.warning(f"[Scheduler] Contact self-test did NOT send: {err}")
+    except Exception as e:
+        logger.error(f"[Scheduler] Contact self-test failed: {e}")
+        print(f"[Scheduler] Contact self-test failed: {e}")
+
+
 # ============================================================================
 # SCHEDULER INIT
 # ============================================================================
@@ -302,6 +367,7 @@ def init_scheduler(app):
         service_health_check     — Every 30 minutes
         daily_briefing_morning   — Every day 06:30 America/Los_Angeles (WO-10)
         canary_suite_daily       — Every day 06:45 America/Los_Angeles (WO-13)
+        contact_selftest_daily   — Every day 06:50 America/Los_Angeles (2026-07-23)
 
     Args:
         app: The Flask application instance (passed for context if needed
@@ -429,19 +495,38 @@ def init_scheduler(app):
             replace_existing=True,
         )
 
+        # ------------------------------------------------------------------
+        # JOB 7: Daily Contact-Form Self-Test  (2026-07-23)
+        # Every day at 06:50 America/Los_Angeles — 5 minutes after the canary
+        # suite (JOB 6). Sends Jim one "contact pipeline is working" heartbeat
+        # email through the real contact Formspree form. Idempotent per day, so
+        # 2 workers still produce exactly one email. Uses Pacific time like
+        # JOBs 5 and 6 (see config note).
+        # ------------------------------------------------------------------
+        scheduler.add_job(
+            func=_job_contact_selftest,
+            trigger=CronTrigger(hour=SELFTEST_HOUR,
+                                minute=SELFTEST_MINUTE,
+                                timezone=SELFTEST_TIMEZONE),
+            id='contact_selftest_daily',
+            name='Daily Contact-Form Self-Test',
+            replace_existing=True,
+        )
+
         scheduler.start()
         _scheduler = scheduler
 
         print(
-            f"[Scheduler] Started — 6 jobs active:\n"
+            f"[Scheduler] Started — 7 jobs active:\n"
             f"  swarm_evaluation_weekly  : Wednesday 08:05 UTC\n"
             f"  introspection_weekly     : Wednesday 08:15 UTC\n"
             f"  introspection_monthly    : First Wednesday 08:30 UTC\n"
             f"  service_health_check     : every {HEALTH_CHECK_INTERVAL_MINUTES} minutes\n"
             f"  daily_briefing_morning   : every day 06:30 {BRIEFING_TIMEZONE}\n"
-            f"  canary_suite_daily       : every day 06:45 {CANARY_TIMEZONE}"
+            f"  canary_suite_daily       : every day 06:45 {CANARY_TIMEZONE}\n"
+            f"  contact_selftest_daily   : every day 06:50 {SELFTEST_TIMEZONE}"
         )
-        logger.info("[Scheduler] BackgroundScheduler started with 6 jobs")
+        logger.info("[Scheduler] BackgroundScheduler started with 7 jobs")
 
     except ImportError:
         print(
