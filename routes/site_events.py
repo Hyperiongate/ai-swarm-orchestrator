@@ -1,8 +1,8 @@
 """
 AI SWARM ORCHESTRATOR — Route: Site Events API
 Created: April 28, 2026
-Last Updated: May 05, 2026
-Author: Claude Sonnet 4.6 for Jim @ Shiftwork Solutions LLC
+Last Updated: July 23, 2026
+Author: Claude for Jim @ Shiftwork Solutions LLC
 
 CHANGE LOG:
     2026-04-28  (v1) Initial build — POST /api/events/log with CORS.
@@ -12,6 +12,19 @@ CHANGE LOG:
                      sessions) now return _cors_headers() so the
                      Performance Dashboard at shift-work.com/performance/
                      can fetch them from the browser without being blocked.
+                     No logic changes — CORS headers only.
+    2026-07-23  (v3) CORS CREDENTIALS FIX — /js/event-tracker.js on
+                     shift-work.com sends events with navigator.sendBeacon(),
+                     and sendBeacon ALWAYS uses credentials mode 'include'.
+                     The browser therefore requires the preflight response to
+                     carry 'Access-Control-Allow-Credentials: true', which we
+                     were not sending — so every beacon was blocked with:
+                     "The value of the 'Access-Control-Allow-Credentials'
+                     header in the response is '' which must be 'true'".
+                     FIX: _cors_headers() now includes
+                     Access-Control-Allow-Credentials: true and Vary: Origin.
+                     This is safe because Access-Control-Allow-Origin is never
+                     '*' here — it only ever echoes shift-work.com origins.
                      No logic changes — CORS headers only.
 
 PURPOSE:
@@ -91,7 +104,9 @@ def _cors_headers(origin=None):
         'Access-Control-Allow-Origin': allowed,
         'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Allow-Credentials': 'true',
         'Access-Control-Max-Age': '86400',
+        'Vary': 'Origin',
     }
 
 
