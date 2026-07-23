@@ -1,8 +1,28 @@
 """
 AI SWARM ORCHESTRATOR — Contact Form API (Security Layer)
 Created: April 7, 2026
-Last Updated: April 7, 2026
-Author: Claude Opus 4.6 for Jim @ Shiftwork Solutions LLC
+Last Updated: July 23, 2026
+Author: Claude for Jim @ Shiftwork Solutions LLC
+
+CHANGE LOG:
+    2026-04-07  (v1) Initial build.
+    2026-07-23  (v2) FIELD MISMATCH FIX — the live contact form at
+                     shift-work.com/contact/ sends firstName, lastName,
+                     topic, and marks company/message as OPTIONAL, but this
+                     endpoint required name + company + message and returned
+                     400 on every real submission. Fixes:
+                     1. Accepts 'name' OR 'firstName'+'lastName' (combined).
+                     2. company and message are now optional (matches the
+                        form UI and the nullable DB columns; email + name
+                        are still required).
+                     3. New optional 'topic' field — stored as a
+                        "[Topic: ...]" prefix on the message and forwarded
+                        to Formspree as its own field.
+                     4. _cors_headers() now sends
+                        Access-Control-Allow-Credentials: true + Vary: Origin
+                        (matches site_events.py v3 fix; safe because the
+                        origin is never '*').
+                     All anti-spam layers unchanged. No fields dropped.
 
 PURPOSE:
     Flask blueprint that sits between the shift-work.com contact form
@@ -22,8 +42,9 @@ ENDPOINT:
     POST /api/contact/submit
     Content-Type: application/json
     Body: {
-        name, email, company, message (required)
-        phone, employees (optional)
+        email (required)
+        name OR firstName+lastName (required)
+        company, message, topic, phone, employees (optional)
         honeypot, timestamp (anti-spam fields)
     }
 
@@ -104,7 +125,9 @@ def _cors_headers(origin=None):
     headers = {
         'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Accept',
+        'Access-Control-Allow-Credentials': 'true',
         'Access-Control-Max-Age': '86400',
+        'Vary': 'Origin',
     }
     if origin in ALLOWED_ORIGINS:
         headers['Access-Control-Allow-Origin'] = origin
@@ -203,6 +226,7 @@ def _forward_to_formspree(form_data):
             'company': form_data.get('company', ''),
             'phone': form_data.get('phone', ''),
             'employees': form_data.get('employees', ''),
+            'topic': form_data.get('topic', ''),
             'message': form_data.get('message', ''),
             '_subject': 'New Contact Form — shift-work.com',
         }
@@ -290,18 +314,37 @@ def contact_submit():
                 pass
 
         # ── LAYER 4: Validate required fields ──────────────────────────
+        # Accept 'name' directly, or build it from firstName + lastName
+        # (the shift-work.com/contact/ form sends firstName/lastName).
         name = (data.get('name') or '').strip()[:255]
+        if not name:
+            first = (data.get('firstName') or '').strip()
+            last = (data.get('lastName') or '').strip()
+            name = (first + ' ' + last).strip()[:255]
+
         raw_email = data.get('email', '')
-        company = (data.get('company') or '').strip()[:255]
+        company = (data.get('company') or '').strip()[:255] or None
         message = (data.get('message') or '').strip()[:5000]
+        topic = (data.get('topic') or '').strip()[:100]
         phone = (data.get('phone') or '').strip()[:50] or None
         employees = (data.get('employees') or '').strip()[:50] or None
 
-        if not name or not raw_email or not company or not message:
+        # Only name + email are required. The live form marks company as
+        # "Optional" and does not require a message, and the DB columns
+        # are nullable — requiring them here caused every submission to 400.
+        if not name or not raw_email:
             return jsonify({
                 'success': False,
-                'error': 'Please fill in all required fields (name, email, company, message).'
+                'error': 'Please fill in your name and email.'
             }), 400
+
+        # Fold the topic into the stored/forwarded message so it is never lost
+        # (contact_submissions has no topic column).
+        if topic and message:
+            message = f'[Topic: {topic}]\n\n{message}'
+        elif topic:
+            message = f'[Topic: {topic}]'
+        message = message or None
 
         # ── LAYER 5: Email validation ──────────────────────────────────
         is_valid, result = _validate_contact_email(raw_email)
@@ -351,10 +394,11 @@ def contact_submit():
         forwarded_ok, status, error_msg = _forward_to_formspree({
             'name': name,
             'email': email,
-            'company': company,
+            'company': company or '',
             'phone': phone or '',
             'employees': employees or '',
-            'message': message,
+            'topic': topic,
+            'message': message or '',
         })
 
         # Update forwarded status
