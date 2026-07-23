@@ -1,10 +1,20 @@
 """
-LEARNING INTEGRATION WRAPPER - Simple Drop-in Integration
+LEARNING INTEGRATION WRAPPER - Simple Drop-in Integration with Auto-Triggers
 Created: February 2, 2026
-Last Updated: February 2, 2026
+Last Updated: February 2, 2026 - Added automatic cycle triggers
 
-This is a SIMPLE wrapper that adds learning outcome recording to your
-orchestration handler WITHOUT modifying the existing orchestration_handler.py file.
+This wrapper adds learning outcome recording AND automatic cycle triggering
+to your orchestration handler.
+
+After each task completes, it:
+1. Records the outcome for learning
+2. Checks if enough new data exists
+3. Automatically triggers learning cycles when ready
+
+Trigger Rules:
+- Phase 1 (Adaptive Learning): Every 10 new outcomes
+- Phase 2 (Predictive Intelligence): Every 20 new outcomes  
+- Phase 3 (Self-Optimization): Every 30 new outcomes
 
 USAGE:
 1. Upload this file to your repo (root directory)
@@ -18,7 +28,7 @@ USAGE:
    record_orchestration_outcome(task_id, orchestrator, user_request, total_time, 
                                 consensus_result, knowledge_applied, specialist_results)
 
-That's it! The learning system will start collecting data.
+That's it! The learning system will collect data AND run cycles automatically.
 
 Author: Jim @ Shiftwork Solutions LLC (managed by Claude Sonnet 4)
 """
@@ -92,9 +102,16 @@ def record_orchestration_outcome(
             additional_context=kwargs
         )
         
-        # Silent success - no output needed
+        # Silent success - outcome recorded
         if outcome_id:
-            pass  # Successfully recorded
+            # Check if we should trigger any learning cycles
+            try:
+                from smart_learning_trigger import get_trigger_system
+                trigger = get_trigger_system()
+                trigger.check_and_trigger_all()
+            except Exception as trigger_error:
+                # Don't let trigger failures break anything
+                print(f"⚠️ Auto-trigger check failed (non-fatal): {trigger_error}")
         
     except Exception as e:
         # CRITICAL: Never let learning break orchestration
