@@ -2,7 +2,7 @@
 AI SWARM ORCHESTRATOR - Self-Test Canaries
 File: proactive/canaries.py
 Created: June 14, 2026
-Last Updated: June 14, 2026 — WO-13 Phase 3: anomaly detection + daily routine
+Last Updated: July 27, 2026 — Add ENABLE_ALERT_DELIVERY_CANARY toggle (default on)
 
 PURPOSE:
     Automated SEMANTIC self-tests for the swarm. A canary does not just check
@@ -29,6 +29,21 @@ DESIGN — why a canary can't always email its own failure:
     point delivery has been independently verified).
 
 CHANGELOG:
+- July 27, 2026: ADD ENABLE_ALERT_DELIVERY_CANARY TOGGLE (default 'true')
+  * The alert-delivery canary is the only canary that emails when it PASSES —
+    it verifies the email channel by sending one "[CANARY] alert delivery
+    self-test" email every run. Jim asked to stop that daily email. Muting the
+    send would break the canary (emailed_at would be null and it would record a
+    false failure every day), so instead this adds a clean on/off switch that
+    mirrors ENABLE_CONTACT_SELFTEST in proactive/contact_selftest.py.
+  * New env var ENABLE_ALERT_DELIVERY_CANARY ('true' default / 'false'):
+    when 'false', run_all_canaries() SKIPS the alert-delivery canary entirely —
+    no daily heartbeat email AND no false "failed" row. Set it to 'false' in
+    the Render environment to silence the daily email; leave it unset (or
+    'true') to keep the prior behavior.
+  * Added `import os` (previously unused). No other canary, the failure-alert
+    path, the anomaly checks, or the results schema was changed. Rule 1
+    (do no harm) preserved.
 - June 14, 2026: WO-13 PHASE 3 — ANOMALY DETECTION + DAILY ROUTINE
   * Added passive anomaly checks (trend analysis on already-stored data):
       - _anomaly_eval_score_slide(): latest active eval health score >= 15
@@ -80,11 +95,26 @@ AUTHOR: Jim @ Shiftwork Solutions LLC (managed by Claude)
 """
 
 import logging
+import os
 from datetime import datetime
 
 from database import get_db
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# 2026-07-27: Toggle for the alert-delivery canary's daily heartbeat email.
+# The alert-delivery canary verifies the email channel by SENDING one labeled
+# "[CANARY] alert delivery self-test" email every run — it is the only canary
+# that emails when it passes. Set ENABLE_ALERT_DELIVERY_CANARY=false in the
+# Render environment to stop that daily email: run_all_canaries() then skips
+# the canary entirely, so it records no result rather than a false failure.
+# Default 'true' preserves prior behavior. Every other canary and all anomaly
+# checks are unaffected either way.
+# ---------------------------------------------------------------------------
+ENABLE_ALERT_DELIVERY_CANARY = os.environ.get(
+    'ENABLE_ALERT_DELIVERY_CANARY', 'true'
+).lower() == 'true'
 
 
 # ============================================================================
@@ -332,6 +362,15 @@ def run_all_canaries():
     """
     results = []
     for fn in _CANARIES:
+        # The alert-delivery canary proves the email channel by SENDING one
+        # test email every run, so it is the single canary that emails even on
+        # success. When ENABLE_ALERT_DELIVERY_CANARY=false, skip it outright:
+        # no daily heartbeat email and no false "failed" row. Every other
+        # canary still runs, and the failure-alert path below is unaffected.
+        if fn is _canary_alert_delivery and not ENABLE_ALERT_DELIVERY_CANARY:
+            logger.info("[Canaries] alert_delivery canary skipped "
+                        "(ENABLE_ALERT_DELIVERY_CANARY=false)")
+            continue
         try:
             results.append(fn())
         except Exception as e:
