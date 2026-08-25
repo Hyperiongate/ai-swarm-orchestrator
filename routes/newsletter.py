@@ -1,581 +1,1027 @@
 """
-AI SWARM ORCHESTRATOR - Proactive Scheduler
-File: proactive/scheduler.py
-Created: June 01, 2026
-Last Updated: July 23, 2026 — Add Daily Contact-Form Self-Test job (now 7 jobs)
+AI SWARM ORCHESTRATOR — Newsletter Subscription API (Security Hardened)
+Created: April 2, 2026
+Last Updated: August 25, 2026 — RESTORED after accidental overwrite
+Author: Claude for Jim @ Shiftwork Solutions LLC
 
-CHANGELOG:
-- July 23, 2026: ADD DAILY CONTACT-FORM SELF-TEST JOB (now 7 jobs)
-  * Added JOB 7: contact_selftest_daily — runs EVERY day at 6:50 AM Pacific,
-    calling run_contact_selftest() from proactive/contact_selftest.py. Sends
-    Jim one clearly-labeled "the contact pipeline is working" heartbeat email
-    through the real contact Formspree form (-> Contact@shift-work.com), so a
-    real submission's server -> Formspree -> inbox path is proven daily.
-  * Why 6:50 AM Pacific: 5 minutes after the canary suite (JOB 6 at 6:45) and
-    20 after the briefing (JOB 5 at 6:30), so the three morning jobs run in a
-    clean, non-overlapping sequence. Uses America/Los_Angeles for the same
-    stable-local-time / automatic-DST reason as JOBs 5 and 6.
-  * Idempotent + multi-worker-safe: run_contact_selftest() claims each day in
-    the contact_selftest_log table before sending, so two gunicorn workers
-    firing the same minute still produce exactly ONE email.
-  * Additionally gated on ENABLE_CONTACT_SELFTEST (default true) so this one
-    heartbeat can be toggled WITHOUT touching the other six jobs. The scheduler
-    itself is still gated on ENABLE_SCHEDULED_JOBS=true.
-  * Pattern preserved: JOB 7 follows the established pattern exactly — a
-    standalone no-argument wrapper (_job_contact_selftest), import performed
-    inside the function body, full try/except so a failure never affects the
-    other jobs or the running app. Same job_defaults apply. NO existing job was
-    changed — the six prior jobs are byte-for-byte the same. Rule 1 (do no
-    harm) preserved.
+PURPOSE:
+    Flask blueprint providing newsletter subscription and admin security
+    endpoints for the shift-work.com website.
 
-- June 14, 2026: WO-13 PHASE 3 — ADD DAILY CANARY SUITE JOB (now 6 jobs)
-  * Added JOB 6: canary_suite_daily — runs EVERY day at 6:45 AM Pacific,
-    calling run_daily_self_tests() from proactive/canaries.py (all canaries +
-    all anomaly checks).
-  * Why 6:45 AM Pacific: 15 minutes after the morning briefing job (JOB 5 at
-    6:30), so the briefing canary doubles as verification that the morning
-    generation actually worked. Uses America/Los_Angeles for the same
-    stable-local-time / automatic-DST reason as JOB 5.
-  * Pattern preserved: JOB 6 follows the established pattern exactly — a
-    standalone no-argument function (_job_canary_suite), import performed
-    inside the function body, and a full try/except so a canary failure never
-    affects the other jobs or the running app. Same job_defaults apply.
-  * Still gated on ENABLE_SCHEDULED_JOBS=true. NO existing job was changed —
-    the five prior jobs are byte-for-byte the same. Rule 1 (do no harm)
-    preserved.
+CHANGE LOG:
+    2026-08-25  RESTORED — On July 23, 2026 (commit 21a7588, "Update
+                fmt.Println message from 'Hello' to 'Goodbye'") this file was
+                accidentally overwritten with a copy of proactive/scheduler.py.
+                That silently killed EVERY endpoint below plus the contact form
+                (routes/contact_api.py imports get_client_ip, get_user_agent,
+                extract_email_domain, is_ip_blocked from this module, so
+                /api/contact/submit returned 500 on every submission from
+                July 23 to August 25). app.py hid the failure because it wraps
+                blueprint registration in try/except ImportError and only
+                prints "Newsletter routes not found" to the log.
+                THIS restore is byte-identical to the last good version
+                (commit 0626c87, April 7, 2026) except for this header note.
+                No functionality added, none removed.
+                LESSON FOR FUTURE EDITS: before committing this file, verify
+                line 1 of the docstring still says "Newsletter Subscription
+                API" — not "Proactive Scheduler" — and that newsletter_bp
+                is defined. proactive/scheduler.py is a DIFFERENT file that
+                was never harmed.
+    2026-04-02  Initial build — basic subscribe + stats endpoints
+    2026-04-07  SECURITY HARDENING — comprehensive anti-spam overhaul:
+                1. Expanded disposable email domain list (20 → 120+)
+                2. Server-side honeypot verification (rejects if honeypot filled)
+                3. Server-side timestamp verification (rejects if < 2 seconds)
+                4. User-agent logging on every signup
+                5. Email domain extraction and storage
+                6. IP blocklist integration (checks ip_blocklist table)
+                7. Enhanced admin endpoints:
+                   - GET  /api/newsletter/stats (existing, enhanced)
+                   - GET  /api/newsletter/subscribers (paginated list with IPs)
+                   - GET  /api/newsletter/subscribers/by-ip/<ip> (lookup by IP)
+                   - GET  /api/newsletter/subscribers/by-domain/<domain>
+                   - POST /api/newsletter/block-ip (add IP to blocklist)
+                   - POST /api/newsletter/unblock-ip (remove IP from blocklist)
+                   - GET  /api/newsletter/blocked-ips (view blocklist)
+                   - POST /api/newsletter/unsubscribe (admin force-unsubscribe)
+                8. Shared security utilities imported by contact_api.py
 
-- June 13, 2026: WO-10 — ADD DAILY BRIEFING JOB (now 5 jobs)
-  * Added JOB 5: daily_briefing_morning — runs EVERY day at 6:30 AM Pacific,
-    calling generate_daily_briefing() from proactive/daily_briefing.py.
-  * Why: that generator was always designed to be driven by this scheduler —
-    its own docstring names "proactive/scheduler.py at 6:30 AM Pacific
-    (automatic)" as a caller — but the job was never registered when this
-    file was first created in WO-4. As a result the briefing only ever
-    generated on-demand when the Briefing panel was opened. This wires the
-    intended automatic morning run so the briefing is pre-built each day.
-  * Timezone: this single job uses America/Los_Angeles (NOT UTC like the
-    other four), by deliberate choice — a morning briefing should land at a
-    stable 6:30 AM LOCAL time year-round, so APScheduler/pytz handles the
-    PDT<->PST daylight-saving shift automatically. pytz resolves the string
-    'America/Los_Angeles' exactly as it already resolves 'UTC' for the other
-    jobs (string timezones are supported and already in use here).
-  * Idempotent: generate_daily_briefing() UPSERTs on briefing_date, so a
-    daily run cleanly overwrites that day's briefing — running it every
-    morning is safe.
-  * Pattern preserved: JOB 5 follows the exact established pattern — a
-    standalone no-argument function, import performed inside the function
-    body, and a full try/except so a briefing failure never affects the
-    other jobs or the running app. Same job_defaults apply (coalesce,
-    max_instances=1, misfire_grace_time=3600).
-  * Still gated on ENABLE_SCHEDULED_JOBS=true. NO existing job was changed —
-    the four WO-4 jobs are byte-for-byte the same. Rule 1 (do no harm)
-    preserved.
+ENDPOINTS:
+    POST /api/newsletter/subscribe
+        Body: { email, name?, source?, honeypot?, timestamp? }
+        Returns: 201 (new), 200 (duplicate), 400 (invalid), 429 (rate limited), 403 (blocked)
 
-- June 01, 2026: WO-4 — INITIAL IMPLEMENTATION
-  * Created proactive/scheduler.py — this file previously did not exist,
-    causing app.py's `from proactive.scheduler import init_scheduler` to
-    fail silently with "Scheduler not found (non-fatal)" on every startup.
-  * init_scheduler(app): registers APScheduler BackgroundScheduler with the
-    Flask app. Reads ENABLE_SCHEDULED_JOBS env var (must be 'true' to
-    activate). Defaults to disabled so no jobs run until explicitly enabled
-    in Render environment variables.
-  * Four jobs registered (all fire only when ENABLE_SCHEDULED_JOBS=true):
-      1. swarm_evaluation_weekly   — runs every Wednesday at 08:05 AM UTC
-         Calls SwarmSelfEvaluator.run_evaluation(days=7, save_to_db=True)
-      2. introspection_weekly      — runs every Wednesday at 08:15 AM UTC
-         Calls IntrospectionEngine.run_introspection(days=7, is_monthly=False)
-      3. introspection_monthly     — runs first Wednesday of each month at 08:30 AM UTC
-         Calls IntrospectionEngine.run_introspection(days=30, is_monthly=True)
-      4. service_health_check      — runs every 30 minutes
-         Calls check_all_services() from proactive.app_monitor
-  * Evaluation and introspection jobs are staggered by 10 minutes to avoid
-    simultaneous AI API calls.
-  * Monthly introspection uses a day_of_week + day filter (day <= 7) to
-    target the first Wednesday of each month.
-  * All jobs are wrapped in try/except so a single job failure never
-    crashes the scheduler or the app.
-  * APScheduler is already in requirements.txt (apscheduler>=3.10).
-  * ENABLE_SCHEDULED_JOBS defaults to 'false' — matches the existing
-    config.py pattern. Set to 'true' in Render env vars to activate.
-  * Job misfire_grace_time set to 1 hour so jobs missed during a deploy
-    restart fire once when the app comes back up.
+    GET  /api/newsletter/stats
+    GET  /api/newsletter/subscribers?page=1&per_page=50
+    GET  /api/newsletter/subscribers/by-ip/<ip>
+    GET  /api/newsletter/subscribers/by-domain/<domain>
+    POST /api/newsletter/block-ip     { ip_address, reason? }
+    POST /api/newsletter/unblock-ip   { ip_address }
+    GET  /api/newsletter/blocked-ips
+    POST /api/newsletter/unsubscribe  { email }
 
-USAGE (Render environment variables to activate):
-    ENABLE_SCHEDULED_JOBS=true
-    ENABLE_EMAIL_ALERTS=true          (optional, for alert emails)
-    ALERT_TO_EMAIL=jim@shift-work.com (required if email alerts enabled)
+CORS:
+    Enabled for shift-work.com origins only.
 
-AUTHOR: Jim @ Shiftwork Solutions LLC
+ANTI-SPAM LAYERS (SERVER-SIDE):
+    1. IP blocklist check (database-backed, admin-managed)
+    2. Server-side honeypot verification (rejects if filled)
+    3. Server-side timestamp verification (rejects if < 2 seconds)
+    4. Email format validation (regex)
+    5. Disposable email domain blocking (120+ domains)
+    6. Duplicate check (UNIQUE constraint + explicit check)
+    7. IP-based rate limiting (max 5 signups per IP per hour)
+    8. User-agent logging for forensic analysis
+    9. Email domain extraction for domain-level blocking/reporting
+
+GOLDEN RULES FOLLOWED:
+    - All SQL uses %s placeholders via db_engine.py
+    - Never imports sqlite3 directly
+    - Uses RETURNING id (not lastrowid)
+    - Fully idempotent migrations (tables created by migration_006 + 007)
+
+I did no harm and this file is not truncated
 """
 
-import os
+import re
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
+from flask import Blueprint, request, jsonify
 
 logger = logging.getLogger(__name__)
 
-# ============================================================================
-# CONFIGURATION
-# ============================================================================
-
-ENABLE_SCHEDULED_JOBS = os.environ.get('ENABLE_SCHEDULED_JOBS', 'false').lower() == 'true'
-
-# Staggered UTC times on Wednesday — avoids simultaneous AI API calls
-EVALUATION_DAY        = 'wed'
-EVALUATION_HOUR       = 8
-EVALUATION_MINUTE     = 5   # 08:05 UTC Wednesday
-
-INTROSPECTION_HOUR    = 8
-INTROSPECTION_MINUTE  = 15  # 08:15 UTC Wednesday
-
-MONTHLY_INTRO_HOUR    = 8
-MONTHLY_INTRO_MINUTE  = 30  # 08:30 UTC first Wednesday of month
-
-HEALTH_CHECK_INTERVAL_MINUTES = 30  # every 30 minutes, matches app_monitor.py default
-
-# WO-10: Daily morning briefing — fires in LOCAL Pacific time (not UTC) so it
-# always lands at 6:30 AM regardless of daylight saving. APScheduler/pytz
-# resolve this string timezone and apply the PDT/PST offset automatically.
-BRIEFING_TIMEZONE = 'America/Los_Angeles'
-BRIEFING_HOUR     = 6
-BRIEFING_MINUTE   = 30  # 6:30 AM Pacific, every day
-
-# WO-13 Phase 3: daily self-test canaries + anomaly detection. Fires 15 minutes
-# after the morning briefing (also Pacific) so the briefing canary doubles as
-# verification that the 6:30 AM generation worked. Pacific time for the same
-# stable-local-time / automatic-DST reason as the briefing job.
-CANARY_TIMEZONE = 'America/Los_Angeles'
-CANARY_HOUR     = 6
-CANARY_MINUTE   = 45  # 6:45 AM Pacific, every day
-
-# 2026-07-23: Daily contact-form self-test heartbeat. Fires 5 minutes after the
-# canary suite (also Pacific) so the three morning jobs run back-to-back without
-# overlapping. Sends Jim one "contact pipeline is working" email each morning
-# through the real contact Formspree form. See proactive/contact_selftest.py.
-SELFTEST_TIMEZONE = 'America/Los_Angeles'
-SELFTEST_HOUR     = 6
-SELFTEST_MINUTE   = 50  # 6:50 AM Pacific, every day
+newsletter_bp = Blueprint('newsletter', __name__)
 
 
-# ============================================================================
-# JOB FUNCTIONS
-# ============================================================================
-# Each function is a standalone callable — no arguments, no shared state.
-# Wrapped in try/except so a failure in one job never affects other jobs
-# or the running app.
+# ═══════════════════════════════════════════════════════════════════════════
+# CORS — manual preflight handling
+# Only allows requests from shift-work.com and localhost (dev).
+# ═══════════════════════════════════════════════════════════════════════════
 
-def _job_swarm_evaluation():
-    """Weekly Swarm Self-Evaluation — runs every Wednesday at 08:05 UTC."""
-    logger.info("[Scheduler] Starting weekly swarm self-evaluation")
-    print(f"[Scheduler] {datetime.utcnow().isoformat()} — weekly swarm evaluation starting")
-    try:
-        from swarm_self_evaluation import get_swarm_evaluator
-        evaluator = get_swarm_evaluator()
-        report = evaluator.run_evaluation(days=7, save_to_db=True)
-        health = report.get('health_score', {}).get('overall', 'N/A')
-        print(f"[Scheduler] Swarm evaluation complete — health score: {health}/100")
-        logger.info(f"[Scheduler] Swarm evaluation complete — health score: {health}/100")
-    except Exception as e:
-        logger.error(f"[Scheduler] Swarm evaluation failed: {e}")
-        print(f"[Scheduler] Swarm evaluation failed: {e}")
+ALLOWED_ORIGINS = [
+    'https://shift-work.com',
+    'https://www.shift-work.com',
+    'http://localhost:3000',
+    'http://localhost:5000',
+    'http://127.0.0.1:5500',
+    'null',
+]
 
 
-def _job_introspection_weekly():
-    """Weekly Introspection — runs every Wednesday at 08:15 UTC."""
-    logger.info("[Scheduler] Starting weekly introspection")
-    print(f"[Scheduler] {datetime.utcnow().isoformat()} — weekly introspection starting")
-    try:
-        from introspection import get_introspection_engine
-        engine = get_introspection_engine()
-        report = engine.run_introspection(days=7, is_monthly=False)
-        health = report.get('summary', {}).get('health_score', 'N/A')
-        print(f"[Scheduler] Weekly introspection complete — health score: {health}/100")
-        logger.info(f"[Scheduler] Weekly introspection complete — health score: {health}/100")
-    except Exception as e:
-        logger.error(f"[Scheduler] Weekly introspection failed: {e}")
-        print(f"[Scheduler] Weekly introspection failed: {e}")
-
-
-def _job_introspection_monthly():
-    """
-    Monthly deep-dive introspection — runs on the first Wednesday of each
-    month at 08:30 UTC.
-
-    APScheduler's cron trigger fires every Wednesday with day <= 7.
-    That combination always targets the first Wednesday of the month.
-    """
-    logger.info("[Scheduler] Starting monthly introspection deep-dive")
-    print(f"[Scheduler] {datetime.utcnow().isoformat()} — monthly introspection starting")
-    try:
-        from introspection import get_introspection_engine
-        engine = get_introspection_engine()
-        report = engine.run_introspection(days=30, is_monthly=True)
-        health = report.get('summary', {}).get('health_score', 'N/A')
-        print(f"[Scheduler] Monthly introspection complete — health score: {health}/100")
-        logger.info(f"[Scheduler] Monthly introspection complete — health score: {health}/100")
-    except Exception as e:
-        logger.error(f"[Scheduler] Monthly introspection failed: {e}")
-        print(f"[Scheduler] Monthly introspection failed: {e}")
-
-
-def _job_service_health_check():
-    """Service health check — runs every 30 minutes."""
-    logger.debug("[Scheduler] Running service health checks")
-    try:
-        from proactive.app_monitor import check_all_services
-        result = check_all_services()
-        total   = result.get('total_checked', 0)
-        healthy = result.get('healthy_count', 0)
-        issues  = result.get('issues', [])
-        if issues:
-            print(f"[Scheduler] Health check: {healthy}/{total} healthy, "
-                  f"{len(issues)} issue(s): "
-                  f"{[i['service_name'] for i in issues]}")
-        else:
-            logger.debug(f"[Scheduler] Health check: {healthy}/{total} healthy")
-    except Exception as e:
-        logger.error(f"[Scheduler] Service health check failed: {e}")
-        print(f"[Scheduler] Service health check failed: {e}")
-
-
-def _job_daily_briefing():
-    """
-    WO-10: Daily morning briefing — runs every day at 6:30 AM Pacific.
-
-    Calls generate_daily_briefing() (proactive/daily_briefing.py), which is
-    the same underlying function the on-demand GET /api/briefing path uses.
-    The generator UPSERTs on briefing_date, so this daily run simply ensures
-    today's briefing exists (pre-built) and overwrites it cleanly if it does.
-
-    The import is performed inside this function (matching the other jobs) so
-    that, if proactive/daily_briefing.py is ever unavailable at runtime, this
-    job logs and returns without disturbing the scheduler or other jobs.
-    """
-    logger.info("[Scheduler] Starting daily briefing generation")
-    print(f"[Scheduler] {datetime.utcnow().isoformat()} — daily briefing generation starting (6:30 AM Pacific)")
-    try:
-        from proactive.daily_briefing import generate_daily_briefing
-        result = generate_daily_briefing()
-        if isinstance(result, dict) and result.get('success'):
-            print(f"[Scheduler] Daily briefing generated for {result.get('briefing_date', 'today')}")
-            logger.info(f"[Scheduler] Daily briefing generated for {result.get('briefing_date', 'today')}")
-        else:
-            err = result.get('error') if isinstance(result, dict) else 'unknown result'
-            print(f"[Scheduler] Daily briefing returned no success flag: {err}")
-            logger.warning(f"[Scheduler] Daily briefing returned no success flag: {err}")
-    except Exception as e:
-        logger.error(f"[Scheduler] Daily briefing failed: {e}")
-        print(f"[Scheduler] Daily briefing failed: {e}")
-
-
-def _job_canary_suite():
-    """
-    WO-13 Phase 3: Daily self-test canaries + anomaly detection — runs every
-    day at 6:45 AM Pacific, 15 minutes after the morning briefing job.
-
-    Calls run_daily_self_tests() from proactive/canaries.py, which runs every
-    canary (alert delivery, briefing generation, eval metrics) and then every
-    anomaly check (eval score slide, eval staleness, briefing collapse). Canary
-    failures and detected anomalies email Jim via the alert system; the
-    alert-delivery canary's own result is recorded for /api/canaries/status,
-    since that canary cannot report itself by email.
-
-    The import is performed inside this function (matching the other jobs) so
-    that, if proactive/canaries.py is ever unavailable at runtime, this job
-    logs and returns without disturbing the scheduler or other jobs.
-    """
-    logger.info("[Scheduler] Starting daily self-test canary suite")
-    print(f"[Scheduler] {datetime.utcnow().isoformat()} — daily canary suite starting (6:45 AM Pacific)")
-    try:
-        from proactive.canaries import run_daily_self_tests
-        result = run_daily_self_tests()
-        c = result.get('canaries', {}) if isinstance(result, dict) else {}
-        a = result.get('anomalies', {}) if isinstance(result, dict) else {}
-        print(f"[Scheduler] Canary suite complete — "
-              f"{c.get('passed', 0)}/{c.get('total', 0)} passed, "
-              f"{a.get('count', 0)} anomaly(ies)")
-        logger.info(f"[Scheduler] Canary suite: {c.get('passed', 0)}/{c.get('total', 0)} passed, "
-                    f"{a.get('count', 0)} anomalies")
-    except Exception as e:
-        logger.error(f"[Scheduler] Canary suite failed: {e}")
-        print(f"[Scheduler] Canary suite failed: {e}")
-
-
-def _job_contact_selftest():
-    """
-    2026-07-23: Daily contact-form self-test — runs every day at 6:50 AM
-    Pacific, 5 minutes after the canary suite.
-
-    Calls run_contact_selftest() from proactive/contact_selftest.py, which
-    sends Jim one clearly-labeled "the contact pipeline is working" heartbeat
-    email through the real contact Formspree form. That function is idempotent
-    per day (it claims the day in contact_selftest_log before sending), so even
-    with 2 gunicorn workers firing this minute, exactly one email goes out.
-
-    The import is performed inside this function (matching the other jobs) so
-    that, if proactive/contact_selftest.py is ever unavailable at runtime, this
-    job logs and returns without disturbing the scheduler or other jobs.
-    """
-    logger.info("[Scheduler] Starting daily contact-form self-test")
-    print(f"[Scheduler] {datetime.utcnow().isoformat()} — contact self-test starting (6:50 AM Pacific)")
-    try:
-        from proactive.contact_selftest import run_contact_selftest
-        result = run_contact_selftest()
-        if isinstance(result, dict) and result.get('skipped'):
-            logger.info(f"[Scheduler] Contact self-test skipped: {result.get('detail')}")
-        elif isinstance(result, dict) and result.get('success'):
-            print("[Scheduler] Contact self-test email sent OK")
-            logger.info("[Scheduler] Contact self-test email sent OK")
-        else:
-            err = result.get('detail') if isinstance(result, dict) else 'unknown result'
-            print(f"[Scheduler] Contact self-test did NOT send: {err}")
-            logger.warning(f"[Scheduler] Contact self-test did NOT send: {err}")
-    except Exception as e:
-        logger.error(f"[Scheduler] Contact self-test failed: {e}")
-        print(f"[Scheduler] Contact self-test failed: {e}")
-
-
-# ============================================================================
-# SCHEDULER INIT
-# ============================================================================
-
-_scheduler = None  # module-level singleton — prevents duplicate schedulers
-
-
-def init_scheduler(app):
-    """
-    Initialize and start the APScheduler BackgroundScheduler.
-
-    Called from app.py:
-        from proactive.scheduler import init_scheduler
-        init_scheduler(app)
-
-    Guards:
-    - Reads ENABLE_SCHEDULED_JOBS env var. If false (default), logs the
-      disabled state and returns without starting any jobs. This means
-      no automated runs happen until Jim sets ENABLE_SCHEDULED_JOBS=true
-      in Render environment variables.
-    - Module-level _scheduler singleton prevents duplicate schedulers if
-      init_scheduler is called more than once (e.g. during testing).
-    - All job exceptions are caught internally — a failed job never
-      crashes the scheduler thread or the Flask app.
-
-    Job schedule:
-        swarm_evaluation_weekly  — Wednesday 08:05 UTC
-        introspection_weekly     — Wednesday 08:15 UTC
-        introspection_monthly    — First Wednesday of month 08:30 UTC
-        service_health_check     — Every 30 minutes
-        daily_briefing_morning   — Every day 06:30 America/Los_Angeles (WO-10)
-        canary_suite_daily       — Every day 06:45 America/Los_Angeles (WO-13)
-        contact_selftest_daily   — Every day 06:50 America/Los_Angeles (2026-07-23)
-
-    Args:
-        app: The Flask application instance (passed for context if needed
-             in future; not used directly in this version)
-    """
-    global _scheduler
-
-    if _scheduler is not None:
-        logger.info("[Scheduler] Already initialized — skipping duplicate init")
-        return
-
-    if not ENABLE_SCHEDULED_JOBS:
-        print(
-            "[Scheduler] ENABLE_SCHEDULED_JOBS is false — scheduler disabled. "
-            "Set ENABLE_SCHEDULED_JOBS=true in Render environment variables to activate."
-        )
-        logger.info("[Scheduler] Disabled via ENABLE_SCHEDULED_JOBS=false")
-        return
-
-    try:
-        from apscheduler.schedulers.background import BackgroundScheduler
-        from apscheduler.triggers.cron import CronTrigger
-        from apscheduler.triggers.interval import IntervalTrigger
-
-        scheduler = BackgroundScheduler(
-            job_defaults={
-                'coalesce':           True,   # merge missed runs into one
-                'max_instances':      1,       # never run the same job twice at once
-                'misfire_grace_time': 3600,    # fire up to 1 hour late after a restart
-            },
-            timezone='UTC'
-        )
-
-        # ------------------------------------------------------------------
-        # JOB 1: Weekly Swarm Self-Evaluation
-        # Every Wednesday at 08:05 UTC
-        # ------------------------------------------------------------------
-        scheduler.add_job(
-            func=_job_swarm_evaluation,
-            trigger=CronTrigger(day_of_week=EVALUATION_DAY,
-                                hour=EVALUATION_HOUR,
-                                minute=EVALUATION_MINUTE,
-                                timezone='UTC'),
-            id='swarm_evaluation_weekly',
-            name='Weekly Swarm Self-Evaluation',
-            replace_existing=True,
-        )
-
-        # ------------------------------------------------------------------
-        # JOB 2: Weekly Introspection
-        # Every Wednesday at 08:15 UTC
-        # ------------------------------------------------------------------
-        scheduler.add_job(
-            func=_job_introspection_weekly,
-            trigger=CronTrigger(day_of_week=EVALUATION_DAY,
-                                hour=INTROSPECTION_HOUR,
-                                minute=INTROSPECTION_MINUTE,
-                                timezone='UTC'),
-            id='introspection_weekly',
-            name='Weekly Introspection',
-            replace_existing=True,
-        )
-
-        # ------------------------------------------------------------------
-        # JOB 3: Monthly Introspection Deep-Dive
-        # First Wednesday of each month at 08:30 UTC
-        # day <= 7 combined with day_of_week='wed' = first Wednesday
-        # ------------------------------------------------------------------
-        scheduler.add_job(
-            func=_job_introspection_monthly,
-            trigger=CronTrigger(day_of_week=EVALUATION_DAY,
-                                day='1-7',
-                                hour=MONTHLY_INTRO_HOUR,
-                                minute=MONTHLY_INTRO_MINUTE,
-                                timezone='UTC'),
-            id='introspection_monthly',
-            name='Monthly Introspection Deep-Dive',
-            replace_existing=True,
-        )
-
-        # ------------------------------------------------------------------
-        # JOB 4: Service Health Check
-        # Every 30 minutes
-        # ------------------------------------------------------------------
-        scheduler.add_job(
-            func=_job_service_health_check,
-            trigger=IntervalTrigger(minutes=HEALTH_CHECK_INTERVAL_MINUTES,
-                                    timezone='UTC'),
-            id='service_health_check',
-            name='Service Health Check',
-            replace_existing=True,
-        )
-
-        # ------------------------------------------------------------------
-        # JOB 5: Daily Morning Briefing  (WO-10)
-        # Every day at 06:30 America/Los_Angeles (stable 6:30 AM Pacific,
-        # DST handled automatically). Pre-builds the briefing each morning;
-        # generate_daily_briefing() UPSERTs on briefing_date so this is
-        # idempotent. NOTE: this job intentionally uses Pacific time rather
-        # than UTC — see the WO-10 changelog note at the top of this file.
-        # ------------------------------------------------------------------
-        scheduler.add_job(
-            func=_job_daily_briefing,
-            trigger=CronTrigger(hour=BRIEFING_HOUR,
-                                minute=BRIEFING_MINUTE,
-                                timezone=BRIEFING_TIMEZONE),
-            id='daily_briefing_morning',
-            name='Daily Morning Briefing',
-            replace_existing=True,
-        )
-
-        # ------------------------------------------------------------------
-        # JOB 6: Daily Self-Test Canaries + Anomaly Detection  (WO-13 Phase 3)
-        # Every day at 06:45 America/Los_Angeles — 15 minutes after the morning
-        # briefing (JOB 5) so the briefing canary doubles as proof the 6:30
-        # generation worked. Uses Pacific time like JOB 5 (see config note).
-        # ------------------------------------------------------------------
-        scheduler.add_job(
-            func=_job_canary_suite,
-            trigger=CronTrigger(hour=CANARY_HOUR,
-                                minute=CANARY_MINUTE,
-                                timezone=CANARY_TIMEZONE),
-            id='canary_suite_daily',
-            name='Daily Self-Test Canaries',
-            replace_existing=True,
-        )
-
-        # ------------------------------------------------------------------
-        # JOB 7: Daily Contact-Form Self-Test  (2026-07-23)
-        # Every day at 06:50 America/Los_Angeles — 5 minutes after the canary
-        # suite (JOB 6). Sends Jim one "contact pipeline is working" heartbeat
-        # email through the real contact Formspree form. Idempotent per day, so
-        # 2 workers still produce exactly one email. Uses Pacific time like
-        # JOBs 5 and 6 (see config note).
-        # ------------------------------------------------------------------
-        scheduler.add_job(
-            func=_job_contact_selftest,
-            trigger=CronTrigger(hour=SELFTEST_HOUR,
-                                minute=SELFTEST_MINUTE,
-                                timezone=SELFTEST_TIMEZONE),
-            id='contact_selftest_daily',
-            name='Daily Contact-Form Self-Test',
-            replace_existing=True,
-        )
-
-        scheduler.start()
-        _scheduler = scheduler
-
-        print(
-            f"[Scheduler] Started — 7 jobs active:\n"
-            f"  swarm_evaluation_weekly  : Wednesday 08:05 UTC\n"
-            f"  introspection_weekly     : Wednesday 08:15 UTC\n"
-            f"  introspection_monthly    : First Wednesday 08:30 UTC\n"
-            f"  service_health_check     : every {HEALTH_CHECK_INTERVAL_MINUTES} minutes\n"
-            f"  daily_briefing_morning   : every day 06:30 {BRIEFING_TIMEZONE}\n"
-            f"  canary_suite_daily       : every day 06:45 {CANARY_TIMEZONE}\n"
-            f"  contact_selftest_daily   : every day 06:50 {SELFTEST_TIMEZONE}"
-        )
-        logger.info("[Scheduler] BackgroundScheduler started with 7 jobs")
-
-    except ImportError:
-        print(
-            "[Scheduler] APScheduler not installed — install apscheduler>=3.10. "
-            "Scheduled jobs will not run."
-        )
-        logger.error("[Scheduler] APScheduler import failed")
-    except Exception as e:
-        logger.error(f"[Scheduler] Failed to start: {e}")
-        print(f"[Scheduler] Failed to start (non-fatal): {e}")
-
-
-def get_scheduler_status() -> dict:
-    """
-    Return the current scheduler status and registered jobs.
-    Used by health checks and admin endpoints.
-
-    Returns:
-        dict with keys: enabled, running, jobs (list)
-    """
-    if not ENABLE_SCHEDULED_JOBS:
-        return {
-            'enabled': False,
-            'running': False,
-            'message': 'Set ENABLE_SCHEDULED_JOBS=true in Render to activate',
-            'jobs': []
-        }
-
-    if _scheduler is None:
-        return {
-            'enabled': True,
-            'running': False,
-            'message': 'Scheduler not yet initialized',
-            'jobs': []
-        }
-
-    jobs = []
-    for job in _scheduler.get_jobs():
-        next_run = job.next_run_time
-        jobs.append({
-            'id':       job.id,
-            'name':     job.name,
-            'next_run': next_run.isoformat() if next_run else None,
-        })
-
-    return {
-        'enabled': True,
-        'running': _scheduler.running,
-        'jobs':    jobs
+def _cors_headers(origin=None):
+    """Return CORS headers dict for the given origin."""
+    headers = {
+        'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Accept',
+        'Access-Control-Max-Age': '86400',
     }
+    if origin in ALLOWED_ORIGINS:
+        headers['Access-Control-Allow-Origin'] = origin
+    elif origin and (origin.endswith('.shift-work.com') or origin.endswith('.onrender.com')):
+        headers['Access-Control-Allow-Origin'] = origin
+    else:
+        headers['Access-Control-Allow-Origin'] = 'https://shift-work.com'
+    return headers
+
+
+@newsletter_bp.after_request
+def add_cors_headers(response):
+    """Add CORS headers to every response from this blueprint."""
+    origin = request.headers.get('Origin', '')
+    for key, value in _cors_headers(origin).items():
+        response.headers[key] = value
+    return response
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SHARED SECURITY UTILITIES
+# These are also imported by routes/contact_api.py
+# ═══════════════════════════════════════════════════════════════════════════
+
+def get_client_ip():
+    """
+    Extract the real client IP address from the request.
+    Handles X-Forwarded-For (Render proxy), X-Real-IP, and direct connection.
+    Returns the first (client) IP from X-Forwarded-For if present.
+    """
+    forwarded = request.headers.get('X-Forwarded-For', '')
+    if forwarded:
+        # X-Forwarded-For: client, proxy1, proxy2
+        ip = forwarded.split(',')[0].strip()
+    else:
+        ip = request.headers.get('X-Real-IP', request.remote_addr)
+    return (ip or 'unknown')[:45]
+
+
+def get_user_agent():
+    """Extract and truncate user agent string."""
+    ua = request.headers.get('User-Agent', '')
+    return ua[:500] if ua else None
+
+
+def extract_email_domain(email):
+    """Extract domain from email address."""
+    if not email or '@' not in email:
+        return None
+    return email.split('@')[1].lower()
+
+
+def is_ip_blocked(ip_address):
+    """
+    Check if an IP address is in the active blocklist.
+    Returns (is_blocked, reason).
+    Fails open — if the check errors, allow the request.
+    """
+    from db_engine import get_db_connection
+
+    if not ip_address or ip_address == 'unknown':
+        return False, None
+
+    try:
+        conn = get_db_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT reason FROM ip_blocklist
+                   WHERE ip_address = %s AND is_active = TRUE
+                   LIMIT 1""",
+                (ip_address,)
+            )
+            row = cursor.fetchone()
+            if row:
+                return True, row['reason']
+            return False, None
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.warning(f"IP blocklist check failed (allowing request): {e}")
+        return False, None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DISPOSABLE EMAIL DOMAINS — 120+ throwaway email services
+# Updated: April 7, 2026
+# ═══════════════════════════════════════════════════════════════════════════
+
+DISPOSABLE_DOMAINS = {
+    # Original list
+    'mailinator.com', 'guerrillamail.com', 'throwaway.email', 'tempmail.com',
+    'yopmail.com', 'sharklasers.com', 'grr.la', 'guerrillamail.net',
+    'trash-mail.com', 'fakeinbox.com', 'mailnesia.com', 'maildrop.cc',
+    'dispostable.com', 'getnada.com', 'temp-mail.org', '10minutemail.com',
+    'trashmail.com', 'mohmal.com', 'emailondeck.com', 'burnermail.io',
+    # Expanded list — April 7, 2026
+    'guerrillamail.info', 'guerrillamail.de', 'guerrillamailblock.com',
+    'tempail.com', 'tempr.email', 'temp-mail.io', 'temp-mail.de',
+    'throwaway.email', 'throwawaymails.com', 'trashmail.io', 'trashmail.me',
+    'trashmail.net', 'trashmail.org', 'trashmail.ws',
+    'mailtemp.info', 'mailtemp.net', 'mt2015.com',
+    'guerrillamail.org', 'spam4.me', 'spamgourmet.com', 'spamfree24.org',
+    'mytemp.email', 'tmpmail.net', 'tmpmail.org',
+    'disposableemailaddresses.emailmiser.com',
+    'harakirimail.com', 'mailexpire.com', 'mailzilla.com',
+    'binkmail.com', 'bobmail.info', 'chammy.info',
+    'devnullmail.com', 'discard.email', 'discardmail.com',
+    'discardmail.de', 'disposeamail.com', 'dm.w3internet.co.uk',
+    'drdrb.com', 'einrot.com', 'emailigo.de', 'emailmiser.com',
+    'emailtemporario.com.br', 'ephemail.net', 'etranquil.com',
+    'fastacura.com', 'filzmail.com', 'fixmail.tk',
+    'flyspam.com', 'frapmail.com', 'gelitik.in',
+    'getonemail.com', 'getonemail.net', 'girlsundertheinfluence.com',
+    'gishpuppy.com', 'greensloth.com', 'gsrv.co.uk',
+    'guerrillamail.biz', 'haltospam.com', 'hidemail.de',
+    'hotpop.com', 'ichimail.com', 'imails.info',
+    'inboxbear.com', 'inboxclean.com', 'inboxclean.org',
+    'jetable.com', 'jetable.fr.nf', 'jetable.net',
+    'jetable.org', 'jnxjn.com', 'kasmail.com',
+    'kaspop.com', 'klzlk.com', 'koszmail.pl',
+    'kurzepost.de', 'lawlita.com', 'letthemeatspam.com',
+    'lhsdv.com', 'lifebyfood.com', 'link2mail.net',
+    'litedrop.com', 'lookugly.com', 'lopl.co.cc',
+    'lr78.com', 'maileater.com', 'mailforspam.com',
+    'mailfreeonline.com', 'mailguard.me', 'mailin8r.com',
+    'mailinater.com', 'mailinator.net', 'mailinator2.com',
+    'mailincubator.com', 'mailme.ir', 'mailme.lv',
+    'mailmetrash.com', 'mailmoat.com', 'mailnator.com',
+    'mailnull.com', 'mailshell.com', 'mailsiphon.com',
+    'mailslite.com', 'mailzilla.org', 'mbx.cc',
+    'mega.zik.dj', 'meltmail.com', 'messagebeamer.de',
+    'mezimages.net', 'mintemail.com', 'mmmmail.com',
+    'mobi.web.id', 'mobileninja.co.uk', 'mycleaninbox.net',
+    'mypartyclip.de', 'myphantom.com', 'mysamp.de',
+    'mytempemail.com', 'mytempmail.com', 'nabala.com',
+    'neverbox.com', 'no-spam.ws', 'nobulk.com',
+    'noclickemail.com', 'nogmailspam.info', 'nomail.xl.cx',
+    'nomail2me.com', 'nospam.ze.tc', 'nospam4.us',
+    'nospamfor.us', 'nospammail.net', 'nothingtoseehere.ca',
+    'nowmymail.com', 'nurfuerspam.de', 'nus.edu.sg',
+    'objectmail.com', 'obobbo.com', 'onewaymail.com',
+    'ordinaryamerican.net', 'owlpic.com', 'pookmail.com',
+    'proxymail.eu', 'prtnx.com', 'putthisinyouremail.com',
+    'qq.com', 'quickinbox.com', 'rcpt.at',
+    'reallymymail.com', 'recode.me', 'recursor.net',
+    'regbypass.com', 'rejectmail.com', 'rhyta.com',
+    'rklips.com', 'rmqkr.net', 'royal.net',
+    'rppkn.com', 'rtrtr.com', 's0ny.net',
+    'safe-mail.net', 'safersignup.de', 'safetymail.info',
+    'sandelf.de', 'saynotospams.com', 'scatmail.com',
+    'schafmail.de', 'selfdestructingmail.com', 'sendspamhere.com',
+    'shiftmail.com', 'shitmail.me', 'shortmail.net',
+    'sibmail.com', 'skeefmail.com', 'slaskpost.se',
+    'slipry.net', 'slopsbox.com', 'smashmail.de',
+    'soodonims.com', 'spam.la', 'spamavert.com',
+    'spambob.com', 'spambob.net', 'spambob.org',
+    'spambog.com', 'spambog.de', 'spambog.ru',
+    'spambox.us', 'spamcannon.com', 'spamcannon.net',
+    'spamcero.com', 'spamcorptastic.com', 'spamcowboy.com',
+    'spamcowboy.net', 'spamcowboy.org', 'spamday.com',
+    'spamex.com', 'spamfighter.cf', 'spamfighter.ga',
+    'spamfighter.gq', 'spamfighter.ml', 'spamfighter.tk',
+    'spamfree.eu', 'spamfree24.com', 'spamfree24.de',
+    'spamfree24.info', 'spamfree24.net', 'spamhole.com',
+    'spamify.com', 'spaminator.de', 'spamkill.info',
+    'spaml.com', 'spaml.de', 'spammotel.com',
+    'spamobox.com', 'spamoff.de', 'spamslicer.com',
+    'spamspot.com', 'spamstack.net', 'spamthis.co.uk',
+    'spamtrail.com', 'spamtrap.ro', 'speed.1s.fr',
+    'superrito.com', 'suremail.info', 'teleworm.us',
+    'tempalias.com', 'tempe4mail.com', 'tempemail.co.za',
+    'tempemail.com', 'tempemail.net', 'tempinbox.com',
+    'tempinbox.co.uk', 'tempmail.eu', 'tempmail.it',
+    'tempmail2.com', 'tempmaildemo.com', 'tempmailer.com',
+    'tempomail.fr', 'temporarily.de', 'temporarioemail.com.br',
+    'temporaryemail.net', 'temporaryforwarding.com',
+    'temporaryinbox.com', 'temporarymailaddress.com',
+    'thankyou2010.com', 'thisisnotmyrealemail.com',
+    'tilien.com', 'tittbit.in', 'tmail.ws',
+    'tmailinator.com', 'toiea.com', 'tradermail.info',
+    'turual.com', 'twinmail.de', 'tyldd.com',
+    'uggsrock.com', 'upliftnow.com', 'uplipht.com',
+    'venompen.com', 'veryreallyfakeemails.com', 'viditag.com',
+    'viewcastmedia.com', 'viewcastmedia.net', 'viewcastmedia.org',
+    'vomoto.com', 'vpn.st', 'vsimcard.com',
+    'vubby.com', 'wasteland.rfc822.org', 'webemail.me',
+    'weg-werf-email.de', 'wegwerfadresse.de', 'wegwerfemail.com',
+    'wegwerfemail.de', 'wegwerfmail.de', 'wegwerfmail.net',
+    'wegwerfmail.org', 'wh4f.org', 'whatiaas.com',
+    'whatpaas.com', 'whyspam.me', 'wikidocuslice.com',
+    'willhackforfood.biz', 'willselfdestruct.com',
+    'winemaven.info', 'wronghead.com', 'wuzup.net',
+    'wuzupmail.net', 'wwwnew.eu', 'xagloo.com',
+    'xemaps.com', 'xents.com', 'xjoi.com',
+    'xoxy.net', 'yapped.net', 'yep.it',
+    'yogamaven.com', 'yomail.info', 'yopmail.fr',
+    'yopmail.net', 'ypmail.webarnak.fr.eu.org',
+    'yuurok.com', 'zehnminutenmail.de', 'zippymail.info',
+    'zoaxe.com', 'zoemail.org',
+}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EMAIL VALIDATION
+# ═══════════════════════════════════════════════════════════════════════════
+
+EMAIL_REGEX = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
+
+
+def _validate_email(email):
+    """Validate email format and check against disposable domains."""
+    if not email or not isinstance(email, str):
+        return False, 'Email is required.'
+    email = email.strip().lower()
+    if len(email) > 254:
+        return False, 'Email address is too long.'
+    if not EMAIL_REGEX.match(email):
+        return False, 'Please enter a valid email address.'
+    domain = email.split('@')[1]
+    if domain in DISPOSABLE_DOMAINS:
+        return False, 'Please use a permanent email address.'
+    return True, email
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# RATE LIMITING (IP-based, in-database)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _check_rate_limit(ip_address):
+    """
+    Check if this IP has submitted more than 5 signups in the last hour.
+    Returns (is_allowed, message).
+    Fails open — if the check errors, allow the request.
+    """
+    from db_engine import get_db_connection
+
+    if not ip_address or ip_address == 'unknown':
+        return True, ''
+
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+        cursor.execute(
+            """SELECT COUNT(*) as cnt FROM newsletter_subscribers
+               WHERE ip_address = %s AND subscribed_at > %s""",
+            (ip_address, one_hour_ago)
+        )
+        row = cursor.fetchone()
+        count = row['cnt'] if row else 0
+        return count < 5, 'Too many signups from this address. Please try again later.'
+    except Exception as e:
+        logger.warning(f"Rate limit check failed (allowing request): {e}")
+        return True, ''
+    finally:
+        conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SUBSCRIBE ENDPOINT
+# ═══════════════════════════════════════════════════════════════════════════
+
+@newsletter_bp.route('/api/newsletter/subscribe', methods=['POST', 'OPTIONS'])
+def subscribe():
+    """Handle newsletter subscription with full anti-spam stack."""
+
+    # Handle CORS preflight
+    if request.method == 'OPTIONS':
+        return jsonify({'status': 'ok'}), 200
+
+    from db_engine import get_db_connection
+
+    try:
+        data = request.get_json(silent=True)
+        if not data:
+            return jsonify({
+                'success': False,
+                'error': 'Invalid request. Send JSON with an email field.'
+            }), 400
+
+        # ── LAYER 1: IP blocklist check ────────────────────────────────
+        ip_address = get_client_ip()
+        blocked, block_reason = is_ip_blocked(ip_address)
+        if blocked:
+            logger.warning(f"Blocked IP attempted newsletter signup: {ip_address} (reason: {block_reason})")
+            # Return a generic error — don't reveal they're blocked
+            return jsonify({
+                'success': False,
+                'error': 'Something went wrong. Please try again later.'
+            }), 403
+
+        # ── LAYER 2: Server-side honeypot check ────────────────────────
+        # The frontend honeypot field is named '_gotcha' — bots fill it in.
+        # We also check 'honeypot' in case the frontend sends it explicitly.
+        honeypot_value = data.get('honeypot', '') or data.get('_gotcha', '')
+        if honeypot_value:
+            logger.warning(f"Honeypot triggered on newsletter signup from {ip_address}")
+            # Fake success — bot thinks it worked
+            return jsonify({
+                'success': True,
+                'message': 'Thank you! You have been subscribed.'
+            }), 201
+
+        # ── LAYER 3: Server-side timestamp check ───────────────────────
+        # Frontend sets a hidden _loaded field with Date.now() on page load.
+        # If the form is submitted in under 2 seconds, it's likely a bot.
+        client_timestamp = data.get('timestamp', None) or data.get('_loaded', None)
+        if client_timestamp:
+            try:
+                loaded_at = int(client_timestamp)
+                # Client sends Date.now() in milliseconds
+                now_ms = int(datetime.utcnow().timestamp() * 1000)
+                elapsed_ms = now_ms - loaded_at
+                if elapsed_ms < 2000:
+                    logger.warning(f"Timestamp check failed on newsletter signup from {ip_address} (elapsed: {elapsed_ms}ms)")
+                    return jsonify({
+                        'success': False,
+                        'error': 'Please take a moment before submitting.'
+                    }), 400
+            except (ValueError, TypeError):
+                # Can't parse timestamp — not a deal-breaker, continue
+                pass
+
+        # ── LAYER 4: Email validation ──────────────────────────────────
+        raw_email = data.get('email', '')
+        is_valid, result = _validate_email(raw_email)
+        if not is_valid:
+            return jsonify({'success': False, 'error': result}), 400
+        email = result  # cleaned, lowercased email
+
+        # ── LAYER 5: Rate limit check ─────────────────────────────────
+        is_allowed, rate_msg = _check_rate_limit(ip_address)
+        if not is_allowed:
+            return jsonify({'success': False, 'error': rate_msg}), 429
+
+        # ── Collect metadata ───────────────────────────────────────────
+        name = (data.get('name') or '').strip()[:255] or None
+        source = (data.get('source') or 'website').strip()[:100]
+        user_agent = get_user_agent()
+        email_domain = extract_email_domain(email)
+
+        # ── Database insert ────────────────────────────────────────────
+        conn = get_db_connection()
+        try:
+            cursor = conn.cursor()
+
+            # Check for duplicate
+            cursor.execute(
+                "SELECT id, is_active FROM newsletter_subscribers WHERE email = %s",
+                (email,)
+            )
+            existing = cursor.fetchone()
+
+            if existing:
+                if existing['is_active']:
+                    return jsonify({
+                        'success': False,
+                        'error': 'This email is already subscribed.'
+                    }), 200
+                else:
+                    # Re-activate a previously unsubscribed email
+                    cursor.execute(
+                        """UPDATE newsletter_subscribers
+                           SET is_active = TRUE, name = COALESCE(%s, name),
+                               source = %s, subscribed_at = NOW(), ip_address = %s,
+                               user_agent = %s, email_domain = %s
+                           WHERE email = %s
+                           RETURNING id""",
+                        (name, source, ip_address, user_agent, email_domain, email)
+                    )
+                    conn.commit()
+                    logger.info(f"Newsletter re-subscribe: {email} from {ip_address}")
+                    return jsonify({
+                        'success': True,
+                        'message': 'Welcome back! You have been re-subscribed.'
+                    }), 201
+
+            # Insert new subscriber
+            cursor.execute(
+                """INSERT INTO newsletter_subscribers
+                   (email, name, source, ip_address, user_agent, email_domain)
+                   VALUES (%s, %s, %s, %s, %s, %s)
+                   RETURNING id""",
+                (email, name, source, ip_address, user_agent, email_domain)
+            )
+            new_id = cursor.fetchone()['id']
+            conn.commit()
+
+            logger.info(f"New newsletter subscriber: {email} (id={new_id}, source={source}, ip={ip_address})")
+            return jsonify({
+                'success': True,
+                'message': 'Thank you! You have been subscribed to the Shiftwork Solutions newsletter.'
+            }), 201
+
+        except Exception as e:
+            conn.rollback()
+            if 'unique' in str(e).lower() or 'duplicate' in str(e).lower():
+                return jsonify({
+                    'success': False,
+                    'error': 'This email is already subscribed.'
+                }), 200
+            raise
+        finally:
+            conn.close()
+
+    except Exception as e:
+        logger.error(f"Newsletter subscribe error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': 'Something went wrong. Please try again later.'
+        }), 500
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STATS ENDPOINT (admin)
+# ═══════════════════════════════════════════════════════════════════════════
+
+@newsletter_bp.route('/api/newsletter/stats', methods=['GET'])
+def newsletter_stats():
+    """Return newsletter subscriber statistics with IP and domain breakdown."""
+    from db_engine import get_db_connection
+
+    try:
+        conn = get_db_connection()
+        try:
+            cursor = conn.cursor()
+
+            # Total active subscribers
+            cursor.execute(
+                "SELECT COUNT(*) as total FROM newsletter_subscribers WHERE is_active = TRUE"
+            )
+            total = cursor.fetchone()['total']
+
+            # Total all time
+            cursor.execute(
+                "SELECT COUNT(*) as all_time FROM newsletter_subscribers"
+            )
+            all_time = cursor.fetchone()['all_time']
+
+            # Signups in last 24 hours
+            cursor.execute(
+                """SELECT COUNT(*) as recent_count FROM newsletter_subscribers
+                   WHERE subscribed_at > NOW() - INTERVAL '24 hours'"""
+            )
+            last_24h = cursor.fetchone()['recent_count']
+
+            # Top 10 IP addresses by signup count
+            cursor.execute(
+                """SELECT ip_address, COUNT(*) as signup_count
+                   FROM newsletter_subscribers
+                   WHERE ip_address IS NOT NULL
+                   GROUP BY ip_address
+                   ORDER BY signup_count DESC
+                   LIMIT 10"""
+            )
+            top_ips = [{'ip': r['ip_address'], 'count': r['signup_count']}
+                       for r in cursor.fetchall()]
+
+            # Top 10 email domains
+            cursor.execute(
+                """SELECT email_domain, COUNT(*) as domain_count
+                   FROM newsletter_subscribers
+                   WHERE email_domain IS NOT NULL AND is_active = TRUE
+                   GROUP BY email_domain
+                   ORDER BY domain_count DESC
+                   LIMIT 10"""
+            )
+            top_domains = [{'domain': r['email_domain'], 'count': r['domain_count']}
+                           for r in cursor.fetchall()]
+
+            # Last 10 signups (with IP and user agent)
+            cursor.execute(
+                """SELECT id, email, name, source, ip_address, user_agent,
+                          email_domain, subscribed_at
+                   FROM newsletter_subscribers
+                   WHERE is_active = TRUE
+                   ORDER BY subscribed_at DESC
+                   LIMIT 10"""
+            )
+            recent = []
+            for row in cursor.fetchall():
+                recent.append({
+                    'id': row['id'],
+                    'email': row['email'],
+                    'name': row['name'],
+                    'source': row['source'],
+                    'ip_address': row['ip_address'],
+                    'user_agent': row['user_agent'],
+                    'email_domain': row['email_domain'],
+                    'subscribed_at': str(row['subscribed_at']) if row['subscribed_at'] else None,
+                })
+
+            # Blocked IP count
+            cursor.execute(
+                "SELECT COUNT(*) as blocked FROM ip_blocklist WHERE is_active = TRUE"
+            )
+            blocked_count = cursor.fetchone()['blocked']
+
+            return jsonify({
+                'success': True,
+                'active_subscribers': total,
+                'all_time_subscribers': all_time,
+                'last_24_hours': last_24h,
+                'blocked_ips': blocked_count,
+                'top_ips': top_ips,
+                'top_email_domains': top_domains,
+                'recent': recent,
+            })
+        finally:
+            conn.close()
+
+    except Exception as e:
+        logger.error(f"Newsletter stats error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SUBSCRIBERS LIST (admin, paginated)
+# ═══════════════════════════════════════════════════════════════════════════
+
+@newsletter_bp.route('/api/newsletter/subscribers', methods=['GET'])
+def list_subscribers():
+    """Paginated subscriber list with IP and domain info."""
+    from db_engine import get_db_connection
+
+    try:
+        page = max(1, int(request.args.get('page', 1)))
+        per_page = min(100, max(1, int(request.args.get('per_page', 50))))
+        offset = (page - 1) * per_page
+
+        conn = get_db_connection()
+        try:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                "SELECT COUNT(*) as total FROM newsletter_subscribers"
+            )
+            total = cursor.fetchone()['total']
+
+            cursor.execute(
+                """SELECT id, email, name, source, ip_address, user_agent,
+                          email_domain, subscribed_at, is_active
+                   FROM newsletter_subscribers
+                   ORDER BY subscribed_at DESC
+                   LIMIT %s OFFSET %s""",
+                (per_page, offset)
+            )
+            subscribers = []
+            for row in cursor.fetchall():
+                subscribers.append({
+                    'id': row['id'],
+                    'email': row['email'],
+                    'name': row['name'],
+                    'source': row['source'],
+                    'ip_address': row['ip_address'],
+                    'user_agent': row['user_agent'],
+                    'email_domain': row['email_domain'],
+                    'subscribed_at': str(row['subscribed_at']) if row['subscribed_at'] else None,
+                    'is_active': row['is_active'],
+                })
+
+            return jsonify({
+                'success': True,
+                'total': total,
+                'page': page,
+                'per_page': per_page,
+                'total_pages': (total + per_page - 1) // per_page,
+                'subscribers': subscribers,
+            })
+        finally:
+            conn.close()
+
+    except Exception as e:
+        logger.error(f"Subscriber list error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# LOOKUP BY IP (admin)
+# ═══════════════════════════════════════════════════════════════════════════
+
+@newsletter_bp.route('/api/newsletter/subscribers/by-ip/<path:ip>', methods=['GET'])
+def subscribers_by_ip(ip):
+    """Find all signups from a given IP address."""
+    from db_engine import get_db_connection
+
+    try:
+        conn = get_db_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT id, email, name, source, ip_address, user_agent,
+                          email_domain, subscribed_at, is_active
+                   FROM newsletter_subscribers
+                   WHERE ip_address = %s
+                   ORDER BY subscribed_at DESC""",
+                (ip,)
+            )
+            results = []
+            for row in cursor.fetchall():
+                results.append({
+                    'id': row['id'],
+                    'email': row['email'],
+                    'name': row['name'],
+                    'source': row['source'],
+                    'ip_address': row['ip_address'],
+                    'user_agent': row['user_agent'],
+                    'email_domain': row['email_domain'],
+                    'subscribed_at': str(row['subscribed_at']) if row['subscribed_at'] else None,
+                    'is_active': row['is_active'],
+                })
+
+            # Check if this IP is blocked
+            blocked, reason = is_ip_blocked(ip)
+
+            return jsonify({
+                'success': True,
+                'ip_address': ip,
+                'is_blocked': blocked,
+                'block_reason': reason,
+                'signup_count': len(results),
+                'signups': results,
+            })
+        finally:
+            conn.close()
+
+    except Exception as e:
+        logger.error(f"Subscribers by IP error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# LOOKUP BY DOMAIN (admin)
+# ═══════════════════════════════════════════════════════════════════════════
+
+@newsletter_bp.route('/api/newsletter/subscribers/by-domain/<domain>', methods=['GET'])
+def subscribers_by_domain(domain):
+    """Find all signups from a given email domain."""
+    from db_engine import get_db_connection
+
+    try:
+        conn = get_db_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT id, email, name, source, ip_address, user_agent,
+                          email_domain, subscribed_at, is_active
+                   FROM newsletter_subscribers
+                   WHERE email_domain = %s
+                   ORDER BY subscribed_at DESC""",
+                (domain.lower(),)
+            )
+            results = []
+            for row in cursor.fetchall():
+                results.append({
+                    'id': row['id'],
+                    'email': row['email'],
+                    'name': row['name'],
+                    'source': row['source'],
+                    'ip_address': row['ip_address'],
+                    'subscribed_at': str(row['subscribed_at']) if row['subscribed_at'] else None,
+                    'is_active': row['is_active'],
+                })
+
+            return jsonify({
+                'success': True,
+                'domain': domain.lower(),
+                'signup_count': len(results),
+                'signups': results,
+            })
+        finally:
+            conn.close()
+
+    except Exception as e:
+        logger.error(f"Subscribers by domain error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# BLOCK IP (admin)
+# ═══════════════════════════════════════════════════════════════════════════
+
+@newsletter_bp.route('/api/newsletter/block-ip', methods=['POST'])
+def block_ip():
+    """Add an IP to the blocklist."""
+    from db_engine import get_db_connection
+
+    try:
+        data = request.get_json(silent=True)
+        if not data or not data.get('ip_address'):
+            return jsonify({
+                'success': False,
+                'error': 'ip_address is required.'
+            }), 400
+
+        ip = data['ip_address'].strip()[:45]
+        reason = (data.get('reason') or 'Blocked by admin').strip()[:500]
+
+        conn = get_db_connection()
+        try:
+            cursor = conn.cursor()
+
+            # Check if already blocked
+            cursor.execute(
+                "SELECT id, is_active FROM ip_blocklist WHERE ip_address = %s",
+                (ip,)
+            )
+            existing = cursor.fetchone()
+
+            if existing:
+                if existing['is_active']:
+                    return jsonify({
+                        'success': False,
+                        'error': f'IP {ip} is already blocked.'
+                    }), 200
+                else:
+                    # Re-activate
+                    cursor.execute(
+                        """UPDATE ip_blocklist
+                           SET is_active = TRUE, reason = %s, blocked_at = NOW()
+                           WHERE ip_address = %s
+                           RETURNING id""",
+                        (reason, ip)
+                    )
+                    conn.commit()
+                    logger.info(f"IP re-blocked: {ip} (reason: {reason})")
+                    return jsonify({
+                        'success': True,
+                        'message': f'IP {ip} has been blocked.',
+                    }), 200
+            else:
+                cursor.execute(
+                    """INSERT INTO ip_blocklist (ip_address, reason)
+                       VALUES (%s, %s)
+                       RETURNING id""",
+                    (ip, reason)
+                )
+                new_id = cursor.fetchone()['id']
+                conn.commit()
+                logger.info(f"IP blocked: {ip} (id={new_id}, reason: {reason})")
+                return jsonify({
+                    'success': True,
+                    'message': f'IP {ip} has been blocked.',
+                    'id': new_id,
+                }), 201
+
+        except Exception as e:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    except Exception as e:
+        logger.error(f"Block IP error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# UNBLOCK IP (admin)
+# ═══════════════════════════════════════════════════════════════════════════
+
+@newsletter_bp.route('/api/newsletter/unblock-ip', methods=['POST'])
+def unblock_ip():
+    """Remove an IP from the blocklist (soft delete — sets is_active=FALSE)."""
+    from db_engine import get_db_connection
+
+    try:
+        data = request.get_json(silent=True)
+        if not data or not data.get('ip_address'):
+            return jsonify({
+                'success': False,
+                'error': 'ip_address is required.'
+            }), 400
+
+        ip = data['ip_address'].strip()[:45]
+
+        conn = get_db_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """UPDATE ip_blocklist SET is_active = FALSE
+                   WHERE ip_address = %s AND is_active = TRUE
+                   RETURNING id""",
+                (ip,)
+            )
+            result = cursor.fetchone()
+            conn.commit()
+
+            if result:
+                logger.info(f"IP unblocked: {ip}")
+                return jsonify({
+                    'success': True,
+                    'message': f'IP {ip} has been unblocked.',
+                }), 200
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': f'IP {ip} was not found in the active blocklist.',
+                }), 404
+
+        except Exception as e:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    except Exception as e:
+        logger.error(f"Unblock IP error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# VIEW BLOCKED IPS (admin)
+# ═══════════════════════════════════════════════════════════════════════════
+
+@newsletter_bp.route('/api/newsletter/blocked-ips', methods=['GET'])
+def view_blocked_ips():
+    """View all actively blocked IP addresses."""
+    from db_engine import get_db_connection
+
+    try:
+        conn = get_db_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT id, ip_address, reason, blocked_at, blocked_by
+                   FROM ip_blocklist
+                   WHERE is_active = TRUE
+                   ORDER BY blocked_at DESC"""
+            )
+            blocked = []
+            for row in cursor.fetchall():
+                blocked.append({
+                    'id': row['id'],
+                    'ip_address': row['ip_address'],
+                    'reason': row['reason'],
+                    'blocked_at': str(row['blocked_at']) if row['blocked_at'] else None,
+                    'blocked_by': row['blocked_by'],
+                })
+
+            return jsonify({
+                'success': True,
+                'blocked_count': len(blocked),
+                'blocked_ips': blocked,
+            })
+        finally:
+            conn.close()
+
+    except Exception as e:
+        logger.error(f"View blocked IPs error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ADMIN UNSUBSCRIBE (admin force-unsubscribe)
+# ═══════════════════════════════════════════════════════════════════════════
+
+@newsletter_bp.route('/api/newsletter/unsubscribe', methods=['POST'])
+def admin_unsubscribe():
+    """Admin force-unsubscribe an email address."""
+    from db_engine import get_db_connection
+
+    try:
+        data = request.get_json(silent=True)
+        if not data or not data.get('email'):
+            return jsonify({
+                'success': False,
+                'error': 'email is required.'
+            }), 400
+
+        email = data['email'].strip().lower()
+
+        conn = get_db_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """UPDATE newsletter_subscribers SET is_active = FALSE
+                   WHERE email = %s AND is_active = TRUE
+                   RETURNING id""",
+                (email,)
+            )
+            result = cursor.fetchone()
+            conn.commit()
+
+            if result:
+                logger.info(f"Admin unsubscribed: {email}")
+                return jsonify({
+                    'success': True,
+                    'message': f'{email} has been unsubscribed.',
+                }), 200
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': f'{email} is not an active subscriber.',
+                }), 404
+
+        except Exception as e:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    except Exception as e:
+        logger.error(f"Admin unsubscribe error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 
 # I did no harm and this file is not truncated
