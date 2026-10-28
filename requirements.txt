@@ -1,7 +1,19 @@
 # AI SWARM ORCHESTRATOR - Requirements
-# Last Updated: June 14, 2026
+# Last Updated: October 28, 2026
 #
 # CHANGES:
+# - October 28, 2026: SECURITY — eMudhra CA COMPROMISE (Render advisory, Oct 2026)
+#   * Added certifi>=2026.10.19 (see SECURITY section at the bottom).
+#     'requests' (and libraries built on it) checks HTTPS certificates
+#     against certifi's own bundle, NOT the server's system store, so a
+#     Render rebuild alone does not remove the compromised eMudhra
+#     intermediates. (Current anthropic/openai releases use the system
+#     store, which the rebuild refreshes; older releases used certifi too.)
+#     certifi was only an unpinned indirect dependency before, so a cached
+#     build could keep an old bundle.
+#   * Purely additive — no other package changed. Deploy with
+#     "Clear build cache & deploy" and confirm the build log shows
+#     certifi 2026.10.19 or later.
 # - June 14, 2026: FEYNMANLAB PHASE 3 — PHYSICS COMPUTE
 #   * Added scipy>=1.14.0 (ODE integration, optimization, linear algebra,
 #     special functions) and sympy>=1.13.0 (symbolic mathematics, pure Python)
@@ -104,4 +116,10 @@ resend>=0.7.0               # Resend email SDK — emails a copy of each PDF to 
 # ==========================================
 scipy>=1.14.0              # ODE integration, optimization, linear algebra, special functions
 sympy>=1.13.0              # symbolic mathematics (pure Python)
+# ==========================================
+# SECURITY — TRUSTED CERTIFICATE BUNDLE (Added October 28, 2026)
+# eMudhra CA compromise: certifi 2026.10.19 and later drop the compromised
+# intermediates. Kept as a floor (>=) so future security releases are picked up.
+# ==========================================
+certifi>=2026.10.19        # CA bundle used by requests for outbound HTTPS calls
 # I did no harm and this file is not truncated
