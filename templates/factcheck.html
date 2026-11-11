@@ -1,0 +1,1441 @@
+<!doctype html>
+<!--
+  Live Political Speech Fact-Checker - the listening page
+
+  File: templates/factcheck.html   (served at /factcheck by routes/factcheck.py)
+
+  CHANGE NOTES
+  2026-11-11  Moved inside the AI Swarm Orchestrator.
+              - Talks to /api/factcheck/... instead of /api/...
+              - The server now queues each piece of AI work and answers at once;
+                this page asks every two seconds (every four once only report
+                work is left) whether the queued work is done; see api() and
+                pollJobs() below. Nothing else about how the page looks or
+                behaves has changed.
+              - Sent to the browser as a plain file, not through the template
+                engine, so braces in the script are safe.
+  2026-11-10  First version (built from Jim's build spec of the same date).
+              - Listens through the computer's microphone (Chrome or Edge).
+              - Live transcript, verdict bubble, running meter, claim list.
+              - After Stop: annotated transcript, tally, five-layer recheck of every claim.
+              - Print / save as PDF, download for Word, saved speeches (kept in this browser).
+              - "Check pasted text" for trying the checker without a microphone.
+
+  This one file holds the layout, the styling and the page's script.
+  It talks only to the Swarm's own server (/api/factcheck/...). The AI key is never here.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Speech Fact-Checker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,400..800&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #16202b;
+    --muted: #55616d;
+    --paper: #e8ecf0;
+    --panel: #ffffff;
+    --line: #c5ced7;
+    --control: #1d4f8f;
+    --control-ink: #ffffff;
+    --true: #1b7a44;
+    --misleading: #b06f00;
+    --false: #c0352b;
+    --unverified: #5f6b77;
+    --true-wash: #d9efe1;
+    --misleading-wash: #fbe9c6;
+    --false-wash: #f8d9d5;
+    --unverified-wash: #e1e6eb;
+    --ui: "Archivo", "Segoe UI", system-ui, sans-serif;
+    --reading: "Source Serif 4", Georgia, serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink: #e9eef3;
+      --muted: #a3afbb;
+      --paper: #10161d;
+      --panel: #1a232d;
+      --line: #34414e;
+      --control: #6ea8ea;
+      --control-ink: #0c1218;
+      --true: #4fc083;
+      --misleading: #e5ad3f;
+      --false: #f0776b;
+      --unverified: #9aa7b4;
+      --true-wash: #17382a;
+      --misleading-wash: #40300f;
+      --false-wash: #47201c;
+      --unverified-wash: #2a343f;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { font-size: 17px; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--ui);
+    line-height: 1.45;
+  }
+  button, input, textarea { font: inherit; color: inherit; }
+  button {
+    border: 1.5px solid var(--line);
+    background: var(--panel);
+    padding: 0.5rem 0.9rem;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  button:hover:not(:disabled) { border-color: var(--control); }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+  button.primary { background: var(--control); border-color: var(--control); color: var(--control-ink); }
+  button.stop { background: var(--false); border-color: var(--false); color: #fff; }
+  button.quiet { border-color: transparent; background: transparent; text-decoration: underline; padding-inline: 0.3rem; }
+  :focus-visible { outline: 3px solid var(--control); outline-offset: 2px; }
+
+  .top {
+    display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between;
+    gap: 0.5rem 1.5rem; padding: 0.9rem 1.25rem 0.4rem;
+  }
+  .top h1 { margin: 0; font-size: 1.15rem; font-stretch: 112%; font-weight: 800; letter-spacing: 0.01em; }
+  .top nav { display: flex; gap: 0.75rem; }
+
+  main { padding: 0 1.25rem 2rem; max-width: 1280px; margin: 0 auto; }
+
+  .banner {
+    margin: 0.5rem 1.25rem; padding: 0.7rem 1rem; border-radius: 6px;
+    background: var(--misleading-wash); border: 1.5px solid var(--misleading);
+  }
+  .banner.bad { background: var(--false-wash); border-color: var(--false); }
+
+  .setup {
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto; gap: 0.75rem; align-items: end;
+    margin: 0.6rem 0 1rem;
+  }
+  .setup label { display: block; font-size: 0.82rem; color: var(--muted); font-weight: 600; margin-bottom: 0.2rem; }
+  .setup input {
+    width: 100%; padding: 0.5rem 0.7rem; border: 1.5px solid var(--line); border-radius: 6px; background: var(--panel);
+  }
+  .setup .go { display: flex; gap: 0.5rem; align-items: center; }
+  .setup .go button { padding: 0.55rem 1.4rem; font-size: 1.05rem; }
+  .status { font-size: 0.9rem; color: var(--muted); min-height: 1.3rem; margin: -0.4rem 0 0.8rem; }
+  .status .dot {
+    display: inline-block; width: 0.65rem; height: 0.65rem; border-radius: 50%;
+    background: var(--false); margin-right: 0.4rem; vertical-align: baseline;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .status .dot { animation: pulse 1.4s ease-in-out infinite; }
+    @keyframes pulse { 50% { opacity: 0.25; } }
+  }
+
+  /* The verdict bubble: built like a TV caption strip so it reads from the couch. */
+  .bubble {
+    display: grid; grid-template-columns: minmax(11rem, 24%) 1fr;
+    background: var(--panel); border-radius: 10px; overflow: hidden;
+    border: 2px solid var(--bubble, var(--unverified));
+    min-height: 8.5rem;
+  }
+  .bubble-verdict {
+    background: var(--bubble, var(--unverified)); color: #fff;
+    display: flex; flex-direction: column; justify-content: center;
+    padding: 1rem 1.2rem;
+    font-weight: 800; font-stretch: 120%; line-height: 1.02;
+    font-size: clamp(1.7rem, 3.6vw, 3.2rem);
+  }
+  @media (prefers-color-scheme: dark) { .bubble-verdict { color: #0c1218; } }
+  .bubble-verdict small {
+    display: block; margin-top: 0.5rem; font-size: 0.8rem; font-weight: 600; font-stretch: 100%; opacity: 0.92;
+  }
+  .bubble-body { padding: 1rem 1.3rem; display: flex; flex-direction: column; justify-content: center; gap: 0.4rem; }
+  .bubble-claim { margin: 0; font-size: clamp(1.05rem, 1.7vw, 1.45rem); font-weight: 600; line-height: 1.3; }
+  .bubble-reason { margin: 0; font-family: var(--reading); font-size: clamp(1rem, 1.4vw, 1.2rem); color: var(--ink); }
+  .bubble-sources { margin: 0; font-size: 0.85rem; color: var(--muted); }
+  .bubble-sources a { color: inherit; }
+  .v-true { --bubble: var(--true); }
+  .v-misleading { --bubble: var(--misleading); }
+  .v-false { --bubble: var(--false); }
+  .v-unverified, .v-idle, .v-checking, .v-error { --bubble: var(--unverified); }
+
+  .pending { min-height: 1.5rem; margin: 0.45rem 0 0.2rem; font-size: 0.9rem; color: var(--muted); }
+
+  .meter { margin: 0.5rem 0 1.1rem; }
+  .meter-bar { display: flex; height: 0.85rem; border-radius: 5px; overflow: hidden; background: var(--unverified-wash); }
+  .meter-bar span { display: block; height: 100%; }
+  .meter-bar .m-true { background: var(--true); }
+  .meter-bar .m-misleading { background: var(--misleading); }
+  .meter-bar .m-false { background: var(--false); }
+  .meter-bar .m-unverified { background: var(--unverified); }
+  .meter-text { margin: 0.35rem 0 0; font-size: 0.92rem; }
+  .meter-text b { font-weight: 700; }
+
+  .cols { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 1.1rem; align-items: start; }
+  .cols h2, .report h2 { font-size: 0.95rem; font-weight: 700; margin: 0 0 0.45rem; }
+  .pane { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 0.9rem 1rem; }
+  #transcript {
+    font-family: var(--reading); font-size: 1.08rem; line-height: 1.65;
+    max-height: 46vh; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  #transcript .interim { color: var(--muted); }
+  .empty { color: var(--muted); font-family: var(--ui); font-size: 0.95rem; }
+
+  mark { color: inherit; border-radius: 3px; padding: 0.05em 0.12em; cursor: pointer; }
+  mark.v-true { background: var(--true-wash); box-shadow: inset 0 -2px 0 var(--true); }
+  mark.v-misleading { background: var(--misleading-wash); box-shadow: inset 0 -2px 0 var(--misleading); }
+  mark.v-false { background: var(--false-wash); box-shadow: inset 0 -2px 0 var(--false); }
+  mark.v-unverified, mark.v-checking, mark.v-error { background: var(--unverified-wash); box-shadow: inset 0 -2px 0 var(--unverified); }
+
+  #claimList { list-style: none; margin: 0; padding: 0; max-height: 46vh; overflow-y: auto; }
+  #claimList li { border-top: 1px solid var(--line); padding: 0.6rem 0; }
+  #claimList li:first-child { border-top: 0; padding-top: 0.1rem; }
+  #claimList li.flash { background: var(--unverified-wash); }
+  .chip {
+    display: inline-block; font-size: 0.78rem; font-weight: 700; padding: 0.12rem 0.5rem; border-radius: 4px;
+    color: #fff; background: var(--bubble, var(--unverified)); margin-right: 0.4rem; white-space: nowrap;
+  }
+  @media (prefers-color-scheme: dark) { .chip { color: #0c1218; } }
+  .claim-text { font-weight: 600; }
+  .claim-reason { margin: 0.25rem 0 0; font-family: var(--reading); }
+  .claim-more { margin-top: 0.3rem; font-size: 0.9rem; }
+  .claim-more summary { cursor: pointer; color: var(--muted); }
+  .claim-more p { margin: 0.35rem 0; }
+  .sources { margin: 0.3rem 0 0; padding-left: 1.1rem; font-size: 0.88rem; }
+  .sources a { color: var(--control); overflow-wrap: anywhere; }
+  .when { color: var(--muted); font-size: 0.82rem; font-variant-numeric: tabular-nums; margin-right: 0.4rem; }
+
+  .usage { padding: 0 1.25rem 1.5rem; max-width: 1280px; margin: 0 auto; font-size: 0.85rem; color: var(--muted); }
+
+  /* Report */
+  .report-tools { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; margin: 0.6rem 0 0.9rem; }
+  .report-progress { font-size: 0.92rem; color: var(--muted); margin-left: auto; }
+  .report { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 1.4rem 1.6rem; }
+  .report h1 { font-size: 1.5rem; font-stretch: 110%; margin: 0 0 0.2rem; }
+  .report .sub { color: var(--muted); margin: 0 0 1rem; }
+  .report h2 { font-size: 1.1rem; margin: 1.6rem 0 0.5rem; padding-top: 0.9rem; border-top: 1px solid var(--line); }
+  .report .tally { font-size: 1.05rem; margin: 0.4rem 0; }
+  .report .annotated { font-family: var(--reading); font-size: 1.05rem; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; max-width: 75ch; }
+  .report .note { color: var(--muted); font-size: 0.9rem; max-width: 75ch; }
+  .card { border-top: 1px solid var(--line); padding: 1rem 0; max-width: 78ch; }
+  .card h3 { margin: 0 0 0.3rem; font-size: 1.02rem; line-height: 1.35; }
+  .card blockquote { margin: 0.3rem 0 0.5rem; padding-left: 0.8rem; border-left: 3px solid var(--line); font-family: var(--reading); }
+  .card p { margin: 0.3rem 0; }
+  .card .layer { margin-top: 0.55rem; }
+  .card .layer b { display: block; font-size: 0.9rem; }
+  .card .layer span.lv { font-weight: 700; }
+  .changed { font-size: 0.88rem; font-weight: 600; color: var(--misleading); }
+
+  dialog { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--ink); padding: 1.3rem 1.4rem; width: min(40rem, 92vw); }
+  dialog::backdrop { background: rgba(10, 16, 22, 0.55); }
+  dialog h2 { margin: 0 0 0.6rem; font-size: 1.1rem; }
+  dialog p { margin: 0.4rem 0; }
+  dialog textarea, dialog input[type="password"], dialog input[type="text"] {
+    width: 100%; padding: 0.55rem 0.7rem; border: 1.5px solid var(--line); border-radius: 6px; background: var(--paper);
+  }
+  dialog textarea { min-height: 13rem; font-family: var(--reading); }
+  dialog .row { display: flex; gap: 0.6rem; justify-content: flex-end; margin-top: 0.9rem; }
+  .history-list { list-style: none; margin: 0; padding: 0; max-height: 55vh; overflow-y: auto; }
+  .history-list li { display: flex; gap: 0.6rem; align-items: center; justify-content: space-between; border-top: 1px solid var(--line); padding: 0.55rem 0; }
+  .history-list li:first-child { border-top: 0; }
+  .history-list .meta { color: var(--muted); font-size: 0.85rem; }
+
+  [hidden] { display: none !important; }
+
+  @media (max-width: 820px) {
+    .setup { grid-template-columns: 1fr; }
+    .cols { grid-template-columns: 1fr; }
+    .bubble { grid-template-columns: 1fr; }
+    .report { padding: 1rem; }
+  }
+  @media print {
+    body { background: #fff; color: #000; }
+    .top, .banner, #viewLive, .report-tools, .usage, dialog { display: none !important; }
+    #viewReport { display: block !important; }
+    .report { border: 0; padding: 0; }
+    main { padding: 0; max-width: none; }
+    .card { break-inside: avoid; }
+    mark { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .chip { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <h1>Speech Fact-Checker</h1>
+  <nav>
+    <button type="button" class="quiet" id="btnPaste">Check pasted text</button>
+    <button type="button" class="quiet" id="btnHistory">Saved speeches</button>
+  </nav>
+</header>
+
+<div id="banner" class="banner" role="status" hidden></div>
+
+<main>
+  <section id="viewLive">
+    <form class="setup" id="setupForm" autocomplete="off">
+      <div>
+        <label for="inSpeaker">Who is speaking</label>
+        <input id="inSpeaker" type="text" maxlength="120" placeholder="Name of the speaker">
+      </div>
+      <div>
+        <label for="inEvent">Occasion</label>
+        <input id="inEvent" type="text" maxlength="200" placeholder="For example: State of the Union, 2026">
+      </div>
+      <div class="go">
+        <button type="submit" class="primary" id="btnStart">Start listening</button>
+        <button type="button" class="stop" id="btnStop" hidden>Stop and build report</button>
+      </div>
+    </form>
+    <p class="status" id="status" aria-live="polite"></p>
+
+    <div id="bubble" class="bubble v-idle" aria-live="polite">
+      <div class="bubble-verdict" id="bubbleVerdict">Ready</div>
+      <div class="bubble-body">
+        <p class="bubble-claim" id="bubbleClaim">Turn the TV up, then press Start listening.</p>
+        <p class="bubble-reason" id="bubbleReason">Each checkable claim gets a verdict here a few seconds after it is said.</p>
+        <p class="bubble-sources" id="bubbleSources"></p>
+      </div>
+    </div>
+    <p class="pending" id="pending"></p>
+
+    <div class="meter">
+      <div class="meter-bar" id="meterBar" role="img" aria-label="Share of claims by verdict"></div>
+      <p class="meter-text" id="meterText">No claims checked yet.</p>
+    </div>
+
+    <div class="cols">
+      <section class="pane">
+        <h2>Transcript</h2>
+        <div id="transcript"><span class="empty">What the microphone hears appears here.</span></div>
+      </section>
+      <section class="pane">
+        <h2>Claims</h2>
+        <ol id="claimList"><li class="empty">Claims appear here as they are found, newest first.</li></ol>
+      </section>
+    </div>
+  </section>
+
+  <section id="viewReport" hidden>
+    <div class="report-tools">
+      <button type="button" id="btnNew" class="primary">New speech</button>
+      <button type="button" id="btnPrint">Print or save as PDF</button>
+      <button type="button" id="btnWord">Download for Word</button>
+      <button type="button" id="btnStopRecheck" hidden>Stop the recheck</button>
+      <button type="button" id="btnResume" hidden>Recheck the remaining claims</button>
+      <span class="report-progress" id="reportProgress" aria-live="polite"></span>
+    </div>
+    <article class="report" id="report"></article>
+  </section>
+</main>
+
+<p class="usage" id="usage"></p>
+
+<dialog id="dlgPass">
+  <form method="dialog" id="passForm">
+    <h2>Passcode</h2>
+    <p>This fact-checker is private. Enter the passcode set for it in Render.</p>
+    <input type="password" id="inPass" autocomplete="off" aria-label="Passcode">
+    <p id="passMsg" class="changed"></p>
+    <div class="row"><button type="submit" class="primary">Continue</button></div>
+  </form>
+</dialog>
+
+<dialog id="dlgPaste">
+  <h2>Check pasted text</h2>
+  <p>Paste part of a speech or an article. It goes through the same checks as live listening.
+     The speaker and occasion boxes on the main page are used if you filled them in.</p>
+  <textarea id="inPaste" aria-label="Text to check"></textarea>
+  <div class="row">
+    <button type="button" id="btnPasteCancel">Cancel</button>
+    <button type="button" class="primary" id="btnPasteGo">Check this text</button>
+  </div>
+</dialog>
+
+<dialog id="dlgHistory">
+  <h2>Saved speeches</h2>
+  <p class="meta" style="color:var(--muted);font-size:0.88rem">Saved in this browser on this computer only.</p>
+  <ul class="history-list" id="historyList"></ul>
+  <div class="row"><button type="button" id="btnHistoryClose">Close</button></div>
+</dialog>
+
+<script>
+"use strict";
+
+/* ------------------------------------------------------------------ helpers */
+
+const $ = (id) => document.getElementById(id);
+const LABEL = {
+  true: "True", misleading: "Misleading", false: "False", unverified: "Can’t verify",
+  checking: "Checking", error: "Couldn’t check", idle: "Ready"
+};
+const HISTORY_KEY = "speechFactChecker.history.v1";
+const PASS_KEY = "speechFactChecker.passcode";
+const API = "/api/factcheck";
+const POLL_MS = 2000;                                                 // how often to ask whether queued live work is done
+const POLL_SLOW_MS = 4000;                                            // ...and when only report work is waiting
+const JOB_WAIT_MS = { claims: 240000, check: 360000, deep: 900000 };  // give up waiting after this long
+const LIVE_CHECKS_AT_ONCE = 3;
+const DEEP_CHECKS_AT_ONCE = 2;
+const CHUNK_WORDS = 40;        // send a passage for claim-finding once this many new words are heard
+const CHUNK_MAX_WORDS = 110;   // never send more than this in one go
+const QUIET_MS = 5000;         // or after this long a pause, if at least a few words are waiting
+
+function esc(text) {
+  return String(text == null ? "" : text)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function safeUrl(url) {
+  return /^https?:\/\//i.test(String(url || "")) ? String(url) : "";
+}
+function wordCount(text) {
+  const m = String(text).match(/\S+/g);
+  return m ? m.length : 0;
+}
+function clock(seconds) {
+  if (seconds == null || isNaN(seconds)) return "";
+  const s = Math.max(0, Math.round(seconds));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+  return (h ? h + ":" + String(m).padStart(2, "0") : String(m)) + ":" + String(r).padStart(2, "0");
+}
+function hostOf(url) {
+  try { return new URL(url).hostname.replace(/^www\./, ""); } catch (e) { return url; }
+}
+function sourcesHTML(sources) {
+  const list = (sources || []).filter((s) => safeUrl(s.url));
+  if (!list.length) return "";
+  const cited = list.some((s) => s.cited !== false);
+  return '<p style="margin:0.4rem 0 0;font-size:0.88rem;font-weight:600">' +
+    (cited ? "Sources" : "Pages the checker looked at") + "</p><ul class=\"sources\">" +
+    list.map((s) => '<li><a href="' + esc(safeUrl(s.url)) + '" target="_blank" rel="noopener noreferrer">' +
+      esc(s.title || hostOf(s.url)) + "</a> (" + esc(hostOf(s.url)) + ")</li>").join("") + "</ul>";
+}
+
+/* ------------------------------------------------------------------ banner */
+
+function showBanner(message, bad) {
+  const el = $("banner");
+  el.textContent = message;
+  el.className = "banner" + (bad ? " bad" : "");
+  el.hidden = false;
+}
+function hideBanner() { $("banner").hidden = true; }
+
+/* ------------------------------------------------------------------ talking to the server */
+
+function getPass() {
+  try { return sessionStorage.getItem(PASS_KEY) || ""; } catch (e) { return window.__pass || ""; }
+}
+function setPass(value) {
+  window.__pass = value;
+  try { sessionStorage.setItem(PASS_KEY, value); } catch (e) { /* kept in memory instead */ }
+}
+
+let passPromise = null;
+function askPasscode(message) {
+  if (passPromise) return passPromise;
+  passPromise = new Promise((resolve) => {
+    const dlg = $("dlgPass");
+    $("passMsg").textContent = message || "";
+    $("inPass").value = "";
+    const done = () => {
+      dlg.removeEventListener("close", done);
+      setPass($("inPass").value.trim());
+      passPromise = null;
+      resolve();
+    };
+    dlg.addEventListener("close", done);
+    dlg.showModal();
+    $("inPass").focus();
+  });
+  return passPromise;
+}
+
+/* One plain request to this page's server. */
+async function post(path, body, attempt) {
+  let response;
+  try {
+    response = await fetch(API + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-App-Passcode": getPass() },
+      body: JSON.stringify(body)
+    });
+  } catch (e) {
+    throw new Error("This page could not reach its server. Check the internet connection.");
+  }
+  if (response.status === 401 && (attempt || 0) < 3) {
+    await askPasscode((attempt || 0) > 0 ? "That passcode was not accepted. Try again." : "");
+    return post(path, body, (attempt || 0) + 1);
+  }
+  let data = null;
+  try { data = await response.json(); } catch (e) { /* handled below */ }
+  if (!response.ok) {
+    throw new Error((data && data.error) || ("The server answered with an error (" + response.status + ")."));
+  }
+  if (!data) throw new Error("The server sent an answer this page could not read.");
+  return data;
+}
+
+/*
+  Asking the server to do AI work. Inside the Swarm the work is queued and done
+  by a separate helper, so the server answers at once with a job number. This
+  page then asks every two seconds, in ONE request for all waiting jobs,
+  whether they are finished. api() hides all that: it resolves with the result
+  when the job is done, and rejects with a plain message if it fails.
+*/
+const waitingJobs = new Map();      // job id -> { resolve, reject, deadline }
+let pollTimer = null;
+let pollIsSlow = false;
+let pollFailures = 0;
+
+async function api(kind, body) {
+  const data = await post("/" + kind, body);
+  if (!data.job_id) throw new Error("The server did not accept this request.");
+  return new Promise((resolve, reject) => {
+    waitingJobs.set(data.job_id, { kind: kind, resolve: resolve, reject: reject, deadline: Date.now() + JOB_WAIT_MS[kind] });
+    if (kind !== "deep" && pollTimer && pollIsSlow) {      // live work arrived: stop waiting at the slow pace
+      clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+    schedulePoll();
+  });
+}
+
+function schedulePoll() {
+  if (pollTimer || !waitingJobs.size) return;
+  // Live work is asked about every 2 seconds. When only report work is left, every 4:
+  // nobody is watching a bubble then, and it halves the requests sent to the Swarm.
+  pollIsSlow = !Array.from(waitingJobs.values()).some((w) => w.kind !== "deep");
+  pollTimer = setTimeout(async () => {
+    pollTimer = null;
+    await pollJobs();
+    schedulePoll();
+  }, pollIsSlow ? POLL_SLOW_MS : POLL_MS);
+}
+
+async function pollJobs() {
+  const ids = Array.from(waitingJobs.keys()).slice(0, 50);
+  if (!ids.length) return;
+  let data = null;
+  try {
+    data = await post("/jobs/status", { ids: ids });
+    pollFailures = 0;
+  } catch (e) {
+    pollFailures += 1;
+    if (pollFailures >= 8) {          // about 16 seconds without the server
+      pollFailures = 0;
+      for (const id of ids) {
+        const w = waitingJobs.get(id);
+        waitingJobs.delete(id);
+        if (w) w.reject(e);
+      }
+    }
+    return;
+  }
+  for (const job of data.jobs || []) {
+    const w = waitingJobs.get(job.id);
+    if (!w) continue;
+    if (job.status === "done") {
+      waitingJobs.delete(job.id);
+      w.resolve(job.result || {});
+    } else if (job.status === "failed" || job.status === "missing") {
+      waitingJobs.delete(job.id);
+      w.reject(new Error(job.error || "This check failed on the server."));
+    }
+  }
+  const now = Date.now();
+  for (const [id, w] of Array.from(waitingJobs.entries())) {
+    if (now > w.deadline) {
+      waitingJobs.delete(id);
+      w.reject(new Error("This check took too long and was given up."));
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ the current speech */
+
+function newSession(mode) {
+  return {
+    id: "s" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+    mode: mode,                       // "live" or "paste"
+    started: new Date().toISOString(),
+    startedMs: Date.now(),
+    speaker: $("inSpeaker").value.trim(),
+    event: $("inEvent").value.trim(),
+    text: "",                         // everything heard so far
+    marks: [],                        // [{offset, t}] to tell when each part was heard
+    sentUpTo: 0,                      // text before this point has been searched for claims
+    claims: [],
+    usage: { calls: 0, input_tokens: 0, output_tokens: 0, searches: 0, cost: 0 },
+    deepDone: false
+  };
+}
+
+let S = null;                 // the speech being worked on
+let phase = "idle";           // idle | live | finishing | report
+let viewing = null;           // the session shown in the report view
+let interimText = "";
+let lastFinalAt = 0;
+let detectBusy = false;
+let detectFailures = 0;
+let detectPausedUntil = 0;
+let lastCarry = null;         // remembers a carried-over fragment so it is not resent unchanged
+let tickTimer = null;
+let recheckStopped = false;
+
+function addUsage(session, usage) {
+  if (!usage || !session) return;
+  session.usage.calls += 1;
+  session.usage.input_tokens += usage.input_tokens || 0;
+  session.usage.output_tokens += usage.output_tokens || 0;
+  session.usage.searches += usage.searches || 0;
+  session.usage.cost += usage.cost || 0;
+  if (session === S) renderUsage();
+}
+
+function finalVerdict(c) {
+  if (c.deep && c.deep.final_verdict) return c.deep.final_verdict;
+  if (c.status === "done" && c.live) return c.live.verdict;
+  if (c.status === "error") return "error";
+  return "checking";
+}
+function finalReason(c) {
+  if (c.deep && c.deep.final_reason) return c.deep.final_reason;
+  if (c.status === "done" && c.live) return c.live.reason;
+  if (c.status === "error") return c.error || "This claim could not be checked.";
+  return "";
+}
+function tally(claims) {
+  const t = { true: 0, misleading: 0, false: 0, unverified: 0, checking: 0, total: claims.length };
+  for (const c of claims) {
+    const v = finalVerdict(c);
+    if (v === "checking") t.checking += 1;
+    else if (v === "error") t.unverified += 1;
+    else t[v] += 1;
+  }
+  t.rated = t.true + t.misleading + t.false;
+  t.pctTrue = t.rated ? Math.round((100 * t.true) / t.rated) : null;
+  return t;
+}
+
+/* ------------------------------------------------------------------ finding a quote inside the transcript */
+
+function tokensOf(text, base) {
+  const out = [];
+  const re = /[\p{L}\p{N}]+/gu;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    out.push({ w: m[0].toLowerCase(), s: base + m.index, e: base + m.index + m[0].length });
+  }
+  return out;
+}
+function findRun(hay, needle, from) {
+  if (!needle.length) return -1;
+  outer:
+  for (let i = from || 0; i <= hay.length - needle.length; i++) {
+    for (let j = 0; j < needle.length; j++) {
+      if (hay[i + j].w !== needle[j].w) continue outer;
+    }
+    return i;
+  }
+  return -1;
+}
+function locateQuote(text, quote, from, to) {
+  const hay = tokensOf(text.slice(from, to), from);
+  const needle = tokensOf(quote || "", 0);
+  if (!hay.length || !needle.length) return null;
+  let i = findRun(hay, needle, 0);
+  if (i !== -1) return { start: hay[i].s, end: hay[i + needle.length - 1].e };
+  // Not word-for-word: match the opening and closing few words instead.
+  const k = Math.min(4, needle.length);
+  const head = needle.slice(0, k), tail = needle.slice(needle.length - k);
+  i = findRun(hay, head, 0);
+  if (i === -1) return null;
+  const j = findRun(hay, tail, i);
+  if (j === -1 || j + k - 1 - i > needle.length * 2 + 6) return null;
+  return { start: hay[i].s, end: hay[j + k - 1].e };
+}
+function timeAt(session, offset) {
+  let t = null;
+  for (const mark of session.marks) {
+    if (mark.offset <= offset) t = mark.t; else break;
+  }
+  return t;
+}
+
+/* ------------------------------------------------------------------ drawing the live view */
+
+function annotatedHTML(session, clickable) {
+  const text = session.text;
+  const ranges = session.claims
+    .filter((c) => c.start != null && c.end != null && c.end > c.start)
+    .map((c) => ({ s: c.start, e: c.end, c: c }))
+    .sort((a, b) => a.s - b.s);
+  let html = "", at = 0;
+  for (const r of ranges) {
+    const s = Math.max(r.s, at);
+    if (s >= r.e) continue;                 // fully overlapped by an earlier claim
+    html += esc(text.slice(at, s));
+    const v = finalVerdict(r.c);
+    html += '<mark class="v-' + v + '"' + (clickable ? ' data-claim="' + esc(r.c.id) + '"' : "") +
+      ' title="' + esc(LABEL[v] + ": " + r.c.claim) + '">' + esc(text.slice(s, r.e)) + "</mark>";
+    at = r.e;
+  }
+  html += esc(text.slice(at));
+  return html;
+}
+
+function renderTranscript() {
+  const box = $("transcript");
+  if (!S || (!S.text && !interimText)) {
+    box.innerHTML = '<span class="empty">What the microphone hears appears here.</span>';
+    return;
+  }
+  const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  box.innerHTML = annotatedHTML(S, true) +
+    (interimText ? ' <span class="interim">' + esc(interimText) + "</span>" : "");
+  if (nearBottom) box.scrollTop = box.scrollHeight;
+}
+
+function renderBubble() {
+  const bubble = $("bubble");
+  let shown = null;
+  if (S) {
+    for (let i = S.claims.length - 1; i >= 0; i--) {
+      if (S.claims[i].status === "done") { shown = S.claims[i]; break; }
+    }
+  }
+  if (!shown) {
+    bubble.className = "bubble v-idle";
+    if (phase === "live") {
+      $("bubbleVerdict").textContent = "Listening";
+      $("bubbleClaim").textContent = "No checkable claim yet.";
+      $("bubbleReason").textContent = "Greetings, opinions and promises are skipped. Verdicts appear when a factual claim is made.";
+    } else if (phase === "finishing") {
+      $("bubbleVerdict").textContent = "Finishing";
+      $("bubbleClaim").textContent = "Finishing the last checks.";
+      $("bubbleReason").textContent = "";
+    } else {
+      $("bubbleVerdict").textContent = "Ready";
+      $("bubbleClaim").textContent = "Turn the TV up, then press Start listening.";
+      $("bubbleReason").textContent = "Each checkable claim gets a verdict here a few seconds after it is said.";
+    }
+    $("bubbleSources").textContent = "";
+  } else {
+    const v = shown.live.verdict;
+    bubble.className = "bubble v-" + v;
+    $("bubbleVerdict").innerHTML = esc(LABEL[v]) +
+      (shown.live.confidence === "low" && v !== "unverified" ? "<small>Low confidence</small>" : "");
+    $("bubbleClaim").textContent = shown.claim;
+    $("bubbleReason").textContent = shown.live.reason;
+    const src = (shown.live.sources || []).filter((s) => safeUrl(s.url)).slice(0, 3);
+    $("bubbleSources").innerHTML = src.length
+      ? "Source: " + src.map((s) => '<a href="' + esc(safeUrl(s.url)) + '" target="_blank" rel="noopener noreferrer">' +
+          esc(hostOf(s.url)) + "</a>").join(", ")
+      : (shown.live.searched ? "" : "Judged from settled knowledge, no web search.");
+  }
+  const waiting = S ? S.claims.filter((c) => c.status === "checking") : [];
+  $("pending").textContent = waiting.length
+    ? "Checking " + waiting.length + (waiting.length === 1 ? " claim: " : " claims. Latest: ") +
+      "“" + waiting[waiting.length - 1].claim + "”"
+    : "";
+}
+
+function meterHTML(t) {
+  const done = t.total - t.checking;
+  if (!done) return "";
+  return ["true", "misleading", "false", "unverified"].map((k) =>
+    t[k] ? '<span class="m-' + k + '" style="width:' + (100 * t[k] / done) + '%"></span>' : "").join("");
+}
+function tallySentence(t) {
+  const done = t.total - t.checking;
+  if (!t.total) return "No claims checked yet.";
+  let s = "<b>" + done + "</b> " + (done === 1 ? "claim" : "claims") + " checked: " +
+    t.true + " true, " + t.misleading + " misleading, " + t.false + " false, " + t.unverified + " can’t verify.";
+  if (t.pctTrue != null) s += " <b>" + t.pctTrue + "%</b> of the rated claims are true.";
+  if (t.checking) s += " " + t.checking + " still being checked.";
+  return s;
+}
+function renderMeter() {
+  const t = tally(S ? S.claims : []);
+  $("meterBar").innerHTML = meterHTML(t);
+  $("meterText").innerHTML = tallySentence(t);
+}
+
+function claimItemHTML(c) {
+  const v = finalVerdict(c);
+  const when = clock(c.t);
+  let more = "";
+  if (c.status === "done" && c.live) {
+    more = '<details class="claim-more"><summary>Why, and sources</summary>' +
+      (c.quote ? "<p>Said: “" + esc(c.quote) + "”</p>" : "") +
+      (c.kind === "attribution" ? "<p>This checks whether it was really said or done, not whether it is true.</p>" : "") +
+      (c.live.literal ? "<p><b>As stated:</b> " + esc(c.live.literal) + "</p>" : "") +
+      (c.live.implied_claim ? "<p><b>What it implies:</b> " + esc(c.live.implied_claim) + "</p>" : "") +
+      "<p>Confidence: " + esc(c.live.confidence || "low") + "</p>" +
+      sourcesHTML(c.live.sources) + "</details>";
+  } else if (c.status === "error") {
+    more = '<p class="claim-more"><button type="button" class="quiet" data-retry="' + esc(c.id) + '">Try this one again</button></p>';
+  }
+  return '<li id="li-' + esc(c.id) + '" class="v-' + v + '">' +
+    (when ? '<span class="when">' + when + "</span>" : "") +
+    '<span class="chip">' + esc(LABEL[v]) + "</span>" +
+    '<span class="claim-text">' + esc(c.claim) + "</span>" +
+    (finalReason(c) ? '<p class="claim-reason">' + esc(finalReason(c)) + "</p>" : "") +
+    more + "</li>";
+}
+function renderClaims() {
+  const list = $("claimList");
+  if (!S || !S.claims.length) {
+    list.innerHTML = '<li class="empty">Claims appear here as they are found, newest first.</li>';
+    return;
+  }
+  const open = new Set();
+  list.querySelectorAll("details[open]").forEach((d) => open.add(d.parentElement.id));
+  list.innerHTML = S.claims.slice().reverse().map(claimItemHTML).join("");
+  open.forEach((id) => {
+    const li = document.getElementById(id);
+    const d = li && li.querySelector("details");
+    if (d) d.open = true;
+  });
+}
+function renderUsage() {
+  const el = $("usage");
+  const session = (phase === "report" && viewing) ? viewing : S;
+  if (!session || !session.usage.calls) { el.textContent = ""; return; }
+  const u = session.usage;
+  el.textContent = "AI use for this speech: " + u.calls + " requests, " + u.searches +
+    " web searches, roughly $" + u.cost.toFixed(2) + ". This is an estimate; the AI provider’s bill is the real figure.";
+}
+function renderLive() {
+  renderTranscript(); renderBubble(); renderMeter(); renderClaims(); renderUsage();
+}
+
+/* ------------------------------------------------------------------ finding and checking claims */
+
+function nextChunkEnd(session, isFinal) {
+  // Decide how much of the waiting text to send. Never more than CHUNK_MAX_WORDS.
+  const start = session.sentUpTo;
+  const waiting = session.text.slice(start);
+  const re = /\S+/g;
+  let m, n = 0, cut = waiting.length, lastSentenceEnd = -1;
+  while ((m = re.exec(waiting)) !== null) {
+    n += 1;
+    const end = m.index + m[0].length;
+    if (/[.!?]["”')\]]?$/.test(m[0])) lastSentenceEnd = end;
+    if (n >= CHUNK_MAX_WORDS) {
+      cut = (lastSentenceEnd > waiting.length * 0.3) ? lastSentenceEnd : end;
+      break;
+    }
+  }
+  return { end: start + cut, whole: cut >= waiting.length && isFinal };
+}
+
+function carryStart(chunk, tail) {
+  // If the server says the passage ended mid-sentence, find where that fragment begins.
+  const tailWords = String(tail || "").trim().split(/\s+/).filter(Boolean);
+  if (!tailWords.length || tailWords.length > 30) return -1;
+  const words = [];
+  const re = /\S+/g;
+  let m;
+  while ((m = re.exec(chunk)) !== null) words.push({ w: m[0].toLowerCase(), i: m.index });
+  if (words.length - tailWords.length < 5) return -1;       // must leave real progress
+  const from = words.length - tailWords.length;
+  for (let k = 0; k < tailWords.length; k++) {
+    if (words[from + k].w !== tailWords[k].toLowerCase()) return -1;
+  }
+  return words[from].i;
+}
+
+async function sendChunk(isFinal) {
+  const session = S;
+  if (!session || detectBusy) return false;
+  const chunkStart = session.sentUpTo;
+  const plan = nextChunkEnd(session, isFinal);
+  const chunkEnd = plan.end;
+  const chunk = session.text.slice(chunkStart, chunkEnd);
+  if (!chunk.trim()) { session.sentUpTo = chunkEnd; return false; }
+
+  // A fragment carried over and then followed by silence is judged as it stands.
+  const settle = plan.whole ||
+    (lastCarry && lastCarry.start === chunkStart && lastCarry.textLen === session.text.length);
+
+  detectBusy = true;
+  try {
+    const data = await api("claims", {
+      new_text: chunk,
+      context: session.text.slice(Math.max(0, chunkStart - 1200), chunkStart),
+      known_claims: session.claims.slice(-15).map((c) => c.claim),
+      speaker: session.speaker,
+      event: session.event,
+      final: !!settle
+    });
+    if (session !== S) return false;
+    addUsage(session, data.usage);
+    detectFailures = 0;
+    hideBanner();
+
+    let next = chunkEnd;
+    lastCarry = null;
+    if (!settle && data.incomplete_tail) {
+      const at = carryStart(chunk, data.incomplete_tail);
+      if (at > 0) {
+        next = chunkStart + at;
+        lastCarry = { start: next, textLen: session.text.length };
+      }
+    }
+    session.sentUpTo = next;
+
+    for (const item of data.claims || []) {
+      const norm = item.claim.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+      if (session.claims.some((c) => c.norm === norm)) continue;
+      const where = locateQuote(session.text, item.quote, Math.max(0, chunkStart - 200), chunkEnd);
+      if (where && where.start >= next && next < chunkEnd) continue;   // belongs to the carried fragment
+      const claim = {
+        id: "c" + (session.claims.length + 1),
+        claim: item.claim, quote: item.quote, kind: item.kind, norm: norm,
+        start: where ? where.start : null, end: where ? where.end : null,
+        t: session.mode === "live" ? timeAt(session, where ? where.start : chunkStart) : null,
+        status: "checking", live: null, deep: null, deepStatus: "none", error: ""
+      };
+      session.claims.push(claim);
+      liveQueue.push(claim);
+    }
+    pumpLiveQueue();
+    renderLive();
+    return true;
+  } catch (e) {
+    if (session !== S) return false;
+    detectFailures += 1;
+    detectPausedUntil = Date.now() + Math.min(60000, 8000 * detectFailures);
+    showBanner("Claim finding hit a problem: " + e.message +
+      (phase === "live" ? " Listening continues; it will try again shortly." : ""), true);
+    if (isFinal || detectFailures >= 4) session.sentUpTo = chunkEnd;   // do not get stuck on one passage
+    return false;
+  } finally {
+    detectBusy = false;
+  }
+}
+
+const liveQueue = [];
+let liveRunning = 0;
+const liveIdleWaiters = [];
+
+function claimContext(session, c) {
+  if (c.start == null) return session.text.slice(-900);
+  return session.text.slice(Math.max(0, c.start - 600), Math.min(session.text.length, c.end + 300));
+}
+
+function pumpLiveQueue() {
+  while (liveRunning < LIVE_CHECKS_AT_ONCE && liveQueue.length) {
+    const c = liveQueue.shift();
+    const session = S;
+    liveRunning += 1;
+    api("check", {
+      claim: c.claim, quote: c.quote, kind: c.kind, context: claimContext(session, c),
+      speaker: session.speaker, event: session.event
+    }).then((data) => {
+      addUsage(session, data.usage);
+      c.live = data; c.status = "done"; c.error = "";
+    }).catch((e) => {
+      c.status = "error"; c.error = "Couldn’t check this one: " + e.message;
+    }).finally(() => {
+      liveRunning -= 1;
+      if (session === S && phase !== "report") renderLive();
+      pumpLiveQueue();
+      if (!liveRunning && !liveQueue.length) liveIdleWaiters.splice(0).forEach((fn) => fn());
+    });
+  }
+}
+function liveQueueIdle() {
+  if (!liveRunning && !liveQueue.length) return Promise.resolve();
+  return new Promise((resolve) => liveIdleWaiters.push(resolve));
+}
+
+function tick() {
+  if (phase !== "live" || !S || S.mode !== "live" || detectBusy) return;
+  if (Date.now() < detectPausedUntil) return;
+  const waitingWords = wordCount(S.text.slice(S.sentUpTo));
+  const quietFor = Date.now() - lastFinalAt;
+  if (waitingWords >= CHUNK_WORDS || (waitingWords >= 6 && quietFor > QUIET_MS)) {
+    if (lastCarry && lastCarry.start === S.sentUpTo && lastCarry.textLen === S.text.length && quietFor <= QUIET_MS) return;
+    sendChunk(false);
+  }
+}
+
+/* ------------------------------------------------------------------ listening (the microphone) */
+
+const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec = null;
+let recErrors = 0;
+let wakeLock = null;
+
+function addFinal(text) {
+  const clean = String(text || "").replace(/\s+/g, " ").trim();
+  if (!clean || !S) return;
+  const offset = S.text.length ? S.text.length + 1 : 0;
+  S.marks.push({ offset: offset, t: (Date.now() - S.startedMs) / 1000 });
+  S.text += (S.text ? " " : "") + clean;
+  lastFinalAt = Date.now();
+}
+
+function startRecognizer() {
+  if (phase !== "live") return;
+  rec = new SpeechRec();
+  rec.continuous = true;
+  rec.interimResults = true;
+  rec.lang = "en-US";
+  rec.onresult = (ev) => {
+    recErrors = 0;
+    let interim = "";
+    for (let i = ev.resultIndex; i < ev.results.length; i++) {
+      const r = ev.results[i];
+      if (r.isFinal) addFinal(r[0].transcript); else interim += r[0].transcript;
+    }
+    interimText = interim.trim();
+    renderTranscript();
+  };
+  rec.onerror = (ev) => {
+    const code = ev.error;
+    if (code === "not-allowed" || code === "service-not-allowed") {
+      stopListeningHard("The browser was not allowed to use the microphone. Click the padlock or microphone icon in the address bar, allow the microphone for this page, then press Start listening again.");
+    } else if (code === "audio-capture") {
+      stopListeningHard("No microphone was found. Plug one in or check the computer’s sound settings, then press Start listening again.");
+    } else if (code === "network") {
+      recErrors += 1;
+      if (recErrors >= 6) stopListeningHard("The browser’s speech recognition lost its connection several times. Check the internet connection, then press Start listening again.");
+    }
+    // "no-speech" and "aborted" are normal; listening restarts by itself below.
+  };
+  rec.onend = () => {
+    if (interimText) { addFinal(interimText); interimText = ""; renderTranscript(); }
+    if (phase === "live") setTimeout(() => { try { startRecognizer(); } catch (e) { /* retried on next end */ } }, 250);
+  };
+  try { rec.start(); } catch (e) { setTimeout(startRecognizer, 500); }
+}
+
+function stopRecognizer() {
+  if (rec) {
+    rec.onend = null; rec.onresult = null; rec.onerror = null;
+    try { rec.stop(); } catch (e) { /* already stopped */ }
+    rec = null;
+  }
+  if (interimText) { addFinal(interimText); interimText = ""; }
+  if (wakeLock) { try { wakeLock.release(); } catch (e) { /* nothing to release */ } wakeLock = null; }
+}
+
+function stopListeningHard(message) {
+  // Listening could not continue. Keep what was heard, and tell the person what to do.
+  stopRecognizer();
+  clearInterval(tickTimer);
+  const hadText = S && S.text.trim();
+  phase = hadText ? "live" : "idle";
+  showBanner(message, true);
+  if (hadText) { finishSpeech(); } else { setControls(); renderLive(); }
+}
+
+function setControls() {
+  const live = phase === "live";
+  $("btnStart").hidden = live || phase === "finishing";
+  $("btnStop").hidden = !live;
+  $("btnStart").disabled = phase === "finishing";
+  $("inSpeaker").disabled = live || phase === "finishing";
+  $("inEvent").disabled = live || phase === "finishing";
+  $("btnPaste").disabled = live || phase === "finishing";
+  $("status").innerHTML = live
+    ? '<span class="dot"></span>Listening through the microphone. Keep this tab open and in front.'
+    : (phase === "finishing" ? "Finishing the last checks…" : "");
+}
+
+async function startListening() {
+  if (!SpeechRec) {
+    showBanner("This browser can’t listen. Open this page in Chrome or Edge on your computer. “Check pasted text” still works here.", true);
+    return;
+  }
+  hideBanner();
+  S = newSession("live");
+  viewing = null;
+  interimText = ""; lastFinalAt = Date.now(); detectFailures = 0; detectPausedUntil = 0; lastCarry = null;
+  liveQueue.length = 0;
+  phase = "live";
+  setControls();
+  renderLive();
+  startRecognizer();
+  clearInterval(tickTimer);
+  tickTimer = setInterval(tick, 1000);
+  // Ask the computer not to dim or sleep the screen while listening. Not every browser allows it.
+  try { if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request("screen"); } catch (e) { wakeLock = null; }
+}
+
+/* ------------------------------------------------------------------ after Stop: finish, report, recheck */
+
+async function finishSpeech() {
+  if (!S || phase === "finishing" || phase === "report") return;
+  const session = S;
+  stopRecognizer();
+  clearInterval(tickTimer);
+  phase = "finishing";
+  setControls();
+  renderLive();
+
+  // Search whatever text is still waiting, then let the live checks finish.
+  let guard = 0;
+  while (session === S && session.sentUpTo < session.text.length && guard < 400) {
+    guard += 1;
+    while (detectBusy) await new Promise((r) => setTimeout(r, 150));
+    const before = session.sentUpTo;
+    await sendChunk(true);
+    if (detectFailures >= 2) break;                                           // the server keeps failing; stop asking
+    if (session.sentUpTo === before) session.sentUpTo = session.text.length;  // could not make progress
+  }
+  await liveQueueIdle();
+  if (session !== S) return;
+
+  if (!session.text.trim()) {
+    phase = "idle"; setControls(); renderLive();
+    showBanner("Nothing was heard, so there is no report. Check the microphone and the TV volume, then try again.", true);
+    return;
+  }
+  phase = "report";
+  viewing = session;
+  saveSession(session);
+  showReport(session);
+  runRecheck(session);
+}
+
+async function runRecheck(session) {
+  const todo = session.claims.filter((c) => c.deepStatus !== "done");
+  recheckStopped = false;
+  if (!todo.length) { session.deepDone = true; saveSession(session); updateProgress(session); return; }
+  $("btnStopRecheck").hidden = false;
+  let next = 0;
+  async function worker() {
+    while (next < todo.length && !recheckStopped && viewing === session) {
+      const c = todo[next++];
+      c.deepStatus = "running";
+      updateProgress(session);
+      try {
+        const data = await api("deep", {
+          claim: c.claim, quote: c.quote, kind: c.kind, context: claimContext(session, c),
+          speaker: session.speaker, event: session.event,
+          live_verdict: c.live ? c.live.verdict : "unverified",
+          live_reason: c.live ? c.live.reason : ""
+        });
+        addUsage(session, data.usage);
+        if (data.no_answer) { c.deepStatus = "failed"; c.deepError = "The recheck did not return a usable answer."; }
+        else { c.deep = data; c.deepStatus = "done"; }
+      } catch (e) {
+        c.deepStatus = "failed"; c.deepError = e.message;
+      }
+      saveSession(session);
+      if (viewing === session) { renderReport(session); updateProgress(session); renderUsage(); }
+    }
+  }
+  const workers = [];
+  for (let i = 0; i < DEEP_CHECKS_AT_ONCE; i++) workers.push(worker());
+  await Promise.all(workers);
+  session.claims.forEach((c) => { if (c.deepStatus === "running") c.deepStatus = "none"; });
+  session.deepDone = session.claims.every((c) => c.deepStatus === "done");
+  saveSession(session);
+  if (viewing === session) { $("btnStopRecheck").hidden = true; renderReport(session); updateProgress(session); }
+}
+
+function updateProgress(session) {
+  const total = session.claims.length;
+  const done = session.claims.filter((c) => c.deepStatus === "done").length;
+  const failed = session.claims.filter((c) => c.deepStatus === "failed").length;
+  const running = session.claims.some((c) => c.deepStatus === "running");
+  let text = "";
+  if (!total) text = "No checkable claims were found.";
+  else if (running) text = "Rechecking each claim in depth: " + done + " of " + total + " done.";
+  else if (done === total) text = "In-depth recheck complete for all " + total + " claims.";
+  else text = "In-depth recheck done for " + done + " of " + total + " claims" + (failed ? " (" + failed + " could not be rechecked)." : ".");
+  $("reportProgress").textContent = text;
+  $("btnResume").hidden = running || !total || done === total;
+}
+
+function layerHTML(title, verdict, body) {
+  if (!body && !verdict) return "";
+  return '<div class="layer"><b>' + esc(title) + "</b>" +
+    (verdict ? '<span class="lv">' + esc(LABEL[verdict] || verdict) + ".</span> " : "") + esc(body || "") + "</div>";
+}
+
+function cardHTML(c, session) {
+  const v = finalVerdict(c);
+  const liveV = c.live ? c.live.verdict : null;
+  const changed = c.deep && liveV && c.deep.final_verdict !== liveV;
+  const when = clock(c.t);
+  let h = '<section class="card v-' + v + '">' +
+    "<h3>" + (when ? '<span class="when">' + when + "</span>" : "") +
+    '<span class="chip">' + esc(LABEL[v]) + "</span>" + esc(c.claim) + "</h3>" +
+    (c.quote ? "<blockquote>“" + esc(c.quote) + "”</blockquote>" : "") +
+    (c.kind === "attribution" ? '<p class="note">This checks whether it was really said or done, not whether it is true.</p>' : "") +
+    (finalReason(c) ? "<p>" + esc(finalReason(c)) + "</p>" : "") +
+    (changed ? '<p class="changed">Changed on recheck. The live verdict was “' + esc(LABEL[liveV]) + "”.</p>" : "");
+  if (c.deep) {
+    const d = c.deep;
+    h += layerHTML("1. As stated", d.literal_verdict, d.literal_explanation) +
+      layerHTML("2. What it implies", d.implied_verdict,
+        (d.implied_claim ? "Listeners are meant to conclude: " + d.implied_claim + " " : "") + (d.implied_explanation || "")) +
+      layerHTML("3. Speaker’s track record on this claim", null,
+        d.track_record || (d.track_record_found ? "" : "Nothing found on earlier versions of this claim.")) +
+      '<div class="layer"><b>4. Technique</b>' + (d.techniques && d.techniques.length
+        ? d.techniques.map((t) => esc(t.name) + ": " + esc(t.explanation)).join("<br>")
+        : "No recognised persuasion technique stood out in these words.") + "</div>" +
+      layerHTML("5. Context and interests", null, d.context) +
+      '<p class="note">Confidence: ' + esc(d.confidence || "low") + ".</p>" +
+      sourcesHTML(d.sources);
+  } else {
+    if (c.live) {
+      h += layerHTML("As stated", null, c.live.literal) + layerHTML("What it implies", null, c.live.implied_claim) +
+        sourcesHTML(c.live.sources);
+    }
+    h += '<p class="note">' + (c.deepStatus === "running" ? "In-depth recheck under way." :
+      c.deepStatus === "failed" ? "The in-depth recheck did not complete for this claim (" + esc(c.deepError || "no detail") + "). The live verdict is shown." :
+      "In-depth recheck not run for this claim. The live verdict is shown.") + "</p>";
+  }
+  return h + "</section>";
+}
+
+function reportHTML(session) {
+  const t = tally(session.claims);
+  const date = new Date(session.started);
+  const title = (session.speaker || "Speech") + (session.event ? ", " + session.event : "");
+  const placed = session.claims.filter((c) => c.start != null).length;
+  let h = "<h1>" + esc(title) + "</h1>" +
+    '<p class="sub">Fact-check report. ' + (session.mode === "paste" ? "Checked from pasted text on " : "Heard on ") +
+    esc(date.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" })) +
+    (session.mode === "live" ? " at " + esc(date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })) : "") + ".</p>" +
+    "<h2>Summary</h2>" +
+    '<div class="meter-bar">' + meterHTML(t) + "</div>" +
+    '<p class="tally">' + tallySentence(t) + "</p>" +
+    '<p class="note">True means accurate as said and in what it implies. Misleading means technically accurate but ' +
+    "the takeaway is wrong or key context is missing. False means inaccurate as said. Can’t verify means reliable " +
+    "evidence was not found. Verdicts are produced by an AI model using web search and can be wrong; each one lists its sources so you can check it.</p>" +
+    "<h2>Annotated transcript</h2>" +
+    '<div class="annotated">' + annotatedHTML(session, false) + "</div>" +
+    (session.mode === "live" ? '<p class="note">The transcript comes from automatic speech recognition, so some words may be mis-heard.</p>' : "") +
+    (placed < session.claims.length ? '<p class="note">' + (session.claims.length - placed) +
+      " of the claims below could not be matched to exact words in the transcript, so they are not highlighted above.</p>" : "") +
+    "<h2>Claim by claim</h2>";
+  h += session.claims.length
+    ? session.claims.map((c) => cardHTML(c, session)).join("")
+    : '<p class="note">No checkable factual claims were found in what was heard.</p>';
+  return h;
+}
+
+function renderReport(session) { $("report").innerHTML = reportHTML(session); }
+
+function showReport(session) {
+  viewing = session;
+  phase = "report";
+  $("viewLive").hidden = true;
+  $("viewReport").hidden = false;
+  $("btnStopRecheck").hidden = true;
+  renderReport(session);
+  updateProgress(session);
+  renderUsage();
+  window.scrollTo(0, 0);
+}
+
+function backToStart() {
+  recheckStopped = true;
+  viewing = null;
+  S = null;
+  phase = "idle";
+  liveQueue.length = 0;
+  $("viewReport").hidden = true;
+  $("viewLive").hidden = false;
+  hideBanner();
+  setControls();
+  renderLive();
+}
+
+function downloadWord() {
+  if (!viewing) return;
+  const css = "body{font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#111}" +
+    "h1{font-size:18pt}h2{font-size:13pt;margin-top:18pt}h3{font-size:11.5pt}" +
+    ".sub,.note,.when{color:#555}.annotated{white-space:pre-wrap}" +
+    "mark.v-true{background:#d9efe1}mark.v-misleading{background:#fbe9c6}mark.v-false{background:#f8d9d5}" +
+    "mark.v-unverified,mark.v-checking,mark.v-error{background:#e1e6eb}" +
+    ".chip{font-weight:bold;color:#fff;padding:1pt 4pt}" +
+    ".v-true .chip{background:#1b7a44}.v-misleading .chip{background:#b06f00}.v-false .chip{background:#c0352b}" +
+    ".v-unverified .chip,.v-checking .chip,.v-error .chip{background:#5f6b77}" +
+    ".card{border-top:1px solid #bbb;padding:8pt 0}.layer b{display:block}.changed{color:#b06f00;font-weight:bold}" +
+    ".meter-bar{display:none}blockquote{margin-left:10pt;border-left:2pt solid #bbb;padding-left:8pt}";
+  const doc = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" ' +
+    'xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><title>Fact-check report</title><style>' +
+    css + "</style></head><body>" + reportHTML(viewing) + "</body></html>";
+  const blob = new Blob(["﻿", doc], { type: "application/msword" });
+  const name = ("fact-check " + (viewing.speaker || "speech") + " " + viewing.started.slice(0, 10))
+    .replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "-") + ".doc";
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+
+/* ------------------------------------------------------------------ saved speeches (this browser only) */
+
+function loadHistory() {
+  try {
+    const list = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+    return Array.isArray(list) ? list : [];
+  } catch (e) { return []; }
+}
+function saveSession(session) {
+  const copy = {
+    id: session.id, mode: session.mode, started: session.started, startedMs: session.startedMs,
+    speaker: session.speaker, event: session.event, text: session.text, marks: [], sentUpTo: session.text.length,
+    claims: session.claims.map((c) => Object.assign({}, c, { deepStatus: c.deepStatus === "running" ? "none" : c.deepStatus })),
+    usage: session.usage, deepDone: session.deepDone
+  };
+  let list = loadHistory().filter((s) => s.id !== session.id);
+  list.unshift(copy);
+  list = list.slice(0, 30);
+  while (list.length) {
+    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(list)); return true; }
+    catch (e) { list.pop(); }           // out of room: drop the oldest and try again
+  }
+  return false;
+}
+function renderHistory() {
+  const list = loadHistory();
+  $("historyList").innerHTML = list.length ? list.map((s) => {
+    const t = tally(s.claims || []);
+    const d = new Date(s.started);
+    return "<li><div><b>" + esc((s.speaker || "Speech") + (s.event ? ", " + s.event : "")) + "</b><br>" +
+      '<span class="meta">' + esc(d.toLocaleDateString()) + " · " + t.total + " claims: " + t.true + " true, " +
+      t.misleading + " misleading, " + t.false + " false</span></div>" +
+      '<div style="white-space:nowrap"><button type="button" data-open="' + esc(s.id) + '">Open</button> ' +
+      '<button type="button" class="quiet" data-del="' + esc(s.id) + '">Delete</button></div></li>';
+  }).join("") : '<li class="empty">No saved speeches yet. A report is saved here each time you press Stop.</li>';
+}
+
+/* ------------------------------------------------------------------ pasted text */
+
+async function checkPastedText(raw) {
+  const text = String(raw || "").replace(/\r/g, "").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+  if (!text) return;
+  hideBanner();
+  S = newSession("paste");
+  viewing = null;
+  S.text = text;
+  interimText = ""; detectFailures = 0; detectPausedUntil = 0; lastCarry = null;
+  liveQueue.length = 0;
+  phase = "live";               // shown in the live view while it works
+  setControls();
+  $("btnStop").hidden = true;
+  $("status").textContent = "Reading the pasted text…";
+  renderLive();
+  await finishSpeech();
+}
+
+/* ------------------------------------------------------------------ wiring up the buttons */
+
+$("setupForm").addEventListener("submit", (ev) => { ev.preventDefault(); if (phase === "idle") startListening(); });
+$("btnStop").addEventListener("click", () => finishSpeech());
+$("btnNew").addEventListener("click", backToStart);
+$("btnPrint").addEventListener("click", () => window.print());
+$("btnWord").addEventListener("click", downloadWord);
+$("btnResume").addEventListener("click", () => {
+  if (!viewing) return;
+  viewing.claims.forEach((c) => { if (c.deepStatus === "failed") c.deepStatus = "none"; });
+  $("btnResume").hidden = true;
+  runRecheck(viewing);
+});
+$("btnStopRecheck").addEventListener("click", () => {
+  recheckStopped = true;
+  $("btnStopRecheck").hidden = true;
+  $("reportProgress").textContent = "Stopping after the claims already under way…";
+});
+
+$("btnPaste").addEventListener("click", () => { $("inPaste").value = ""; $("dlgPaste").showModal(); });
+$("btnPasteCancel").addEventListener("click", () => $("dlgPaste").close());
+$("btnPasteGo").addEventListener("click", () => {
+  const text = $("inPaste").value;
+  $("dlgPaste").close();
+  if (phase === "report") backToStart();
+  if (phase === "idle") checkPastedText(text);
+});
+
+$("btnHistory").addEventListener("click", () => { renderHistory(); $("dlgHistory").showModal(); });
+$("btnHistoryClose").addEventListener("click", () => $("dlgHistory").close());
+$("historyList").addEventListener("click", (ev) => {
+  const openId = ev.target.getAttribute("data-open");
+  const delId = ev.target.getAttribute("data-del");
+  if (openId) {
+    if (phase === "live" || phase === "finishing") {
+      $("dlgHistory").close();
+      showBanner("Stop the current speech before opening a saved one.", false);
+      return;
+    }
+    const found = loadHistory().find((s) => s.id === openId);
+    if (found) { recheckStopped = true; S = null; $("dlgHistory").close(); showReport(found); }
+  } else if (delId) {
+    if (window.confirm("Delete this saved speech? This cannot be undone.")) {
+      try { localStorage.setItem(HISTORY_KEY, JSON.stringify(loadHistory().filter((s) => s.id !== delId))); } catch (e) { /* nothing saved */ }
+      renderHistory();
+    }
+  }
+});
+
+$("transcript").addEventListener("click", (ev) => {
+  const id = ev.target.getAttribute && ev.target.getAttribute("data-claim");
+  if (!id) return;
+  const li = document.getElementById("li-" + id);
+  if (!li) return;
+  const d = li.querySelector("details");
+  if (d) d.open = true;
+  li.scrollIntoView({ block: "nearest" });
+  li.classList.add("flash");
+  setTimeout(() => li.classList.remove("flash"), 1200);
+});
+$("claimList").addEventListener("click", (ev) => {
+  const id = ev.target.getAttribute && ev.target.getAttribute("data-retry");
+  if (!id || !S) return;
+  const c = S.claims.find((x) => x.id === id);
+  if (c && c.status === "error") { c.status = "checking"; c.error = ""; liveQueue.push(c); pumpLiveQueue(); renderLive(); }
+});
+
+window.addEventListener("beforeunload", (ev) => {
+  if (phase === "live" || phase === "finishing") { ev.preventDefault(); ev.returnValue = ""; }
+});
+document.addEventListener("visibilitychange", async () => {
+  if (document.visibilityState === "visible" && phase === "live" && S && S.mode === "live" && navigator.wakeLock && !wakeLock) {
+    try { wakeLock = await navigator.wakeLock.request("screen"); } catch (e) { wakeLock = null; }
+  }
+});
+
+/* ------------------------------------------------------------------ first load */
+
+(async function init() {
+  setControls();
+  renderLive();
+  if (!SpeechRec) {
+    showBanner("This browser can’t listen through the microphone. Open this page in Chrome or Edge on your computer. “Check pasted text” still works here.", false);
+  }
+  try {
+    const response = await fetch(API + "/health", { headers: { "X-App-Passcode": getPass() } });
+    const health = await response.json();
+    if (health.engine !== "ok") {
+      showBanner("The fact-checker is not fully deployed on the server (factcheck_engine.py is missing), so nothing can be checked.", true);
+    } else if (health.database !== "ok") {
+      showBanner("The fact-checker cannot reach the Swarm’s database right now, so nothing can be checked. The details are in the Render log.", true);
+    } else if (!health.ai_ready) {
+      showBanner("The server has no AI key, so nothing can be checked. In Render, open the Swarm service, choose Environment, and check ANTHROPIC_API_KEY.", true);
+    } else if (health.passcode_required && !health.passcode_ok) {
+      await askPasscode("");
+    }
+  } catch (e) {
+    showBanner("This page could not reach its server. If it was just deployed, wait a minute and reload.", true);
+  }
+})();
+</script>
+</body>
+</html>
+<!-- I did no harm and this file is not truncated. -->

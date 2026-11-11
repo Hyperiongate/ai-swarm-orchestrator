@@ -1,9 +1,25 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: June 30, 2026 — Local Gemma Test Endpoint (browser diagnostic for the local offline model)
+Last Updated: November 11, 2026 — Speech Fact-Checker (listening page + job API)
 
 CHANGELOG:
+- November 11, 2026: SPEECH FACT-CHECKER — ONE CHANGE ONLY:
+  1. BLUEPRINT: Registered factcheck_bp from routes/factcheck.py.
+     Placed immediately AFTER the FeynmanLab (physics_bp) registration block.
+     Provides GET /factcheck (the listening page) and the /api/factcheck/*
+     job API. The page listens through the computer's microphone to a speech
+     on TV, shows a verdict for each checkable claim, and builds an annotated
+     report. The routes only queue work and read results; the AI calls run in
+     a separate helper process (factcheck_runner.py, started on demand by
+     factcheck_engine.py), so no Swarm web worker ever waits on them. Tables
+     factcheck_jobs and factcheck_runner are lazy-created; no migration.
+     Uses the existing ANTHROPIC_API_KEY env var. Optional new env var
+     FACTCHECK_PASSCODE locks the page's API behind a passcode.
+  NO OTHER CHANGES. All migrations, blueprints, routes, helper code, and the
+  entire startup sequence are otherwise completely untouched. Rule 1 (do no harm)
+  preserved.
+
 - June 30, 2026: LOCAL GEMMA TEST ENDPOINT — ONE CHANGE ONLY:
   1. BLUEPRINT: Registered local_gemma_test_bp from routes/local_gemma_test.py.
      Placed immediately AFTER the orchestration_bp registration block.
@@ -1418,6 +1434,18 @@ except ImportError as e:
     print(f"FeynmanLab routes not found: {e}")
 except Exception as e:
     print(f"FeynmanLab registration failed: {e}")
+
+# ----------------------------------------------------------------------------
+# Speech Fact-Checker — listening page + job API (November 11, 2026)
+# ----------------------------------------------------------------------------
+try:
+    from routes.factcheck import factcheck_bp
+    app.register_blueprint(factcheck_bp)
+    print("Speech Fact-Checker API registered")
+except ImportError as e:
+    print(f"Speech Fact-Checker routes not found: {e}")
+except Exception as e:
+    print(f"Speech Fact-Checker registration failed: {e}")
 
 try:
     from routes.newsletter import newsletter_bp
