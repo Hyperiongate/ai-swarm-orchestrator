@@ -71,7 +71,7 @@ Tested 11 November 2026, all passing:
 - 24 server tests against PostgreSQL 16, in an environment built from this
   repo's `requirements.txt` (Flask 3.0.0, anthropic 2.8.0), and again with
   anthropic 0.40.0, the oldest version `requirements.txt` allows.
-- 39 page checks in a real Chrome browser, served by gunicorn with this repo's
+- 44 page checks in a real Chrome browser, served by gunicorn with this repo's
   own `gunicorn.conf.py`, including a deliberate burst of 450 requests that
   restarted the web workers four times while a check was in flight.
 - The whole Swarm `app.py` started before and after the change: the same 426

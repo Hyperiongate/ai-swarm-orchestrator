@@ -5,6 +5,13 @@
   File: templates/factcheck.html   (served at /factcheck by routes/factcheck.py)
 
   CHANGE NOTES
+  2026-11-11  Progress display (asked for by Jim after checking a full interview transcript).
+              - Pasted text, and the wrap-up after Stop, now show a progress bar
+                with the step in hand: 1 reading the text and finding claims
+                (percent read), 2 quick checks still running, 3 the in-depth
+                recheck (bar and count on the report). Each gives a rough
+                "minutes left" once enough has been done to judge the pace.
+              - Additive only: no check, verdict or report content changed.
   2026-11-11  Moved inside the AI Swarm Orchestrator.
               - Talks to /api/factcheck/... instead of /api/...
               - The server now queues each piece of AI work and answers at once;
@@ -161,6 +168,11 @@
 
   .pending { min-height: 1.5rem; margin: 0.45rem 0 0.2rem; font-size: 0.9rem; color: var(--muted); }
 
+  .progress { margin: 0 0 0.9rem; }
+  .progress-bar { height: 0.6rem; border-radius: 4px; overflow: hidden; background: var(--unverified-wash); border: 1px solid var(--line); }
+  .progress-bar span { display: block; height: 100%; width: 0; background: var(--control); }
+  .progress-text { margin: 0.35rem 0 0; font-size: 0.98rem; font-weight: 600; }
+
   .meter { margin: 0.5rem 0 1.1rem; }
   .meter-bar { display: flex; height: 0.85rem; border-radius: 5px; overflow: hidden; background: var(--unverified-wash); }
   .meter-bar span { display: block; height: 100%; }
@@ -250,7 +262,7 @@
   }
   @media print {
     body { background: #fff; color: #000; }
-    .top, .banner, #viewLive, .report-tools, .usage, dialog { display: none !important; }
+    .top, .banner, #viewLive, .report-tools, .progress, .usage, dialog { display: none !important; }
     #viewReport { display: block !important; }
     .report { border: 0; padding: 0; }
     main { padding: 0; max-width: none; }
@@ -289,6 +301,10 @@
       </div>
     </form>
     <p class="status" id="status" aria-live="polite"></p>
+    <div class="progress" id="progress" hidden>
+      <div class="progress-bar"><span id="progressFill"></span></div>
+      <p class="progress-text" id="progressText"></p>
+    </div>
 
     <div id="bubble" class="bubble v-idle" aria-live="polite">
       <div class="bubble-verdict" id="bubbleVerdict">Ready</div>
@@ -325,6 +341,9 @@
       <button type="button" id="btnStopRecheck" hidden>Stop the recheck</button>
       <button type="button" id="btnResume" hidden>Recheck the remaining claims</button>
       <span class="report-progress" id="reportProgress" aria-live="polite"></span>
+    </div>
+    <div class="progress" id="recheckProgress" hidden>
+      <div class="progress-bar"><span id="recheckFill"></span></div>
     </div>
     <article class="report" id="report"></article>
   </section>
@@ -584,6 +603,7 @@ let detectPausedUntil = 0;
 let lastCarry = null;         // remembers a carried-over fragment so it is not resent unchanged
 let tickTimer = null;
 let recheckStopped = false;
+let recheckStart = { ms: 0, base: 0 };   // when the in-depth recheck began, and how many were already done
 
 function addUsage(session, usage) {
   if (!usage || !session) return;
@@ -809,8 +829,48 @@ function renderUsage() {
   el.textContent = "AI use for this speech: " + u.calls + " requests, " + u.searches +
     " web searches, roughly $" + u.cost.toFixed(2) + ". This is an estimate; the AI provider’s bill is the real figure.";
 }
+/* "Roughly N minutes left", worked out from how fast the work has gone so far. */
+function minutesLeft(startMs, fraction) {
+  if (!startMs || fraction < 0.05 || fraction >= 1) return "";
+  const left = Math.ceil(((Date.now() - startMs) * (1 - fraction)) / fraction / 60000);
+  if (left <= 1) return " About a minute left at this pace.";
+  return " Roughly " + left + " minutes left at this pace.";
+}
+
+/*
+  Where the whole job stands, for pasted text and for the wrap-up after Stop.
+  Step 1: read the text and find the claims. Step 2: give each claim its quick
+  verdict. Step 3 (shown on the report): the in-depth recheck.
+  While listening live there is nothing to show: nobody knows how long the speech will run.
+*/
+function renderProgress() {
+  const box = $("progress");
+  const show = !!S && (phase === "live" || phase === "finishing") && (S.mode === "paste" || phase === "finishing");
+  box.hidden = !show;
+  if (!show) return;
+  const total = S.text.length;
+  const read = total ? Math.min(1, S.sentUpTo / total) : 1;
+  const found = S.claims.length;
+  const waiting = S.claims.filter((c) => c.status === "checking").length;
+  let fill = read, text = "";
+  if (read < 1) {
+    text = "Step 1 of 3: reading the text and finding claims. " + Math.round(read * 100) + "% read, " +
+      found + (found === 1 ? " claim" : " claims") + " found so far." +
+      (S.mode === "paste" ? minutesLeft(S.startedMs, read) : "") +
+      " The report opens when the reading and the quick checks finish.";
+  } else if (waiting) {
+    fill = found ? (found - waiting) / found : 1;
+    text = "Step 2 of 3: all the text has been read. Quick checks still running on " + waiting + " of " +
+      found + " claims. The report opens when they finish.";
+  } else {
+    text = "Steps 1 and 2 finished. Opening the report.";
+  }
+  $("progressFill").style.width = (100 * fill).toFixed(1) + "%";
+  $("progressText").textContent = text;
+}
+
 function renderLive() {
-  renderTranscript(); renderBubble(); renderMeter(); renderClaims(); renderUsage();
+  renderTranscript(); renderBubble(); renderMeter(); renderClaims(); renderUsage(); renderProgress();
 }
 
 /* ------------------------------------------------------------------ finding and checking claims */
@@ -1046,7 +1106,9 @@ function setControls() {
   $("btnPaste").disabled = live || phase === "finishing";
   $("status").innerHTML = live
     ? '<span class="dot"></span>Listening through the microphone. Keep this tab open and in front.'
-    : (phase === "finishing" ? "Finishing the last checks…" : "");
+    : (phase === "finishing"
+        ? (S && S.mode === "paste" ? "Working through the pasted text. Keep this tab open." : "Finishing the last checks…")
+        : "");
 }
 
 async function startListening() {
@@ -1109,6 +1171,7 @@ async function runRecheck(session) {
   const todo = session.claims.filter((c) => c.deepStatus !== "done");
   recheckStopped = false;
   if (!todo.length) { session.deepDone = true; saveSession(session); updateProgress(session); return; }
+  recheckStart = { ms: Date.now(), base: session.claims.length - todo.length };
   $("btnStopRecheck").hidden = false;
   let next = 0;
   async function worker() {
@@ -1147,9 +1210,16 @@ function updateProgress(session) {
   const done = session.claims.filter((c) => c.deepStatus === "done").length;
   const failed = session.claims.filter((c) => c.deepStatus === "failed").length;
   const running = session.claims.some((c) => c.deepStatus === "running");
+  const settled = done + failed;
   let text = "";
+  $("recheckProgress").hidden = !running;
+  $("recheckFill").style.width = (total ? (100 * settled) / total : 0).toFixed(1) + "%";
   if (!total) text = "No checkable claims were found.";
-  else if (running) text = "Rechecking each claim in depth: " + done + " of " + total + " done.";
+  else if (running) {
+    const span = total - recheckStart.base;
+    text = "Step 3 of 3: rechecking each claim in depth. " + settled + " of " + total + " done." +
+      minutesLeft(recheckStart.ms, span > 0 ? (settled - recheckStart.base) / span : 0);
+  }
   else if (done === total) text = "In-depth recheck complete for all " + total + " claims.";
   else text = "In-depth recheck done for " + done + " of " + total + " claims" + (failed ? " (" + failed + " could not be rechecked)." : ".");
   $("reportProgress").textContent = text;

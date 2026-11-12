@@ -21,6 +21,7 @@ AUTHOR: Jim @ Shiftwork Solutions LLC (managed by Claude)
 
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -168,6 +169,7 @@ def live_flow(browser, port, failures, errors):
     page.wait_for_function("!!window.__rec")
     check(page.inner_text("#bubbleVerdict") == "Listening", "bubble says Listening after Start", failures)
     check(page.is_visible("#btnStop") and not page.is_visible("#btnStart"), "Stop button replaces Start", failures)
+    check(page.is_hidden("#progress"), "no progress bar while listening live (the length is unknown)", failures)
 
     page.evaluate("window.hear('thank you all', true)")
     check("thank you all" in page.inner_text("#transcript"), "words in progress show in the transcript", failures)
@@ -242,8 +244,28 @@ def paste_flow(browser, port, failures, errors):
     check("can’t listen" in page.inner_text("#banner"), "a browser without speech recognition is told so", failures)
     page.click("#btnPaste")
     page.fill("#inPaste", " ".join(SPEECH * 6))          # about 390 words: several passages
+    # Record every progress message the page shows, so the three steps can be checked afterwards.
+    page.evaluate("""() => {
+      window.__seen = [];
+      setInterval(() => {
+        const live = document.getElementById('progress').hidden ? '' : document.getElementById('progressText').textContent;
+        const report = document.getElementById('reportProgress').textContent;
+        for (const text of [live, report]) if (text && !window.__seen.includes(text)) window.__seen.push(text);
+      }, 50);
+    }""")
     page.click("#btnPasteGo")
     page.wait_for_selector("#viewReport:not([hidden])", timeout=90000)
+    page.wait_for_function("document.getElementById('reportProgress').textContent.includes('complete')",
+                           timeout=90000)
+    seen = page.evaluate("window.__seen")
+    percents = [int(m.group(1)) for text in seen for m in [re.search(r"Step 1 of 3.* (\d+)% read", text)] if m]
+    check(len(percents) >= 2 and percents == sorted(percents) and percents[-1] < 100,
+          f"step 1 shows the share of the text read, rising ({percents})", failures)
+    check(any(text.startswith("Step 2 of 3") for text in seen) or any("Steps 1 and 2 finished" in t for t in seen),
+          "step 2 (quick checks) is announced", failures)
+    check(any(re.search(r"Step 3 of 3: rechecking each claim in depth\. \d+ of 5 done", t) for t in seen),
+          "step 3 shows the in-depth recheck count", failures)
+    check(page.is_hidden("#recheckProgress"), "the recheck bar goes away when the recheck is complete", failures)
     report = page.inner_text("#report")
     check("Checked from pasted text" in report, "report says it came from pasted text", failures)
     count = page.eval_on_selector_all("#report .card", "els => els.length")
