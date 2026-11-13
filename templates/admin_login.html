@@ -1,0 +1,130 @@
+<!doctype html>
+<!--
+  AI Swarm Orchestrator - admin login page
+  File: templates/admin_login.html   (served at /login by swarm_security.py)
+
+  CHANGE NOTES
+  2026-11-11  First version. One passcode box. On success the server sets a
+              30-day cookie and this page sends the browser on to where it was
+              going. Sent to the browser as a plain file, not through the
+              template engine.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Log in | AI Swarm Orchestrator</title>
+<style>
+  :root { --ink: #16202b; --muted: #55616d; --paper: #e8ecf0; --panel: #ffffff; --line: #c5ced7; --control: #1d4f8f; --bad: #c0352b; }
+  @media (prefers-color-scheme: dark) {
+    :root { --ink: #e9eef3; --muted: #a3afbb; --paper: #10161d; --panel: #1a232d; --line: #34414e; --control: #6ea8ea; --bad: #f0776b; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 1rem;
+         background: var(--paper); color: var(--ink); font: 17px/1.45 "Segoe UI", system-ui, sans-serif; }
+  main { width: min(26rem, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 1.6rem; }
+  h1 { margin: 0 0 0.3rem; font-size: 1.25rem; }
+  p { margin: 0.4rem 0; color: var(--muted); }
+  label { display: block; margin: 1rem 0 0.25rem; font-weight: 600; }
+  input { width: 100%; padding: 0.6rem 0.7rem; font: inherit; color: inherit; background: var(--paper);
+          border: 1.5px solid var(--line); border-radius: 6px; }
+  button { margin-top: 1rem; width: 100%; padding: 0.65rem; font: inherit; font-weight: 600; cursor: pointer;
+           color: #fff; background: var(--control); border: 0; border-radius: 6px; }
+  button.plain { background: transparent; color: var(--ink); border: 1.5px solid var(--line); }
+  button:disabled { opacity: 0.5; cursor: wait; }
+  :focus-visible { outline: 3px solid var(--control); outline-offset: 2px; }
+  #message { min-height: 1.4rem; margin-top: 0.8rem; color: var(--bad); font-weight: 600; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>AI Swarm Orchestrator</h1>
+
+  <form id="loginForm" hidden>
+    <p>This part of the Swarm is private. Enter the admin passcode set in Render.</p>
+    <label for="passcode">Admin passcode</label>
+    <input id="passcode" type="password" autocomplete="current-password" required>
+    <button type="submit" id="btnLogin">Log in</button>
+  </form>
+
+  <div id="loggedIn" hidden>
+    <p>You are logged in on this browser.</p>
+    <button type="button" id="btnGo">Open the Swarm</button>
+    <button type="button" id="btnLogout" class="plain">Log out</button>
+  </div>
+
+  <div id="unlocked" hidden>
+    <p>No admin passcode is set on the server, so nothing is locked and there is nothing to log in to.</p>
+    <p>To lock the Swarm, add <b>SWARM_ADMIN_PASSCODE</b> in Render under Environment.</p>
+    <button type="button" id="btnGo2">Open the Swarm</button>
+  </div>
+
+  <p id="message" role="alert"></p>
+</main>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+
+/* Only ever go to a path on this site. */
+function nextPath() {
+  const wanted = new URLSearchParams(location.search).get("next") || "/";
+  return (wanted.startsWith("/") && !wanted.startsWith("//") && !wanted.includes("\\")) ? wanted : "/";
+}
+function show(id) {
+  for (const part of ["loginForm", "loggedIn", "unlocked"]) $(part).hidden = part !== id;
+}
+
+async function start() {
+  try {
+    const state = await (await fetch("/api/admin-gate/status", { cache: "no-store" })).json();
+    if (!state.locked) { show("unlocked"); return; }
+    if (state.logged_in) {
+      // Arrived here already logged in (for example from a link in an email): carry on to the page asked for.
+      if (new URLSearchParams(location.search).has("next")) { location.replace(nextPath()); return; }
+      show("loggedIn");
+      return;
+    }
+    show("loginForm");
+    $("passcode").focus();
+  } catch (e) {
+    show("loginForm");
+    $("message").textContent = "This page could not reach the server. Check the connection and reload.";
+  }
+}
+
+$("loginForm").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  $("message").textContent = "";
+  $("btnLogin").disabled = true;
+  try {
+    const response = await fetch("/api/admin-gate/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ passcode: $("passcode").value, next: nextPath() })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (response.ok && data.success) { location.replace(nextPath()); return; }
+    $("message").textContent = data.error || "Logging in did not work. Try again.";
+    $("passcode").select();
+  } catch (e) {
+    $("message").textContent = "This page could not reach the server. Check the connection and try again.";
+  }
+  $("btnLogin").disabled = false;
+});
+
+$("btnGo").addEventListener("click", () => location.assign(nextPath()));
+$("btnGo2").addEventListener("click", () => location.assign(nextPath()));
+$("btnLogout").addEventListener("click", async () => {
+  try { await fetch("/api/admin-gate/logout", { method: "POST" }); } catch (e) { /* shown below either way */ }
+  show("loginForm");
+  $("passcode").value = "";
+});
+
+start();
+</script>
+</body>
+</html>
+<!-- I did no harm and this file is not truncated. -->

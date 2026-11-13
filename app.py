@@ -1,9 +1,29 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: November 11, 2026 — Speech Fact-Checker (listening page + job API)
+Last Updated: November 11, 2026 — Admin Gate (one passcode for everything that is not public)
 
 CHANGELOG:
+- November 11, 2026: ADMIN GATE — TWO CHANGES ONLY:
+  1. ADMIN GATE: One call to swarm_security.init_security(app), placed immediately
+     AFTER the Integration Hub registration block (i.e. after every blueprint).
+     It registers the /login page and /api/admin-gate/* routes and a
+     before-request check: every route that is not listed in swarm_security.py
+     as public or as having its own login needs the admin passcode (cookie from
+     /login, or the X-Swarm-Key header). The switch is the SWARM_ADMIN_PASSCODE
+     env var: while it is NOT set, nothing is blocked and the gate only records
+     what it would have blocked (see /api/admin-gate/report). NOTE FOR FUTURE
+     WORK: a new route is private by default; a route outsiders must reach has
+     to be added to PUBLIC_ENDPOINTS in swarm_security.py.
+  2. SECRET_KEY: no longer falls back to the fixed string that was printed in
+     this public repository (with it, a Survey admin session cookie could be
+     forged). Falls back to a key derived from DATABASE_URL instead; see
+     swarm_security.session_secret_key(). If SECRET_KEY is set in Render this
+     changes nothing. If it was not, everyone is signed out once.
+  NO OTHER CHANGES. No route's own code was touched, including the
+  /api/admin/* and /api/ptt/dev/* routes in this file, which the gate now
+  protects from outside. Rule 1 (do no harm) preserved.
+
 - November 11, 2026: SPEECH FACT-CHECKER — ONE CHANGE ONLY:
   1. BLUEPRINT: Registered factcheck_bp from routes/factcheck.py.
      Placed immediately AFTER the FeynmanLab (physics_bp) registration block.
@@ -179,7 +199,14 @@ app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
 print("File Upload Limit: 100MB (allows large project files)")
 
 # CRITICAL: Configure session for schedule conversation memory
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production-12345')
+# November 11, 2026: the fallback is no longer a fixed string printed in this public
+# repository. See swarm_security.session_secret_key().
+try:
+    from swarm_security import session_secret_key
+    app.config['SECRET_KEY'] = session_secret_key()
+except Exception as _secret_err:
+    print(f"swarm_security not available ({_secret_err}); using a random session key for this run")
+    app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or os.urandom(32).hex()
 app.config['SESSION_TYPE'] = 'filesystem'
 
 # ============================================================================
@@ -1609,6 +1636,18 @@ try:
     print("Integration Hub API registered")
 except ImportError:
     print("Integration Hub not found")
+
+# ============================================================================
+# ADMIN GATE (November 11, 2026) — one passcode for everything not public.
+# Must stay AFTER all blueprint registrations. See swarm_security.py.
+# ============================================================================
+try:
+    from swarm_security import init_security
+    init_security(app)
+except Exception as e:
+    print(f"ADMIN GATE NOT ACTIVE - swarm_security failed to load: {e}")
+    import traceback
+    traceback.print_exc()
 
 # ============================================================================
 # ADMIN: FIX MEMORY STORE COLUMNS (Phase 2A)
