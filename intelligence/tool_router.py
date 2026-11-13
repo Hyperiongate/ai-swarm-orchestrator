@@ -2,9 +2,14 @@
 intelligence/tool_router.py
 AI Swarm Orchestrator — Phase 4: Tool Router
 Created: March 08, 2026
-Last Updated: March 08, 2026 — Initial build (Phase 4)
+Last Updated: November 13, 2026 — manual_generator stub message updated
 
 CHANGELOG:
+- November 13, 2026: CLEANUP
+  * The manual generator was removed from the Swarm at Jim's request. The
+    manual_generator stub now says so instead of asking for a file. No other
+    change.
+
 - March 08, 2026: Phase 4 initial build + AI-driven schedule generator
   NEW FILE. Routes USE_TOOL decisions from reasoning_engine.py to the
   correct internal tool.
@@ -38,7 +43,7 @@ CHANGELOG:
     schedule_generator — AI-driven generation → Excel via
       PatternScheduleGenerator. Falls back to hardcoded on validation fail.
     research_agent — calls call_research_agent() from task_analysis.py.
-    manual_generator — stub pending implementation_manual_generator.py.
+    manual_generator — stub; the manual generator was removed November 13, 2026.
 
   RETURN FORMAT (all tools):
     'success'               bool
@@ -818,19 +823,23 @@ def _run_research_agent(tool_parameters, user_request, kb_context=""):
 # =============================================================================
 
 def _run_manual_generator(tool_parameters, user_request, kb_context=""):
-    """Stub — pending implementation_manual_generator.py integration."""
+    """
+    Stub. The implementation manual generator was removed from the Swarm on
+    November 13, 2026 (Jim's cleanup). Kept so an old request for this tool
+    gets a plain answer instead of an error.
+    """
     return {
         'success': False,
         'message': (
-            "The implementation manual generator is available but not yet "
-            "wired into the tool router. Please share "
-            "implementation_manual_generator.py so I can connect it properly."
+            "The implementation manual generator is no longer part of the "
+            "Swarm. I can still draft manual content as a normal text or "
+            "document response if you tell me what you need."
         ),
         'file_path': None,
         'file_type': None,
         'needs_clarification': False,
         'clarification_message': None,
-        'error': 'manual_generator not yet wired into tool_router',
+        'error': 'manual_generator was removed from the Swarm',
     }
 
 

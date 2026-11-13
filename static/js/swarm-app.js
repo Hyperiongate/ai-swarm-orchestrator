@@ -5,6 +5,13 @@ Shiftwork Solutions LLC
 =============================================================================
 CHANGE LOG:
 
+- November 13, 2026: CLEANUP at Jim's request
+  * Removed Manuals, Case Studies and Blog Posts mode support from
+    switchMode() (button toggles, panel show/hide, status checks,
+    placeholders), from updateQuickActions() and from the welcome text.
+    Those tabs were removed from index.html the same day.
+  * Every other mode is unchanged. Older notes below are history.
+
 - March 12, 2026: ADDED BRIEFING MODE SUPPORT
   * Added briefingModeBtn toggle in switchMode()
   * Added briefingInfo panel show/hide in switchMode()
@@ -342,7 +349,6 @@ function clearConversationArea() {
         '<li><strong>🔬 Research Mode:</strong> Real-time industry intelligence and news</li>' +
         '<li><strong>🔔 Alerts Mode:</strong> Autonomous monitoring and notifications</li>' +
         '<li><strong>📊 Pipeline Mode:</strong> Lead scoring and sales pipeline management</li>' +
-        '<li><strong>📝 Manuals Mode:</strong> Conversational implementation manual generation</li>' +
         '<li><strong>🗓️ Briefing Mode:</strong> Daily briefings, tasks, and lead alerts</li>' +
         '</ul></div></div>';
     
@@ -811,16 +817,6 @@ function switchMode(mode) {
     var pipelineBtn = document.getElementById('pipelineModeBtn');
     if (pipelineBtn) pipelineBtn.classList.toggle('active', mode === 'pipeline');
     
-    var manualsBtn = document.getElementById('manualsModeBtn');
-    if (manualsBtn) manualsBtn.classList.toggle('active', mode === 'manuals');
-    
-    var casestudiesBtn = document.getElementById('casestudiesModeBtn');
-    if (casestudiesBtn) casestudiesBtn.classList.toggle('active', mode === 'casestudies');
-
-    // ADDED February 23, 2026: Blog Post Generator button toggle
-    var blogpostsBtn = document.getElementById('blogpostsModeBtn');
-    if (blogpostsBtn) blogpostsBtn.classList.toggle('active', mode === 'blogposts');
-
     // ADDED March 12, 2026: Briefing mode button toggle
     var briefingBtn = document.getElementById('briefingModeBtn');
     if (briefingBtn) briefingBtn.classList.toggle('active', mode === 'briefing');
@@ -840,16 +836,6 @@ function switchMode(mode) {
     var pipelineInfo = document.getElementById('pipelineInfo');
     if (pipelineInfo) pipelineInfo.style.display = mode === 'pipeline' ? 'block' : 'none';
     
-    var manualsInfo = document.getElementById('manualsInfo');
-    if (manualsInfo) manualsInfo.style.display = mode === 'manuals' ? 'block' : 'none';
-    
-    var casestudiesInfo = document.getElementById('casestudiesInfo');
-    if (casestudiesInfo) casestudiesInfo.style.display = mode === 'casestudies' ? 'block' : 'none';
-
-    // ADDED February 23, 2026: Blog Post Generator panel show/hide
-    var blogpostsInfo = document.getElementById('blogpostsInfo');
-    if (blogpostsInfo) blogpostsInfo.style.display = mode === 'blogposts' ? 'block' : 'none';
-
     // ADDED March 12, 2026: Briefing panel show/hide
     var briefingInfo = document.getElementById('briefingInfo');
     if (briefingInfo) briefingInfo.style.display = mode === 'briefing' ? 'block' : 'none';
@@ -861,10 +847,6 @@ function switchMode(mode) {
     else if (mode === 'research' && typeof checkResearchStatus === 'function') checkResearchStatus();
     else if (mode === 'alerts' && typeof checkAlertStatus === 'function') checkAlertStatus();
     else if (mode === 'pipeline' && typeof checkPipelineStatus === 'function') checkPipelineStatus();
-    else if (mode === 'manuals' && typeof checkManualsStatus === 'function') checkManualsStatus();
-    else if (mode === 'casestudies' && typeof checkCaseStudiesStatus === 'function') checkCaseStudiesStatus();
-    // ADDED February 23, 2026: Blog Post Generator status check on mode switch
-    else if (mode === 'blogposts' && typeof checkBlogPostsStatus === 'function') checkBlogPostsStatus();
     // ADDED March 12, 2026: Briefing status check on mode switch
     else if (mode === 'briefing' && typeof checkBriefingStatus === 'function') checkBriefingStatus();
     
@@ -881,10 +863,6 @@ function switchMode(mode) {
         'research': "Type your research topic... (e.g., 'Latest OSHA fatigue regulations')",
         'alerts': "Type your request... (e.g., 'Add ABC Manufacturing to monitored clients')",
         'pipeline': "Type your request... (e.g., 'Show me high priority leads')",
-        'manuals': "Type your request... (e.g., 'Create implementation manual for Acme Manufacturing')",
-        'casestudies': "Select industry, problem, and solution in the panel to generate a case study",
-        // ADDED February 23, 2026: Blog Post Generator placeholder
-        'blogposts': "Select a topic in the panel to generate a blog post",
         // ADDED March 12, 2026: Briefing mode placeholder
         'briefing': "Ask about your briefing, tasks, or leads... (e.g., 'What are my tasks today?')"
     };
@@ -914,15 +892,6 @@ function updateQuickActions() {
             '<li onclick="if(typeof importLeadsFromAlerts===\'function\')importLeadsFromAlerts()">📥 Import Alerts</li>' +
             '<li onclick="if(typeof viewAllLeads===\'function\')viewAllLeads()">👁️ View Pipeline</li>' +
             '<li onclick="quickAction(\'Show me high priority leads with score above 70\')">🔥 High Priority</li>',
-        'manuals': '<li onclick="if(typeof startNewManual===\'function\')startNewManual()">➕ New Manual</li>' +
-            '<li onclick="if(typeof viewAllManuals===\'function\')viewAllManuals()">👁️ All Manuals</li>' +
-            '<li onclick="if(typeof viewLessons===\'function\')viewLessons()">💡 Lessons</li>' +
-            '<li onclick="quickAction(\'Continue my manual for [client name]\')">📝 Continue</li>',
-        'casestudies': '<li onclick="if(typeof generateCaseStudy===\'function\')generateCaseStudy()">✍️ New Study</li>' +
-            '<li onclick="if(typeof loadSavedCaseStudies===\'function\')loadSavedCaseStudies()">📚 Refresh Library</li>',
-        // ADDED February 23, 2026: Blog Post Generator quick actions
-        'blogposts': '<li onclick="if(typeof generateBlogPost===\'function\')generateBlogPost()">✍️ New Post</li>' +
-            '<li onclick="if(typeof loadSavedBlogPosts===\'function\')loadSavedBlogPosts()">📚 Refresh Library</li>',
         // ADDED March 12, 2026: Briefing mode quick actions
         'briefing': '<li onclick="if(typeof refreshBriefing===\'function\')refreshBriefing()">🔄 Refresh Briefing</li>' +
             '<li onclick="if(typeof viewAllTasksInChat===\'function\')viewAllTasksInChat()">📋 View All Tasks</li>' +

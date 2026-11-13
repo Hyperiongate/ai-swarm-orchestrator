@@ -40,9 +40,8 @@ WHAT IS LEFT ALONE:
     * Public by design: /health, /static, /homepage, the shift-work.com APIs
       (newsletter subscribe, contact form, assessment, visitor events), the
       survey intake form, and taking a survey by its link.
-    * Has its own login already: Survey admin, the Part Time Tracker (except
-      its /api/ptt/dev/* developer shortcuts, which now need the passcode),
-      and the Speech Fact-Checker (FACTCHECK_PASSCODE).
+    * Has its own login already: Survey admin and the Speech Fact-Checker
+      (FACTCHECK_PASSCODE).
     * Open for now, on purpose: /api/survey/norm/search, because the Thomas
       diagnostic app calls it from its server and does not yet send a key.
       See SERVICE_ENDPOINTS_OPEN_FOR_NOW.
@@ -56,6 +55,12 @@ ENVIRONMENT:
     SECRET_KEY             unchanged in meaning; see session_secret_key().
 
 CHANGELOG:
+- November 13, 2026: PART TIME TRACKER AND FEYNMANLAB REMOVED FROM THE SWARM.
+  The gate no longer makes room for the Part Time Tracker's own logins or
+  its developer shortcuts: both lists are now empty. The purpose notes above
+  still mention those features as they were on November 11; that is history.
+  No rule for any remaining route changed.
+
 - November 13, 2026: HEAD REQUESTS TO PAGES ARE REDIRECTED, NOT REFUSED.
   The first day of watching mode recorded something asking for "/" with HEAD
   (an uptime check). Locked, that would have been answered 401 and read as
@@ -115,7 +120,7 @@ PUBLIC_BLUEPRINTS = {'assessment', 'assessment_ai', 'assessment_pdf'}
 
 # Blueprints that check their own login. The gate stays out of their way.
 OWN_LOGIN_BLUEPRINTS = {'survey_admin', 'factcheck'}
-OWN_LOGIN_BLUEPRINT_PREFIXES = ('ptt',)            # ptt_hr, ptt_worker, ptt_shifts, ptt_chat, ptt_worker_intake
+OWN_LOGIN_BLUEPRINT_PREFIXES = ()                  # none now (was the Part Time Tracker, removed November 13, 2026)
 OWN_LOGIN_ENDPOINTS = {                            # Survey admin actions that live in survey_respondent.py
     'survey_respondent.open_survey',
     'survey_respondent.close_survey',
@@ -123,7 +128,7 @@ OWN_LOGIN_ENDPOINTS = {                            # Survey admin actions that l
     'survey_respondent.get_response_summary',
 }
 # ...except these paths, which sit inside "own login" blueprints but check nothing.
-ALWAYS_GATED_PATH_PREFIXES = ('/api/ptt/dev/',)
+ALWAYS_GATED_PATH_PREFIXES = ()                    # none now (was /api/ptt/dev/, removed November 13, 2026)
 
 # Called server-to-server by the Thomas diagnostic app, which does not send a
 # key yet. TEMPORARY: when Thomas sends X-Swarm-Key, empty this set.

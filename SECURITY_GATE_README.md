@@ -1,6 +1,18 @@
 # Admin Gate: one passcode for the private parts of the Swarm
 
-Added 11 November 2026.
+Added 11 November 2026. Updated 13 November 2026.
+
+> **13 November 2026 update.** Three things changed after this note was written:
+>
+> - The **Part Time Tracker** and **FeynmanLab** were removed from the Swarm
+>   (with the content generators and the avatar consultation). Where this note
+>   mentions them, including the `/api/ptt/dev/*` shortcuts, read it as history.
+> - The **Performance Dashboard** moved from shift-work.com to `/performance`
+>   on the Swarm, behind this gate. Its old in-page PIN is gone.
+> - A `HEAD` request for a page (what uptime checkers send) is now sent to
+>   `/login` like a normal visit instead of being refused.
+>
+> The tests now number 27 in `tests/security/` and 2 in `tests/db/`.
 
 Until now only Survey admin and the Part Time Tracker had logins. Everything
 else answered anyone who knew the address, including the newsletter subscriber

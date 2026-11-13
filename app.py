@@ -1,9 +1,26 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: November 13, 2026 — Performance Dashboard moved in from shift-work.com
+Last Updated: November 13, 2026 — Cleanup: four unused features removed
 
 CHANGELOG:
+- November 13, 2026: CLEANUP — FOUR FEATURES REMOVED AT JIM'S REQUEST:
+  Jim reviewed the Swarm on November 13, 2026 and chose what to keep. These
+  four were not on the keep list and are removed from this file:
+  1. PART TIME TRACKER: migrations 009-012, the five ptt_* blueprints and the
+     three /api/ptt/dev/* routes.
+  2. CONTENT GENERATORS: the blog posts table migration and the marketing,
+     manuals, case_studies and blog_posts blueprints.
+  3. FEYNMANLAB: the physics blueprint.
+  4. AVATAR CONSULTATION (David & Sarah): the avatar blueprint.
+  Also removed: their entries in the /health answer.
+  NOT TOUCHED: the database. Every table these features created, and the
+  data in them, is still there. Everything on the keep list (main chat,
+  schedule generator, knowledge base, Survey in a Box, voice, other AI
+  models, self-learning, proactive agent, fact-checker, performance
+  dashboard, website forms, assessment) is unchanged.
+  Older notes below still mention the removed features; they are history.
+
 - November 13, 2026: PERFORMANCE DASHBOARD — ONE CHANGE ONLY:
   1. BLUEPRINT: Registered performance_bp from routes/performance.py. Placed
      immediately AFTER the Speech Fact-Checker registration block. Provides
@@ -370,83 +387,7 @@ except Exception as e:
     import traceback
     traceback.print_exc()
 
-# ----------------------------------------------------------------------------
-# MIGRATION 009: Part Time Tracker Lite
-# Added: May 01, 2026
-# ----------------------------------------------------------------------------
-try:
-    import importlib.util as _ilu9
-    import os as _os9
-    _m009_path = _os9.path.join(_os9.path.dirname(_os9.path.abspath(__file__)),
-                                'migrations', 'migration_009_ptt.py')
-    _spec009 = _ilu9.spec_from_file_location("migration_009_ptt", _m009_path)
-    _mod009 = _ilu9.module_from_spec(_spec009)
-    _spec009.loader.exec_module(_mod009)
-    _mod009.run_migration()
-    print("Part Time Tracker migration (009) complete")
-except Exception as e:
-    print(f"Part Time Tracker migration (009) failed: {e}")
-    import traceback
-    traceback.print_exc()
-
-# ----------------------------------------------------------------------------
-# MIGRATION 010: Part Time Tracker Phase 2 — Worker audit columns
-# Added: May 04, 2026
-# ----------------------------------------------------------------------------
-try:
-    import importlib.util as _ilu10
-    import os as _os10
-    _m010_path = _os10.path.join(_os10.path.dirname(_os10.path.abspath(__file__)),
-                                 'migrations', 'migration_010_ptt_phase2.py')
-    _spec010 = _ilu10.spec_from_file_location("migration_010_ptt_phase2", _m010_path)
-    _mod010 = _ilu10.module_from_spec(_spec010)
-    _spec010.loader.exec_module(_mod010)
-    _mod010.run_migration()
-    print("Part Time Tracker Phase 2 migration (010) complete")
-except Exception as e:
-    print(f"Part Time Tracker Phase 2 migration (010) failed: {e}")
-    import traceback
-    traceback.print_exc()
-
 print("=" * 60)
-
-# ----------------------------------------------------------------------------
-# MIGRATION 011: Part Time Tracker Phase 3 — urgency + skill_required_id
-# Added: May 06, 2026
-# ----------------------------------------------------------------------------
-try:
-    import importlib.util as _ilu11
-    import os as _os11
-    _m011_path = _os11.path.join(_os11.path.dirname(_os11.path.abspath(__file__)),
-                                 'migrations', 'migration_011_ptt_phase3.py')
-    _spec011 = _ilu11.spec_from_file_location("migration_011_ptt_phase3", _m011_path)
-    _mod011 = _ilu11.module_from_spec(_spec011)
-    _spec011.loader.exec_module(_mod011)
-    _mod011.run_migration()
-    print("Part Time Tracker Phase 3 migration (011) complete")
-except Exception as e:
-    print(f"Part Time Tracker Phase 3 migration (011) failed: {e}")
-    import traceback
-    traceback.print_exc()
-
-# ----------------------------------------------------------------------------
-# MIGRATION 012: Fix ptt_worker unique constraint
-# Added: May 08, 2026
-# ----------------------------------------------------------------------------
-try:
-    import importlib.util as _ilu12
-    import os as _os12
-    _m012_path = _os12.path.join(_os12.path.dirname(_os12.path.abspath(__file__)),
-                                 'migrations', 'migration_012_ptt_worker_unique.py')
-    _spec012 = _ilu12.spec_from_file_location("migration_012_ptt_worker_unique", _m012_path)
-    _mod012 = _ilu12.module_from_spec(_spec012)
-    _spec012.loader.exec_module(_mod012)
-    _mod012.run_migration()
-    print("Part Time Tracker worker constraint migration (012) complete")
-except Exception as e:
-    print(f"Part Time Tracker worker constraint migration (012) failed: {e}")
-    import traceback
-    traceback.print_exc()
 
 # ============================================================================
 # STEP 2: Initialize database (delegates to migration, safe to call again)
@@ -466,21 +407,6 @@ except Exception as e:
 # STEP 3: RUN REMAINING LEGACY DATABASE MIGRATIONS
 # ============================================================================
 print("Running legacy database migrations...")
-
-print("DEBUG: About to attempt blog_posts migration import...")
-try:
-    from add_blog_posts_table import add_blog_posts_table
-    print("DEBUG: Import successful, calling function...")
-    add_blog_posts_table()
-    print("Blog Posts table migration complete!")
-except ImportError as ie:
-    print(f"Blog Posts migration IMPORT ERROR: {ie}")
-    import traceback
-    traceback.print_exc()
-except Exception as e:
-    print(f"Blog Posts migration failed: {e}")
-    import traceback
-    traceback.print_exc()
 
 try:
     from add_missing_columns import add_missing_columns
@@ -960,22 +886,6 @@ def health():
     except Exception:
         intelligence_status = 'not_installed'
 
-    marketing_status = 'disabled'
-    try:
-        from content_marketing_engine import get_content_engine
-        ce = get_content_engine()
-        marketing_status = 'enabled'
-    except Exception:
-        marketing_status = 'not_installed'
-
-    avatar_status = 'disabled'
-    try:
-        from avatar_consultation_engine import get_avatar_engine
-        ae = get_avatar_engine()
-        avatar_status = 'enabled'
-    except Exception:
-        avatar_status = 'not_installed'
-
     evaluation_status = 'disabled'
     last_evaluation = None
     try:
@@ -1011,14 +921,6 @@ def health():
     except Exception:
         introspection_status = 'not_installed'
 
-    manual_generator_status = 'disabled'
-    try:
-        from implementation_manual_generator import get_manuals_dashboard
-        dashboard = get_manuals_dashboard()
-        manual_generator_status = 'enabled'
-    except Exception:
-        manual_generator_status = 'not_installed'
-
     project_management_status = 'disabled'
     project_count = 0
     try:
@@ -1029,20 +931,6 @@ def health():
         project_management_status = 'enabled'
     except Exception:
         project_management_status = 'not_installed'
-
-    case_studies_status = 'disabled'
-    try:
-        from case_study_generator import INDUSTRY_DISPLAY_NAMES
-        case_studies_status = 'enabled'
-    except Exception:
-        case_studies_status = 'not_installed'
-
-    blog_posts_status = 'disabled'
-    try:
-        from blog_post_generator import BLOG_TOPICS
-        blog_posts_status = 'enabled'
-    except Exception:
-        blog_posts_status = 'not_installed'
 
     capabilities_manifest_status = {}
     try:
@@ -1065,7 +953,7 @@ def health():
 
     return jsonify({
         'status': 'healthy',
-        'version': 'Assessment AI Proxy Jun12 + KB Search Endpoint May20 + PTT Lite Phase3 May11 + PTT Lite Phase2 May04 + PTT Lite Phase1 May01 + Site Events Apr28 + Assessment PDF Apr21 + Assessment Sheets Apr17 + Security Hardening Apr07 + Newsletter API Apr02 + Survey in a Box Phase 2 Mar26 + Phase 3 Mar13 + Phase 6 Proactive Agent Mar12 + Phase 1 Onboarding Mar10 + Phase 3 Capabilities Manifest Mar08 + Phase 2A Memory Mar05 + PostgreSQL Migration Mar02',
+        'version': 'Cleanup Nov13 (Part Time Tracker, content generators, FeynmanLab, avatars removed) + Assessment AI Proxy Jun12 + KB Search Endpoint May20 + Site Events Apr28 + Assessment PDF Apr21 + Assessment Sheets Apr17 + Security Hardening Apr07 + Newsletter API Apr02 + Survey in a Box Phase 2 Mar26 + Phase 3 Mar13 + Phase 6 Proactive Agent Mar12 + Phase 1 Onboarding Mar10 + Phase 3 Capabilities Manifest Mar08 + Phase 2A Memory Mar05 + PostgreSQL Migration Mar02',
         'database': {
             'type': get_db_type(),
             'backend': 'PostgreSQL (persistent)' if get_db_type() == 'postgresql' else 'SQLite (local dev)'
@@ -1102,25 +990,14 @@ def health():
             'status': intelligence_status,
             'past_clients_indexed': intelligence_companies
         },
-        'content_marketing': {'status': marketing_status},
-        'avatar_consultation': {'status': avatar_status, 'avatars': ['david', 'sarah']},
         'swarm_evaluation': {'status': evaluation_status, 'last_evaluation': last_evaluation},
         'introspection_layer': {
             'status': introspection_status,
             'last_introspection': last_introspection
         },
-        'manual_generator': {'status': manual_generator_status},
         'project_management': {
             'status': project_management_status,
             'total_projects': project_count
-        },
-        'case_study_generator': {
-            'status': case_studies_status,
-            'features': ['ai_generation', 'seo_optimized', 'word_doc_download', 'saved_library', '16_industries_supported']
-        },
-        'blog_post_generator': {
-            'status': blog_posts_status,
-            'features': ['ai_generation', 'seo_optimized', 'conversational_tone', 'word_doc_download', 'saved_library', '12_topics']
         },
         'knowledge_restore': {
             'status': 'enabled',
@@ -1179,20 +1056,6 @@ def health():
             'summary_url': '/api/events/summary',
             'recent_url': '/api/events/recent',
             'sessions_url': '/api/events/sessions',
-        },
-        'part_time_tracker': {
-            'status': 'enabled',
-            'phase': 'Lite Phase 3 — Shift Management, Worker Dashboard & Claims',
-            'signup_url': '/ptt/',
-            'login_url': '/ptt/login',
-            'dashboard_url': '/ptt/dashboard',
-            'apply_url': '/ptt/apply/<slug>',
-            'api_lead': '/api/ptt/lead',
-            'api_login_request': '/api/ptt/login-request',
-            'api_apply': '/api/ptt/apply/<slug>',
-            'dev_reset': '/api/ptt/dev/reset-company (POST {email})',
-            'dev_reseed': '/api/ptt/dev/reseed-skills (POST {email})',
-            'dev_worker_login_link': '/api/ptt/dev/worker-login-link (POST {worker_id|worker_name})',
         },
     })
 
@@ -1271,24 +1134,6 @@ except Exception as e:
     print(f"Intelligence Dashboard registration failed: {e}")
 
 try:
-    from routes.marketing import marketing_bp
-    app.register_blueprint(marketing_bp)
-    print("Content Marketing Engine API registered")
-except ImportError as e:
-    print(f"Content Marketing Engine routes not found: {e}")
-except Exception as e:
-    print(f"Content Marketing Engine registration failed: {e}")
-
-try:
-    from routes.avatar import avatar_bp
-    app.register_blueprint(avatar_bp)
-    print("Avatar Consultation System API registered")
-except ImportError as e:
-    print(f"Avatar Consultation routes not found: {e}")
-except Exception as e:
-    print(f"Avatar Consultation registration failed: {e}")
-
-try:
     from routes.evaluation import evaluation_bp
     app.register_blueprint(evaluation_bp)
     print("Swarm Self-Evaluation API registered")
@@ -1305,15 +1150,6 @@ except ImportError as e:
     print(f"Introspection Layer routes not found: {e}")
 except Exception as e:
     print(f"Introspection Layer registration failed: {e}")
-
-try:
-    from routes.manuals import manuals_bp
-    app.register_blueprint(manuals_bp)
-    print("Implementation Manual Generator API registered")
-except ImportError as e:
-    print(f"Implementation Manual Generator routes not found: {e}")
-except Exception as e:
-    print(f"Implementation Manual Generator registration failed: {e}")
 
 try:
     from routes.learning import learning_bp
@@ -1379,24 +1215,6 @@ except Exception as e:
     print(f"Phase 1 Intelligence registration failed: {e}")
 
 try:
-    from routes.case_studies import case_studies_bp
-    app.register_blueprint(case_studies_bp)
-    print("Case Study Generator API registered")
-except ImportError as e:
-    print(f"Case Study Generator routes not found: {e}")
-except Exception as e:
-    print(f"Case Study Generator registration failed: {e}")
-
-try:
-    from routes.blog_posts import blog_posts_bp
-    app.register_blueprint(blog_posts_bp)
-    print("Blog Post Generator API registered")
-except ImportError as e:
-    print(f"Blog Post Generator routes not found: {e}")
-except Exception as e:
-    print(f"Blog Post Generator registration failed: {e}")
-
-try:
     from routes.memory import memory_bp
     app.register_blueprint(memory_bp)
     print("Phase 2A Memory System API registered")
@@ -1458,18 +1276,6 @@ except ImportError as e:
     print(f"Proactive Agent routes not found: {e}")
 except Exception as e:
     print(f"Proactive Agent registration failed: {e}")
-
-# ----------------------------------------------------------------------------
-# FeynmanLab — Physics Thinking Partner (WO-14)
-# ----------------------------------------------------------------------------
-try:
-    from routes.physics import physics_bp
-    app.register_blueprint(physics_bp)
-    print("FeynmanLab (Physics Lab) API registered")
-except ImportError as e:
-    print(f"FeynmanLab routes not found: {e}")
-except Exception as e:
-    print(f"FeynmanLab registration failed: {e}")
 
 # ----------------------------------------------------------------------------
 # Speech Fact-Checker — listening page + job API (November 11, 2026)
@@ -1552,60 +1358,6 @@ except ImportError as e:
     print(f"Site Events routes not found: {e}")
 except Exception as e:
     print(f"Site Events registration failed: {e}")
-
-# ----------------------------------------------------------------------------
-# Part Time Tracker Lite — HR Admin Routes
-# ----------------------------------------------------------------------------
-try:
-    from routes.ptt_hr import ptt_hr_bp
-    app.register_blueprint(ptt_hr_bp)
-    print("Part Time Tracker HR Routes registered")
-except ImportError as e:
-    print(f"Part Time Tracker HR routes not found: {e}")
-except Exception as e:
-    print(f"Part Time Tracker HR registration failed: {e}")
-
-# ----------------------------------------------------------------------------
-# Part Time Tracker Lite — Worker Intake Routes (public, no auth)
-# ----------------------------------------------------------------------------
-try:
-    from routes.ptt_worker_intake import ptt_worker_intake_bp
-    app.register_blueprint(ptt_worker_intake_bp)
-    print("Part Time Tracker Worker Intake Routes registered")
-except ImportError as e:
-    print(f"Part Time Tracker Worker Intake routes not found: {e}")
-except Exception as e:
-    print(f"Part Time Tracker Worker Intake registration failed: {e}")
-
-# Part Time Tracker Lite — Shift Management Routes (HR)
-try:
-    from routes.ptt_shifts import ptt_shifts_bp
-    app.register_blueprint(ptt_shifts_bp)
-    print("Part Time Tracker Shifts Routes registered")
-except ImportError as e:
-    print(f"Part Time Tracker Shifts routes not found: {e}")
-except Exception as e:
-    print(f"Part Time Tracker Shifts registration failed: {e}")
-
-# Part Time Tracker Lite — Worker Routes (authenticated worker side)
-try:
-    from routes.ptt_worker import ptt_worker_bp
-    app.register_blueprint(ptt_worker_bp)
-    print("Part Time Tracker Worker Routes registered")
-except ImportError as e:
-    print(f"Part Time Tracker Worker routes not found: {e}")
-except Exception as e:
-    print(f"Part Time Tracker Worker registration failed: {e}")
-
-# Part Time Tracker Lite — AI Chat Advisors (Carolyn + Franklin)
-try:
-    from routes.ptt_chat import ptt_chat_bp
-    app.register_blueprint(ptt_chat_bp)
-    print("Part Time Tracker Chat Advisors registered")
-except ImportError as e:
-    print(f"Part Time Tracker Chat routes not found: {e}")
-except Exception as e:
-    print(f"Part Time Tracker Chat registration failed: {e}")
 
 try:
     from routes.background_jobs import background_jobs_bp
@@ -1749,169 +1501,6 @@ def fix_memory_schema():
         return jsonify({'success': False, 'error': str(e),
                         'traceback': traceback.format_exc()}), 500
 
-# ============================================================================
-# PTT DEV ENDPOINTS — development/testing only
-# ============================================================================
-@app.route('/api/ptt/dev/reset-company', methods=['POST'])
-def ptt_dev_reset_company():
-    """
-    DEV ONLY — wipe all ptt_* data for a company by admin email.
-    """
-    from db_engine import get_db_connection
-    data  = request.get_json(silent=True) or {}
-    email = (data.get("email") or "").strip().lower()
-    if not email:
-        return jsonify({"error": "email required"}), 400
-
-    conn = get_db_connection()
-    try:
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            SELECT a.id AS admin_id, a.company_id
-            FROM ptt_admin_user a WHERE a.email = %s
-        """, (email,))
-        row = cursor.fetchone()
-        if not row:
-            return jsonify({"error": f"No PTT admin found for {email}"}), 404
-
-        company_id = row["company_id"]
-        counts = {}
-
-        cursor.execute("DELETE FROM ptt_session    WHERE company_id = %s", (company_id,))
-        counts["sessions"] = cursor.rowcount
-        cursor.execute("DELETE FROM ptt_magic_token WHERE company_id = %s", (company_id,))
-        counts["tokens"] = cursor.rowcount
-
-        cursor.execute("DELETE FROM ptt_worker WHERE company_id = %s", (company_id,))
-        counts["workers"] = cursor.rowcount
-
-        cursor.execute("DELETE FROM ptt_shift WHERE company_id = %s", (company_id,))
-        counts["shifts"] = cursor.rowcount
-
-        cursor.execute("DELETE FROM ptt_skill WHERE company_id = %s", (company_id,))
-        counts["skills"] = cursor.rowcount
-
-        cursor.execute("DELETE FROM ptt_admin_user WHERE company_id = %s", (company_id,))
-        counts["admins"] = cursor.rowcount
-
-        cursor.execute("DELETE FROM ptt_company WHERE id = %s", (company_id,))
-        counts["companies"] = cursor.rowcount
-
-        conn.commit()
-        print(f"[ptt_dev] reset-company for {email}: {counts}")
-        return jsonify({"status": "ok", "deleted": counts}), 200
-
-    except Exception as e:
-        conn.rollback()
-        import traceback
-        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
-    finally:
-        conn.close()
-
-
-@app.route('/api/ptt/dev/reseed-skills', methods=['POST'])
-def ptt_dev_reseed_skills():
-    """
-    DEV ONLY — replace skill list for a company with the 14 Opus-specified
-    industry skills.
-    """
-    from db_engine import get_db_connection
-    from routes.ptt_hr import SKILL_SEED
-
-    data  = request.get_json(silent=True) or {}
-    email = (data.get("email") or "").strip().lower()
-    if not email:
-        return jsonify({"error": "email required"}), 400
-
-    conn = get_db_connection()
-    try:
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            SELECT a.company_id FROM ptt_admin_user a WHERE a.email = %s
-        """, (email,))
-        row = cursor.fetchone()
-        if not row:
-            return jsonify({"error": f"No PTT admin found for {email}"}), 404
-
-        company_id = row["company_id"]
-
-        cursor.execute("DELETE FROM ptt_skill WHERE company_id = %s", (company_id,))
-        deleted = cursor.rowcount
-
-        for skill_name, skill_desc, sort_order in SKILL_SEED:
-            cursor.execute("""
-                INSERT INTO ptt_skill (company_id, name, description, sort_order)
-                VALUES (%s, %s, %s, %s)
-            """, (company_id, skill_name, skill_desc, sort_order))
-
-        conn.commit()
-        print(f"[ptt_dev] reseed-skills for {email}: deleted {deleted}, seeded {len(SKILL_SEED)}")
-        return jsonify({
-            "status":  "ok",
-            "deleted": deleted,
-            "seeded":  len(SKILL_SEED),
-        }), 200
-
-    except Exception as e:
-        conn.rollback()
-        import traceback
-        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
-    finally:
-        conn.close()
-
-@app.route('/api/ptt/dev/reset-shift', methods=['POST'])
-def ptt_dev_reset_shift():
-    """
-    DEV ONLY — reset a single shift back to 'open' status and delete
-    all claims against it.
-    """
-    from db_engine import get_db_connection
-    data     = request.get_json(silent=True) or {}
-    shift_id = data.get("shift_id")
-    if not shift_id:
-        return jsonify({"error": "shift_id required"}), 400
-    try:
-        shift_id = int(shift_id)
-    except (TypeError, ValueError):
-        return jsonify({"error": "shift_id must be an integer"}), 400
-
-    conn = get_db_connection()
-    try:
-        cursor = conn.cursor()
-
-        cursor.execute("SELECT id, title, company_id FROM ptt_shift WHERE id = %s",
-                       (shift_id,))
-        shift = cursor.fetchone()
-        if not shift:
-            return jsonify({"error": f"Shift {shift_id} not found"}), 404
-
-        cursor.execute("DELETE FROM ptt_shift_claim WHERE shift_id = %s", (shift_id,))
-        claims_deleted = cursor.rowcount
-
-        cursor.execute("""
-            UPDATE ptt_shift SET status = 'open', updated_at = NOW()
-            WHERE id = %s
-        """, (shift_id,))
-
-        conn.commit()
-        print(f"[ptt_dev] reset-shift {shift_id} ('{shift['title']}'): "
-              f"deleted {claims_deleted} claims, status -> open")
-        return jsonify({
-            "status":         "ok",
-            "shift_id":       shift_id,
-            "title":          shift["title"],
-            "claims_deleted": claims_deleted,
-            "shift_status":   "open",
-        }), 200
-
-    except Exception as e:
-        conn.rollback()
-        import traceback
-        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
-    finally:
-        conn.close()
 # ============================================================================
 # PHASE 6: BACKGROUND SCHEDULER INIT
 # ============================================================================

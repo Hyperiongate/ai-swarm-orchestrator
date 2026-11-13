@@ -2,9 +2,16 @@
 intelligence/capabilities_manifest.py
 AI Swarm Orchestrator — Dynamic Capabilities Manifest
 Created: March 08, 2026
-Last Updated: March 08, 2026 — KB stats injection fix (Opus direction)
+Last Updated: November 13, 2026 — Removed three retired modules from the capability checks
 
 CHANGELOG:
+- November 13, 2026: CLEANUP
+  * _build_other_capabilities_section() no longer looks for
+    content_marketing_engine, implementation_manual_generator or
+    avatar_consultation_engine. Those features were removed from the Swarm at
+    Jim's request on November 13, 2026, so the AI should not be told about
+    them. No other change.
+
 - March 08, 2026 (Pass 2): KB STATS INJECTION FIX (Opus direction)
   PROBLEM: _build_knowledge_base_section() used Flask current_app context
     to find the KB object. At startup cache-warm time there is no active
@@ -305,14 +312,8 @@ def _build_other_capabilities_section():
          "Project management: create and track projects, upload files, conversation history."),
         ("intelligence", "get_lead_manager",
          "Intelligence dashboard: lead scoring and pipeline management with normative database."),
-        ("content_marketing_engine", "get_content_engine",
-         "Content marketing: LinkedIn posts and newsletter generation from consulting work."),
-        ("implementation_manual_generator", "get_manuals_dashboard",
-         "Implementation manual generator: Word document generation for client engagements."),
         ("alert_system", "get_alert_manager",
          "Alert system: scheduled monitoring and notifications."),
-        ("avatar_consultation_engine", "get_avatar_engine",
-         "Avatar consultation system: David and Sarah consultation personas."),
     ]
 
     for module_name, func_name, description in module_checks:

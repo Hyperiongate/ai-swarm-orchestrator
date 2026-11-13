@@ -2,7 +2,7 @@
 Admin Gate — tests against the whole Swarm app
 File: tests/security/test_admin_gate.py
 Created: November 11, 2026
-Last Updated: November 11, 2026 — Initial version
+Last Updated: November 13, 2026 — Performance dashboard, HEAD requests, removed features
 
 PURPOSE:
     Starts the real app.py and checks swarm_security.py against every route the
@@ -83,7 +83,7 @@ def locked(web, monkeypatch):
 
 
 def log_in(client, passcode=PASSCODE):
-    return client.post("/api/admin-gate/login", json={"passcode": passcode, "next": "/physics"})
+    return client.post("/api/admin-gate/login", json={"passcode": passcode, "next": "/knowledge"})
 
 
 def refused(response):
@@ -102,7 +102,7 @@ def test_every_name_in_the_lists_is_a_real_route():
     assert named - ENDPOINTS == set()
     blueprints = {endpoint.split(".")[0] for endpoint in ENDPOINTS if "." in endpoint}
     assert (gate.PUBLIC_BLUEPRINTS | gate.OWN_LOGIN_BLUEPRINTS | gate.SURVEY_FAMILY_BLUEPRINTS) - blueprints == set()
-    assert any(name.startswith("ptt") for name in blueprints)
+    assert not any(name.startswith("ptt") for name in blueprints)      # Part Time Tracker removed Nov 13, 2026
 
 
 def test_only_the_intended_routes_are_open_without_the_passcode():
@@ -131,8 +131,7 @@ def test_only_the_intended_routes_are_open_without_the_passcode():
     ]
     assert sorted({path for _m, path, _e, kind in ROUTES if kind == "service_open"}) == ["/api/survey/norm/search"]
     own = {endpoint.split(".")[0] for _m, _p, endpoint, kind in ROUTES if kind == "own_login"}
-    assert own == {"survey_admin", "survey_respondent", "factcheck",
-                   "ptt_hr", "ptt_worker", "ptt_shifts", "ptt_chat", "ptt_worker_intake"}
+    assert own == {"survey_admin", "survey_respondent", "factcheck"}
 
 
 def test_performance_dashboard_is_private_and_carries_no_pin_or_key(locked):
@@ -154,6 +153,22 @@ def test_uptime_checks_using_head_are_redirected_not_refused(locked):
     assert locked.head("/api/newsletter/subscribers").status_code == 401     # data routes still refuse
 
 
+def test_removed_features_are_gone(locked):
+    """Part Time Tracker, content generators, FeynmanLab and avatars were removed November 13, 2026."""
+    gone = ("/ptt", "/api/ptt", "/physics", "/api/physics", "/api/avatar", "/api/manuals",
+            "/api/case-studies", "/api/blog-posts", "/api/marketing/generate-posts", "/api/marketing/pending")
+    assert [path for _m, path, _e, _k in ROUTES if path.startswith(gone)] == []
+    log_in(locked)
+    for path in ("/physics", "/ptt/login", "/api/avatar/status", "/api/manuals/status",
+                 "/api/case-studies/list", "/api/blog-posts/list", "/api/ptt/dev/reset-company"):
+        assert locked.get(path).status_code == 404, path
+    page = locked.get("/").data
+    for tab in (b"manualsModeBtn", b"casestudiesModeBtn", b"blogpostsModeBtn"):
+        assert tab not in page
+    for tab in (b"quickModeBtn", b"projectModeBtn", b"surveyModeBtn", b"marketingModeBtn", b"briefingModeBtn"):
+        assert tab in page
+
+
 def test_the_sensitive_routes_are_private():
     kinds = {f"{method} {path}": kind for method, path, _e, kind in ROUTES}
     assert kinds["GET /performance"] == "admin" and kinds["GET /performance/"] == "admin"
@@ -161,10 +176,8 @@ def test_the_sensitive_routes_are_private():
                   "POST /api/newsletter/block-ip", "POST /api/newsletter/unsubscribe",
                   "GET /api/contact/submissions", "GET /api/events/recent", "GET /api/events/summary",
                   "GET /api/admin/clear-knowledge-db", "POST /api/admin/restore-knowledge",
-                  "POST /api/ptt/dev/reset-company", "POST /api/ptt/dev/reseed-skills",
-                  "POST /api/ptt/dev/reset-shift", "POST /api/ptt/dev/worker-login-link",
-                  "GET /", "GET /physics", "POST /api/physics/message", "POST /api/orchestrate",
-                  "GET /api/avatar/leads", "GET /downloads/x", "GET /knowledge", "GET /memory-admin",
+                  "GET /", "POST /api/orchestrate", "GET /api/marketing/status",
+                  "GET /downloads/x", "GET /knowledge", "GET /memory-admin",
                   "GET /api/admin-gate/report", "GET /api/admin-gate/check"]:
         assert kinds[route] == "admin", route
     assert kinds["GET /api/survey/question-bank"] == "survey_family"
@@ -172,7 +185,7 @@ def test_the_sensitive_routes_are_private():
 
 def test_an_outsider_is_refused_on_every_private_route(locked):
     private = [(method, path) for method, path, _e, kind in ROUTES if kind in ("admin", "survey_family")]
-    assert len(private) > 300
+    assert len(private) > 250
     # A WebSocket route (the voice stream) only exists for WebSocket requests, so ask the way a browser would.
     websocket_paths = {rule.rule for rule in swarm.app.url_map.iter_rules() if rule.websocket}
     upgrade = {"Connection": "Upgrade", "Upgrade": "websocket"}
@@ -200,7 +213,6 @@ def test_public_pages_still_open_when_locked(locked):
     assert locked.get("/homepage").status_code == 200
     assert locked.get("/survey/start").status_code == 200
     assert locked.get("/survey/admin").status_code == 200          # its own login page
-    assert locked.get("/ptt/login").status_code == 200
     assert locked.get("/factcheck").status_code == 200
     assert locked.get("/api/factcheck/health").status_code == 200
     assert locked.get("/no/such/address").status_code == 404       # unknown addresses are not turned into 401s
@@ -213,7 +225,7 @@ def test_public_pages_still_open_when_locked(locked):
 
 def test_watching_mode_blocks_nothing_and_records_what_it_would_block(web):
     assert web.get("/api/newsletter/blocked-ips").status_code == 200
-    assert web.get("/physics").status_code == 200
+    assert web.get("/knowledge").status_code == 200
     assert web.get("/api/events/summary", headers={"Origin": SITE}).status_code == 200
     assert web.get("/health").status_code == 200
     state = web.get("/api/admin-gate/status").get_json()
@@ -223,7 +235,7 @@ def test_watching_mode_blocks_nothing_and_records_what_it_would_block(web):
     report = web.get("/api/admin-gate/report").get_json()
     seen = {(row["mode"], row["endpoint"], row["source"]) for row in report["seen"]}
     assert ("would_block", "newsletter.view_blocked_ips", "direct (typed address, script or another server)") in seen
-    assert ("would_block", "physics.physics_page", "direct (typed address, script or another server)") in seen
+    assert ("would_block", "knowledge_management", "direct (typed address, script or another server)") in seen
     assert ("would_block", "site_events.events_summary", "shift-work.com") in seen
     assert not any(endpoint == "health" for _mode, endpoint, _source in seen)
 
@@ -233,8 +245,8 @@ def test_watching_mode_blocks_nothing_and_records_what_it_would_block(web):
 # ---------------------------------------------------------------------------
 
 def test_page_requests_are_sent_to_the_login_page(locked):
-    response = locked.get("/physics?x=1", headers={"Accept": "text/html"})
-    assert response.status_code == 302 and response.headers["Location"] == "/login?next=/physics%3Fx%3D1"
+    response = locked.get("/knowledge?x=1", headers={"Accept": "text/html"})
+    assert response.status_code == 302 and response.headers["Location"] == "/login?next=/knowledge%3Fx%3D1"
     page = locked.get("/login")
     assert page.status_code == 200 and b"Admin passcode" in page.data
     with open(os.path.join(ROOT, "templates", "admin_login.html"), "rb") as handle:
@@ -248,12 +260,12 @@ def test_login_sets_a_cookie_that_opens_the_private_routes(locked):
     assert refused(locked.get("/api/newsletter/blocked-ips"))
 
     response = log_in(locked)
-    assert response.status_code == 200 and response.get_json() == {"success": True, "next": "/physics"}
+    assert response.status_code == 200 and response.get_json() == {"success": True, "next": "/knowledge"}
     cookie = response.headers["Set-Cookie"]
     assert "swarm_admin=" in cookie and "HttpOnly" in cookie and "SameSite=Strict" in cookie and "Max-Age=2592000" in cookie
 
     assert locked.get("/api/newsletter/blocked-ips").status_code == 200
-    assert locked.get("/physics").status_code == 200
+    assert locked.get("/knowledge").status_code == 200
     assert locked.get("/").status_code == 200
     assert locked.get("/api/admin-gate/check").get_json() == {"success": True, "locked": True}
     assert locked.get("/api/admin-gate/status").get_json()["logged_in"] is True
@@ -345,7 +357,7 @@ def test_survey_admin_login_still_reaches_the_survey_tools(locked):
         session["survey_admin_authenticated"] = True
     assert locked.get("/api/survey/question-bank").status_code == 200
     assert refused(locked.get("/api/newsletter/subscribers"))          # ...but nothing else
-    assert refused(locked.get("/physics"))
+    assert refused(locked.get("/knowledge"))
 
 
 # ---------------------------------------------------------------------------
