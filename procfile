@@ -1,1 +1,0 @@
-web: gunicorn swarm_app:app --bind 0.0.0.0:$PORT --timeout 180 --graceful-timeout 200 --workers 2 --worker-class sync --keep-alive 65 --log-level info --access-logfile - --error-logfile - --preload
