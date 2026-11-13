@@ -1,9 +1,20 @@
 """
 AI SWARM ORCHESTRATOR - Configuration
 Created: January 18, 2026
-Last Updated: July 01, 2026 - GPT4_MODEL -> gpt-5.5 (current OpenAI flagship)
+Last Updated: November 13, 2026 - Claude 5.5 defaults, Gemini and DeepSeek model names repaired
 
 CHANGELOG:
+- November 13, 2026: MODEL NAMES BROUGHT UP TO DATE
+  * CLAUDE_SONNET_MODEL default -> "claude-sonnet-5-5", CLAUDE_OPUS_MODEL default
+    -> "claude-opus-5-5". Both still env-overridable; the 4.x names remain a
+    working fallback (see the note beside the settings).
+  * GEMINI_MODEL -> "gemini-3.8-flash" (was the shut-down "gemini-1.5-pro"), now
+    env-overridable. Goes with the google-genai migration in ai_clients.py.
+  * DEEPSEEK_MODEL -> "deepseek-flash" (the "deepseek-chat" name was discontinued
+    July 24, 2026), now env-overridable.
+  * GPT4_MODEL unchanged: "gpt-5.5" is still current on OpenAI's API.
+  * No other setting changed.
+
 - July 01, 2026 (later same day): GPT4_MODEL -> "gpt-5.5"
   * "gpt-4-turbo-preview" was stale. GPT4_MODEL now defaults to the current OpenAI
     flagship "gpt-5.5" and is env-overridable via the GPT4_MODEL environment var.
@@ -201,8 +212,17 @@ LOCAL_GEMMA_TIMEOUT = int(os.environ.get('LOCAL_GEMMA_TIMEOUT', 300))
 # would have 404'd on the next escalation. Both are now read from environment
 # variables so a future model retirement is a Render env-var change, not a code
 # deploy. Defaults are the current valid strings.
-CLAUDE_SONNET_MODEL = os.environ.get('CLAUDE_SONNET_MODEL', 'claude-sonnet-4-6')
-CLAUDE_OPUS_MODEL = os.environ.get('CLAUDE_OPUS_MODEL', 'claude-opus-4-8')
+#
+# Updated November 13, 2026: defaults moved one generation forward to
+# "claude-sonnet-5-5" and "claude-opus-5-5" (both checked against Anthropic's
+# published model list that day; each also costs less per token than the model
+# it replaces). These models think before answering; claude_compat.py holds the
+# request and reply handling that makes that work, and the same code still
+# works with the 4.x names. FALLBACK: to go back without a code change, set
+# CLAUDE_SONNET_MODEL=claude-sonnet-4-6 and CLAUDE_OPUS_MODEL=claude-opus-4-8 in
+# Render (Anthropic lists both as active until at least 2027).
+CLAUDE_SONNET_MODEL = os.environ.get('CLAUDE_SONNET_MODEL', 'claude-sonnet-5-5')
+CLAUDE_OPUS_MODEL = os.environ.get('CLAUDE_OPUS_MODEL', 'claude-opus-5-5')
 # GPT4_MODEL -> "gpt-5.5" (Updated July 01, 2026, later same day).
 # "gpt-4-turbo-preview" was stale. GPT4_MODEL now defaults to the current OpenAI
 # flagship "gpt-5.5" and is env-overridable (set GPT4_MODEL in Render to change it
@@ -210,14 +230,18 @@ CLAUDE_OPUS_MODEL = os.environ.get('CLAUDE_OPUS_MODEL', 'claude-opus-4-8')
 # 'max_completion_tokens' instead of 'max_tokens' on the chat.completions endpoint
 # — call_gpt4() in ai_clients.py was updated in the same change to send that.
 GPT4_MODEL = os.environ.get('GPT4_MODEL', 'gpt-5.5')
-DEEPSEEK_MODEL = "deepseek-chat"
-# GEMINI_MODEL: "gemini-1.5-pro" is SHUT DOWN by Google (requests return 404) and
-# the old google-generativeai SDK that call_gemini() uses is deprecated. Fixing
-# Gemini requires migrating to the new google-genai SDK + a current model
-# ("gemini-2.5-flash") + a requirements.txt change — that is a SEPARATE step and is
-# intentionally NOT done here so this change stays GPT-5.5-only and nothing
-# half-changes. Left exactly as-is until the Gemini migration lands.
-GEMINI_MODEL = "gemini-1.5-pro"
+# DEEPSEEK_MODEL (Updated November 13, 2026): the old name "deepseek-chat" was
+# discontinued by DeepSeek on July 24, 2026. "deepseek-flash" is the name
+# DeepSeek's own price list gives for its current general model. Env-overridable.
+DEEPSEEK_MODEL = os.environ.get('DEEPSEEK_MODEL', 'deepseek-flash')
+# GEMINI_MODEL (Updated November 13, 2026): "gemini-1.5-pro" was shut down by
+# Google and the old google-generativeai library was deprecated, so Gemini had
+# been failing on every call. call_gemini() in ai_clients.py now uses Google's
+# current library (google-genai, see requirements.txt) and this model, which
+# Google lists as stable and uses in its own migration examples. (The
+# "gemini-2.5-flash" suggested in the July note is itself now deprecated.)
+# Env-overridable.
+GEMINI_MODEL = os.environ.get('GEMINI_MODEL', 'gemini-3.8-flash')
 
 # Local Gemma model identifier (Added June 30, 2026)
 # This must match the "API Model Identifier" shown in LM Studio's Developer panel

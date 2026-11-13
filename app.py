@@ -1,9 +1,20 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: November 13, 2026 — Cleanup: four unused features removed
+Last Updated: November 13, 2026 — AI connections repaired; self-test added
 
 CHANGELOG:
+- November 13, 2026: AI CONNECTIONS — TWO CHANGES ONLY:
+  1. BLUEPRINT: Registered ai_selftest_bp from routes/ai_selftest.py. Placed
+     immediately AFTER the Performance Dashboard registration block. Provides
+     GET /api/admin/ai-selftest (and the page /ai-selftest), which sends one
+     tiny question to each AI connection and reports which ones answer.
+     Private by default under the Admin Gate.
+  2. /health: the assessment_ai "model" entry now reports the model actually
+     in use (config.CLAUDE_SONNET_MODEL) instead of a fixed name.
+  The model changes themselves are in config.py, orchestration/ai_clients.py
+  and claude_compat.py. NO OTHER CHANGES here. Rule 1 (do no harm) preserved.
+
 - November 13, 2026: CLEANUP — FOUR FEATURES REMOVED AT JIM'S REQUEST:
   Jim reviewed the Swarm on November 13, 2026 and chose what to keep. These
   four were not on the keep list and are removed from this file:
@@ -1042,7 +1053,7 @@ def health():
             'status': 'enabled',
             't1_commentary_url': '/api/assessment/t1-commentary',
             't2_evaluate_url': '/api/assessment/t2-evaluate',
-            'model': 'claude-sonnet-4-6',
+            'model': __import__('config').CLAUDE_SONNET_MODEL,
             'note': 'Server-side Anthropic calls for the Shiftwork Operations Assessment (added Jun 12, 2026)',
         },
         'local_gemma_test': {
@@ -1300,6 +1311,18 @@ except ImportError as e:
     print(f"Performance Dashboard routes not found: {e}")
 except Exception as e:
     print(f"Performance Dashboard registration failed: {e}")
+
+# ----------------------------------------------------------------------------
+# AI Connections Self-Test (November 13, 2026)
+# ----------------------------------------------------------------------------
+try:
+    from routes.ai_selftest import ai_selftest_bp
+    app.register_blueprint(ai_selftest_bp)
+    print("AI Connections Self-Test registered")
+except ImportError as e:
+    print(f"AI Connections Self-Test routes not found: {e}")
+except Exception as e:
+    print(f"AI Connections Self-Test registration failed: {e}")
 
 try:
     from routes.newsletter import newsletter_bp

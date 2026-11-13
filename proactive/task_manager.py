@@ -2,7 +2,7 @@
 AI SWARM ORCHESTRATOR - Proactive Task Manager
 File: proactive/task_manager.py
 Created: March 12, 2026
-Last Updated: March 13, 2026 — BUG FIX: remove raise from _ensure_table()
+Last Updated: November 13, 2026 — Claude 5.5 compatibility (claude_compat helpers)
 
 PURPOSE:
     Persistent to-do list that the Swarm maintains, prioritizes, and surfaces.
@@ -13,6 +13,15 @@ PURPOSE:
     This is the first module of Phase 6: The Proactive Agent.
 
 CHANGELOG:
+- November 13, 2026: CLAUDE 5.5 COMPATIBILITY
+  * The one Claude call in this file now builds its request with
+    claude_compat.claude_request() (effort 'low') and reads the answer with
+    claude_compat.claude_text(). Needed because the Swarm's default model is
+    now claude-sonnet-5-5, whose reply can begin with a "thinking" block
+    (reading content[0].text would fail) and whose thinking is paid for out
+    of max_tokens. Still works unchanged with the 4.x models. Nothing else
+    in this file changed.
+
 - March 13, 2026: BUG FIX — remove raise from _ensure_table()
   * _ensure_table() ran at module level and called raise on DB failure.
   * If the DB was temporarily unavailable at startup, Python marked the
@@ -669,6 +678,7 @@ def _call_sonnet_for_tasks(
     """
     import anthropic
     from config import ANTHROPIC_API_KEY, CLAUDE_SONNET_MODEL
+    from claude_compat import claude_request, claude_text
 
     if not ANTHROPIC_API_KEY:
         logger.error("ANTHROPIC_API_KEY not configured — cannot auto-generate tasks")
@@ -708,12 +718,11 @@ Example format:
     try:
         client   = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         response = client.messages.create(
-            model=CLAUDE_SONNET_MODEL,
-            max_tokens=1000,
             messages=[{"role": "user", "content": prompt}],
+            **claude_request(CLAUDE_SONNET_MODEL, 1000, effort='low'),
         )
 
-        raw_text = response.content[0].text.strip()
+        raw_text = claude_text(response).strip()
 
         # Strip accidental markdown fences if Sonnet included them
         if raw_text.startswith("```"):

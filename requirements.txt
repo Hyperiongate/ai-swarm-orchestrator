@@ -1,7 +1,11 @@
 # AI SWARM ORCHESTRATOR - Requirements
-# Last Updated: October 28, 2026
+# Last Updated: November 13, 2026
 #
 # CHANGES:
+# - November 13, 2026: GEMINI LIBRARY REPLACED
+#   * google-generativeai==0.8.3 (deprecated by Google; its model was shut
+#     down) replaced by google-genai, Google's current library. Used only by
+#     call_gemini() in orchestration/ai_clients.py. No other package changed.
 # - October 28, 2026: SECURITY — eMudhra CA COMPROMISE (Render advisory, Oct 2026)
 #   * Added certifi>=2026.10.19 (see SECURITY section at the bottom).
 #     'requests' (and libraries built on it) checks HTTPS certificates
@@ -61,7 +65,7 @@ asgiref>=3.7.0              # ASGI utilities
 # ==========================================
 anthropic>=0.40.0           # MUST be >=0.40.0 to fix httpx proxies error
 openai>=1.12.0
-google-generativeai==0.8.3  # Gemini API
+google-genai>=1.0.0         # Gemini API (Nov 13, 2026: replaces the deprecated google-generativeai)
 requests>=2.31.0
 # ==========================================
 # GOOGLE DRIVE API - Authenticated Downloads (Added February 5, 2026)

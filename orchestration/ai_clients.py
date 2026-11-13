@@ -1,9 +1,32 @@
 """
 AI Clients Module
 Created: January 21, 2026
-Last Updated: July 01, 2026 - GPT-5.5 support in call_gpt4 (max_completion_tokens)
+Last Updated: November 13, 2026 - Claude 5.5 models, Gemini on the google-genai library
 
 CHANGELOG:
+- November 13, 2026: CLAUDE 5.5 SUPPORT + GEMINI REPAIRED
+  * CLAUDE: config.py now defaults to claude-sonnet-5-5 and claude-opus-5-5.
+    Those models think before answering, which broke three assumptions here
+    (the answer is no longer always the first block; thinking is paid for out
+    of max_tokens; thinking depth is set with "effort"). call_claude_sonnet(),
+    call_claude_sonnet_raw() and call_claude_opus() now build the request with
+    claude_compat.claude_request() and read the answer with
+    claude_compat.claude_text(). See claude_compat.py for the full reasoning.
+    The same code still works unchanged with the 4.x models, so setting
+    CLAUDE_SONNET_MODEL / CLAUDE_OPUS_MODEL back in Render is a safe fallback.
+    Effort: 'medium' for the main Sonnet and Opus calls, 'low' for
+    call_claude_sonnet_raw() (short structured answers).
+    A reply with no text (the model declined, or ran out of room) is now
+    returned as a normal error dict instead of raising IndexError.
+  * GEMINI: call_gemini() moved from the deprecated google-generativeai
+    library and the shut-down gemini-1.5-pro model to the google-genai
+    library and config.GEMINI_MODEL (gemini-3.8-flash). The identity text is
+    now passed as a real system instruction. Token counts are now reported.
+    Same arguments, same return shape.
+  * DEEPSEEK: no code change here; config.DEEPSEEK_MODEL changed because the
+    old "deepseek-chat" name was discontinued by DeepSeek on July 24, 2026.
+  * call_gpt4(), call_local_gemma() and call_local_gemma_raw() are untouched.
+
 - July 01, 2026: GPT-5.5 SUPPORT IN call_gpt4()
   * config.GPT4_MODEL moved from the retired "gpt-4-turbo-preview" to the current
     OpenAI flagship "gpt-5.5" (see config.py). The GPT-5 series REQUIRES
@@ -130,8 +153,20 @@ Author: Jim @ Shiftwork Solutions LLC
 import anthropic
 import openai
 from openai import OpenAI
-import google.generativeai as genai
 import config
+from claude_compat import claude_request, claude_text, claude_empty_reason
+
+# Google's current Gemini library (google-genai). Imported defensively: if it
+# is missing, only call_gemini() is affected and it says so plainly.
+try:
+    from google import genai
+    from google.genai import types as genai_types
+    GENAI_AVAILABLE = True
+except Exception as _genai_import_err:
+    print(f"Gemini library (google-genai) not available: {_genai_import_err}")
+    genai = None
+    genai_types = None
+    GENAI_AVAILABLE = False
 
 # Initialize Anthropic client
 anthropic_client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY) if config.ANTHROPIC_API_KEY else None
@@ -178,9 +213,17 @@ except Exception as _local_gemma_init_err:
     print(f"Local Gemma client init failed (non-fatal): {_local_gemma_init_err}")
     local_gemma_client = None
 
-# Initialize Google Gemini
-if config.GOOGLE_API_KEY:
-    genai.configure(api_key=config.GOOGLE_API_KEY)
+# Initialize Google Gemini (google-genai client; timeout is in milliseconds)
+gemini_client = None
+try:
+    if config.GOOGLE_API_KEY and GENAI_AVAILABLE:
+        gemini_client = genai.Client(
+            api_key=config.GOOGLE_API_KEY,
+            http_options=genai_types.HttpOptions(timeout=config.GEMINI_TIMEOUT * 1000),
+        )
+except Exception as _gemini_init_err:
+    print(f"Gemini client init failed (non-fatal): {_gemini_init_err}")
+    gemini_client = None
 
 # Import system capabilities
 try:
@@ -279,11 +322,11 @@ DO NOT say "I don't see any files" - the files ARE present and you MUST read the
         # treats it as highest-priority instructions.
         # ====================================================================
         api_kwargs = {
-            'model': config.CLAUDE_SONNET_MODEL,
-            'max_tokens': max_tokens,
             'messages': messages,
             'timeout': config.ANTHROPIC_TIMEOUT
         }
+        # Model, token allowance and thinking effort (see claude_compat.py)
+        api_kwargs.update(claude_request(config.CLAUDE_SONNET_MODEL, max_tokens, effort='medium'))
 
         if system_prompt:
             api_kwargs['system'] = system_prompt
@@ -291,8 +334,21 @@ DO NOT say "I don't see any files" - the files ARE present and you MUST read the
 
         response = anthropic_client.messages.create(**api_kwargs)
 
+        text = claude_text(response)
+        if not text:
+            reason = claude_empty_reason(response)
+            print(f"Claude returned no text: {reason}")
+            return {
+                'content': f"ERROR: {reason}",
+                'usage': {
+                    'input_tokens': response.usage.input_tokens,
+                    'output_tokens': response.usage.output_tokens
+                },
+                'error': True
+            }
+
         return {
-            'content': response.content[0].text,
+            'content': text,
             'usage': {
                 'input_tokens': response.usage.input_tokens,
                 'output_tokens': response.usage.output_tokens
@@ -344,17 +400,29 @@ def call_claude_sonnet_raw(prompt, system_prompt, max_tokens=1000):
 
     try:
         response = anthropic_client.messages.create(
-            model=config.CLAUDE_SONNET_MODEL,
-            max_tokens=max_tokens,
             system=system_prompt,
             messages=[
                 {'role': 'user', 'content': prompt}
             ],
-            timeout=config.ANTHROPIC_TIMEOUT
+            timeout=config.ANTHROPIC_TIMEOUT,
+            **claude_request(config.CLAUDE_SONNET_MODEL, max_tokens, effort='low')
         )
 
+        text = claude_text(response)
+        if not text:
+            reason = claude_empty_reason(response)
+            print(f"Claude returned no text: {reason}")
+            return {
+                'content': f"ERROR: {reason}",
+                'usage': {
+                    'input_tokens': response.usage.input_tokens,
+                    'output_tokens': response.usage.output_tokens
+                },
+                'error': True
+            }
+
         return {
-            'content': response.content[0].text,
+            'content': text,
             'usage': {
                 'input_tokens': response.usage.input_tokens,
                 'output_tokens': response.usage.output_tokens
@@ -439,11 +507,11 @@ DO NOT say "I don't see any files" - the files ARE present and you MUST read the
             messages = cleaned_messages
 
         api_kwargs = {
-            'model': config.CLAUDE_OPUS_MODEL,
-            'max_tokens': max_tokens,
             'messages': messages,
             'timeout': config.ANTHROPIC_TIMEOUT
         }
+        # Model, token allowance and thinking effort (see claude_compat.py)
+        api_kwargs.update(claude_request(config.CLAUDE_OPUS_MODEL, max_tokens, effort='medium'))
 
         if system_prompt:
             api_kwargs['system'] = system_prompt
@@ -451,8 +519,21 @@ DO NOT say "I don't see any files" - the files ARE present and you MUST read the
 
         response = anthropic_client.messages.create(**api_kwargs)
 
+        text = claude_text(response)
+        if not text:
+            reason = claude_empty_reason(response)
+            print(f"Claude returned no text: {reason}")
+            return {
+                'content': f"ERROR: {reason}",
+                'usage': {
+                    'input_tokens': response.usage.input_tokens,
+                    'output_tokens': response.usage.output_tokens
+                },
+                'error': True
+            }
+
         return {
-            'content': response.content[0].text,
+            'content': text,
             'usage': {
                 'input_tokens': response.usage.input_tokens,
                 'output_tokens': response.usage.output_tokens
@@ -774,10 +855,11 @@ def call_gemini(prompt, max_tokens=4000):
     """
     Call Google Gemini (multimodal specialist)
 
-    UPDATED February 28, 2026: Added identity message prepended to prompt.
-    Gemini's GenerativeModel API does not have a dedicated system role in the
-    same way as OpenAI-compatible APIs, so the identity is prepended to the
-    prompt text as the next best approach.
+    UPDATED November 13, 2026: Moved to Google's current library (google-genai)
+    and a current model (config.GEMINI_MODEL). The old library was deprecated
+    and the old model (gemini-1.5-pro) was shut down, so every call failed.
+    The identity text is now sent as a real system instruction instead of
+    being pasted in front of the prompt.
 
     Returns dict with 'content' and 'usage'
     """
@@ -787,28 +869,45 @@ def call_gemini(prompt, max_tokens=4000):
             'usage': {'input_tokens': 0, 'output_tokens': 0},
             'error': True
         }
+    if not gemini_client:
+        return {
+            'content': "ERROR: Gemini library (google-genai) is not installed or failed to start",
+            'usage': {'input_tokens': 0, 'output_tokens': 0},
+            'error': True
+        }
 
     capabilities = get_system_capabilities_prompt() if CAPABILITIES_AVAILABLE else ""
     identity = get_identity_system_message() if CAPABILITIES_AVAILABLE else ""
 
-    # Prepend identity then capabilities then prompt
-    enhanced_prompt = f"{identity}\n\n{capabilities}\n\n{prompt}"
+    # Capabilities then prompt; the identity goes in as the system instruction
+    enhanced_prompt = f"{capabilities}\n\n{prompt}"
 
     try:
-        model = genai.GenerativeModel(config.GEMINI_MODEL)
-        response = model.generate_content(
-            enhanced_prompt,
-            generation_config=genai.GenerationConfig(
+        response = gemini_client.models.generate_content(
+            model=config.GEMINI_MODEL,
+            contents=enhanced_prompt,
+            config=genai_types.GenerateContentConfig(
+                system_instruction=identity or None,
                 max_output_tokens=max_tokens,
-            )
+            ),
         )
 
-        return {
-            'content': response.text,
-            'usage': {
-                'input_tokens': 0,
-                'output_tokens': 0
+        usage = getattr(response, 'usage_metadata', None)
+        tokens = {
+            'input_tokens': getattr(usage, 'prompt_token_count', 0) or 0,
+            'output_tokens': getattr(usage, 'candidates_token_count', 0) or 0
+        }
+        text = response.text
+        if not text:
+            return {
+                'content': "ERROR: Gemini returned no text (it may have been blocked or run out of room)",
+                'usage': tokens,
+                'error': True
             }
+
+        return {
+            'content': text,
+            'usage': tokens
         }
     except Exception as e:
         return {

@@ -2,7 +2,7 @@
 routes/assessment_ai.py
 AI SWARM ORCHESTRATOR — Assessment AI Proxy Endpoints
 Created: June 12, 2026
-Last Updated: June 12, 2026
+Last Updated: November 13, 2026
 Author: Claude Fable 5 for Jim @ Shiftwork Solutions LLC
 
 PURPOSE:
@@ -53,8 +53,8 @@ SECURITY:
       per-process — modest abuse protection, not a fortress).
 
 MODEL:
-    claude-sonnet-4-6 (set in MODEL constant below; the old page-side
-    string claude-sonnet-4-20250514 was outdated).
+    The Swarm's Sonnet model, config.CLAUDE_SONNET_MODEL (since November 13,
+    2026; before that a fixed claude-sonnet-4-6 in the MODEL constant below).
 
 DEPLOYMENT:
     Place at routes/assessment_ai.py in the ai-swarm-orchestrator repo.
@@ -63,6 +63,13 @@ DEPLOYMENT:
     via config.py — no new environment variables needed.
 
 CHANGE LOG:
+    - November 13, 2026: MODEL now follows config.CLAUDE_SONNET_MODEL instead
+      of a fixed name, so the assessment moves with the rest of the Swarm
+      when the model setting changes. _call_claude() builds its request with
+      claude_compat.claude_request() (effort 'low', which keeps the page
+      quick) so it works with the Claude 5.5 models, whose thinking is paid
+      for out of max_tokens. Reading the answer was already safe. No other
+      change.
     2026-06-12 — Initial build.
 """
 
@@ -78,7 +85,8 @@ assessment_ai_bp = Blueprint('assessment_ai', __name__)
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
-MODEL = 'claude-sonnet-4-6'
+from config import CLAUDE_SONNET_MODEL as MODEL   # follows the Swarm's Sonnet setting
+from claude_compat import claude_request
 T1_MAX_TOKENS = 800
 T2_MAX_TOKENS = 1800
 
@@ -139,9 +147,8 @@ def _call_claude(prompt, max_tokens):
     import anthropic
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     message = client.messages.create(
-        model=MODEL,
-        max_tokens=max_tokens,
         messages=[{'role': 'user', 'content': prompt}],
+        **claude_request(MODEL, max_tokens, effort='low'),
     )
     text = ''
     for block in message.content:

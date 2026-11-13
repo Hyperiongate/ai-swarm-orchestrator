@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<!--
+  Shiftwork Solutions LLC — AI Connections Self-Test
+  File: templates/ai_selftest.html   (served at /ai-selftest by routes/ai_selftest.py)
+  Created: 2026-11-13
+  Last updated: 2026-11-13
+  Author: Claude for Jim @ Shiftwork Solutions LLC
+
+  PURPOSE:
+    One button that asks every AI service the Swarm uses a one-word question
+    and shows which ones answered. Calls GET /api/admin/ai-selftest.
+    Private: the Swarm's Admin Gate requires the admin login to open it.
+
+  CHANGE LOG:
+    2026-11-13  (v1) Initial build.
+
+  Sent to the browser as a plain file, not through the template engine.
+
+  I did no harm and this file is not truncated
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <title>AI Connections Self-Test — AI Swarm</title>
+  <style>
+    :root { --navy:#0D1B3E; --line:#C7D3E3; --bg:#F0F4F9; --muted:#5B6B85; --green:#1E8E5A; --red:#C0392B; --grey:#7A869A; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--navy); font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:15px; line-height:1.5; }
+    header { background:var(--navy); color:#fff; padding:16px 16px; }
+    header .in, main { max-width:980px; margin:0 auto; }
+    header .in { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
+    header h1 { font-size:18px; margin:0; }
+    header a { color:#BFD4F5; text-decoration:none; font-size:14px; }
+    main { padding:24px 16px 48px; }
+    .lead { color:var(--muted); margin:0 0 18px; max-width:70ch; }
+    button { background:var(--navy); color:#fff; border:0; border-radius:6px; padding:12px 22px; font-size:15px; font-weight:600; cursor:pointer; }
+    button:disabled { opacity:.55; cursor:default; }
+    #summary { margin:18px 0 6px; font-weight:600; min-height:24px; }
+    .card { background:#fff; border:1px solid var(--line); border-left:5px solid var(--grey); border-radius:8px; padding:14px 16px; margin-top:12px; }
+    .card.ok { border-left-color:var(--green); }
+    .card.bad { border-left-color:var(--red); }
+    .top { display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:baseline; }
+    .name { font-weight:700; }
+    .state { font-weight:700; }
+    .ok .state { color:var(--green); } .bad .state { color:var(--red); } .skip .state { color:var(--grey); }
+    .meta { color:var(--muted); font-size:13px; margin-top:2px; overflow-wrap:anywhere; }
+    .detail { margin-top:8px; font-size:14px; overflow-wrap:anywhere; }
+    .bad .detail { color:#7A1F1F; }
+    code { background:#EEF2F8; border-radius:4px; padding:1px 5px; font-size:13px; }
+  </style>
+</head>
+<body>
+  <header><div class="in">
+    <h1>AI Connections Self-Test</h1>
+    <a href="/">Back to the Swarm</a>
+  </div></header>
+  <main>
+    <p class="lead">
+      This asks each AI service the Swarm uses one tiny question and shows which ones answer.
+      A run takes up to about a minute and costs a few cents. Nothing is saved.
+    </p>
+    <button id="run" onclick="runTest()">Run the test</button>
+    <div id="summary" aria-live="polite"></div>
+    <div id="results"></div>
+  </main>
+
+<script>
+(function(){
+  'use strict';
+
+  function el(tag, cls, text){
+    var node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text !== undefined && text !== null) node.textContent = text;   // textContent: nothing from a service is run as HTML
+    return node;
+  }
+
+  function card(row){
+    var kind = row.ok === true ? 'ok' : (row.ok === false ? 'bad' : 'skip');
+    var box = el('div', 'card ' + kind);
+    var top = el('div', 'top');
+    top.appendChild(el('span', 'name', row.label));
+    var state = row.ok === true ? 'Working' : (row.ok === false ? 'Not working' : 'Not set up');
+    if (row.seconds !== undefined && row.ok !== null) state += ' · ' + row.seconds + 's';
+    top.appendChild(el('span', 'state', state));
+    box.appendChild(top);
+    box.appendChild(el('div', 'meta', row.purpose + (row.model ? ' — ' + row.model : '')));
+    var detail = row.ok === true ? ('Answered: ' + row.answer) : (row.ok === false ? row.error : row.skipped);
+    if (detail) box.appendChild(el('div', 'detail', detail));
+    if (row.models && row.models.length) box.appendChild(el('div', 'meta', row.models.join(', ')));
+    return box;
+  }
+
+  window.runTest = function(){
+    var button = document.getElementById('run');
+    var summary = document.getElementById('summary');
+    var results = document.getElementById('results');
+    button.disabled = true;
+    results.textContent = '';
+    var started = Date.now();
+    summary.textContent = 'Asking every service… 0s';
+    var ticker = setInterval(function(){
+      summary.textContent = 'Asking every service… ' + Math.round((Date.now() - started) / 1000) + 's';
+    }, 1000);
+
+    fetch('/api/admin/ai-selftest', {headers: {'Accept': 'application/json'}})
+      .then(function(r){
+        if (r.status === 401) { window.location.replace('/login?next=/ai-selftest'); throw new Error('Login needed'); }
+        if (!r.ok) throw new Error('The Swarm answered with status ' + r.status + '.');
+        return r.json();
+      })
+      .then(function(data){
+        summary.textContent = data.working + ' working, ' + data.failing + ' not working, ' +
+                              data.not_set_up + ' not set up (' + data.seconds + 's)';
+        data.results.forEach(function(row){ results.appendChild(card(row)); });
+      })
+      .catch(function(error){ summary.textContent = 'The test could not run: ' + error.message; })
+      .then(function(){ clearInterval(ticker); button.disabled = false; });
+  };
+})();
+</script>
+</body>
+</html>

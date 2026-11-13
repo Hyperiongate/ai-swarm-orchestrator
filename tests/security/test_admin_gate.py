@@ -172,6 +172,7 @@ def test_removed_features_are_gone(locked):
 def test_the_sensitive_routes_are_private():
     kinds = {f"{method} {path}": kind for method, path, _e, kind in ROUTES}
     assert kinds["GET /performance"] == "admin" and kinds["GET /performance/"] == "admin"
+    assert kinds["GET /ai-selftest"] == "admin" and kinds["GET /api/admin/ai-selftest"] == "admin"
     for route in ["GET /api/newsletter/subscribers", "GET /api/newsletter/blocked-ips",
                   "POST /api/newsletter/block-ip", "POST /api/newsletter/unsubscribe",
                   "GET /api/contact/submissions", "GET /api/events/recent", "GET /api/events/summary",
