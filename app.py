@@ -1,9 +1,18 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: November 11, 2026 — Admin Gate (one passcode for everything that is not public)
+Last Updated: November 13, 2026 — Performance Dashboard moved in from shift-work.com
 
 CHANGELOG:
+- November 13, 2026: PERFORMANCE DASHBOARD — ONE CHANGE ONLY:
+  1. BLUEPRINT: Registered performance_bp from routes/performance.py. Placed
+     immediately AFTER the Speech Fact-Checker registration block. Provides
+     GET /performance, the dashboard that used to live on the public website
+     behind a PIN written in its own source. Here the Admin Gate protects it
+     (it is private by default; see swarm_security.py). The data routes it
+     reads are unchanged.
+  NO OTHER CHANGES. Rule 1 (do no harm) preserved.
+
 - November 11, 2026: ADMIN GATE — TWO CHANGES ONLY:
   1. ADMIN GATE: One call to swarm_security.init_security(app), placed immediately
      AFTER the Integration Hub registration block (i.e. after every blueprint).
@@ -1473,6 +1482,18 @@ except ImportError as e:
     print(f"Speech Fact-Checker routes not found: {e}")
 except Exception as e:
     print(f"Speech Fact-Checker registration failed: {e}")
+
+# ----------------------------------------------------------------------------
+# Performance Dashboard — moved here from shift-work.com (November 13, 2026)
+# ----------------------------------------------------------------------------
+try:
+    from routes.performance import performance_bp
+    app.register_blueprint(performance_bp)
+    print("Performance Dashboard registered")
+except ImportError as e:
+    print(f"Performance Dashboard routes not found: {e}")
+except Exception as e:
+    print(f"Performance Dashboard registration failed: {e}")
 
 try:
     from routes.newsletter import newsletter_bp

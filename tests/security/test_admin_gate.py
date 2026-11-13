@@ -135,8 +135,28 @@ def test_only_the_intended_routes_are_open_without_the_passcode():
                    "ptt_hr", "ptt_worker", "ptt_shifts", "ptt_chat", "ptt_worker_intake"}
 
 
+def test_performance_dashboard_is_private_and_carries_no_pin_or_key(locked):
+    assert refused(locked.get("/performance", headers={"Accept": "text/html"}))
+    log_in(locked)
+    page = locked.get("/performance")
+    assert page.status_code == 200
+    with open(os.path.join(ROOT, "templates", "performance.html"), "rb") as handle:
+        assert page.data == handle.read()                      # served as a plain file
+    for gone in (b"1236", b"CORRECT_PIN", b"googletagmanager", b"X-Swarm-Key", b"onrender.com"):
+        assert gone not in page.data
+    assert locked.get("/performance/").status_code == 200
+
+
+def test_uptime_checks_using_head_are_redirected_not_refused(locked):
+    head = locked.head("/")
+    assert head.status_code == 302 and head.headers["Location"] == "/login?next=/"
+    assert locked.head("/health").status_code == 200
+    assert locked.head("/api/newsletter/subscribers").status_code == 401     # data routes still refuse
+
+
 def test_the_sensitive_routes_are_private():
     kinds = {f"{method} {path}": kind for method, path, _e, kind in ROUTES}
+    assert kinds["GET /performance"] == "admin" and kinds["GET /performance/"] == "admin"
     for route in ["GET /api/newsletter/subscribers", "GET /api/newsletter/blocked-ips",
                   "POST /api/newsletter/block-ip", "POST /api/newsletter/unsubscribe",
                   "GET /api/contact/submissions", "GET /api/events/recent", "GET /api/events/summary",

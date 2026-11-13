@@ -1,7 +1,7 @@
 """
 AI SWARM ORCHESTRATOR - Database Engine (Abstraction Layer)
 Created: March 02, 2026
-Last Updated: 2026-05-05
+Last Updated: 2026-11-13
 
 PURPOSE:
     Single database abstraction layer for the entire Swarm system.
@@ -12,6 +12,21 @@ PURPOSE:
     No module should ever import sqlite3 or psycopg2 directly.
 
 CHANGELOG:
+- 2026-11-13: ONE POOL PER PROCESS (fixes random "no results to fetch" errors)
+  * ROOT CAUSE: gunicorn.conf.py uses preload_app=True, so app.py is loaded
+    once in the master process and the two workers are then copies of it.
+    The pool was created during that load (the startup migrations use it), so
+    BOTH workers inherited the SAME open database connections. Two processes
+    talking over one connection read each other's answers. Seen as
+    "no results to fetch", "error with status PGRES_TUPLES_OK and no message
+    from the libpq", and pages that worked on one refresh and failed on the
+    next. The 2026-05-05 fix below treated one symptom of this.
+  * FIX: the pool now remembers which process created it. A process that
+    finds a pool it did not create (i.e. one copied from its parent) sets it
+    aside untouched and opens its own. The copied pool is deliberately NOT
+    closed: closing it here would hang up the parent's connections too.
+  * Nothing else changed: same pool size, same retries, same public functions.
+
 - 2026-05-05: STALE CONNECTION FIX
   * ROOT CAUSE: When Gunicorn restarts a worker, connections in the pool may
     have been closed by the PostgreSQL server (SSL SYSCALL error: EOF detected).
@@ -68,6 +83,7 @@ import os
 import time
 import sqlite3
 import logging
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -94,11 +110,43 @@ print(f"🗄️  DB Engine: {'PostgreSQL (production)' if DB_TYPE == 'postgresql
 # ============================================================================
 
 _pg_pool = None
+_pg_pool_pid = None        # the process that created _pg_pool
+_inherited_pools = []      # pools copied from a parent process: kept, never used, never closed
+_pg_pool_lock = threading.Lock()
+
+
+def _fresh_lock_in_child():
+    # A copied process must not inherit a lock that some thread in the parent
+    # happened to be holding at the moment of the copy.
+    global _pg_pool_lock
+    _pg_pool_lock = threading.Lock()
+
+
+if hasattr(os, 'register_at_fork'):
+    os.register_at_fork(after_in_child=_fresh_lock_in_child)
 
 
 def _get_pg_pool():
-    """Initialize and return the PostgreSQL connection pool."""
-    global _pg_pool
+    """
+    Initialize and return this process's PostgreSQL connection pool.
+
+    A pool copied from a parent process (Gunicorn loads the app once, then
+    copies it into each worker) must not be used: its connections belong to
+    the parent, and sharing them between processes scrambles the answers.
+    Such a pool is set aside and a new one is opened for this process.
+    """
+    global _pg_pool, _pg_pool_pid
+    if _pg_pool is not None and _pg_pool_pid == os.getpid():
+        return _pg_pool
+    with _pg_pool_lock:
+        return _open_pg_pool_locked()
+
+
+def _open_pg_pool_locked():
+    global _pg_pool, _pg_pool_pid
+    if _pg_pool is not None and _pg_pool_pid != os.getpid():
+        _inherited_pools.append(_pg_pool)   # keep it alive so it is never closed from here
+        _pg_pool = None
     if _pg_pool is None:
         try:
             from psycopg2 import pool as pg_pool
@@ -114,6 +162,7 @@ def _get_pg_pool():
                 maxconn=40,
                 dsn=dsn
             )
+            _pg_pool_pid = os.getpid()
             logger.info("PostgreSQL connection pool created (min=2, max=40)")
             print("✅ PostgreSQL connection pool created (min=2, max=40)")
         except Exception as e:
@@ -504,7 +553,7 @@ def get_pool_status():
     Return current pool status for diagnostics.
     Returns dict with pool info, or None if not PostgreSQL or pool not initialized.
     """
-    if DB_TYPE != 'postgresql' or _pg_pool is None:
+    if DB_TYPE != 'postgresql' or _pg_pool is None or _pg_pool_pid != os.getpid():
         return None
     try:
         return {
@@ -519,7 +568,7 @@ def get_pool_status():
 def close_pool():
     """Close the PostgreSQL connection pool. Call on application shutdown."""
     global _pg_pool
-    if _pg_pool and not _pg_pool.closed:
+    if _pg_pool and _pg_pool_pid == os.getpid() and not _pg_pool.closed:
         _pg_pool.closeall()
         _pg_pool = None
         logger.info("PostgreSQL connection pool closed")

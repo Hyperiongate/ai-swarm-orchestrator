@@ -56,6 +56,11 @@ ENVIRONMENT:
     SECRET_KEY             unchanged in meaning; see session_secret_key().
 
 CHANGELOG:
+- November 13, 2026: HEAD REQUESTS TO PAGES ARE REDIRECTED, NOT REFUSED.
+  The first day of watching mode recorded something asking for "/" with HEAD
+  (an uptime check). Locked, that would have been answered 401 and read as
+  "the Swarm is down". A HEAD for a page is now sent to /login like a GET.
+  One line in _wants_a_page(); nothing else changed.
 - November 11, 2026: INITIAL IMPLEMENTATION. New file. Wired into app.py by
   one call to init_security(app) and one change to how SECRET_KEY falls back
   (see app.py changelog). No route's own code was changed.
@@ -421,7 +426,9 @@ def is_admin():
 
 
 def _wants_a_page():
-    if request.method != 'GET' or request.path.startswith('/api/'):
+    # HEAD counts as a page request: uptime monitors ask for "/" with HEAD, and a
+    # redirect to the login page reads as "up" where a 401 would read as "down".
+    if request.method not in ('GET', 'HEAD') or request.path.startswith('/api/'):
         return False
     accept = request.headers.get('Accept', '')
     return 'text/html' in accept or not accept or accept == '*/*'

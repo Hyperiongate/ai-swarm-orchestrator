@@ -1,0 +1,934 @@
+<!DOCTYPE html>
+<!--
+  Shiftwork Solutions LLC — Performance Dashboard
+  File: templates/performance.html   (served at /performance by routes/performance.py)
+  Created: 2026-05-05 (as shift-work.com/performance/)
+  Last updated: 2026-11-13
+  Author: Claude for Jim @ Shiftwork Solutions LLC
+
+  CHANGE LOG:
+    2026-11-13  (v3) MOVED FROM shift-work.com INTO THE SWARM.
+                     - Why: the page's only protection was a 4-digit PIN
+                       written in its own source, and it read the subscriber
+                       list, contact submissions and visitor events from the
+                       Swarm, which answered anyone. It now lives on the
+                       Swarm behind the Admin Gate (swarm_security.py): the
+                       admin passcode at /login is the only way in.
+                     - PIN gate removed (HTML, script and the PIN itself).
+                     - Calls the Swarm on the same site, so no passcode is
+                       ever handled by this page.
+                     - Google Tag Manager removed: outside scripts do not
+                       belong on an admin page.
+                     - "Lock" now logs out of the Swarm on this browser.
+                     - Shows a notice while the Swarm has no passcode set.
+                     - Fixed: reloading the old page while signed in called
+                       loadAll() before it existed. The first load now runs
+                       at the end of the script.
+                     - Every panel, table and number is otherwise unchanged.
+    2026-05-05  (v2) Full rebuild: light theme, Plausible + Clarity link
+                     panels, subscribers table, blocked IPs panel.
+    2026-05-05  (v1) Initial build.
+
+  SWARM ENDPOINTS USED (all need the admin login once the Swarm is locked):
+    GET  /api/newsletter/stats
+    GET  /api/newsletter/subscribers?page=N&per_page=20
+    GET  /api/newsletter/blocked-ips
+    POST /api/newsletter/block-ip          { ip_address, reason }
+    GET  /api/contact/submissions?page=1&per_page=10
+    GET  /api/events/summary
+    GET  /api/events/recent?limit=20
+    GET  /api/admin-gate/check             (is the Swarm locked?)
+    POST /api/admin-gate/logout            (the Lock button)
+
+  Sent to the browser as a plain file, not through the template engine.
+
+  I did no harm and this file is not truncated
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>Performance Dashboard — Shiftwork Solutions</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --navy:        #1F4E79;
+      --navy-dark:   #0D1F3C;
+      --navy-light:  #EEF4FB;
+      --orange:      #E8610A;
+      --mid-blue:    #85B7EB;
+      --green:       #1D9E75;
+      --red:         #C0392B;
+      --amber:       #EEAE26;
+      --white:       #FFFFFF;
+      --bg:          #F0F4F8;
+      --bg-card:     #FFFFFF;
+      --border:      #D1DDE8;
+      --border-mid:  #B8CCDE;
+      --text:        #1A2A3A;
+      --text-mid:    #4A6070;
+      --text-muted:  #7A90A0;
+      --text-dim:    #A0B0BC;
+      --font:        'DM Sans', system-ui, sans-serif;
+      --mono:        'DM Mono', monospace;
+      --radius:      8px;
+      --shadow-sm:   0 1px 4px rgba(31,78,121,0.08);
+      --shadow:      0 3px 14px rgba(31,78,121,0.12);
+    }
+
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ═══════════════════════════════════════════
+       DASHBOARD WRAPPER
+       ═══════════════════════════════════════════ */
+    #dashboard { display: block; }
+    .open-notice { margin: 0 0 18px; padding: 12px 16px; border: 1.5px solid var(--red); border-radius: 8px;
+                   background: #FDECEC; color: #7A1F1F; font-size: 14px; }
+    .open-notice[hidden] { display: none; }
+    #dashboard.visible { display: block; }
+
+    /* ═══════════════════════════════════════════
+       NAV — System B
+       ═══════════════════════════════════════════ */
+    .site-nav {
+      position: sticky; top: 0; z-index: 200;
+      background: var(--navy-dark);
+      border-bottom: 2px solid var(--navy);
+      height: 56px; display: flex; align-items: center;
+    }
+    .nav-inner {
+      max-width: 1320px; width: 100%; margin: 0 auto;
+      padding: 0 28px; display: flex; align-items: center; justify-content: space-between;
+    }
+    .nav-logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    .nav-logo img { height: 30px; width: auto; }
+    .nav-logo-text { font-size: 14px; font-weight: 700; color: var(--mid-blue); letter-spacing: 0.04em; }
+    .nav-center {
+      font-family: var(--mono); font-size: 11px; color: rgba(255,255,255,0.35);
+      text-transform: uppercase; letter-spacing: 0.12em;
+    }
+    .nav-right { display: flex; align-items: center; gap: 10px; }
+    .nav-live {
+      font-family: var(--mono); font-size: 10px; color: #4ecca3;
+      padding: 3px 9px; border: 1px solid rgba(78,204,163,0.3); border-radius: 4px;
+      text-transform: uppercase; letter-spacing: 0.1em;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .nav-live-dot {
+      width: 5px; height: 5px; border-radius: 50%; background: #4ecca3;
+      animation: pulse-dot 2s ease-in-out infinite;
+    }
+    @keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:0.3} }
+    .nav-btn {
+      font-family: var(--mono); font-size: 10px; color: rgba(255,255,255,0.5);
+      background: none; border: 1px solid rgba(255,255,255,0.15); border-radius: 4px;
+      padding: 4px 10px; cursor: pointer;
+      transition: color 0.15s, border-color 0.15s;
+      text-transform: uppercase; letter-spacing: 0.08em;
+    }
+    .nav-btn:hover      { color: #fff; border-color: rgba(255,255,255,0.4); }
+    .nav-btn.lock:hover { color: var(--orange); border-color: var(--orange); }
+
+    /* ═══════════════════════════════════════════
+       MAIN LAYOUT
+       ═══════════════════════════════════════════ */
+    .dash-main { max-width: 1320px; margin: 0 auto; padding: 28px 28px 60px; }
+
+    .dash-header {
+      display: flex; align-items: flex-end; justify-content: space-between;
+      margin-bottom: 28px; flex-wrap: wrap; gap: 12px;
+    }
+    .dash-title    { font-size: 22px; font-weight: 700; color: var(--navy-dark); }
+    .dash-subtitle { font-size: 12px; color: var(--text-muted); margin-top: 3px; font-family: var(--mono); }
+    .dash-ts       { font-family: var(--mono); font-size: 11px; color: var(--text-dim); text-align: right; }
+
+    /* ═══════════════════════════════════════════
+       SECTION LABELS
+       ═══════════════════════════════════════════ */
+    .sec {
+      font-family: var(--mono); font-size: 10px; font-weight: 500;
+      text-transform: uppercase; letter-spacing: 0.14em; color: var(--text-muted);
+      margin-bottom: 12px; margin-top: 32px;
+      padding-bottom: 8px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .sec:first-child { margin-top: 0; }
+    .sec-action {
+      font-family: var(--mono); font-size: 10px; color: var(--navy);
+      cursor: pointer; background: none; border: none;
+      text-transform: uppercase; letter-spacing: 0.08em;
+    }
+    .sec-action:hover { color: var(--orange); }
+
+    /* ═══════════════════════════════════════════
+       METRIC CARDS
+       ═══════════════════════════════════════════ */
+    .metric-grid {
+      display: grid; grid-template-columns: repeat(5,1fr); gap: 14px;
+    }
+    @media(max-width:1100px){ .metric-grid{ grid-template-columns:repeat(3,1fr); } }
+    @media(max-width:700px){  .metric-grid{ grid-template-columns:repeat(2,1fr); } }
+
+    .mcard {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-top: 3px solid var(--accent, var(--navy));
+      border-radius: var(--radius); padding: 18px 16px 14px;
+      box-shadow: var(--shadow-sm); transition: box-shadow 0.2s;
+    }
+    .mcard:hover { box-shadow: var(--shadow); }
+    .mcard-label {
+      font-family: var(--mono); font-size: 10px; text-transform: uppercase;
+      letter-spacing: 0.1em; color: var(--text-muted); margin-bottom: 8px;
+    }
+    .mcard-value {
+      font-family: var(--mono); font-size: 30px; font-weight: 500;
+      color: var(--navy-dark); line-height: 1; min-height: 30px;
+    }
+    .mcard-value.loading { color: var(--text-dim); font-size: 18px; animation: blink 1.2s ease-in-out infinite; }
+    .mcard-value.err     { color: var(--red); font-size: 14px; }
+    .mcard-sub { font-family: var(--mono); font-size: 11px; color: var(--text-dim); margin-top: 5px; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+    /* ═══════════════════════════════════════════
+       ANALYTICS LINK BUTTONS
+       ═══════════════════════════════════════════ */
+    .analytics-grid {
+      display: grid; grid-template-columns: repeat(3,1fr); gap: 14px;
+    }
+    @media(max-width:800px){ .analytics-grid{ grid-template-columns:1fr; } }
+
+    .analytics-btn {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 18px 20px; background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--accent, var(--navy));
+      border-radius: var(--radius); text-decoration: none;
+      box-shadow: var(--shadow-sm);
+      transition: box-shadow 0.2s, transform 0.15s;
+    }
+    .analytics-btn:hover { box-shadow: var(--shadow); transform: translateY(-1px); }
+    .analytics-btn-name { font-size: 14px; font-weight: 700; color: var(--navy-dark); margin-bottom: 3px; }
+    .analytics-btn-desc { font-family: var(--mono); font-size: 10px; color: var(--text-muted); }
+    .analytics-btn-arrow { font-size: 18px; color: var(--text-dim); flex-shrink: 0; margin-left: 16px; }
+
+    .analytics-placeholder {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 18px 20px; background: var(--bg);
+      border: 1px dashed var(--border-mid); border-radius: var(--radius); opacity: 0.7;
+    }
+    .analytics-placeholder-name { font-size: 14px; font-weight: 700; color: var(--text-muted); margin-bottom: 3px; }
+    .analytics-placeholder-desc { font-family: var(--mono); font-size: 10px; color: var(--text-dim); }
+    .analytics-placeholder-tag {
+      font-family: var(--mono); font-size: 10px; color: var(--text-dim);
+      padding: 3px 8px; border: 1px solid var(--border); border-radius: 4px;
+    }
+
+    /* ═══════════════════════════════════════════
+       TWO-COL LAYOUT
+       ═══════════════════════════════════════════ */
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media(max-width:900px){ .two-col{ grid-template-columns:1fr; } }
+
+    /* ═══════════════════════════════════════════
+       CARDS
+       ═══════════════════════════════════════════ */
+    .card {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow-sm);
+    }
+    .card-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 11px 16px; background: var(--navy-light);
+      border-bottom: 1px solid var(--border);
+    }
+    .card-head-title {
+      font-family: var(--mono); font-size: 10px; font-weight: 500;
+      text-transform: uppercase; letter-spacing: 0.1em; color: var(--navy);
+    }
+    .card-head-right { font-family: var(--mono); font-size: 10px; color: var(--text-muted); }
+
+    /* ═══════════════════════════════════════════
+       DATA TABLES
+       ═══════════════════════════════════════════ */
+    .data-table { width: 100%; border-collapse: collapse; }
+    .data-table th {
+      font-family: var(--mono); font-size: 10px; text-transform: uppercase;
+      letter-spacing: 0.1em; color: var(--text-muted); padding: 9px 14px;
+      text-align: left; background: var(--navy-light);
+      border-bottom: 1px solid var(--border); white-space: nowrap;
+    }
+    .data-table td {
+      font-family: var(--mono); font-size: 12px; color: var(--text);
+      padding: 9px 14px; border-bottom: 1px solid #EEF2F6; vertical-align: middle;
+    }
+    .data-table tr:last-child td { border-bottom: none; }
+    .data-table tr:hover td { background: #F7FAFD; }
+
+    /* cell helpers */
+    .td-email  { color: var(--navy); font-weight: 500; }
+    .td-ip     { color: var(--text-mid); }
+    .td-dom    { color: var(--text-muted); }
+    .td-date   { color: var(--text-dim); white-space: nowrap; }
+    .td-yes    { color: var(--green); font-weight: 600; }
+    .td-no     { color: var(--red); }
+    .td-name   { font-weight: 600; color: var(--navy-dark); }
+    .td-co     { font-size: 11px; color: var(--text-muted); }
+    .td-msg    { color: var(--text-mid); max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .td-reason { color: var(--text-muted); font-size: 11px; }
+    .ev-count  { font-weight: 600; color: var(--navy); }
+
+    .ev-dot {
+      display: inline-block; width: 7px; height: 7px;
+      border-radius: 50%; margin-right: 7px; vertical-align: middle;
+    }
+    .dot-booking_click    { background: #1D9E75; }
+    .dot-contact_form     { background: #E8610A; }
+    .dot-newsletter_signup{ background: #1F4E79; }
+    .dot-thomas_opened    { background: #EEAE26; }
+    .dot-thomas_question  { background: #c49a14; }
+    .dot-resource_download{ background: #85B7EB; }
+    .dot-phone_click      { background: #2ecc71; }
+    .dot-landing_page     { background: #B8CCDE; }
+    .dot-scroll_depth     { background: #D1DDE8; }
+    .dot-time_on_page     { background: #D1DDE8; }
+
+    /* ═══════════════════════════════════════════
+       FEED CHIPS
+       ═══════════════════════════════════════════ */
+    .chip {
+      display: inline-block; font-family: var(--mono); font-size: 10px;
+      padding: 2px 8px; border-radius: 4px; white-space: nowrap;
+    }
+    .chip-booking_click    { background: #e6f9f3; color: #0d7a57; }
+    .chip-contact_form     { background: #fef0e7; color: #c4500a; }
+    .chip-newsletter_signup{ background: #eef4fb; color: #1f4e79; }
+    .chip-thomas_opened    { background: #fdf6e3; color: #9a6b00; }
+    .chip-thomas_question  { background: #fdf6e3; color: #9a6b00; }
+    .chip-resource_download{ background: #eef4fb; color: #3a6f9e; }
+    .chip-phone_click      { background: #e6f9f3; color: #0d7a57; }
+    .chip-landing_page     { background: #F4F6F8; color: #7a90a0; }
+    .chip-scroll_depth     { background: #F4F6F8; color: #a0b0bc; }
+    .chip-time_on_page     { background: #F4F6F8; color: #a0b0bc; }
+    .chip-unknown          { background: #F4F6F8; color: #a0b0bc; }
+
+    /* ═══════════════════════════════════════════
+       STATUS ROWS
+       ═══════════════════════════════════════════ */
+    .status-row {
+      padding: 20px 16px; text-align: center;
+      font-family: var(--mono); font-size: 12px; color: var(--text-dim);
+    }
+    .status-row.loading { animation: blink 1.2s ease-in-out infinite; }
+    .status-row.err     { color: var(--red); }
+
+    /* ═══════════════════════════════════════════
+       PAGINATION
+       ═══════════════════════════════════════════ */
+    .pager {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 14px; border-top: 1px solid var(--border); background: var(--navy-light);
+    }
+    .pager-info { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+    .pager-btns { display: flex; gap: 6px; }
+    .pager-btn {
+      font-family: var(--mono); font-size: 11px; padding: 4px 12px;
+      background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px;
+      cursor: pointer; color: var(--navy); transition: background 0.15s, border-color 0.15s;
+    }
+    .pager-btn:hover:not(:disabled) { background: var(--navy-light); border-color: var(--mid-blue); }
+    .pager-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* ═══════════════════════════════════════════
+       BLOCK IP FORM
+       ═══════════════════════════════════════════ */
+    .block-form {
+      padding: 16px; background: var(--navy-light);
+      border-top: 1px solid var(--border);
+      display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end;
+    }
+    .block-form-group {
+      display: flex; flex-direction: column; gap: 4px;
+      flex: 1; min-width: 160px;
+    }
+    .block-form-label {
+      font-family: var(--mono); font-size: 10px; text-transform: uppercase;
+      letter-spacing: 0.08em; color: var(--text-muted);
+    }
+    .block-form-input {
+      padding: 8px 10px; border: 1px solid var(--border-mid); border-radius: 5px;
+      font-family: var(--mono); font-size: 12px; color: var(--text);
+      background: var(--bg-card); outline: none; transition: border-color 0.15s;
+    }
+    .block-form-input:focus { border-color: var(--navy); }
+    .block-btn {
+      padding: 8px 20px; background: var(--red); color: #fff; border: none;
+      border-radius: 5px; font-family: var(--mono); font-size: 12px; font-weight: 500;
+      cursor: pointer; white-space: nowrap; transition: background 0.15s; align-self: flex-end;
+    }
+    .block-btn:hover     { background: #a93226; }
+    .block-btn:disabled  { opacity: 0.5; cursor: not-allowed; }
+    .block-form-msg { width: 100%; font-family: var(--mono); font-size: 11px; min-height: 14px; }
+    .block-form-msg.ok  { color: var(--green); }
+    .block-form-msg.err { color: var(--red); }
+
+    /* ═══════════════════════════════════════════
+       FOOTER
+       ═══════════════════════════════════════════ */
+    .dash-footer {
+      margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 10px;
+      font-family: var(--mono); font-size: 11px; color: var(--text-dim);
+    }
+  </style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════
+     DASHBOARD
+     ═══════════════════════════════════════════════════ -->
+<div id="dashboard">
+
+  <nav class="site-nav">
+    <div class="nav-inner">
+      <a href="https://shift-work.com/" class="nav-logo">
+        <img src="https://shift-work.com/images/clear_bkgr_logo_2.png" alt="Shiftwork Solutions" />
+        <span class="nav-logo-text">SHIFTWORK SOLUTIONS</span>
+      </a>
+      <span class="nav-center">Performance Dashboard</span>
+      <div class="nav-right">
+        <span class="nav-live"><span class="nav-live-dot"></span>Live</span>
+        <button class="nav-btn" onclick="loadAll()">↺ Refresh</button>
+        <button class="nav-btn lock" onclick="lockDash()">⚿ Lock</button>
+      </div>
+    </div>
+  </nav>
+
+  <main class="dash-main">
+
+    <div class="open-notice" id="open-notice" hidden>
+      <strong>The Swarm is not locked yet.</strong> Until an admin passcode is set, this page and the
+      data on it can be read by anyone who has the address. Add SWARM_ADMIN_PASSCODE in Render.
+    </div>
+
+    <div class="dash-header">
+      <div>
+        <div class="dash-title">Performance Dashboard</div>
+        <div class="dash-subtitle">shift-work.com &middot; auto-refreshes every 5 min</div>
+      </div>
+      <div class="dash-ts" id="last-ts">Last updated: —</div>
+    </div>
+
+    <!-- ── 1. KEY METRICS ── -->
+    <div class="sec">Key Conversions — Live from Swarm</div>
+    <div class="metric-grid">
+      <div class="mcard" style="--accent:#1F4E79">
+        <div class="mcard-label">Active Subscribers</div>
+        <div class="mcard-value loading" id="m-nl-active">…</div>
+        <div class="mcard-sub" id="m-nl-active-sub">newsletter</div>
+      </div>
+      <div class="mcard" style="--accent:#1D9E75">
+        <div class="mcard-label">New (Last 24h)</div>
+        <div class="mcard-value loading" id="m-nl-24h">…</div>
+        <div class="mcard-sub">new subscribers</div>
+      </div>
+      <div class="mcard" style="--accent:#85B7EB">
+        <div class="mcard-label">All-Time Subscribers</div>
+        <div class="mcard-value loading" id="m-nl-alltime">…</div>
+        <div class="mcard-sub">total ever</div>
+      </div>
+      <div class="mcard" style="--accent:#E8610A">
+        <div class="mcard-label">Contact Submissions</div>
+        <div class="mcard-value loading" id="m-contact">…</div>
+        <div class="mcard-sub">total form submits</div>
+      </div>
+      <div class="mcard" style="--accent:#C0392B">
+        <div class="mcard-label">Blocked IPs</div>
+        <div class="mcard-value loading" id="m-blocked">…</div>
+        <div class="mcard-sub">on blocklist</div>
+      </div>
+    </div>
+
+    <!-- ── 2. ANALYTICS LINKS ── -->
+    <div class="sec">Analytics Dashboards</div>
+    <div class="analytics-grid">
+      <a class="analytics-btn" style="--accent:#4E9AF1"
+         href="https://plausible.io/shift-work.com"
+         target="_blank" rel="noopener">
+        <div>
+          <div class="analytics-btn-name">Plausible Analytics</div>
+          <div class="analytics-btn-desc">Traffic &middot; pages &middot; referrers &middot; devices</div>
+        </div>
+        <span class="analytics-btn-arrow">↗</span>
+      </a>
+      <a class="analytics-btn" style="--accent:#0078D4"
+         href="https://clarity.microsoft.com/projects/view/wiyn7e4d73/dashboard?date=Last%203%20days"
+         target="_blank" rel="noopener">
+        <div>
+          <div class="analytics-btn-name">Microsoft Clarity</div>
+          <div class="analytics-btn-desc">Heatmaps &middot; session recordings &middot; rage clicks</div>
+        </div>
+        <span class="analytics-btn-arrow">↗</span>
+      </a>
+      <div class="analytics-placeholder">
+        <div>
+          <div class="analytics-placeholder-name">Google Ads</div>
+          <div class="analytics-placeholder-desc">Not yet connected</div>
+        </div>
+        <span class="analytics-placeholder-tag">Pending</span>
+      </div>
+    </div>
+
+    <!-- ── 3. CONVERSION EVENTS ── -->
+    <div class="sec">
+      <span>Conversion Events (Last 30 Days)</span>
+      <span id="events-note" style="font-family:var(--mono);font-size:10px;color:var(--text-dim)">requires site_events.py v2 deploy</span>
+    </div>
+    <div class="two-col">
+      <div class="card">
+        <div class="card-head">
+          <span class="card-head-title">Event Breakdown</span>
+          <span class="card-head-right" id="events-head-r"></span>
+        </div>
+        <div id="event-table-body">
+          <div class="status-row loading">Loading events…</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <span class="card-head-title">Recent Activity Feed</span>
+          <span class="card-head-right">Last 20 events</span>
+        </div>
+        <div id="feed-body">
+          <div class="status-row loading">Loading feed…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── 4. CONTACT SUBMISSIONS ── -->
+    <div class="sec">Recent Contact Form Submissions</div>
+    <div class="card">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Name / Company</th>
+            <th>Email</th>
+            <th>Message</th>
+            <th>Date</th>
+            <th>Fwd</th>
+          </tr>
+        </thead>
+        <tbody id="contact-tbody">
+          <tr><td colspan="5" class="status-row loading">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ── 5. NEWSLETTER SUBSCRIBERS ── -->
+    <div class="sec">
+      <span>Newsletter Subscribers</span>
+      <button class="sec-action" onclick="nlPage=1;loadSubscribers()">↺ Reload</button>
+    </div>
+    <div class="card">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Email</th>
+            <th>Source</th>
+            <th>IP Address</th>
+            <th>Domain</th>
+            <th>Subscribed</th>
+            <th>Active</th>
+          </tr>
+        </thead>
+        <tbody id="nl-tbody">
+          <tr><td colspan="6" class="status-row loading">Loading…</td></tr>
+        </tbody>
+      </table>
+      <div class="pager" id="nl-pager" style="display:none">
+        <span class="pager-info" id="nl-pager-info"></span>
+        <div class="pager-btns">
+          <button class="pager-btn" id="nl-prev" onclick="nlPagePrev()">← Prev</button>
+          <button class="pager-btn" id="nl-next" onclick="nlPageNext()">Next →</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── 6. BLOCKED IPs ── -->
+    <div class="sec">
+      <span>Blocked IP Addresses</span>
+      <button class="sec-action" onclick="loadBlockedIPs()">↺ Reload</button>
+    </div>
+    <div class="card">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>IP Address</th>
+            <th>Reason</th>
+            <th>Blocked At</th>
+            <th>Blocked By</th>
+          </tr>
+        </thead>
+        <tbody id="blocked-tbody">
+          <tr><td colspan="4" class="status-row loading">Loading…</td></tr>
+        </tbody>
+      </table>
+      <div class="block-form">
+        <div class="block-form-group">
+          <label class="block-form-label" for="block-ip-input">IP Address to Block</label>
+          <input class="block-form-input" type="text" id="block-ip-input"
+                 placeholder="e.g. 192.168.1.100" maxlength="64" />
+        </div>
+        <div class="block-form-group">
+          <label class="block-form-label" for="block-reason-input">Reason (optional)</label>
+          <input class="block-form-input" type="text" id="block-reason-input"
+                 placeholder="e.g. spam, abuse" maxlength="200" />
+        </div>
+        <button class="block-btn" id="block-submit-btn" onclick="submitBlockIP()">Block IP</button>
+        <div class="block-form-msg" id="block-form-msg"></div>
+      </div>
+    </div>
+
+    <div class="dash-footer">
+      <span>Shiftwork Solutions LLC &middot; Internal Use Only</span>
+      <span id="footer-ts">Auto-refresh every 5 min</span>
+    </div>
+
+  </main>
+</div><!-- /#dashboard -->
+
+<script>
+(function(){
+  'use strict';
+
+  var SWARM       = '';   // same site: this page is served by the Swarm itself
+  var REFRESH_MS  = 5 * 60 * 1000;
+
+  var nlPage       = 1;
+  var nlTotalPages = 1;
+  var nlPerPage    = 20;
+  var refreshTimer = null;
+
+  /* ── ACCESS ───────────────────────────────────────────────────── */
+  /* Getting here at all means the Swarm's Admin Gate let this browser in.
+     If a call is later refused (logged out, or the passcode changed), go
+     back to the Swarm's login page and return here afterwards. */
+  function goToLogin(){ window.location.replace('/login?next=/performance'); }
+
+  function checkLock(){
+    fetch('/api/admin-gate/check',{headers:{'Accept':'application/json'}})
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(d){ document.getElementById('open-notice').hidden = !(d && d.locked === false); })
+      .catch(function(){});
+  }
+
+  function showDash(){
+    checkLock();
+    loadAll();
+    if(refreshTimer) clearInterval(refreshTimer);
+    refreshTimer=setInterval(loadAll, REFRESH_MS);
+  }
+
+  window.lockDash=function(){
+    if(refreshTimer) clearInterval(refreshTimer);
+    fetch('/api/admin-gate/logout',{method:'POST'}).then(goToLogin, goToLogin);
+  };
+
+  /* ── HELPERS ──────────────────────────────────────────────────── */
+  function fmtN(n){ return (n===null||n===undefined)?'—':Number(n).toLocaleString(); }
+
+  function fmtDate(s){
+    if(!s) return '—';
+    try{
+      var d=new Date(s);
+      return d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'2-digit'})+' '+
+             d.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true});
+    }catch(e){ return s; }
+  }
+
+  function fmtRel(s){
+    if(!s) return '—';
+    try{
+      var diff=Date.now()-new Date(s).getTime();
+      var m=Math.floor(diff/60000);
+      if(m<1)  return 'just now';
+      if(m<60) return m+'m ago';
+      var h=Math.floor(m/60);
+      if(h<24) return h+'h ago';
+      return Math.floor(h/24)+'d ago';
+    }catch(e){ return '—'; }
+  }
+
+  function esc(s){
+    if(!s) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
+  function setM(id,val,sub){
+    var el=document.getElementById(id);
+    if(el){ el.textContent=val; el.className='mcard-value'; }
+    var se=document.getElementById(id+'-sub');
+    if(se&&sub!==undefined) se.textContent=sub;
+  }
+  function setMErr(id){ var el=document.getElementById(id); if(el){ el.textContent='Err'; el.className='mcard-value err'; } }
+
+  function apiFetch(path){
+    return fetch(SWARM+path,{method:'GET',headers:{'Accept':'application/json'}})
+      .then(function(r){ if(r.status===401){ goToLogin(); } if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); });
+  }
+  function apiPost(path,body){
+    return fetch(SWARM+path,{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Accept':'application/json'},
+      body:JSON.stringify(body)
+    }).then(function(r){ if(r.status===401){ goToLogin(); } if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); });
+  }
+
+  /* ── LOAD ALL ─────────────────────────────────────────────────── */
+  window.loadAll=function(){
+    var now=new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    document.getElementById('last-ts').textContent='Last updated: '+now;
+    document.getElementById('footer-ts').textContent='Auto-refresh every 5 min · last: '+now;
+    loadNewsletterStats();
+    loadContactStats();
+    loadEventSummary();
+    loadRecentFeed();
+    loadContactSubmissions();
+    loadSubscribers();
+    loadBlockedIPs();
+  };
+
+  /* ── NEWSLETTER STATS ─────────────────────────────────────────── */
+  function loadNewsletterStats(){
+    apiFetch('/api/newsletter/stats').then(function(d){
+      if(!d.success) throw new Error(d.error||'error');
+      setM('m-nl-active', fmtN(d.active_subscribers),  'currently active');
+      setM('m-nl-24h',    fmtN(d.last_24_hours),        'new subscribers');
+      setM('m-nl-alltime',fmtN(d.all_time_subscribers), 'total ever');
+      setM('m-blocked',   fmtN(d.blocked_ips),          'on blocklist');
+    }).catch(function(){
+      ['m-nl-active','m-nl-24h','m-nl-alltime','m-blocked'].forEach(setMErr);
+    });
+  }
+
+  /* ── CONTACT STATS ────────────────────────────────────────────── */
+  function loadContactStats(){
+    apiFetch('/api/contact/submissions?page=1&per_page=1').then(function(d){
+      if(!d.success) throw new Error(d.error||'error');
+      setM('m-contact', fmtN(d.total), 'total form submits');
+    }).catch(function(){ setMErr('m-contact'); });
+  }
+
+  /* ── EVENT SUMMARY ────────────────────────────────────────────── */
+  var EVENT_ORDER=['booking_click','contact_form','newsletter_signup','thomas_opened',
+                   'thomas_question','resource_download','phone_click','landing_page',
+                   'scroll_depth','time_on_page'];
+  var EVENT_LABELS={
+    booking_click:'Booking Click', contact_form:'Contact Form',
+    newsletter_signup:'Newsletter Signup', thomas_opened:'Thomas Opened',
+    thomas_question:'Thomas Question', resource_download:'Resource Download',
+    phone_click:'Phone Click', landing_page:'Landing Page View',
+    scroll_depth:'Scroll Depth', time_on_page:'Time on Page'
+  };
+
+  function loadEventSummary(){
+    var tb=document.getElementById('event-table-body');
+    tb.innerHTML='<div class="status-row loading">Loading events…</div>';
+    apiFetch('/api/events/summary').then(function(d){
+      if(!d.success&&!Array.isArray(d.summary)) throw new Error(d.error||'error');
+      var rows=d.summary||[];
+      var byType={};
+      rows.forEach(function(r){ byType[r.event_type]=r; });
+
+      var html='<table class="data-table"><thead><tr>'+
+               '<th>Event</th><th>Count</th><th>Unique Sessions</th><th>Last Seen</th>'+
+               '</tr></thead><tbody>';
+      EVENT_ORDER.forEach(function(t){
+        var r=byType[t]||{};
+        var count=r.total!==undefined?fmtN(r.total):'0';
+        var sess=r.unique_sessions!==undefined?fmtN(r.unique_sessions):'—';
+        var last=r.last_seen?fmtRel(r.last_seen):'—';
+        html+='<tr>'+
+              '<td><span class="ev-dot dot-'+t+'"></span>'+esc(EVENT_LABELS[t]||t)+'</td>'+
+              '<td class="ev-count">'+count+'</td>'+
+              '<td>'+sess+'</td>'+
+              '<td class="td-date">'+last+'</td></tr>';
+      });
+      rows.forEach(function(r){
+        if(EVENT_ORDER.indexOf(r.event_type)===-1){
+          html+='<tr><td><span class="ev-dot" style="background:#ccc"></span>'+esc(r.event_type)+'</td>'+
+                '<td class="ev-count">'+fmtN(r.total)+'</td><td>'+fmtN(r.unique_sessions)+'</td>'+
+                '<td class="td-date">'+fmtRel(r.last_seen)+'</td></tr>';
+        }
+      });
+      html+='</tbody></table>';
+      tb.innerHTML=html;
+      var en=document.getElementById('events-note');
+      if(en) en.textContent='(last '+(d.days||30)+' days)';
+    }).catch(function(err){
+      tb.innerHTML='<div class="status-row err">Could not load: '+esc(err.message)+
+                   '<br><span style="font-size:10px;color:var(--text-dim)">Deploy site_events.py v2 to fix</span></div>';
+    });
+  }
+
+  /* ── RECENT FEED ──────────────────────────────────────────────── */
+  function loadRecentFeed(){
+    var fb=document.getElementById('feed-body');
+    fb.innerHTML='<div class="status-row loading">Loading feed…</div>';
+    apiFetch('/api/events/recent?limit=20').then(function(d){
+      if(!d.success&&!Array.isArray(d.events)) throw new Error(d.error||'error');
+      var evts=d.events||[];
+      if(!evts.length){ fb.innerHTML='<div class="status-row">No recent events.</div>'; return; }
+      var html='<table class="data-table"><thead><tr>'+
+               '<th>Event</th><th>Page</th><th>Device</th><th>When</th>'+
+               '</tr></thead><tbody>';
+      evts.forEach(function(ev){
+        var t=ev.event_type||'unknown';
+        var page=ev.page_url||'—';
+        try{ var u=new URL(page); page=u.pathname||page; }catch(e){}
+        if(page.length>35) page=page.substring(0,33)+'…';
+        html+='<tr>'+
+              '<td><span class="chip chip-'+t+'">'+(EVENT_LABELS[t]||t)+'</span></td>'+
+              '<td style="font-size:11px;color:var(--text-mid)">'+esc(page)+'</td>'+
+              '<td style="font-size:11px;color:var(--text-dim)">'+esc(ev.device_type||'—')+'</td>'+
+              '<td class="td-date">'+fmtRel(ev.created_at)+'</td></tr>';
+      });
+      html+='</tbody></table>';
+      fb.innerHTML=html;
+    }).catch(function(err){
+      fb.innerHTML='<div class="status-row err">Could not load: '+esc(err.message)+'</div>';
+    });
+  }
+
+  /* ── CONTACT SUBMISSIONS ──────────────────────────────────────── */
+  function loadContactSubmissions(){
+    var tb=document.getElementById('contact-tbody');
+    tb.innerHTML='<tr><td colspan="5" class="status-row loading">Loading…</td></tr>';
+    apiFetch('/api/contact/submissions?page=1&per_page=10').then(function(d){
+      if(!d.success) throw new Error(d.error||'error');
+      var subs=d.submissions||[];
+      if(!subs.length){ tb.innerHTML='<tr><td colspan="5" class="status-row">No submissions yet.</td></tr>'; return; }
+      var html='';
+      subs.forEach(function(s){
+        var msg=s.message||'';
+        if(msg.length>80) msg=msg.substring(0,78)+'…';
+        var fwd=s.forwarded?'<span class="td-yes">✓</span>':'<span class="td-no">✗</span>';
+        html+='<tr>'+
+              '<td><span class="td-name">'+esc(s.name)+'</span><br><span class="td-co">'+esc(s.company||'')+'</span></td>'+
+              '<td class="td-email">'+esc(s.email)+'</td>'+
+              '<td class="td-msg">'+esc(msg)+'</td>'+
+              '<td class="td-date">'+fmtDate(s.submitted_at)+'</td>'+
+              '<td>'+fwd+'</td></tr>';
+      });
+      tb.innerHTML=html;
+    }).catch(function(err){
+      tb.innerHTML='<tr><td colspan="5" class="status-row err">'+esc(err.message)+'</td></tr>';
+    });
+  }
+
+  /* ── NEWSLETTER SUBSCRIBERS ───────────────────────────────────── */
+  window.nlPage=1;
+  window.nlPagePrev=function(){ if(nlPage>1){ nlPage--; loadSubscribers(); } };
+  window.nlPageNext=function(){ if(nlPage<nlTotalPages){ nlPage++; loadSubscribers(); } };
+
+  function loadSubscribers(){
+    var tb=document.getElementById('nl-tbody');
+    tb.innerHTML='<tr><td colspan="6" class="status-row loading">Loading…</td></tr>';
+    apiFetch('/api/newsletter/subscribers?page='+nlPage+'&per_page='+nlPerPage)
+      .then(function(d){
+        if(!d.success) throw new Error(d.error||'error');
+        nlTotalPages=d.total_pages||1;
+        var subs=d.subscribers||[];
+        if(!subs.length){ tb.innerHTML='<tr><td colspan="6" class="status-row">No subscribers yet.</td></tr>'; return; }
+        var html='';
+        subs.forEach(function(s){
+          var active=s.is_active?'<span class="td-yes">✓</span>':'<span class="td-no">✗</span>';
+          html+='<tr>'+
+                '<td class="td-email">'+esc(s.email)+'</td>'+
+                '<td class="td-src">'+esc(s.source||'—')+'</td>'+
+                '<td class="td-ip">'+esc(s.ip_address||'—')+'</td>'+
+                '<td class="td-dom">'+esc(s.email_domain||'—')+'</td>'+
+                '<td class="td-date">'+fmtDate(s.subscribed_at)+'</td>'+
+                '<td>'+active+'</td></tr>';
+        });
+        tb.innerHTML=html;
+        var pager=document.getElementById('nl-pager');
+        pager.style.display='flex';
+        document.getElementById('nl-pager-info').textContent=
+          'Page '+nlPage+' of '+nlTotalPages+' · '+fmtN(d.total)+' total';
+        document.getElementById('nl-prev').disabled=(nlPage<=1);
+        document.getElementById('nl-next').disabled=(nlPage>=nlTotalPages);
+      }).catch(function(err){
+        tb.innerHTML='<tr><td colspan="6" class="status-row err">'+esc(err.message)+'</td></tr>';
+      });
+  }
+
+  /* ── BLOCKED IPs ──────────────────────────────────────────────── */
+  function loadBlockedIPs(){
+    var tb=document.getElementById('blocked-tbody');
+    tb.innerHTML='<tr><td colspan="4" class="status-row loading">Loading…</td></tr>';
+    apiFetch('/api/newsletter/blocked-ips').then(function(d){
+      if(!d.success) throw new Error(d.error||'error');
+      var ips=d.blocked_ips||d.ips||[];
+      if(!ips.length){ tb.innerHTML='<tr><td colspan="4" class="status-row">No blocked IPs.</td></tr>'; return; }
+      var html='';
+      ips.forEach(function(ip){
+        var addr=ip.ip_address||ip.ip||'—';
+        html+='<tr>'+
+              '<td class="td-ip" style="font-weight:600">'+esc(addr)+'</td>'+
+              '<td class="td-reason">'+esc(ip.reason||'—')+'</td>'+
+              '<td class="td-date">'+fmtDate(ip.blocked_at||ip.created_at)+'</td>'+
+              '<td class="td-dom">'+esc(ip.blocked_by||'system')+'</td></tr>';
+      });
+      tb.innerHTML=html;
+    }).catch(function(err){
+      tb.innerHTML='<tr><td colspan="4" class="status-row err">'+esc(err.message)+'</td></tr>';
+    });
+  }
+
+  /* ── SUBMIT BLOCK IP ──────────────────────────────────────────── */
+  window.submitBlockIP=function(){
+    var ip=document.getElementById('block-ip-input').value.trim();
+    var reason=document.getElementById('block-reason-input').value.trim();
+    var btn=document.getElementById('block-submit-btn');
+    var msg=document.getElementById('block-form-msg');
+    msg.textContent=''; msg.className='block-form-msg';
+    if(!ip){ msg.className='block-form-msg err'; msg.textContent='IP address is required.'; return; }
+    btn.disabled=true; btn.textContent='Blocking…';
+    apiPost('/api/newsletter/block-ip',{ip_address:ip,reason:reason||'Blocked via dashboard'})
+      .then(function(d){
+        if(!d.success) throw new Error(d.error||'Failed');
+        msg.className='block-form-msg ok';
+        msg.textContent='✓ '+ip+' blocked.';
+        document.getElementById('block-ip-input').value='';
+        document.getElementById('block-reason-input').value='';
+        btn.disabled=false; btn.textContent='Block IP';
+        loadBlockedIPs(); loadNewsletterStats();
+      }).catch(function(err){
+        msg.className='block-form-msg err';
+        msg.textContent='Error: '+err.message;
+        btn.disabled=false; btn.textContent='Block IP';
+      });
+  };
+
+  showDash();
+
+})();
+</script>
+
+</body>
+</html>
+<!-- I did no harm and this file is not truncated -->
