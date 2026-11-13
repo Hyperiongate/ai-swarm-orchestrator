@@ -1,9 +1,25 @@
 """
 SWARM PROJECT KNOWLEDGE INTEGRATION MODULE - ENHANCED
 Created: January 19, 2026
-Last Updated: February 25, 2026 - SAFETY GUARD + DIAGNOSTIC IMPROVEMENTS
+Last Updated: November 13, 2026 - wait_until_ready() so workers never start half-loaded
 
 CHANGELOG:
+
+- November 13, 2026: ADDED wait_until_ready()
+  * PROBLEM: initialize_background() loads the documents in a background
+    thread. Gunicorn (preload_app=True) loads the app once and then copies
+    that process to make the worker that serves requests. A copy does not
+    carry background threads with it. If the copy was made while the load
+    was still running, the worker was left with a half-filled index (seen in
+    testing: 25 of 34 documents) that never finished, and it reported
+    "initializing" until the worker was next recycled. Whether this happened
+    after a given deploy was a matter of timing.
+  * FIX: wait_until_ready(timeout) lets app.py wait for the load to finish
+    before the app finishes starting, so the copy is always made from a
+    fully loaded knowledge base. The load still runs in the background while
+    the rest of the app starts, so no time is wasted.
+  * Nothing else changed: indexing, search and every other method are as
+    they were.
 
 - February 25, 2026: SAFETY GUARD + DIAGNOSTIC IMPROVEMENTS
   * PROBLEM: After database deletion, _index_all_documents() starts with
@@ -176,6 +192,14 @@ class EnhancedProjectKnowledgeBase:
     def is_ready(self):
         """True when initialization is fully complete."""
         return self._initialization_complete.is_set()
+
+    def wait_until_ready(self, timeout=180.0):
+        """
+        Block until the background load has finished, or timeout seconds pass.
+        Returns True if the knowledge base is ready. Called once by app.py at
+        the end of start-up (Added November 13, 2026; see the changelog).
+        """
+        return self._wait_for_ready(timeout=timeout)
 
     def _wait_for_ready(self, timeout=2.0):
         """

@@ -1,7 +1,7 @@
 """
 ADAPTIVE LEARNING ENGINE - Phase 1
 Created: February 2, 2026
-Last Updated: February 2, 2026
+Last Updated: November 13, 2026 — learning file moved to the persistent disk
 
 This module implements true learning loops for the AI Swarm Orchestrator.
 It tracks task outcomes, identifies patterns, and automatically adjusts
@@ -15,8 +15,20 @@ Integration Points:
 - Provides learned patterns to orchestrator for better routing
 - Suggests automatic adjustments (requires approval initially)
 
+CHANGELOG:
+- November 13, 2026: LEARNING IS NO LONGER LOST ON EVERY DEPLOY
+  * The default database file was 'swarm_intelligence.db' with no folder,
+    which on Render sits in the app folder and is wiped at each deploy. The
+    default is now local_store.LEARNING_DB_PATH, which points at the
+    persistent disk (/mnt/project/swarm_learning.db) when one is attached and
+    falls back to the old name otherwise. See local_store.py for the full
+    reasoning. Only the default changed: every table, query and function is
+    as it was, and a caller that passes its own db_path is unaffected.
+
 Author: Jim @ Shiftwork Solutions LLC (managed by Claude Sonnet 4)
 """
+
+from local_store import LEARNING_DB_PATH
 
 import json
 import sqlite3
@@ -32,7 +44,7 @@ class OutcomeTracker:
     Records what worked, what didn't, and why.
     """
     
-    def __init__(self, db_path='swarm_intelligence.db'):
+    def __init__(self, db_path=LEARNING_DB_PATH):
         self.db_path = db_path
         self._ensure_tables()
     
@@ -275,7 +287,7 @@ class PatternRecognizer:
     Discovers what combinations of factors lead to success.
     """
     
-    def __init__(self, db_path='swarm_intelligence.db'):
+    def __init__(self, db_path=LEARNING_DB_PATH):
         self.db_path = db_path
         self.min_confidence = 0.75  # 75% confidence threshold
         self.min_observations = 10   # Need 10+ observations
@@ -564,7 +576,7 @@ class BehaviorModifier:
     All modifications are logged and can be reverted.
     """
     
-    def __init__(self, db_path='swarm_intelligence.db'):
+    def __init__(self, db_path=LEARNING_DB_PATH):
         self.db_path = db_path
     
     def suggest_adjustments(self, patterns: List[Dict]) -> List[Dict]:
@@ -693,7 +705,7 @@ class AdaptiveLearningEngine:
     Coordinates outcome tracking, pattern recognition, and behavior modification.
     """
     
-    def __init__(self, db_path='swarm_intelligence.db'):
+    def __init__(self, db_path=LEARNING_DB_PATH):
         self.db_path = db_path
         self.outcome_tracker = OutcomeTracker(db_path)
         self.pattern_recognizer = PatternRecognizer(db_path)
@@ -843,7 +855,7 @@ class AdaptiveLearningEngine:
 
 
 # Convenience function for integration
-def get_learning_engine(db_path='swarm_intelligence.db') -> AdaptiveLearningEngine:
+def get_learning_engine(db_path=LEARNING_DB_PATH) -> AdaptiveLearningEngine:
     """Get the singleton learning engine instance"""
     return AdaptiveLearningEngine(db_path)
 

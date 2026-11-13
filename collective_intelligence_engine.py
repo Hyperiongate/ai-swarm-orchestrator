@@ -1,7 +1,7 @@
 """
 COLLECTIVE INTELLIGENCE ENGINE - Phase 4
 Created: February 2, 2026
-Last Updated: February 2, 2026
+Last Updated: November 13, 2026 — learning file moved to the persistent disk
 
 This module learns from ALL past project materials to provide intelligent
 recommendations for new projects. It extracts patterns from:
@@ -18,8 +18,20 @@ Key Features:
 
 Integration: Works with existing knowledge base, adds learning layer on top.
 
+CHANGELOG:
+- November 13, 2026: LEARNING IS NO LONGER LOST ON EVERY DEPLOY
+  * The default database file was 'swarm_intelligence.db' with no folder,
+    which on Render sits in the app folder and is wiped at each deploy. The
+    default is now local_store.LEARNING_DB_PATH, which points at the
+    persistent disk (/mnt/project/swarm_learning.db) when one is attached and
+    falls back to the old name otherwise. See local_store.py for the full
+    reasoning. Only the default changed: every table, query and function is
+    as it was, and a caller that passes its own db_path is unaffected.
+
 Author: Jim @ Shiftwork Solutions LLC (managed by Claude Sonnet 4)
 """
+
+from local_store import LEARNING_DB_PATH
 
 import json
 import sqlite3
@@ -34,7 +46,7 @@ class CollectiveKnowledgeExtractor:
     Learns patterns from implementation manuals, lessons learned, surveys, etc.
     """
     
-    def __init__(self, db_path='swarm_intelligence.db', knowledge_base=None):
+    def __init__(self, db_path=LEARNING_DB_PATH, knowledge_base=None):
         self.db_path = db_path
         self.knowledge_base = knowledge_base
         self._ensure_tables()
@@ -517,7 +529,7 @@ class IntelligentDocumentAnalyzer:
     Provides insights, comparisons to normative data, and recommendations.
     """
     
-    def __init__(self, db_path='swarm_intelligence.db', knowledge_base=None):
+    def __init__(self, db_path=LEARNING_DB_PATH, knowledge_base=None):
         self.db_path = db_path
         self.knowledge_base = knowledge_base
         self.extractor = CollectiveKnowledgeExtractor(db_path, knowledge_base)
@@ -758,7 +770,7 @@ class IntelligentDeliverableGenerator:
     learned patterns and best practices from past work.
     """
     
-    def __init__(self, db_path='swarm_intelligence.db', knowledge_base=None):
+    def __init__(self, db_path=LEARNING_DB_PATH, knowledge_base=None):
         self.db_path = db_path
         self.knowledge_base = knowledge_base
         self.extractor = CollectiveKnowledgeExtractor(db_path, knowledge_base)
@@ -1033,7 +1045,7 @@ class CollectiveIntelligenceOrchestrator:
     Coordinates learning from past work and intelligent deliverable generation.
     """
     
-    def __init__(self, db_path='swarm_intelligence.db', knowledge_base=None):
+    def __init__(self, db_path=LEARNING_DB_PATH, knowledge_base=None):
         self.db_path = db_path
         self.knowledge_base = knowledge_base
         self.extractor = CollectiveKnowledgeExtractor(db_path, knowledge_base)

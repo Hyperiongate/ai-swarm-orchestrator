@@ -1,9 +1,19 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: November 13, 2026 — System Report added
+Last Updated: November 13, 2026 — Start-up waits for the knowledge base
 
 CHANGELOG:
+- November 13, 2026: START-UP WAITS FOR BACKGROUND LOADING — ONE CHANGE ONLY:
+  Added a "FINISH LOADING BEFORE WORKERS START" block at the very end of this
+  file (after Swarm self-registration). It waits for the knowledge base's
+  background load, and then the capabilities manifest warm-up, to finish.
+  WHY: under Gunicorn's preload the worker is a copy of this process, and a
+  copy made mid-load kept a half-filled knowledge base that never completed
+  (seen in testing: 25 of 34 documents, stuck on "initializing"). Start-up
+  takes a few seconds longer; the old version keeps serving meanwhile.
+  NO OTHER CHANGES. Rule 1 (do no harm) preserved.
+
 - November 13, 2026: SYSTEM REPORT — ONE CHANGE ONLY:
   BLUEPRINT: Registered system_report_bp from routes/system_report.py. Placed
   immediately AFTER the AI Connections Self-Test registration block. Provides
@@ -1565,6 +1575,27 @@ except ImportError as e:
     print(f"App Monitor not found (non-fatal): {e}")
 except Exception as e:
     print(f"Swarm self-registration failed (non-fatal): {e}")
+
+# ============================================================================
+# FINISH LOADING BEFORE WORKERS START (November 13, 2026)
+# ============================================================================
+# Gunicorn (preload_app=True) loads this file once, then copies the process to
+# make the worker that serves requests. A copy does not carry background
+# threads with it, so anything still loading in a background thread at that
+# moment is left half-done in the worker for good. The knowledge base and the
+# capabilities manifest both load in background threads (so the rest of this
+# file can load meanwhile); here, at the very end, we wait for them.
+try:
+    if knowledge_base is not None and not knowledge_base.is_ready:
+        print("Waiting for the knowledge base to finish loading before workers start...")
+        if knowledge_base.wait_until_ready(timeout=180):
+            print(f"Knowledge base ready: {len(knowledge_base.knowledge_index)} documents")
+        else:
+            print("WARNING: knowledge base still loading after 180s; this worker may start without it")
+    if '_warm_thread' in globals() and _warm_thread.is_alive():
+        _warm_thread.join(timeout=60)
+except Exception as e:
+    print(f"Wait-for-load step failed (non-fatal): {e}")
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))

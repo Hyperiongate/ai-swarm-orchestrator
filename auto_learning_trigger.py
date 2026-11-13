@@ -1,7 +1,7 @@
 """
 AUTOMATIC COLLECTIVE INTELLIGENCE LEARNING TRIGGER
 Created: February 2, 2026
-Last Updated: February 2, 2026
+Last Updated: November 13, 2026 — learning file moved to the persistent disk
 
 This module automatically triggers collective intelligence learning when:
 1. New files are added to the knowledge base
@@ -10,8 +10,20 @@ This module automatically triggers collective intelligence learning when:
 
 No manual intervention needed - the system learns automatically.
 
+CHANGELOG:
+- November 13, 2026: LEARNING IS NO LONGER LOST ON EVERY DEPLOY
+  * The default database file was 'swarm_intelligence.db' with no folder,
+    which on Render sits in the app folder and is wiped at each deploy. The
+    default is now local_store.LEARNING_DB_PATH, which points at the
+    persistent disk (/mnt/project/swarm_learning.db) when one is attached and
+    falls back to the old name otherwise. See local_store.py for the full
+    reasoning. Only the default changed: every table, query and function is
+    as it was, and a caller that passes its own db_path is unaffected.
+
 Author: Jim @ Shiftwork Solutions LLC (managed by Claude Sonnet 4)
 """
+
+from local_store import LEARNING_DB_PATH
 
 import sqlite3
 from datetime import datetime, timedelta
@@ -23,7 +35,7 @@ class AutoLearningTrigger:
     Automatically triggers collective intelligence learning when appropriate.
     """
     
-    def __init__(self, db_path='swarm_intelligence.db'):
+    def __init__(self, db_path=LEARNING_DB_PATH):
         self.db_path = db_path
         self._ensure_tables()
     

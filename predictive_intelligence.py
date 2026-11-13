@@ -1,7 +1,7 @@
 """
 PREDICTIVE INTELLIGENCE ENGINE - Phase 2
 Created: February 2, 2026
-Last Updated: February 2, 2026
+Last Updated: November 13, 2026 — learning file moved to the persistent disk
 
 This module implements predictive capabilities that anticipate user needs
 and pre-stage resources before they're requested.
@@ -19,8 +19,20 @@ Features:
 Integration: Safe to deploy - only makes predictions, doesn't change behavior
 unless predictions are explicitly used by orchestrator.
 
+CHANGELOG:
+- November 13, 2026: LEARNING IS NO LONGER LOST ON EVERY DEPLOY
+  * The default database file was 'swarm_intelligence.db' with no folder,
+    which on Render sits in the app folder and is wiped at each deploy. The
+    default is now local_store.LEARNING_DB_PATH, which points at the
+    persistent disk (/mnt/project/swarm_learning.db) when one is attached and
+    falls back to the old name otherwise. See local_store.py for the full
+    reasoning. Only the default changed: every table, query and function is
+    as it was, and a caller that passes its own db_path is unaffected.
+
 Author: Jim @ Shiftwork Solutions LLC (managed by Claude Sonnet 4)
 """
+
+from local_store import LEARNING_DB_PATH
 
 import json
 import sqlite3
@@ -36,7 +48,7 @@ class UserBehaviorAnalyzer:
     Learns sequences like: "schedule request → implementation manual → employee survey"
     """
     
-    def __init__(self, db_path='swarm_intelligence.db'):
+    def __init__(self, db_path=LEARNING_DB_PATH):
         self.db_path = db_path
         self._ensure_tables()
     
@@ -320,7 +332,7 @@ class ProjectPhasePredictor:
     Example: "Manufacturing projects typically go: Survey → Schedule Design → Implementation"
     """
     
-    def __init__(self, db_path='swarm_intelligence.db'):
+    def __init__(self, db_path=LEARNING_DB_PATH):
         self.db_path = db_path
     
     def analyze_project_progressions(self) -> List[Dict]:
@@ -408,7 +420,7 @@ class ResourcePreStager:
     Example: "Jim's working on schedule, pre-load normative data"
     """
     
-    def __init__(self, db_path='swarm_intelligence.db'):
+    def __init__(self, db_path=LEARNING_DB_PATH):
         self.db_path = db_path
     
     def predict_needed_resources(self, current_context: Dict) -> List[Dict]:
@@ -480,7 +492,7 @@ class ProactiveSuggestionEngine:
     Example: "Ready to draft employee communication email?"
     """
     
-    def __init__(self, db_path='swarm_intelligence.db'):
+    def __init__(self, db_path=LEARNING_DB_PATH):
         self.db_path = db_path
     
     def generate_suggestions(self, current_context: Dict, recent_tasks: List[Dict]) -> List[Dict]:
@@ -575,7 +587,7 @@ class PredictiveIntelligenceEngine:
     Coordinates behavior analysis, predictions, and proactive suggestions.
     """
     
-    def __init__(self, db_path='swarm_intelligence.db'):
+    def __init__(self, db_path=LEARNING_DB_PATH):
         self.db_path = db_path
         self.behavior_analyzer = UserBehaviorAnalyzer(db_path)
         self.phase_predictor = ProjectPhasePredictor(db_path)
@@ -712,7 +724,7 @@ class PredictiveIntelligenceEngine:
 
 
 # Convenience function
-def get_predictive_engine(db_path='swarm_intelligence.db') -> PredictiveIntelligenceEngine:
+def get_predictive_engine(db_path=LEARNING_DB_PATH) -> PredictiveIntelligenceEngine:
     """Get singleton instance of predictive engine"""
     return PredictiveIntelligenceEngine(db_path)
 
