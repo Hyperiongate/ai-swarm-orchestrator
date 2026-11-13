@@ -1,9 +1,17 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: November 13, 2026 — AI connections repaired; self-test added
+Last Updated: November 13, 2026 — System Report added
 
 CHANGELOG:
+- November 13, 2026: SYSTEM REPORT — ONE CHANGE ONLY:
+  BLUEPRINT: Registered system_report_bp from routes/system_report.py. Placed
+  immediately AFTER the AI Connections Self-Test registration block. Provides
+  GET /api/admin/system-report (and the page /system-report): a read-only
+  picture of where the live Swarm keeps its data (PostgreSQL tables, local
+  SQLite files, mounted disk) and of the scheduled jobs. Counts and dates
+  only. Private by default under the Admin Gate. NO OTHER CHANGES.
+
 - November 13, 2026: AI CONNECTIONS — TWO CHANGES ONLY:
   1. BLUEPRINT: Registered ai_selftest_bp from routes/ai_selftest.py. Placed
      immediately AFTER the Performance Dashboard registration block. Provides
@@ -1323,6 +1331,18 @@ except ImportError as e:
     print(f"AI Connections Self-Test routes not found: {e}")
 except Exception as e:
     print(f"AI Connections Self-Test registration failed: {e}")
+
+# ----------------------------------------------------------------------------
+# System Report (November 13, 2026) — read-only: where data lives, scheduler
+# ----------------------------------------------------------------------------
+try:
+    from routes.system_report import system_report_bp
+    app.register_blueprint(system_report_bp)
+    print("System Report registered")
+except ImportError as e:
+    print(f"System Report routes not found: {e}")
+except Exception as e:
+    print(f"System Report registration failed: {e}")
 
 try:
     from routes.newsletter import newsletter_bp

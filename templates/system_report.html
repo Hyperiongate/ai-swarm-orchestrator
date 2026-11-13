@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<!--
+  Shiftwork Solutions LLC — System Report
+  File: templates/system_report.html   (served at /system-report by routes/system_report.py)
+  Created: 2026-11-13
+  Last updated: 2026-11-13
+  Author: Claude for Jim @ Shiftwork Solutions LLC
+
+  PURPOSE:
+    Shows where the live Swarm keeps its data and whether its scheduled jobs
+    run, as plain text that can be copied with one button and pasted to
+    Claude. Calls GET /api/admin/system-report. Read-only.
+    Private: the Swarm's Admin Gate requires the admin login to open it.
+
+  CHANGE LOG:
+    2026-11-13  (v1) Initial build.
+
+  Sent to the browser as a plain file, not through the template engine.
+
+  I did no harm and this file is not truncated
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <title>System Report — AI Swarm</title>
+  <style>
+    :root { --navy:#0D1B3E; --line:#C7D3E3; --bg:#F0F4F9; --muted:#5B6B85; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--navy); font-family:-apple-system,'Segoe UI',Arial,sans-serif; font-size:15px; line-height:1.5; }
+    header { background:var(--navy); color:#fff; padding:16px; }
+    header .in, main { max-width:980px; margin:0 auto; }
+    header .in { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
+    header h1 { font-size:18px; margin:0; }
+    header a { color:#BFD4F5; text-decoration:none; font-size:14px; }
+    main { padding:24px 16px 48px; }
+    .lead { color:var(--muted); margin:0 0 18px; max-width:70ch; }
+    button { background:var(--navy); color:#fff; border:0; border-radius:6px; padding:12px 22px; font-size:15px; font-weight:600; cursor:pointer; margin-right:8px; }
+    button:disabled { opacity:.55; cursor:default; }
+    #status { display:inline-block; margin-left:4px; color:var(--muted); min-height:22px; }
+    pre { background:#fff; border:1px solid var(--line); border-radius:8px; padding:16px; margin-top:16px; overflow-x:auto;
+          font-family:Consolas,'Courier New',monospace; font-size:13px; line-height:1.45; white-space:pre; min-height:120px; }
+  </style>
+</head>
+<body>
+  <header><div class="in">
+    <h1>System Report</h1>
+    <a href="/">Back to the Swarm</a>
+  </div></header>
+  <main>
+    <p class="lead">
+      Where the Swarm keeps its data, and whether its scheduled jobs are running. It shows counts and dates only,
+      never the contents of a record, and it changes nothing. Press <strong>Copy</strong> and paste the text to Claude.
+    </p>
+    <button id="copy" onclick="copyReport()" disabled>Copy</button>
+    <button id="again" onclick="loadReport()">Refresh</button>
+    <span id="status" aria-live="polite"></span>
+    <pre id="report">Loading…</pre>
+  </main>
+
+<script>
+(function(){
+  'use strict';
+
+  function pad(text, width){ text = String(text); while (text.length < width) text += ' '; return text + ' '; }
+
+  function asText(d){
+    var out = [];
+    out.push('SWARM SYSTEM REPORT  ' + d.generated);
+    out.push('');
+
+    var p = d.process || {};
+    out.push('PROCESS');
+    out.push('  id ' + p.pid + ' (parent ' + p.parent_pid + '), Python ' + p.python + ', loaded ' + p.loaded +
+             ' (' + p.minutes_since_loaded + ' min ago)');
+    out.push('  folder: ' + p.folder);
+    out.push('  threads alive here: ' + (p.threads_alive_here || []).join(', '));
+    out.push('');
+
+    var s = d.scheduler || {};
+    out.push('SCHEDULED JOBS');
+    out.push('  ENABLE_SCHEDULED_JOBS = ' + s.ENABLE_SCHEDULED_JOBS + ';  enabled: ' + s.enabled + ';  running: ' + s.running);
+    if (s.message) out.push('  ' + s.message);
+    if (s.error) out.push('  error: ' + s.error);
+    (s.jobs || []).forEach(function(j){ out.push('  - ' + pad(j.name, 40) + ' next: ' + j.next_run); });
+    out.push('');
+
+    out.push('DISK');
+    (Array.isArray(d.disk) ? d.disk : []).forEach(function(f){
+      out.push('  ' + pad(f.path, 28) + (f.exists
+        ? ('mounted disk: ' + f.is_mounted_disk + ';  ' + f.files + ' entries;  ' + f.free_gb + ' of ' + f.total_gb + ' GB free')
+        : 'does not exist'));
+    });
+    out.push('');
+
+    out.push('LOCAL DATABASE FILES');
+    var files = Array.isArray(d.local_files) ? d.local_files : [];
+    if (!files.length) out.push('  none found');
+    files.forEach(function(f){
+      out.push('  ' + f.path + '   ' + f.size_kb + ' KB, last changed ' + f.last_changed + ', ' + f.rows_total + ' rows in all');
+      if (f.error) out.push('      error: ' + f.error);
+      Object.keys(f.tables || {}).forEach(function(t){ out.push('      ' + pad(t, 40) + f.tables[t]); });
+    });
+    out.push('');
+
+    var pg = d.postgres || {};
+    out.push('POSTGRESQL' + (pg.in_use ? ('  (' + pg.table_count + ' tables)') : ''));
+    if (pg.note) out.push('  ' + pg.note);
+    if (pg.error) out.push('  error: ' + pg.error);
+    (pg.tables || []).forEach(function(t){
+      out.push('  ' + pad(t.table, 40) + (t.error ? t.error : (pad(t.rows, 9) + (t.newest ? ('newest ' + t.newest) : ''))));
+    });
+    return out.join('\n');
+  }
+
+  window.loadReport = function(){
+    var status = document.getElementById('status');
+    var pre = document.getElementById('report');
+    document.getElementById('copy').disabled = true;
+    status.textContent = 'Loading…';
+    fetch('/api/admin/system-report', {headers: {'Accept': 'application/json'}})
+      .then(function(r){
+        if (r.status === 401) { window.location.replace('/login?next=/system-report'); throw new Error('Login needed'); }
+        if (!r.ok) throw new Error('The Swarm answered with status ' + r.status + '.');
+        return r.json();
+      })
+      .then(function(data){
+        pre.textContent = asText(data);            // textContent: shown as text, never run as HTML
+        status.textContent = '';
+        document.getElementById('copy').disabled = false;
+      })
+      .catch(function(error){ pre.textContent = ''; status.textContent = 'Could not load the report: ' + error.message; });
+  };
+
+  window.copyReport = function(){
+    var status = document.getElementById('status');
+    var text = document.getElementById('report').textContent;
+    function done(){ status.textContent = 'Copied. Paste it to Claude.'; }
+    function byHand(){
+      var range = document.createRange(); range.selectNodeContents(document.getElementById('report'));
+      var selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+      status.textContent = 'Selected. Press Ctrl+C to copy.';
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, byHand);
+    else byHand();
+  };
+
+  loadReport();
+})();
+</script>
+</body>
+</html>

@@ -169,10 +169,29 @@ def test_removed_features_are_gone(locked):
         assert tab in page
 
 
+def test_system_report_is_private_and_shows_counts_only(locked):
+    assert refused(locked.get("/api/admin/system-report"))
+    log_in(locked)
+    locked.post("/api/newsletter/subscribe", json={"email": "report-check@example.com"})
+    report = locked.get("/api/admin/system-report")
+    assert report.status_code == 200
+    data = report.get_json()
+    assert set(data) == {"generated", "process", "scheduler", "disk", "local_files", "postgres"}
+    assert data["process"]["pid"] == os.getpid() and "MainThread" in data["process"]["threads_alive_here"]
+    assert data["scheduler"]["enabled"] is False
+    assert data["postgres"]["in_use"] is True and data["postgres"]["table_count"] > 40
+    tables = {row["table"]: row for row in data["postgres"]["tables"]}
+    assert not [row for row in tables.values() if "error" in row]
+    assert tables["admin_gate_seen"]["rows"] >= 0 and "rows" in tables["factcheck_jobs"]
+    assert b"report-check@example.com" not in report.data          # counts and dates, never contents
+    assert locked.get("/system-report").status_code == 200
+
+
 def test_the_sensitive_routes_are_private():
     kinds = {f"{method} {path}": kind for method, path, _e, kind in ROUTES}
     assert kinds["GET /performance"] == "admin" and kinds["GET /performance/"] == "admin"
     assert kinds["GET /ai-selftest"] == "admin" and kinds["GET /api/admin/ai-selftest"] == "admin"
+    assert kinds["GET /system-report"] == "admin" and kinds["GET /api/admin/system-report"] == "admin"
     for route in ["GET /api/newsletter/subscribers", "GET /api/newsletter/blocked-ips",
                   "POST /api/newsletter/block-ip", "POST /api/newsletter/unsubscribe",
                   "GET /api/contact/submissions", "GET /api/events/recent", "GET /api/events/summary",
