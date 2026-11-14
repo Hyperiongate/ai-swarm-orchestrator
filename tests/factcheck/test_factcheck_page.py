@@ -2,7 +2,7 @@
 Speech Fact-Checker — page tests under the Swarm's real server settings
 File: tests/factcheck/test_factcheck_page.py
 Created: November 11, 2026
-Last Updated: November 11, 2026 — Initial version
+Last Updated: November 13, 2026 — Consensus flow (the panel of other AIs)
 
 PURPOSE:
     Drives the listening page in a real Chrome with a pretend microphone, served
@@ -105,6 +105,9 @@ def start_server(port, log_path, extra_env=None, no_key=False):
     """gunicorn with the Swarm's own gunicorn.conf.py, serving only the fact-checker blueprint."""
     env = dict(os.environ)
     env.pop("FACTCHECK_PASSCODE", None)
+    for name in ("OPENAI_API_KEY", "DEEPSEEK_API_KEY", "GOOGLE_API_KEY", "FACTCHECK_PANEL",   # no panel unless a flow asks
+                 "HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"):
+        env.pop(name, None)
     env.update({"PORT": str(port), "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{STUB_PORT}",
                 "ANTHROPIC_API_KEY": "test-key-not-real"})
     if no_key:
@@ -169,6 +172,7 @@ def live_flow(browser, port, failures, errors):
     page.wait_for_function("!!window.__rec")
     check(page.inner_text("#bubbleVerdict") == "Listening", "bubble says Listening after Start", failures)
     check(page.is_visible("#btnStop") and not page.is_visible("#btnStart"), "Stop button replaces Start", failures)
+    check(page.is_hidden("#consensusRow"), "no consensus switch when the server has no other AI", failures)
     check(page.is_hidden("#progress"), "no progress bar while listening live (the length is unknown)", failures)
 
     page.evaluate("window.hear('thank you all', true)")
@@ -271,6 +275,100 @@ def paste_flow(browser, port, failures, errors):
     count = page.eval_on_selector_all("#report .card", "els => els.length")
     check(count == 5, f"repeated claims are counted once ({count} cards)", failures)
     page.context.close()
+
+
+PANEL_ENV = {
+    "OPENAI_API_KEY": "test-key-not-real", "OPENAI_BASE_URL": f"http://127.0.0.1:{STUB_PORT}/gpt",
+    "DEEPSEEK_API_KEY": "test-key-not-real", "FACTCHECK_PANEL_DEEPSEEK_URL": f"http://127.0.0.1:{STUB_PORT}/deepseek",
+    "GOOGLE_API_KEY": "test-key-not-real", "FACTCHECK_PANEL_GEMINI_URL": f"http://127.0.0.1:{STUB_PORT}/gemini/",
+}
+
+
+def panel_calls():
+    with urllib.request.urlopen(f"http://127.0.0.1:{STUB_PORT}/_panel", timeout=5) as response:
+        return json.loads(response.read())["calls"]
+
+
+def consensus_flow(browser, failures, errors, log_dir):
+    print("Consensus: the panel of other AIs")
+    kill_helper()      # the helper is a singleton; a fresh one must start with this server's panel settings
+    proc = start_server(5074, os.path.join(log_dir, "gunicorn-consensus.log"), extra_env=PANEL_ENV)
+    try:
+        page = new_page(browser, 5074, errors)
+        page.wait_for_selector("#consensusRow:not([hidden])")
+        check(page.is_checked("#inConsensus"), "the switch is offered and starts on when other AIs are available", failures)
+        check("GPT, DeepSeek and Gemini" in page.inner_text("#consensusLabel"), "the switch names the other AIs", failures)
+
+        # Live: Claude's verdict must show before the panel has answered.
+        page.fill("#inSpeaker", "Senator Example")
+        page.click("#btnStart")
+        page.wait_for_function("!!window.__rec")
+        page.evaluate("text => window.hear(text)", "The official figure is 5 for the whole of this year.")
+        page.wait_for_function("document.getElementById('bubbleVerdict').textContent.startsWith('True')", timeout=40000)
+        early = page.inner_text("#bubbleConsensus")
+        check(early.startswith("Asking GPT, DeepSeek and Gemini") or "4 of 4 AIs agree" in early,
+              f"the verdict is on screen while the other AIs are still being asked ({early!r})", failures)
+        page.wait_for_function("document.getElementById('bubbleConsensus').textContent.includes('4 of 4 AIs agree')",
+                               timeout=40000)
+        check("Claude, GPT, DeepSeek and Gemini" in page.inner_text("#bubbleConsensus"),
+              "the bubble names who agreed", failures)
+
+        page.evaluate("text => window.hear(text)", "This is wrong 6 dispute here and everybody in the room knows it.")
+        page.wait_for_function("document.querySelectorAll('#claimList .agree-tag.disputed').length === 1", timeout=40000)
+        check("Disputed, 3 of 4 agree" in page.inner_text("#claimList .agree-tag.disputed"),
+              "a disagreement is marked Disputed with the count", failures)
+        check("GPT says Misleading" in page.inner_text("#bubbleConsensus"), "the bubble says which AI differs", failures)
+
+        page.evaluate("text => window.hear(text)", "The count is 7 geminidown now across all of the state.")
+        page.wait_for_function("document.querySelectorAll('#claimList .agree-tag').length === 3 && "
+                               "!document.querySelector('#claimList').textContent.includes('Asking other AIs')", timeout=40000)
+        tags = page.eval_on_selector_all("#claimList .agree-tag", "els => els.map(e => e.textContent)")
+        check(tags == ["3 of 3 AIs agree", "Disputed, 3 of 4 agree", "4 of 4 AIs agree"],
+              f"each claim shows its own agreement, newest first ({tags})", failures)
+        page.click("#claimList li:first-child summary")
+        detail = page.inner_text("#claimList li:first-child details")
+        check("Gemini: no answer, its account is out of credit" in detail,
+              "an AI that could not answer is listed with the reason", failures)
+        check("did not search the web again" in detail, "the limit of the panel is stated", failures)
+        check("CLAIM" not in page.inner_text("#bubbleConsensus") and "test-key" not in page.content(),
+              "no key or stray text leaks into the page", failures)
+        page.screenshot(path=os.path.join(SHOTS, "consensus-live.png"), full_page=True)
+
+        page.click("#btnStop")
+        page.wait_for_selector("#viewReport:not([hidden])", timeout=40000)
+        page.wait_for_function("document.getElementById('reportProgress').textContent.includes('complete')", timeout=90000)
+        report = page.inner_text("#report")
+        check(report.count("Other AIs:") == 3, f"the report shows the panel on every claim ({report.count('Other AIs:')})", failures)
+        check("GPT: Misleading. Scripted gpt reason." in report, "the report gives each AI's verdict and reason", failures)
+        check("charges are not in this estimate" in page.inner_text("#usage"), "the cost note says the panel is not included", failures)
+        page.screenshot(path=os.path.join(SHOTS, "consensus-report.png"), full_page=True)
+
+        # Saved speeches keep the panel's answers.
+        page.click("#btnNew")
+        page.click("#btnHistory")
+        page.click("#historyList button[data-open]")
+        page.wait_for_selector("#viewReport:not([hidden])")
+        check(page.inner_text("#report").count("Other AIs:") == 3, "a saved speech keeps the other AIs' verdicts", failures)
+
+        # Switch off: no panel calls at all, and the choice is remembered.
+        page.click("#btnNew")
+        page.uncheck("#inConsensus")
+        before = panel_calls()
+        page.click("#btnPaste")
+        page.fill("#inPaste", "The total is 8 here. The sum is 9 there.")
+        page.click("#btnPasteGo")
+        page.wait_for_selector("#viewReport:not([hidden])", timeout=90000)
+        page.wait_for_function("document.getElementById('reportProgress').textContent.includes('complete')", timeout=90000)
+        check(panel_calls() == before, "with the switch off the other AIs are not called", failures)
+        check("Other AIs:" not in page.inner_text("#report") and not page.query_selector("#report .agree-tag"),
+              "with the switch off the report shows no panel", failures)
+        page.reload()
+        page.wait_for_selector("#consensusRow:not([hidden])")
+        check(not page.is_checked("#inConsensus"), "the switch setting is remembered in this browser", failures)
+        page.context.close()
+    finally:
+        proc.terminate()
+        kill_helper()  # so the next flow's helper starts without the panel settings
 
 
 def narrow_and_dark(browser, port, failures, errors):
@@ -389,6 +487,7 @@ def main():
         with sync_playwright() as p:
             browser = p.chromium.launch(channel="chrome", headless=True)
             live_flow(browser, 5071, failures, errors)
+            consensus_flow(browser, failures, errors, log_dir)
             paste_flow(browser, 5071, failures, errors)
             narrow_and_dark(browser, 5071, failures, errors)
             failed_check_flow(browser, 5071, failures, errors)

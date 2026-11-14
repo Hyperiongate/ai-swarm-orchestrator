@@ -2,7 +2,7 @@
 Speech Fact-Checker — Flask Routes
 File: routes/factcheck.py
 Created: November 11, 2026
-Last Updated: November 11, 2026 — Initial implementation inside the Swarm
+Last Updated: November 13, 2026 — /api/factcheck/consensus (the panel of other AIs)
 
 PURPOSE:
     Flask blueprint for the Live Political Speech Fact-Checker. Serves the
@@ -21,9 +21,10 @@ ENDPOINTS:
     POST  /api/factcheck/claims         — queue: find the claims in a passage
     POST  /api/factcheck/check          — queue: fast live check of one claim
     POST  /api/factcheck/deep           — queue: five-layer recheck of one claim
+    POST  /api/factcheck/consensus      — queue: other AIs' own verdicts on a checked claim
     POST  /api/factcheck/jobs/status    — where do these jobs stand? {ids: [...]}
 
-    The three queue routes answer 202 with {"job_id": "..."}; the page then asks
+    The four queue routes answer 202 with {"job_id": "..."}; the page then asks
     /jobs/status every two seconds until each job is 'done' or 'failed'.
 
 PASSCODE:
@@ -33,6 +34,12 @@ PASSCODE:
     who finds the address can spend the Swarm's AI budget.
 
 CHANGELOG:
+- November 13, 2026: MULTI-AI CONSENSUS
+  * New route POST /api/factcheck/consensus (same passcode rule and same
+    shared handler as the other queue routes). /api/factcheck/health now
+    also lists the panel ("panel": [{name, model}, ...]) so the page knows
+    whether to offer the switch. No existing route changed.
+
 - November 11, 2026: INITIAL IMPLEMENTATION
   * New blueprint factcheck_bp. Registered in app.py (see app.py changelog).
     No existing route touched. Rule 1 (do no harm) preserved.
@@ -135,6 +142,12 @@ def factcheck_health():
     info['ai_ready'] = eng.ai_ready()
     info['models'] = {'claims': eng.CLAIM_MODEL, 'check': eng.CHECK_MODEL, 'deep': eng.DEEP_MODEL}
     try:
+        import factcheck_panel
+        info['panel'] = [{'name': m['name'], 'model': m['model']} for m in factcheck_panel.panel_members()]
+    except Exception as e:
+        logger.error(f"GET /api/factcheck/health could not read the panel: {e}")
+        info['panel'] = []
+    try:
         info['helper'] = 'running' if eng.runner_alive() else 'idle'
         info['database'] = 'ok'
     except Exception as e:
@@ -195,6 +208,15 @@ def factcheck_check():
 def factcheck_deep():
     """Queue: five-layer recheck of one claim. Body: as /check plus {live_verdict?, live_reason?}"""
     return _queue('deep')
+
+
+@factcheck_bp.route('/api/factcheck/consensus', methods=['POST'])
+def factcheck_consensus():
+    """
+    Queue: ask the panel of other AIs for their own verdicts on a checked claim.
+    Body: as /check plus {evidence?, sources?: [{title, url}]}. Claude's verdict is NOT sent.
+    """
+    return _queue('consensus')
 
 
 # ============================================================================

@@ -2,7 +2,7 @@
 Speech Fact-Checker — Engine
 File: factcheck_engine.py
 Created: November 11, 2026
-Last Updated: November 11, 2026 — Initial implementation inside the Swarm
+Last Updated: November 13, 2026 — Multi-AI consensus (the panel)
 
 PURPOSE:
     The working parts of the Live Political Speech Fact-Checker: a page that
@@ -13,8 +13,9 @@ PURPOSE:
     This module holds two things:
       1. THE AI WORK — the instructions given to the models and the three jobs
          they do: find the claims in a passage ("claims"), check one claim fast
-         with web search ("check"), and dissect one claim in five layers for the
-         final report ("deep").
+         with web search ("check"), dissect one claim in five layers for the
+         final report ("deep"), and ask a panel of other companies' AI models
+         for their own verdicts on a checked claim ("consensus").
       2. THE JOB QUEUE — a small PostgreSQL-backed queue. The web routes only
          ever ADD a job and READ its result; they never wait on the AI.
 
@@ -67,8 +68,24 @@ SETTINGS (Render > Environment; all optional except the Swarm's existing key):
     FACTCHECK_LIVE_MAX_SEARCHES  web searches per live check     (default 2)
     FACTCHECK_DEEP_MAX_SEARCHES  web searches per deep check     (default 5)
     FACTCHECK_DAILY_JOB_LIMIT    safety cap on jobs per UTC day  (default 3000)
+    FACTCHECK_PANEL              which other AIs to ask, e.g. "gpt,deepseek"; "none" = off
+                                 (default: every one whose key is set; see factcheck_panel.py)
 
 CHANGELOG:
+- November 13, 2026: MULTI-AI CONSENSUS (THE PANEL)
+  * New job kind "consensus": after Claude's quick check, other companies'
+    AI models (GPT, DeepSeek, Gemini: whichever have keys) each judge the
+    same claim and the same evidence on their own, without seeing Claude's
+    verdict. The calls live in factcheck_panel.py; panel_system(),
+    _panel_user_text() and panel_check() here prepare the question and
+    tidy the answers. The page shows the agreement.
+  * To give the panel evidence that carries no verdict, the quick check now
+    also records an "evidence" field: the key facts found, stated neutrally.
+    One extra sentence of output; every other field is unchanged.
+  * The queue treats "consensus" as live work (same priority as "check").
+    Nothing about "claims", "check" or "deep" jobs changed otherwise.
+  * factcheck_jobs.kind can now also hold 'consensus' (no table change).
+
 - November 11, 2026: INITIAL IMPLEMENTATION INSIDE THE SWARM
   * Ported from the standalone first version (built November 10, 2026). The AI
     instructions, the answer fields and the "only links the search really
@@ -141,10 +158,11 @@ MAX_CLAIM = 600          # characters of one claim
 MAX_CLAIMS_PER_PASSAGE = 5
 
 # --- job queue ---
-JOB_KINDS = ("claims", "check", "deep")
-JOB_PRIORITY = {"claims": 0, "check": 1, "deep": 2}      # live work first
-JOB_BUDGET_SECONDS = {"claims": 90, "check": 150, "deep": 420}   # AI time allowed per job
-JOB_HARD_LIMIT_SECONDS = {"claims": 240, "check": 330, "deep": 660}  # then the web side fails it
+JOB_KINDS = ("claims", "check", "deep", "consensus")
+JOB_PRIORITY = {"claims": 0, "check": 1, "consensus": 1, "deep": 2}      # live work first
+JOB_BUDGET_SECONDS = {"claims": 90, "check": 150, "deep": 420, "consensus": 60}   # AI time allowed per job
+JOB_HARD_LIMIT_SECONDS = {"claims": 240, "check": 330, "deep": 660, "consensus": 150}  # then the web side fails it
+MAX_EVIDENCE = 1200      # characters of evidence passed to the panel
 MAX_ATTEMPTS = 2                 # a job interrupted twice is failed, not retried again
 QUEUE_GIVE_UP_SECONDS = 120      # queued this long with no helper alive -> failed
 JOB_KEEP_SECONDS = 2 * 24 * 3600
@@ -484,7 +502,31 @@ def check_system():
         "that basis; mark it unverified and say why.\n\n"
         "Finish by calling the record_verdict tool. The reason must be one plain sentence a TV viewer can "
         "read at a glance (30 words at most), giving the key fact with its number or date. In source_urls "
-        "list only pages your searches returned that support the verdict."
+        "list only pages your searches returned that support the verdict. In evidence, state the key facts "
+        "you found, with their numbers, dates and who published them, in at most 80 words. Evidence must be "
+        "facts only: no verdict, no judgement words such as accurate, wrong, misleading or exaggerated. "
+        "Other reviewers will judge the claim from it without seeing your verdict."
+    )
+
+
+def panel_system():
+    return _common_rules() + (
+        "\nYOUR JOB: you are one of several independent reviewers. Give YOUR OWN verdict on ONE claim from "
+        "a speech. You cannot see the other reviewers' verdicts and they cannot see yours.\n\n"
+        "You are given the claim, the words as said, nearby speech for context, and evidence that a web "
+        "search found today. Judge the claim against that evidence and against settled, stable knowledge. "
+        "The evidence may describe events after your training; treat it as current and do not contradict "
+        "it from memory. If the evidence does not settle the claim, answer unverified rather than guess.\n\n"
+        "Decide two things:\n"
+        "1. Literal: is the statement, as said, accurate?\n"
+        "2. Implied: what would an ordinary listener take from it, and is that accurate?\n\n"
+        "Then choose ONE verdict:\n"
+        "- true: accurate as stated, and the natural takeaway is accurate too. Fair rounding is fine.\n"
+        "- misleading: accurate or partly accurate as stated, but the natural takeaway is wrong, or key "
+        "context is left out that changes the meaning.\n"
+        "- false: inaccurate as stated.\n"
+        "- unverified: the evidence is missing, thin or conflicting, or the statement is not checkable.\n\n"
+        "If a name or number looks mis-heard by the speech recognition, answer unverified and say why."
     )
 
 
@@ -560,8 +602,10 @@ VERDICT_TOOL = {
             "implied_claim": {"type": "string", "description": "What a listener is meant to conclude, or empty."},
             "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
             "source_urls": {"type": "array", "items": {"type": "string"}},
+            "evidence": {"type": "string", "description": "The key facts found, 80 words at most. Facts only: "
+                                                          "no verdict and no judgement words."},
         },
-        "required": ["verdict", "reason", "literal", "implied_claim", "confidence", "source_urls"],
+        "required": ["verdict", "reason", "literal", "implied_claim", "confidence", "source_urls", "evidence"],
     },
 }
 
@@ -657,6 +701,12 @@ def clean_payload(kind, data):
             "live_verdict": _norm_verdict(data.get("live_verdict")),
             "live_reason": _clip(data.get("live_reason"), 400),
         })
+    if kind == "consensus":
+        sources = []
+        for item in (data.get("sources") if isinstance(data.get("sources"), list) else [])[:5]:
+            if isinstance(item, dict) and str(item.get("url") or "").strip().lower().startswith(("http://", "https://")):
+                sources.append({"title": _clip(item.get("title"), 200), "url": _clip(item.get("url"), 500)})
+        base.update({"evidence": _clip(data.get("evidence"), MAX_EVIDENCE), "sources": sources})
     return base
 
 
@@ -734,13 +784,14 @@ def quick_check(data):
             "reason": "The checker did not return a usable answer for this claim.",
             "literal": "", "implied_claim": "", "confidence": "low",
             "sources": _pick_sources([], found), "searched": bool(found),
-            "no_answer": True, "usage": usage,
+            "evidence": "", "no_answer": True, "usage": usage,
         }
     return {
         "verdict": _norm_verdict(answer.get("verdict")),
         "reason": _clip(answer.get("reason"), 400),
         "literal": _clip(answer.get("literal"), 600),
         "implied_claim": _clip(answer.get("implied_claim"), 600),
+        "evidence": _clip(answer.get("evidence"), MAX_EVIDENCE),
         "confidence": _confidence(answer.get("confidence")),
         "sources": _pick_sources(answer.get("source_urls"), found),
         "searched": usage["searches"] > 0 or bool(found),
@@ -788,7 +839,46 @@ def deep_check(data):
     }
 
 
-_JOB_FUNCTIONS = {"claims": find_claims, "check": quick_check, "deep": deep_check}
+def _panel_user_text(data):
+    """What each panel member is shown: the claim and the evidence, never Claude's verdict."""
+    text = _claim_user_text(data)
+    evidence = str(data.get("evidence") or "").strip()
+    text += ("<evidence_found_by_web_search_today>\n"
+             + (evidence or "No evidence was gathered for this claim.")
+             + "\n</evidence_found_by_web_search_today>\n")
+    sources = data.get("sources") or []
+    if sources:
+        text += ("<sources>\n"
+                 + "\n".join(f"- {item.get('title') or 'Untitled'} ({item.get('url')})" for item in sources)
+                 + "\n</sources>\n")
+    return text
+
+
+def panel_check(data):
+    """Job 'consensus': other companies' AI models each give their own verdict on one checked claim."""
+    import factcheck_panel
+    answer = factcheck_panel.ask_panel(panel_system(), _panel_user_text(data))
+    tokens_in = sum(row.get("input_tokens", 0) or 0 for row in answer["panel"])
+    tokens_out = sum(row.get("output_tokens", 0) or 0 for row in answer["panel"])
+    panel = []
+    for row in answer["panel"]:
+        entry = {"name": row["name"], "model": row["model"], "ok": bool(row.get("ok"))}
+        if entry["ok"]:
+            entry.update({"verdict": _norm_verdict(row.get("verdict")),
+                          "confidence": _confidence(row.get("confidence")),
+                          "reason": _clip(row.get("reason"), 400)})
+        else:
+            entry["error"] = _clip(row.get("error"), 120) or "no answer"
+        panel.append(entry)
+    return {
+        "panel": panel, "asked": answer["asked"], "answered": answer["answered"],
+        # Other providers' prices are not tracked here, so cost stays 0 and the page says so.
+        "usage": {"model": "panel", "input_tokens": tokens_in, "output_tokens": tokens_out,
+                  "searches": 0, "cost": 0.0},
+    }
+
+
+_JOB_FUNCTIONS = {"claims": find_claims, "check": quick_check, "deep": deep_check, "consensus": panel_check}
 
 
 def run_job(kind, payload):

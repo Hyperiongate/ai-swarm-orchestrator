@@ -2,7 +2,7 @@
 Speech Fact-Checker — server tests
 File: tests/factcheck/test_factcheck_server.py
 Created: November 11, 2026
-Last Updated: November 11, 2026 — Initial version
+Last Updated: November 13, 2026 — Tests for the panel of other AIs (consensus)
 
 PURPOSE:
     Tests for factcheck_engine.py, factcheck_runner.py and routes/factcheck.py
@@ -39,6 +39,15 @@ if not os.environ.get("DATABASE_URL"):
 STUB_PORT = int(os.environ.get("STUB_PORT", "5099"))
 os.environ["ANTHROPIC_BASE_URL"] = f"http://127.0.0.1:{STUB_PORT}"
 os.environ["ANTHROPIC_API_KEY"] = "test-key-not-real"
+# The panel of other AIs (factcheck_panel.py) is pointed at the same stand-in service.
+os.environ.update({
+    "OPENAI_API_KEY": "test-key-not-real", "OPENAI_BASE_URL": f"http://127.0.0.1:{STUB_PORT}/gpt",
+    "DEEPSEEK_API_KEY": "test-key-not-real", "FACTCHECK_PANEL_DEEPSEEK_URL": f"http://127.0.0.1:{STUB_PORT}/deepseek",
+    "GOOGLE_API_KEY": "test-key-not-real", "FACTCHECK_PANEL_GEMINI_URL": f"http://127.0.0.1:{STUB_PORT}/gemini/",
+})
+for _name in ("FACTCHECK_PANEL", "FACTCHECK_PANEL_OPENAI_MODEL", "FACTCHECK_PANEL_DEEPSEEK_MODEL",
+              "FACTCHECK_PANEL_GEMINI_MODEL", "HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"):
+    os.environ.pop(_name, None)
 os.environ["NO_PROXY"] = os.environ["no_proxy"] = "127.0.0.1,localhost"
 os.environ.pop("FACTCHECK_PASSCODE", None)
 
@@ -274,6 +283,98 @@ def test_check_gives_verdict_and_only_real_sources(web):
     sent = stub_stats()["last"][-1]
     assert sent["tools"][0] == {"type": "web_search_20250305", "name": "web_search", "max_uses": 2}
     assert "<speaker>Senator Example</speaker>" in sent["messages"][0]["content"]
+
+
+def panel_stats():
+    with urllib.request.urlopen(f"http://127.0.0.1:{STUB_PORT}/_panel", timeout=5) as response:
+        return json.loads(response.read())
+
+
+PANEL_BODY = {"claim": "The figure is 5.", "quote": "it is 5", "speaker": "Senator Example", "event": "Town hall",
+              "context": "As I said, it is 5.", "evidence": "The official figure was 5 in 2025.",
+              "sources": [{"title": "Official statistics", "url": "https://stats.example.gov/report"},
+                          {"title": "Not a link", "url": "javascript:alert(1)"}]}
+
+
+def test_check_records_evidence_for_the_panel(web):
+    data = result_of(web, "check", {"claim": "The figure is 5."})
+    assert data["evidence"] == "Scripted evidence: the official figure was 5 in 2025."
+    sent = stub_stats()["last"][-1]
+    tool = [t for t in sent["tools"] if t.get("name") == "record_verdict"][0]
+    assert "evidence" in tool["input_schema"]["required"]
+
+
+def test_health_lists_the_panel(web, monkeypatch):
+    panel = web.get("/api/factcheck/health").get_json()["panel"]
+    assert panel == [{"name": "GPT", "model": "gpt-5.5"}, {"name": "DeepSeek", "model": "deepseek-flash"},
+                     {"name": "Gemini", "model": "gemini-3.8-flash"}]
+    monkeypatch.setenv("FACTCHECK_PANEL", "deepseek,gpt")
+    assert [m["name"] for m in web.get("/api/factcheck/health").get_json()["panel"]] == ["DeepSeek", "GPT"]
+    monkeypatch.setenv("FACTCHECK_PANEL", "none")
+    assert web.get("/api/factcheck/health").get_json()["panel"] == []
+    monkeypatch.delenv("FACTCHECK_PANEL")
+    monkeypatch.delenv("GOOGLE_API_KEY")
+    assert [m["name"] for m in web.get("/api/factcheck/health").get_json()["panel"]] == ["GPT", "DeepSeek"]
+
+
+def test_panel_members_each_give_their_own_verdict(web):
+    before = panel_stats()["calls"]
+    data = result_of(web, "consensus", PANEL_BODY)
+    assert data["asked"] == 3 and data["answered"] == 3
+    assert [(m["name"], m["ok"], m["verdict"]) for m in data["panel"]] == \
+        [("GPT", True, "true"), ("DeepSeek", True, "true"), ("Gemini", True, "true")]
+    assert data["panel"][0]["reason"] == "Scripted gpt reason." and data["panel"][0]["confidence"] == "high"
+    assert data["usage"] == {"model": "panel", "input_tokens": 1200, "output_tokens": 90, "searches": 0, "cost": 0.0}
+
+    stats = panel_stats()
+    assert stats["calls"] == before + 3                               # one call each, no more
+    for sent in stats["last"][-3:]:
+        text = json.dumps(sent["body"])
+        assert "The figure is 5." in text and "The official figure was 5 in 2025." in text
+        assert "stats.example.gov/report" in text and "javascript:" not in text
+        assert "one of several independent reviewers" in text
+    gpt = [s["body"] for s in stats["last"][-3:] if s["who"] == "gpt"][0]
+    assert gpt["model"] == "gpt-5.5" and gpt["response_format"] == {"type": "json_object"}
+    assert "max_completion_tokens" in gpt and "max_tokens" not in gpt
+    deepseek = [s["body"] for s in stats["last"][-3:] if s["who"] == "deepseek"][0]
+    assert deepseek["model"] == "deepseek-flash" and "max_tokens" in deepseek
+
+
+def test_panel_never_sees_claudes_verdict(web):
+    """Whatever the page sends, only the claim, context and evidence reach the other AIs."""
+    body = dict(PANEL_BODY, verdict="false", reason="CLAUDE-REASON-MARKER", live_verdict="false",
+                live_reason="CLAUDE-REASON-MARKER", literal="CLAUDE-REASON-MARKER")
+    result_of(web, "consensus", body)
+    for sent in panel_stats()["last"][-3:]:
+        assert "CLAUDE-REASON-MARKER" not in json.dumps(sent["body"])
+
+
+def test_panel_can_disagree_and_a_failed_member_does_not_stop_the_rest(web):
+    data = result_of(web, "consensus", dict(PANEL_BODY, claim="This is wrong 5 dispute geminidown garble."))
+    rows = {m["name"]: m for m in data["panel"]}
+    assert rows["GPT"]["ok"] and rows["GPT"]["verdict"] == "misleading"
+    assert rows["DeepSeek"] == {"name": "DeepSeek", "model": "deepseek-flash", "ok": False,
+                                "error": "its answer could not be read"}
+    assert rows["Gemini"]["ok"] is False and rows["Gemini"]["error"] == "its account is out of credit"
+    assert data["asked"] == 3 and data["answered"] == 1
+    assert "test-key-not-real" not in json.dumps(data)
+
+
+def test_panel_with_no_members_answers_at_once(web, monkeypatch):
+    monkeypatch.setenv("FACTCHECK_PANEL", "none")
+    before = panel_stats()["calls"]
+    data = result_of(web, "consensus", PANEL_BODY)
+    assert data["panel"] == [] and data["asked"] == 0 and data["answered"] == 0
+    assert panel_stats()["calls"] == before
+
+
+def test_consensus_needs_a_claim_and_counts_as_live_work(web):
+    assert web.post("/api/factcheck/consensus", json={"evidence": "x"}).status_code == 400
+    deep = queue(web, "deep", {"claim": "Deep one 5."})
+    consensus = queue(web, "consensus", PANEL_BODY)
+    first = engine.claim_jobs(1, 3)
+    assert [job["id"] for job in first] == [consensus]               # taken before the report work
+    assert job_row(deep)["status"] == "queued"
 
 
 def test_check_continues_after_a_paused_search(web):

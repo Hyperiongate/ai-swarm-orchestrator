@@ -8,6 +8,32 @@ checkable claim gets a coloured verdict a few seconds after it is said. Press
 **Stop and build report** for the annotated transcript, a tally, and a five-layer
 recheck of every claim.
 
+## Multi-AI consensus (added 13 November 2026)
+
+With the switch **Ask other AIs to confirm each verdict** on, every claim Claude
+has checked is also put in front of the other AI services the Swarm has keys
+for: GPT (OpenAI), DeepSeek and Gemini (Google).
+
+- Each one sees the claim, the words as said, the nearby speech and the
+  evidence Claude's web search found. **None sees Claude's verdict**, and none
+  sees another's answer. Each gives its own verdict and a one-line reason.
+- The page shows the outcome on the bubble, in the claim list and in the
+  report: "4 of 4 AIs agree", or "Disputed, 3 of 4 agree" with who differs.
+- Claude's verdict appears as fast as before. The others are asked afterwards,
+  all at once, and their line fills in a few seconds later.
+- **The limit:** the other AIs judge the same evidence; they do not search the
+  web again. Agreement means independent readers of that evidence reach the
+  same verdict. It does not mean three separate investigations.
+- **Cost:** about one extra call per AI per claim. Their charges appear on
+  their own bills (OpenAI, DeepSeek, Google) and are not in the page's estimate.
+- An AI that fails (no credit, wrong key, too slow) is shown as "no answer"
+  with the reason and never holds up the others. To leave one out, set
+  `FACTCHECK_PANEL` in Render, for example `gpt,deepseek`; `none` turns the
+  panel off altogether.
+
+The code is in `factcheck_panel.py`; the question put to the panel is
+`panel_system()` in `factcheck_engine.py`.
+
 ## Files
 
 | File | What it is |

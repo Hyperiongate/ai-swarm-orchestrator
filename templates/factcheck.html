@@ -5,6 +5,21 @@
   File: templates/factcheck.html   (served at /factcheck by routes/factcheck.py)
 
   CHANGE NOTES
+  2026-11-13  Multi-AI consensus (asked for by Jim).
+              - New switch under the speaker boxes: "Ask other AIs to confirm
+                each verdict". When on, each claim Claude has checked is put in
+                front of the other AIs the server has keys for (GPT, DeepSeek,
+                Gemini). They see the claim and the evidence, not Claude's
+                verdict, and each gives its own.
+              - The bubble, the claim list and the report show the outcome:
+                "3 of 3 AIs agree", or "Disputed" with each AI's verdict and
+                one-line reason.
+              - Claude's verdict appears exactly as fast as before. The other
+                AIs are asked afterwards and their line fills in a few seconds
+                later; they never hold up the next claim.
+              - The switch is remembered in this browser. It is hidden if the
+                server has no other AI available.
+              - Additive only: no existing check, verdict or report content changed.
   2026-11-11  Progress display (asked for by Jim after checking a full interview transcript).
               - Pasted text, and the wrap-up after Stop, now show a progress bar
                 with the step in hand: 1 reading the text and finding claims
@@ -161,6 +176,16 @@
   .bubble-reason { margin: 0; font-family: var(--reading); font-size: clamp(1rem, 1.4vw, 1.2rem); color: var(--ink); }
   .bubble-sources { margin: 0; font-size: 0.85rem; color: var(--muted); }
   .bubble-sources a { color: inherit; }
+  .bubble-consensus { margin: 0.35rem 0 0; font-size: 0.9rem; font-weight: 600; }
+  .bubble-consensus:empty { display: none; }
+  .agree-tag { display: inline-block; margin-right: 0.4rem; padding: 0.05rem 0.5rem; border-radius: 999px;
+               border: 1px solid currentColor; font-size: 0.75rem; font-weight: 600; white-space: nowrap; }
+  .agree-tag.disputed { border-style: dashed; }
+  .panel-list { margin: 0.3rem 0 0.2rem; padding-left: 1.1rem; }
+  .panel-list li, #claimList .panel-list li { margin: 0.15rem 0; list-style: disc; border: 0; padding: 0; background: none; }
+  .setup .consensus-row { grid-column: 1 / -1; display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; color: var(--muted); }
+  .setup .consensus-row input { width: auto; margin: 0; }
+  .setup .consensus-row label { display: inline; margin: 0; font-weight: 500; font-size: 0.9rem; }
   .v-true { --bubble: var(--true); }
   .v-misleading { --bubble: var(--misleading); }
   .v-false { --bubble: var(--false); }
@@ -299,6 +324,10 @@
         <button type="submit" class="primary" id="btnStart">Start listening</button>
         <button type="button" class="stop" id="btnStop" hidden>Stop and build report</button>
       </div>
+      <div class="consensus-row" id="consensusRow" hidden>
+        <input type="checkbox" id="inConsensus">
+        <label for="inConsensus" id="consensusLabel">Ask other AIs to confirm each verdict</label>
+      </div>
     </form>
     <p class="status" id="status" aria-live="polite"></p>
     <div class="progress" id="progress" hidden>
@@ -312,6 +341,7 @@
         <p class="bubble-claim" id="bubbleClaim">Turn the TV up, then press Start listening.</p>
         <p class="bubble-reason" id="bubbleReason">Each checkable claim gets a verdict here a few seconds after it is said.</p>
         <p class="bubble-sources" id="bubbleSources"></p>
+        <p class="bubble-consensus" id="bubbleConsensus"></p>
       </div>
     </div>
     <p class="pending" id="pending"></p>
@@ -394,7 +424,8 @@ const PASS_KEY = "speechFactChecker.passcode";
 const API = "/api/factcheck";
 const POLL_MS = 2000;                                                 // how often to ask whether queued live work is done
 const POLL_SLOW_MS = 4000;                                            // ...and when only report work is waiting
-const JOB_WAIT_MS = { claims: 240000, check: 360000, deep: 900000 };  // give up waiting after this long
+const JOB_WAIT_MS = { claims: 240000, check: 360000, deep: 900000, consensus: 200000 };  // give up waiting after this long
+const CONSENSUS_KEY = "speechFactChecker.consensus";                  // remembers the "ask other AIs" switch
 const LIVE_CHECKS_AT_ONCE = 3;
 const DEEP_CHECKS_AT_ONCE = 2;
 const CHUNK_WORDS = 40;        // send a passage for claim-finding once this many new words are heard
@@ -615,6 +646,95 @@ function addUsage(session, usage) {
   if (session === S) renderUsage();
 }
 
+/* ------------------------------------------------------------------ the panel of other AIs */
+
+let panelNames = [];          // the other AIs the server can ask, from /health
+let panelRunning = 0;
+const panelIdleWaiters = [];
+
+function consensusOn() {
+  return panelNames.length > 0 && $("inConsensus").checked;
+}
+function namesList(names) {
+  if (names.length <= 1) return names.join("");
+  return names.slice(0, -1).join(", ") + " and " + names[names.length - 1];
+}
+function setUpPanel(panel) {
+  panelNames = (panel || []).map((m) => m.name);
+  $("consensusRow").hidden = !panelNames.length;
+  if (!panelNames.length) return;
+  let saved = null;
+  try { saved = localStorage.getItem(CONSENSUS_KEY); } catch (e) { /* the switch just starts on */ }
+  $("inConsensus").checked = saved !== "off";
+  $("consensusLabel").textContent = "Ask other AIs to confirm each verdict (" + namesList(panelNames) +
+    "). Adds a few seconds and about " + (panelNames.length + 1) + " times the AI calls per claim.";
+}
+
+/* Ask the panel about one checked claim. Claude's verdict is deliberately not sent. */
+function askPanel(session, c) {
+  if (!consensusOn() || !c.live || c.live.no_answer) return;
+  c.panelStatus = "asking";
+  c.panelNames = panelNames.slice();
+  panelRunning += 1;
+  api("consensus", {
+    claim: c.claim, quote: c.quote, kind: c.kind, context: claimContext(session, c),
+    speaker: session.speaker, event: session.event,
+    evidence: c.live.evidence || "", sources: (c.live.sources || []).slice(0, 5)
+  }).then((data) => {
+    addUsage(session, data.usage);
+    c.panel = data.panel || [];
+    c.panelStatus = "done";
+  }).catch((e) => {
+    c.panelStatus = "failed";
+    c.panelError = e.message;
+  }).finally(() => {
+    panelRunning -= 1;
+    if (session === S && phase !== "report") renderLive();
+    else if (viewing === session) { saveSession(session); renderReport(session); }
+    if (!panelRunning) panelIdleWaiters.splice(0).forEach((fn) => fn());
+  });
+}
+function panelIdle(maxMs) {
+  if (!panelRunning) return Promise.resolve();
+  return new Promise((resolve) => { panelIdleWaiters.push(resolve); setTimeout(resolve, maxMs); });
+}
+
+/* How the AIs line up on one claim. Claude's live verdict counts as one voice. */
+function consensusOf(c) {
+  if (!c.live || !c.panelStatus) return null;
+  if (c.panelStatus === "asking") return { state: "asking", text: "Asking " + namesList(c.panelNames || []) + "…" };
+  if (c.panelStatus === "failed") return { state: "none", text: "The other AIs could not be asked (" + (c.panelError || "no detail") + ")." };
+  const answered = (c.panel || []).filter((m) => m.ok);
+  if (!answered.length) return { state: "none", text: "None of the other AIs answered." };
+  const total = answered.length + 1;
+  const agree = 1 + answered.filter((m) => m.verdict === c.live.verdict).length;
+  if (agree === total) return { state: "agree", tag: total + " of " + total + " AIs agree", text: total + " of " + total + " AIs agree: Claude, " + namesList(answered.map((m) => m.name)) + "." };
+  const others = answered.filter((m) => m.verdict !== c.live.verdict)
+    .map((m) => m.name + " says " + LABEL[m.verdict]).join("; ");
+  return { state: "disputed", tag: "Disputed, " + agree + " of " + total + " agree",
+           text: "Disputed. " + agree + " of " + total + " AIs say " + LABEL[c.live.verdict] + ". " + others + "." };
+}
+function consensusTagHTML(c) {
+  const k = consensusOf(c);
+  if (!k) return "";
+  if (k.state === "asking") return '<span class="agree-tag">Asking other AIs</span>';
+  if (!k.tag) return "";
+  return '<span class="agree-tag' + (k.state === "disputed" ? " disputed" : "") + '">' + esc(k.tag) + "</span>";
+}
+function panelDetailHTML(c) {
+  const k = consensusOf(c);
+  if (!k) return "";
+  let h = "<p><b>Other AIs:</b> " + esc(k.text) + "</p>";
+  if (c.panelStatus === "done" && c.panel && c.panel.length) {
+    h += '<ul class="panel-list"><li>Claude: ' + esc(LABEL[c.live.verdict]) + ". " + esc(c.live.reason || "") + "</li>" +
+      c.panel.map((m) => "<li>" + esc(m.name) + ": " + (m.ok
+        ? esc(LABEL[m.verdict]) + ". " + esc(m.reason || "") + (m.confidence === "low" ? " (low confidence)" : "")
+        : "no answer, " + esc(m.error || "no detail")) + "</li>").join("") + "</ul>" +
+      '<p class="note">The other AIs judged the same evidence without seeing Claude’s verdict. They did not search the web again.</p>';
+  }
+  return h;
+}
+
 function finalVerdict(c) {
   if (c.deep && c.deep.final_verdict) return c.deep.final_verdict;
   if (c.status === "done" && c.live) return c.live.verdict;
@@ -756,6 +876,8 @@ function renderBubble() {
           esc(hostOf(s.url)) + "</a>").join(", ")
       : (shown.live.searched ? "" : "Judged from settled knowledge, no web search.");
   }
+  const shownConsensus = shown ? consensusOf(shown) : null;
+  $("bubbleConsensus").textContent = shownConsensus ? shownConsensus.text : "";
   const waiting = S ? S.claims.filter((c) => c.status === "checking") : [];
   $("pending").textContent = waiting.length
     ? "Checking " + waiting.length + (waiting.length === 1 ? " claim: " : " claims. Latest: ") +
@@ -795,13 +917,14 @@ function claimItemHTML(c) {
       (c.live.literal ? "<p><b>As stated:</b> " + esc(c.live.literal) + "</p>" : "") +
       (c.live.implied_claim ? "<p><b>What it implies:</b> " + esc(c.live.implied_claim) + "</p>" : "") +
       "<p>Confidence: " + esc(c.live.confidence || "low") + "</p>" +
+      panelDetailHTML(c) +
       sourcesHTML(c.live.sources) + "</details>";
   } else if (c.status === "error") {
     more = '<p class="claim-more"><button type="button" class="quiet" data-retry="' + esc(c.id) + '">Try this one again</button></p>';
   }
   return '<li id="li-' + esc(c.id) + '" class="v-' + v + '">' +
     (when ? '<span class="when">' + when + "</span>" : "") +
-    '<span class="chip">' + esc(LABEL[v]) + "</span>" +
+    '<span class="chip">' + esc(LABEL[v]) + "</span>" + consensusTagHTML(c) +
     '<span class="claim-text">' + esc(c.claim) + "</span>" +
     (finalReason(c) ? '<p class="claim-reason">' + esc(finalReason(c)) + "</p>" : "") +
     more + "</li>";
@@ -827,7 +950,8 @@ function renderUsage() {
   if (!session || !session.usage.calls) { el.textContent = ""; return; }
   const u = session.usage;
   el.textContent = "AI use for this speech: " + u.calls + " requests, " + u.searches +
-    " web searches, roughly $" + u.cost.toFixed(2) + ". This is an estimate; the AI provider’s bill is the real figure.";
+    " web searches, roughly $" + u.cost.toFixed(2) + ". This is an estimate; the AI provider’s bill is the real figure." +
+    (session.claims.some((c) => c.panelStatus) ? " The other AIs’ charges are not in this estimate." : "");
 }
 /* "Roughly N minutes left", worked out from how fast the work has gone so far. */
 function minutesLeft(startMs, fraction) {
@@ -999,6 +1123,8 @@ function pumpLiveQueue() {
     }).then((data) => {
       addUsage(session, data.usage);
       c.live = data; c.status = "done"; c.error = "";
+      c.panel = null; c.panelStatus = "";
+      askPanel(session, c);          // does not wait: the verdict above is shown at once
     }).catch((e) => {
       c.status = "error"; c.error = "Couldn’t check this one: " + e.message;
     }).finally(() => {
@@ -1153,6 +1279,7 @@ async function finishSpeech() {
     if (session.sentUpTo === before) session.sentUpTo = session.text.length;  // could not make progress
   }
   await liveQueueIdle();
+  await panelIdle(60000);           // let the other AIs finish; anything later still updates the report
   if (session !== S) return;
 
   if (!session.text.trim()) {
@@ -1244,6 +1371,10 @@ function cardHTML(c, session) {
     (c.kind === "attribution" ? '<p class="note">This checks whether it was really said or done, not whether it is true.</p>' : "") +
     (finalReason(c) ? "<p>" + esc(finalReason(c)) + "</p>" : "") +
     (changed ? '<p class="changed">Changed on recheck. The live verdict was “' + esc(LABEL[liveV]) + "”.</p>" : "");
+  if (c.live && c.panelStatus && c.panelStatus !== "asking") {
+    h += '<div class="layer">' + panelDetailHTML(c) +
+      (changed ? '<p class="note">The other AIs judged the live verdict’s evidence, before the in-depth recheck.</p>' : "") + "</div>";
+  }
   if (c.deep) {
     const d = c.deep;
     h += layerHTML("1. As stated", d.literal_verdict, d.literal_explanation) +
@@ -1361,7 +1492,10 @@ function saveSession(session) {
   const copy = {
     id: session.id, mode: session.mode, started: session.started, startedMs: session.startedMs,
     speaker: session.speaker, event: session.event, text: session.text, marks: [], sentUpTo: session.text.length,
-    claims: session.claims.map((c) => Object.assign({}, c, { deepStatus: c.deepStatus === "running" ? "none" : c.deepStatus })),
+    claims: session.claims.map((c) => Object.assign({}, c, {
+      deepStatus: c.deepStatus === "running" ? "none" : c.deepStatus,
+      panelStatus: c.panelStatus === "asking" ? "" : c.panelStatus
+    })),
     usage: session.usage, deepDone: session.deepDone
   };
   let list = loadHistory().filter((s) => s.id !== session.id);
@@ -1407,6 +1541,9 @@ async function checkPastedText(raw) {
 
 /* ------------------------------------------------------------------ wiring up the buttons */
 
+$("inConsensus").addEventListener("change", () => {
+  try { localStorage.setItem(CONSENSUS_KEY, $("inConsensus").checked ? "on" : "off"); } catch (e) { /* not remembered, still works */ }
+});
 $("setupForm").addEventListener("submit", (ev) => { ev.preventDefault(); if (phase === "idle") startListening(); });
 $("btnStop").addEventListener("click", () => finishSpeech());
 $("btnNew").addEventListener("click", backToStart);
@@ -1501,6 +1638,7 @@ document.addEventListener("visibilitychange", async () => {
     } else if (health.passcode_required && !health.passcode_ok) {
       await askPasscode("");
     }
+    setUpPanel(health.panel);
   } catch (e) {
     showBanner("This page could not reach its server. If it was just deployed, wait a minute and reload.", true);
   }

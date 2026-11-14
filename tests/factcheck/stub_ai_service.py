@@ -2,7 +2,7 @@
 Speech Fact-Checker — stand-in for the AI service (TESTS ONLY)
 File: tests/factcheck/stub_ai_service.py
 Created: November 11, 2026
-Last Updated: November 11, 2026 — Initial version
+Last Updated: November 13, 2026 — also stands in for the panel's AI services
 
 PURPOSE:
     A tiny local web service that answers like the Anthropic Messages API, so
@@ -19,12 +19,24 @@ PURPOSE:
         slowcase    -> takes STUB_SLOW_SECONDS (default 12) to answer
         autherror   -> the service rejects the key (401)
 
+    Added November 13, 2026: it also answers like the three services the
+    fact-checker's panel asks (factcheck_panel.py), each under its own path:
+        /gpt/chat/completions        (OpenAI style)
+        /deepseek/chat/completions   (OpenAI style)
+        /gemini/<version>/models/<model>:generateContent
+    Panel verdicts follow the same keywords, plus:
+        dispute     -> GPT answers "misleading" whatever the others say
+        geminidown  -> Gemini answers 402 (out of credit)
+        garble      -> DeepSeek answers with text that is not the asked-for JSON
+    GET /_panel returns the last request bodies the panel services received.
+
     Usage:  python tests/factcheck/stub_ai_service.py [port]
     GET /_stats returns how many calls were made and the last request bodies.
 
 AUTHOR: Jim @ Shiftwork Solutions LLC (managed by Claude)
 """
 
+import json
 import os
 import re
 import sys
@@ -34,6 +46,7 @@ from flask import Flask, jsonify, request
 
 app = Flask(__name__)
 STATS = {"calls": 0, "last": []}
+PANEL = {"calls": 0, "last": []}
 DELAY = float(os.environ.get("STUB_DELAY", "0.25"))
 SLOW = float(os.environ.get("STUB_SLOW_SECONDS", "12"))
 
@@ -129,6 +142,7 @@ def messages():
             "implied_claim": "Scripted implied claim.", "confidence": "medium",
             "source_urls": ["https://stats.example.gov/report/",
                             "https://made-up.example.com/never-searched"],
+            "evidence": "Scripted evidence: the official figure was 5 in 2025.",
         })], "tool_use", 1 if prior else 0, model)
 
     if "record_dissection" in names:
@@ -146,6 +160,58 @@ def messages():
 
     return jsonify({"type": "error", "error": {"type": "invalid_request_error",
                                                "message": "unexpected request to the stub"}}), 400
+
+
+# ---------------------------------------------------------------------------
+# the panel's services (added November 13, 2026)
+# ---------------------------------------------------------------------------
+
+def _panel_verdict(who, text):
+    claim = _section(text, "claim")
+    verdict = "false" if "wrong" in claim else ("misleading" if "half" in claim else
+                                                ("unverified" if "unknown" in claim else "true"))
+    if who == "gpt" and "dispute" in claim:
+        verdict = "misleading"
+    return claim, {"verdict": verdict, "confidence": "high", "reason": f"Scripted {who} reason."}
+
+
+def _record_panel(who, body):
+    PANEL["calls"] += 1
+    PANEL["last"] = (PANEL["last"] + [{"who": who, "body": body}])[-12:]
+    time.sleep(DELAY)
+
+
+@app.get("/_panel")
+def panel_stats():
+    return jsonify(PANEL)
+
+
+@app.post("/<who>/chat/completions")
+def chat_completions(who):
+    body = request.get_json()
+    _record_panel(who, body)
+    user_text = body["messages"][-1]["content"]
+    claim, answer = _panel_verdict(who, user_text)
+    content = "I would rather chat about it." if (who == "deepseek" and "garble" in claim) else json.dumps(answer)
+    return jsonify({"id": "c1", "object": "chat.completion", "created": 1, "model": body.get("model"),
+                    "choices": [{"index": 0, "finish_reason": "stop",
+                                 "message": {"role": "assistant", "content": content}}],
+                    "usage": {"prompt_tokens": 400, "completion_tokens": 30, "total_tokens": 430}})
+
+
+@app.post("/gemini/<version>/models/<path:model_and_action>")
+def gemini(version, model_and_action):
+    body = request.get_json()
+    _record_panel("gemini", body)
+    user_text = json.dumps(body.get("contents"))
+    user_text = body["contents"][0]["parts"][0]["text"] if isinstance(body.get("contents"), list) else user_text
+    claim, answer = _panel_verdict("gemini", user_text)
+    if "geminidown" in claim:
+        return jsonify({"error": {"code": 402, "message": "Your prepayment credits are depleted.",
+                                  "status": "RESOURCE_EXHAUSTED"}}), 402
+    return jsonify({"candidates": [{"content": {"role": "model", "parts": [{"text": json.dumps(answer)}]},
+                                    "finishReason": "STOP", "index": 0}],
+                    "usageMetadata": {"promptTokenCount": 400, "candidatesTokenCount": 30, "totalTokenCount": 430}})
 
 
 if __name__ == "__main__":
