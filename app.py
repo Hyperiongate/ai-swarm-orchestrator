@@ -1,9 +1,21 @@
 """
 AI SWARM ORCHESTRATOR - Main Application
 Created: January 18, 2026
-Last Updated: November 13, 2026 — Start-up waits for the knowledge base
+Last Updated: November 15, 2026 — The Humanity Index page
 
 CHANGELOG:
+- November 15, 2026: THE HUMANITY INDEX — ONE CHANGE ONLY:
+  1. BLUEPRINT: Registered humanity_bp from routes/humanity.py. Placed
+     immediately AFTER the Speech Fact-Checker registration block. Provides
+     GET /humanity (the page) and the /api/humanity/* API. Type any sentence;
+     the Swarm answers where we are, why, and what I can do, with cited
+     figures that the other AIs then rate. The routes only queue work and
+     read results; the AI calls run in a separate helper process
+     (humanity_runner.py, started on demand by humanity_engine.py). Its four
+     tables (humanity_jobs, humanity_runner, humanity_library,
+     humanity_ledger) are lazy-created; no migration. Locked behind
+     HUMANITY_PASSCODE (or FACTCHECK_PASSCODE if that is not set).
+  NO OTHER CHANGES. Rule 1 (do no harm) preserved.
 - November 13, 2026: START-UP WAITS FOR BACKGROUND LOADING — ONE CHANGE ONLY:
   Added a "FINISH LOADING BEFORE WORKERS START" block at the very end of this
   file (after Swarm self-registration). It waits for the knowledge base's
@@ -1317,6 +1329,18 @@ except ImportError as e:
     print(f"Speech Fact-Checker routes not found: {e}")
 except Exception as e:
     print(f"Speech Fact-Checker registration failed: {e}")
+
+# ----------------------------------------------------------------------------
+# The Humanity Index — page + job API (November 15, 2026)
+# ----------------------------------------------------------------------------
+try:
+    from routes.humanity import humanity_bp
+    app.register_blueprint(humanity_bp)
+    print("Humanity Index API registered")
+except ImportError as e:
+    print(f"Humanity Index routes not found: {e}")
+except Exception as e:
+    print(f"Humanity Index registration failed: {e}")
 
 # ----------------------------------------------------------------------------
 # Performance Dashboard — moved here from shift-work.com (November 13, 2026)

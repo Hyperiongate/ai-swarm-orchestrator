@@ -2,7 +2,7 @@
 Admin Gate — tests against the whole Swarm app
 File: tests/security/test_admin_gate.py
 Created: November 11, 2026
-Last Updated: November 13, 2026 — Performance dashboard, HEAD requests, removed features
+Last Updated: November 15, 2026 — The Humanity Index has its own login
 
 PURPOSE:
     Starts the real app.py and checks swarm_security.py against every route the
@@ -131,7 +131,7 @@ def test_only_the_intended_routes_are_open_without_the_passcode():
     ]
     assert sorted({path for _m, path, _e, kind in ROUTES if kind == "service_open"}) == ["/api/survey/norm/search"]
     own = {endpoint.split(".")[0] for _m, _p, endpoint, kind in ROUTES if kind == "own_login"}
-    assert own == {"survey_admin", "survey_respondent", "factcheck"}
+    assert own == {"survey_admin", "survey_respondent", "factcheck", "humanity"}
 
 
 def test_performance_dashboard_is_private_and_carries_no_pin_or_key(locked):

@@ -2,7 +2,7 @@
 AI SWARM ORCHESTRATOR - Admin Gate (one passcode for everything that is not public)
 File: swarm_security.py
 Created: November 11, 2026
-Last Updated: November 11, 2026 — Initial implementation
+Last Updated: November 15, 2026 — The Humanity Index has its own login
 
 PURPOSE:
     Until now only Survey admin and the Part Time Tracker had logins. Everything
@@ -55,6 +55,9 @@ ENVIRONMENT:
     SECRET_KEY             unchanged in meaning; see session_secret_key().
 
 CHANGELOG:
+- November 15, 2026: 'humanity' (the Humanity Index, routes/humanity.py) added to
+  OWN_LOGIN_BLUEPRINTS. It checks its own passcode (HUMANITY_PASSCODE). One line;
+  nothing else changed.
 - November 13, 2026: PART TIME TRACKER AND FEYNMANLAB REMOVED FROM THE SWARM.
   The gate no longer makes room for the Part Time Tracker's own logins or
   its developer shortcuts: both lists are now empty. The purpose notes above
@@ -119,7 +122,7 @@ PUBLIC_ENDPOINTS = {
 PUBLIC_BLUEPRINTS = {'assessment', 'assessment_ai', 'assessment_pdf'}
 
 # Blueprints that check their own login. The gate stays out of their way.
-OWN_LOGIN_BLUEPRINTS = {'survey_admin', 'factcheck'}
+OWN_LOGIN_BLUEPRINTS = {'survey_admin', 'factcheck', 'humanity'}
 OWN_LOGIN_BLUEPRINT_PREFIXES = ()                  # none now (was the Part Time Tracker, removed November 13, 2026)
 OWN_LOGIN_ENDPOINTS = {                            # Survey admin actions that live in survey_respondent.py
     'survey_respondent.open_survey',
