@@ -2,7 +2,7 @@
 The Humanity Index — Flask Routes
 File: routes/humanity.py
 Created: November 15, 2026
-Last Updated: November 15, 2026 — Initial implementation
+Last Updated: November 15, 2026 (afternoon) — The score routes
 
 PURPOSE:
     Flask blueprint for the Humanity Index page and its small API. Every
@@ -25,6 +25,14 @@ ENDPOINTS:
     GET   /api/humanity/ledger              every "I did this"
     POST  /api/humanity/ledger/add          {answer_id, done_on?, times?, note?}
     POST  /api/humanity/ledger/delete       {id}
+    GET   /api/humanity/score/card          the scorecard: categories, measures, end points
+    POST  /api/humanity/score/run           queue: work out the score for a place {place}
+    GET   /api/humanity/score/latest        the newest run for ?place= (or null)
+    GET   /api/humanity/score/run/<id>      one run: progress, values, scores, review
+    GET   /api/humanity/score/history       past runs for ?place=, with their scores
+    GET   /api/humanity/score/places        places scored so far
+    POST  /api/humanity/score/review        queue: other AIs check a run's values {run_id}
+    POST  /api/humanity/score/delete        {run_id}
 
 PASSCODE (Jim's choice, November 15, 2026: "just you, with passcode"):
     Every /api/humanity/* route except /health needs the passcode in the
@@ -35,6 +43,9 @@ PASSCODE (Jim's choice, November 15, 2026: "just you, with passcode"):
     Gate (swarm_security.py) lists this blueprint as having its own login.
 
 CHANGELOG:
+- November 15, 2026 (afternoon): THE SCORE
+  * Eight /api/humanity/score/* routes (listed above), same passcode rule.
+    No existing route changed.
 - November 15, 2026: INITIAL IMPLEMENTATION
   * New blueprint humanity_bp. Registered in app.py (see app.py changelog).
     No existing route touched. Rule 1 (do no harm) preserved.
@@ -329,5 +340,140 @@ def humanity_ledger_delete():
     except Exception as e:
         return _db_error('deleting from the ledger', e)
     return jsonify({'deleted': deleted})
+
+# ============================================================================
+# THE SCORE
+# ============================================================================
+
+def _score():
+    import humanity_score
+    return humanity_score
+
+
+@humanity_bp.route('/api/humanity/score/card', methods=['GET'])
+@needs_passcode
+def humanity_score_card():
+    try:
+        return jsonify({'categories': _score().scorecard_public(), 'world': _score().WORLD})
+    except ImportError:
+        return _not_ready()
+
+
+@humanity_bp.route('/api/humanity/score/run', methods=['POST'])
+@needs_passcode
+def humanity_score_run():
+    data = _body() or {}
+    try:
+        eng, sc = _engine(), _score()
+    except ImportError:
+        return _not_ready()
+    if not eng.ai_ready():
+        return jsonify({'error': 'The server has no AI key. Check ANTHROPIC_API_KEY in Render under '
+                                 'Environment, then redeploy.'}), 503
+    try:
+        run_id = sc.start_run(data.get('place'))
+    except eng.NotReady as e:
+        return jsonify({'error': str(e)}), 503
+    except Exception as e:
+        return _db_error('starting a score run', e)
+    return jsonify({'run_id': run_id}), 202
+
+
+def _run_json(run):
+    if run is None:
+        return None
+    run = dict(run)
+    run.pop('values', None)          # the scored form (run['score']) carries everything the page needs
+    return run
+
+
+@humanity_bp.route('/api/humanity/score/latest', methods=['GET'])
+@needs_passcode
+def humanity_score_latest():
+    try:
+        return jsonify({'run': _run_json(_score().latest_run(request.args.get('place')))})
+    except ImportError:
+        return _not_ready()
+    except Exception as e:
+        return _db_error('reading the latest score', e)
+
+
+@humanity_bp.route('/api/humanity/score/run/<run_id>', methods=['GET'])
+@needs_passcode
+def humanity_score_get(run_id):
+    if not _ID.match(run_id):
+        return jsonify({'error': 'Not found.'}), 404
+    try:
+        run = _score().get_run(run_id)
+    except ImportError:
+        return _not_ready()
+    except Exception as e:
+        return _db_error('reading a score run', e)
+    if run is None:
+        return jsonify({'error': 'That score run no longer exists.'}), 404
+    return jsonify({'run': _run_json(run)})
+
+
+@humanity_bp.route('/api/humanity/score/history', methods=['GET'])
+@needs_passcode
+def humanity_score_history():
+    try:
+        return jsonify({'runs': _score().run_history(request.args.get('place'))})
+    except ImportError:
+        return _not_ready()
+    except Exception as e:
+        return _db_error('reading score history', e)
+
+
+@humanity_bp.route('/api/humanity/score/places', methods=['GET'])
+@needs_passcode
+def humanity_score_places():
+    try:
+        return jsonify({'places': _score().places()})
+    except ImportError:
+        return _not_ready()
+    except Exception as e:
+        return _db_error('reading scored places', e)
+
+
+@humanity_bp.route('/api/humanity/score/review', methods=['POST'])
+@needs_passcode
+def humanity_score_review():
+    run_id = str((_body() or {}).get('run_id') or '')
+    if not _ID.match(run_id):
+        return jsonify({'error': 'The request was not understood.'}), 400
+    try:
+        eng, sc = _engine(), _score()
+    except ImportError:
+        return _not_ready()
+    if not eng.panel_names():
+        return jsonify({'error': 'No other AI is available to check the values. The Swarm needs '
+                                 'OPENAI_API_KEY, GOOGLE_API_KEY or DEEPSEEK_API_KEY in Render.'}), 503
+    try:
+        run = sc.get_run(run_id)
+        if run is None:
+            return jsonify({'error': 'That score run no longer exists.'}), 404
+        if not run['complete']:
+            return jsonify({'error': 'The research for this score is not finished yet.'}), 409
+        job_id = eng.submit_job('score_review', {'run_id': run_id})
+    except eng.NotReady as e:
+        return jsonify({'error': str(e)}), 503
+    except Exception as e:
+        return _db_error('queueing a score check', e)
+    return jsonify({'job_id': job_id}), 202
+
+
+@humanity_bp.route('/api/humanity/score/delete', methods=['POST'])
+@needs_passcode
+def humanity_score_delete():
+    run_id = str((_body() or {}).get('run_id') or '')
+    if not _ID.match(run_id):
+        return jsonify({'error': 'The request was not understood.'}), 400
+    try:
+        return jsonify({'deleted': _score().delete_run(run_id)})
+    except ImportError:
+        return _not_ready()
+    except Exception as e:
+        return _db_error('deleting a score run', e)
 
 # I did no harm and this file is not truncated

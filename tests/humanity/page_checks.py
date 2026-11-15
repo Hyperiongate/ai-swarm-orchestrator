@@ -2,13 +2,15 @@
 The Humanity Index — page tests in a real browser
 File: tests/humanity/page_checks.py
 Created: November 15, 2026
-Last Updated: November 15, 2026 — Initial version
+Last Updated: November 15, 2026 (afternoon) — the Score tab and voice
 
 PURPOSE:
     Serves the page with gunicorn under the Swarm's own gunicorn.conf.py, with
     the real helper process and the stand-in AI service, and drives it in
-    Chromium: passcode, asking, the zoom dial arithmetic, the other AIs'
-    ratings, "I did this", the ledger, the library, phone width, dark mode.
+    Chromium: passcode, the Score (working it out, the arithmetic, the
+    measures, the other AIs' checks, weights, history, places), voice (with a
+    simulated microphone), asking, the zoom dial arithmetic, the ratings,
+    "I did this", the ledger, the library, phone width, dark mode.
     Saves screenshots in tests/humanity/screens/ (not committed).
     Nothing in the Swarm imports this file.
 
@@ -83,6 +85,10 @@ def main():
             cur = conn.cursor()
             for table in ("humanity_jobs", "humanity_library", "humanity_ledger"):
                 cur.execute(f"DELETE FROM {table}")
+            import humanity_score
+            humanity_score.ensure_tables()
+            cur.execute("DELETE FROM humanity_score_values")
+            cur.execute("DELETE FROM humanity_score_runs")
         run_browser()
     finally:
         web.terminate()
@@ -101,10 +107,39 @@ def main():
     return 1 if failed else 0
 
 
+# A pretend microphone: when started, it "hears" whatever window.__say holds.
+FAKE_MIC = """
+window.__say = "";
+window.webkitSpeechRecognition = class {
+  start() {
+    const text = window.__say;
+    setTimeout(() => {
+      const res = [[{ transcript: text }]]; res[0].isFinal = true;
+      this.onresult && this.onresult({ results: res });
+      this.onend && this.onend();
+    }, 150);
+  }
+  stop() { this.onend && this.onend(); }
+};
+window.SpeechRecognition = window.webkitSpeechRecognition;   // newer Chromium has the unprefixed name too
+"""
+
+
+def expected_scores(leave_out=None):
+    import humanity_score
+    from stub_ai_service import SCORE_VALUES
+    values = {c["key"]: {"values": [{"key": m["key"], "value": SCORE_VALUES[m["key"]]} for m in c["measures"]]}
+              for c in humanity_score.SCORECARD}
+    weights = {leave_out: 0} if leave_out else None
+    return humanity_score.score_run(values, weights)["overall"]
+
+
 def run_browser():
+    sys.path.insert(0, HERE)
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = browser.new_page(viewport={"width": 1280, "height": 900}, device_scale_factor=1)
+        page.add_init_script(FAKE_MIC)
         errors = []
         page.on("pageerror", lambda e: errors.append(str(e)))
         page.on("dialog", lambda d: (errors.append("dialog: " + d.message), d.dismiss()))
@@ -115,13 +150,71 @@ def run_browser():
         check("asks for the passcode on arrival", page.is_visible("#passin"))
         page.fill("#passin", "wrong")
         page.click("#passform button")
-        page.fill("#q", "I want to walk instead of driving")
-        page.click("#askbtn")
         page.wait_for_selector("#passdlg[open]", timeout=8000)
         check("a wrong passcode is asked again", "not accepted" in page.inner_text("#passmsg"),
               page.inner_text("#passmsg"))
         page.fill("#passin", PASS)
         page.click("#passform button")
+
+        # ---------------- the score
+        page.wait_for_selector("text=No score has been worked out for the world yet", timeout=8000)
+        check("Score is the first tab, with an invitation to work it out", True)
+        page.click("button:has-text('Work out the score')")
+        page.wait_for_selector("text=Researching:", timeout=8000)
+        check("shows research progress", True)
+        page.wait_for_selector("button:has-text('Refresh with the latest data'):not([disabled])", timeout=90000)
+        big = page.inner_text(".bignum")
+        want = expected_scores()
+        check(f"world score is {want}", big.startswith(str(want)), big)
+        check("12 categories listed", page.locator(".cat").count() == 12)
+        check("track shows both end points", "worst seen in modern times" in page.inner_text(".track-ends")
+              and "ideal world" in page.inner_text(".track-ends"))
+        page.click(".cat >> nth=0 >> button")
+        health = page.inner_text(".cat >> nth=0")
+        check("health opens to its measures, values and end points",
+              "73.3" in health and "25 / 90 years" in health and "Life expectancy" in health, health[:300])
+        page.wait_for_selector(".cat >> nth=0 >> .rev.good", timeout=40000)
+        check("other AIs' checks shown per measure", "3 of 3 AIs find this sound" in page.inner_text(".cat >> nth=0"))
+        check("checked-by line names the AIs", "GPT, DeepSeek, Gemini" in page.inner_text(".scoreactions"))
+        page.screenshot(path=os.path.join(SCREENS, "score-desktop.png"), full_page=True)
+
+        page.click("button:has-text('Change what counts')")
+        page.click(".weights .row:has-text('Fair shares') button:has-text('Leave out')")
+        want_without = expected_scores("fair_shares")
+        big = page.inner_text(".bignum")
+        check(f"leaving out Fair shares gives {want_without}", big.startswith(str(want_without)), big)
+        check("says custom weights are in use", "your own weights" in page.inner_text(".herometa"))
+        page.click("button:has-text('Go back to equal weights')")
+        check("back to equal weights", page.inner_text(".bignum").startswith(str(want)))
+        page.click("button:has-text('Done changing what counts')")
+
+        page.click("button:has-text('Refresh with the latest data')")
+        page.wait_for_selector("text=Researching:", timeout=8000)
+        page.wait_for_selector("button:has-text('Refresh with the latest data'):not([disabled])", timeout=90000)
+        page.wait_for_selector(".history .entry", timeout=8000)
+        check("earlier score kept in history", str(want) in page.inner_text(".history"))
+        check("change since last time shown", "since" in page.inner_text(".herometa"), page.inner_text(".herometa"))
+
+        page.click("#placeseg button:has-text('Marin County')")
+        page.wait_for_selector("text=No score has been worked out for Marin County, California yet", timeout=8000)
+        check("Marin County has its own score", True)
+
+        # voice on the Ask tab: a spoken score question opens the Score for that place
+        page.click("nav.tabs button[data-view='ask']")
+        page.evaluate("window.__say = 'What is the score for the world?'")
+        page.click("#askmic")
+        page.wait_for_selector("#view-score:not(.hidden) .bignum", timeout=8000)
+        check("spoken 'what is the score for the world' opens the world score",
+              page.get_attribute("#placeseg button[data-place='World']", "aria-pressed") == "true")
+        page.evaluate("window.__say = 'marin county'")
+        page.click("#placemic")
+        page.wait_for_selector("text=No score has been worked out for Marin County, California yet", timeout=8000)
+        check("saying 'marin county' picks the Marin County place", True)
+
+        # ---------------- asking (spoken)
+        page.click("nav.tabs button[data-view='ask']")
+        page.evaluate("window.__say = 'I want to walk instead of driving'")
+        page.click("#askmic")
 
         # waiting and the answer
         page.wait_for_selector("#waiting:not(.hidden)", timeout=8000)
@@ -192,6 +285,11 @@ def run_browser():
         phone.goto(BASE + "/humanity")
         phone.evaluate(f"sessionStorage.setItem('humanity-pass', '{PASS}')")
         phone.goto(BASE + "/humanity")
+        phone.wait_for_selector(".bignum", timeout=8000)
+        phone.click(".cat >> nth=0 >> button")
+        overflow = phone.evaluate("document.documentElement.scrollWidth - window.innerWidth")
+        check("Score page: no sideways scrolling at phone width", overflow <= 0, overflow)
+        phone.screenshot(path=os.path.join(SCREENS, "score-phone-dark.png"), full_page=True)
         phone.click("nav.tabs button[data-view='library']")
         phone.wait_for_selector(".libitem", timeout=8000)
         phone.click(".libitem button.open")

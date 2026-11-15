@@ -2,6 +2,42 @@
 
 Added 15 November 2026, from Jim's concept doc "The Humanity Index — Concept".
 
+## The score (added the afternoon of 15 November 2026)
+
+The **Score** tab (the first tab) gives one number from 0 to 100 for how we are
+doing as people, for the **world**, **Marin County**, or any place you type or say.
+
+- **0** is the worst conditions seen in modern times; **100** is an ideal world
+  (Jim's choice).
+- It is built from **12 categories**: health and long life, basic needs, quality
+  of life, freedom of choice, lack of oppression, fair shares, care for the planet,
+  ability to aspire, science and discovery, peace and safety, honest government,
+  kindness and community. Jim rated all 12 "most important", so **they count
+  equally**. "Change what counts" lets a viewer try their own weights (kept in
+  that browser only).
+- Each category uses **fixed, named measures** (26 in all), each with a stated
+  value that scores 0 and a value that scores 100, and the reason. For example,
+  life expectancy scores 0 at 25 years and 100 at 90 years. A measure's score
+  is where the real value sits between the two; a category is the average of its
+  measures; the overall score is the average of the categories. The whole
+  scorecard is in `humanity_score.py` (`SCORECARD`), and every end point is
+  shown on the page next to its measure.
+- **Work out the score** sends the swarm to find the latest value of every
+  measure for that place: one research job per category, with web search, at
+  the most local level published (county, then state, then country; the page
+  says which). It takes a few minutes and roughly $1 to $2. The other AIs then
+  check every value, and each measure shows how many agree.
+- **Every run is kept.** The score changes only when you refresh it with new
+  data, and the page shows the change since the last run and the earlier scores.
+- On test data close to real world figures, the world scores about 57.
+
+## Voice
+
+The microphone buttons (Chrome and Edge) let you speak a question on **Ask** or a
+place on **Score**. On Ask, a question about the score ("what's the score for
+Marin County?") opens the Score tab for that place; anything else is researched
+as a question.
+
 Open **/humanity** on the Swarm, type any sentence ("walk instead of driving",
 "end global hunger", "eat less beef"), and the Swarm answers in the same three
 parts every time:
@@ -52,9 +88,9 @@ search the web again.
 3. Open `https://<the Swarm address>/humanity`. Start with one sentence and look
    for `[Humanity] Research helper started` in the Render log.
 
-It uses the Swarm's existing `ANTHROPIC_API_KEY`. Its four database tables
-(`humanity_jobs`, `humanity_runner`, `humanity_library`, `humanity_ledger`)
-create themselves on first use. No change to `requirements.txt`,
+It uses the Swarm's existing `ANTHROPIC_API_KEY`. Its six database tables
+(`humanity_jobs`, `humanity_runner`, `humanity_library`, `humanity_ledger`,
+`humanity_score_runs`, `humanity_score_values`) create themselves on first use. No change to `requirements.txt`,
 `gunicorn.conf.py` or the migrations.
 
 ## Cost
@@ -71,6 +107,7 @@ jobs applies (`HUMANITY_DAILY_JOB_LIMIT`).
 | `templates/humanity.html` | The page. |
 | `routes/humanity.py` | The page route, the passcode, and the small API. |
 | `humanity_engine.py` | The instructions to the AI, the fixed answer shape, the panel review, the queue, library and ledger. |
+| `humanity_score.py` | The scorecard (12 categories, 26 measures and their end points), the research for each category, the scoring, and the saved runs. |
 | `humanity_runner.py` | The separate helper process that does the AI work. |
 | `tests/humanity/` | The dry-run tests. Not used by the running app. |
 | `app.py` | One change: the blueprint registration. |
@@ -88,26 +125,31 @@ If those files are edited later, run the Humanity Index tests too.
 | `HUMANITY_PASSCODE` | none (falls back to `FACTCHECK_PASSCODE`) | The page's passcode |
 | `HUMANITY_MODEL` | `claude-sonnet-5-5` | Model that researches the answer |
 | `HUMANITY_MAX_SEARCHES` | `6` | Web searches per answer |
-| `HUMANITY_DAILY_JOB_LIMIT` | `200` | Safety cap on AI jobs per day |
+| `HUMANITY_DAILY_JOB_LIMIT` | `200` | Safety cap on AI jobs per day (one score run uses 13) |
+| `HUMANITY_SCORE_MODEL` | `claude-sonnet-5-5` | Model that looks up the score's measures |
+| `HUMANITY_SCORE_MAX_SEARCHES` | `4` | Web searches per category |
 
 ## What has and has not been tested
 
-Tested 15 November 2026, all passing:
+Tested 15 November 2026 (and again that afternoon with the score and voice), all passing:
 
-- 23 server tests against PostgreSQL 16 with this repo's `requirements.txt`,
+- 34 server tests against PostgreSQL 16 (11 of them for the score: the scoring
+  rule checked independently, both directions of a measure, a failed category,
+  nothing found, invented links, history, the real helper process, the AI check) with this repo's `requirements.txt`,
   including the real helper process, the passcode on every route, links that
   the search never returned being dropped, junk numbers being cleaned, panel
   disagreement and panel failures.
-- 23 page checks in a real Chromium browser served by gunicorn with this repo's
+- 40 page checks in a real Chromium browser, including the score, the weights,
+  history, places and voice (with a simulated microphone), served by gunicorn with this repo's
   `gunicorn.conf.py`, including the dial arithmetic, the ratings, the ledger, the
   library, phone width and dark mode.
 - The Swarm's own tests (Admin Gate, fact-checker, database, AI connections) all
-  still pass, and the whole `app.py` starts with the same 348 routes plus the 11
+  still pass, and the whole `app.py` starts with the same 348 routes plus the 19
   new ones.
 
 **Not yet tested:** real answers from the real AI models (their quality, speed and
-cost), because the test environment has no AI keys. The first question on Render
-is the first real test.
+cost), and a real microphone, because the test environment has neither. The first
+question and the first score on Render are the first real tests.
 
 ## Running the tests again
 

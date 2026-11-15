@@ -5,6 +5,25 @@
   File: templates/humanity.html   (served at /humanity by routes/humanity.py)
 
   CHANGE NOTES
+  2026-11-15  (afternoon) The Score and voice (asked for by Jim after trying the
+              first version: "there should be a humanity index score", "I'd like
+              to be able to speak my question").
+              - New first tab, Score: one number from 0 to 100 for the world or a
+                place such as Marin County, from 12 category scores. 0 is the
+                worst seen in modern times; 100 is an ideal world. Each category
+                opens to show its measures: the value found, the year and area,
+                its own score, the two end points and why, the source, and how
+                the other AIs rated it.
+              - "Work out the score" researches all 12 categories (a few
+                minutes); categories fill in as they arrive. Every run is kept;
+                the page shows the change since the last one.
+              - Weights: all count equally by default (Jim rated every category
+                "Most"). "Change what counts" lets a viewer try their own;
+                remembered in this browser only.
+              - Microphone buttons on Score and Ask (Chrome and Edge). On Ask, a
+                spoken or typed question about the score ("what's the score for
+                Marin County?") opens the Score tab for that place.
+              - Additive: Ask, the dial, the ledger and the library are unchanged.
   2026-11-15  First version (from Jim's concept doc "The Humanity Index - Concept",
               November 14-15, 2026, and his choices that day: the ask-anything
               engine first, just him with a passcode, Claude publishes).
@@ -211,6 +230,60 @@ table.ytab { width: 100%; border-collapse: collapse; background: var(--panel); b
 .x:hover { color: var(--red); background: var(--red-soft); }
 .empty { padding: 30px; text-align: center; color: var(--muted); background: var(--panel); border: 1px dashed var(--line); border-radius: 16px; }
 
+/* ---------- score ---------- */
+.scorehead { padding: 34px 0 6px; }
+.scorehead h1 { font-family: var(--display); font-weight: 780; font-size: clamp(30px, 5vw, 46px); letter-spacing: -0.02em; margin: 0 0 14px; }
+.placebar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.placebar form { display: flex; gap: 8px; flex: 1 1 260px; min-width: 0; }
+.placebar input { flex: 1; min-width: 0; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); }
+.mic { border: 1px solid var(--line); background: var(--panel); border-radius: 12px; width: 48px; flex: none; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.mic svg { width: 22px; height: 22px; fill: currentColor; }
+.mic.listening { background: var(--red); border-color: var(--red); color: #fff; }
+.hero { display: grid; grid-template-columns: auto 1fr; gap: 10px 36px; align-items: end; margin: 26px 0 8px; }
+@media (max-width: 700px) { .hero { grid-template-columns: 1fr; } }
+.bignum { font-family: var(--display); font-weight: 800; font-size: clamp(96px, 17vw, 168px); line-height: .82; letter-spacing: -0.05em; font-variant-numeric: tabular-nums; }
+.bignum small { font-size: .2em; letter-spacing: 0; font-weight: 600; color: var(--muted); margin-left: .25em; }
+.track { position: relative; height: 14px; border-radius: 999px; margin: 6px 0 8px;
+  background: linear-gradient(90deg, var(--red-soft), var(--amber-soft) 50%, var(--green-soft)); }
+.track i { position: absolute; top: -7px; width: 4px; height: 28px; border-radius: 2px; background: var(--ink); transform: translateX(-2px); transition: left .6s ease; }
+.track-ends { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); gap: 12px; }
+.herometa { color: var(--muted); font-size: 15px; margin: 8px 0 0; }
+.delta.up { color: var(--green); font-weight: 700; } .delta.down { color: var(--red); font-weight: 700; }
+.scoreactions { display: flex; gap: 10px; flex-wrap: wrap; margin: 18px 0 8px; }
+.progress { height: 8px; border-radius: 999px; background: var(--line); overflow: hidden; margin: 8px 0; }
+.progress i { display: block; height: 100%; background: var(--amber); transition: width .5s; }
+.cats { display: grid; gap: 8px; margin-top: 18px; }
+.cat { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; min-width: 0; }   /* min-width: the measures table scrolls inside, not the page */
+.cat > button { width: 100%; display: grid; grid-template-columns: minmax(130px, 220px) 1fr 56px; gap: 14px; align-items: center;
+  background: none; border: 0; padding: 14px 16px; cursor: pointer; text-align: left; }
+@media (max-width: 600px) { .cat > button { grid-template-columns: 1fr 52px; } .cat .bar { grid-column: 1 / -1; grid-row: 2; } }
+.cat .name { font-weight: 700; }
+.cat .bar { height: 10px; border-radius: 999px; background: var(--sky); overflow: hidden; }
+.cat .bar i { display: block; height: 100%; border-radius: 999px; background: var(--green); transition: width .6s ease; }
+.cat .bar i.mid { background: var(--amber); } .cat .bar i.low { background: var(--red); }
+.cat .num { font-family: var(--display); font-weight: 760; font-size: 24px; text-align: right; font-variant-numeric: tabular-nums; }
+.cat .num.wait { font-size: 14px; color: var(--muted); font-family: var(--body); font-weight: 400; }
+.cat .detail { padding: 0 16px 16px; }
+.mtable { width: 100%; border-collapse: collapse; font-size: 15px; }
+.mtable th { text-align: left; color: var(--muted); font-weight: 700; font-size: 13px; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.mtable td { padding: 9px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.mtable td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mtable .sub { font-size: 13px; color: var(--muted); }
+@media (max-width: 600px) {          /* phones: each measure becomes a short stacked block */
+  .mtable thead { display: none; }
+  .mtable tr { display: block; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .mtable td { display: block; border: 0; padding: 2px 0; }
+  .mtable td.n { text-align: left; }
+  .mtable td:nth-child(3)::before { content: "Scores 0 at / 100 at: "; }
+  .mtable td:nth-child(4)::before { content: "Score: "; color: var(--muted); }
+}
+.weights { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-top: 14px; }
+.weights .row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.weights .row:last-child { border-bottom: 0; }
+.weights .seg button { padding: 5px 10px; font-size: 14px; }
+.history { margin-top: 26px; }
+.history h3 { font-family: var(--display); margin: 0 0 8px; }
+
 /* ---------- passcode ---------- */
 dialog { border: 1px solid var(--line); border-radius: 16px; padding: 24px; background: var(--panel); color: var(--ink); max-width: 380px; width: calc(100% - 32px); }
 dialog::backdrop { background: rgba(10, 25, 40, .45); }
@@ -225,7 +298,8 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
   <div class="wrap">
     <div class="brand">The Humanity <span>Index</span></div>
     <nav class="tabs" role="tablist" aria-label="Sections">
-      <button role="tab" data-view="ask" aria-selected="true">Ask</button>
+      <button role="tab" data-view="score" aria-selected="true">Score</button>
+      <button role="tab" data-view="ask" aria-selected="false">Ask</button>
       <button role="tab" data-view="ledger" aria-selected="false">My ledger</button>
       <button role="tab" data-view="library" aria-selected="false">Asked before</button>
     </nav>
@@ -233,13 +307,35 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
 </header>
 
 <main>
-  <section id="view-ask" class="wrap">
+  <div class="wrap"><div id="pagenotice" class="notice hidden" role="alert"></div></div>
+
+  <section id="view-score" class="wrap" aria-labelledby="score-h">
+    <div class="scorehead">
+      <h1 id="score-h">How are we doing as people?</h1>
+      <div class="placebar">
+        <div class="seg" id="placeseg" role="group" aria-label="Place">
+          <button type="button" data-place="World" aria-pressed="true">World</button>
+          <button type="button" data-place="Marin County, California" aria-pressed="false">Marin County</button>
+        </div>
+        <form id="placeform">
+          <label class="sr" for="otherplace">Another place</label>
+          <input id="otherplace" type="text" maxlength="120" placeholder="Another place, e.g. Japan or Oakland, California">
+          <button class="btn quiet" type="submit">Show</button>
+          <button class="mic" type="button" id="placemic" aria-label="Say a place"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-2.1A7 7 0 0 0 19 12h-2z"/></svg></button>
+        </form>
+      </div>
+    </div>
+    <div id="score"></div>
+  </section>
+
+  <section id="view-ask" class="wrap hidden">
     <div class="ask">
       <h1>What would you like to change?</h1>
       <form class="askbox" id="askform">
         <label class="sr" for="q">Type a sentence</label>
         <input id="q" type="text" maxlength="600" autocomplete="off"
                placeholder="e.g. I want to walk instead of driving to the shop">
+        <button class="mic" type="button" id="askmic" aria-label="Speak your question"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-2.1A7 7 0 0 0 19 12h-2z"/></svg></button>
         <button class="btn green" id="askbtn" type="submit">Show me the difference</button>
       </form>
       <div class="askmore">
@@ -275,7 +371,7 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
   </section>
 </main>
 
-<footer class="wrap">Figures come from live web searches and are checked by other AIs. Big totals are simple multiples of one cited figure; real life at scale is messier, and each answer says how.</footer>
+<footer class="wrap">Figures come from live web searches and are checked by other AIs. The score uses fixed measures with stated end points; each category shows them. Big totals on Ask are simple multiples of one cited figure; real life at scale is messier, and each answer says how.</footer>
 
 <dialog id="passdlg">
   <form method="dialog" id="passform">
@@ -387,7 +483,8 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
   // ------------------------------------------------------------------ tabs
   function show(view) {
     document.querySelectorAll("nav.tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.view === view)));
-    ["ask", "ledger", "library"].forEach((v) => $("view-" + v).classList.toggle("hidden", v !== view));
+    ["score", "ask", "ledger", "library"].forEach((v) => $("view-" + v).classList.toggle("hidden", v !== view));
+    if (view === "score" && !scoreState.loaded) loadScore(scoreState.place);
     if (view === "ledger") loadLedger();
     if (view === "library") loadLibrary();
   }
@@ -411,6 +508,8 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
     e.preventDefault();
     const question = $("q").value.trim();
     if (question.length < 3) { $("q").focus(); return; }
+    const scorePlace = scoreQuestion(question);
+    if (scorePlace) { show("score"); loadScore(scorePlace); return; }
     store("local", "humanity-place", $("place").value.trim());
     $("askerror").classList.add("hidden");
     $("answer").classList.add("hidden");
@@ -756,26 +855,319 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
     } catch (err) { alert(err.message); }
   }
 
+
+  // ------------------------------------------------------------------ page notice
+  function pageNotice(text) {
+    $("pagenotice").textContent = text;
+    $("pagenotice").classList.toggle("hidden", !text);
+  }
+
+  // ------------------------------------------------------------------ voice
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  function setupMic(button, input, onDone) {
+    if (!Recognition) { button.classList.add("hidden"); return; }
+    let rec = null;
+    button.addEventListener("click", () => {
+      if (rec) { rec.stop(); return; }
+      rec = new Recognition();
+      rec.lang = "en-US";
+      rec.interimResults = true;
+      rec.continuous = false;
+      let finalText = "";
+      button.classList.add("listening");
+      button.setAttribute("aria-label", "Listening. Press to stop");
+      rec.onresult = (ev) => {
+        let text = "";
+        for (const r of ev.results) text += r[0].transcript;
+        input.value = text;
+        if (ev.results[ev.results.length - 1].isFinal) finalText = text;
+      };
+      rec.onerror = (ev) => {
+        if (ev.error === "not-allowed") pageNotice("The browser was not allowed to use the microphone. Allow it in the address bar, then try again.");
+      };
+      rec.onend = () => {
+        rec = null;
+        button.classList.remove("listening");
+        button.setAttribute("aria-label", "Speak");
+        const text = (finalText || input.value).trim();
+        if (text) onDone(text);
+      };
+      rec.start();
+    });
+  }
+  // "What's the score for Marin County?" -> the Score tab for that place.
+  function scoreQuestion(text) {
+    if (!/\b(score|humanity index|how (are|is) we doing|how good are we)\b/i.test(text)) return null;
+    const m = text.match(/\b(?:for|in|of)\s+(?:the\s+)?(.+?)[?.!]*$/i);
+    let place = m ? m[1].trim() : "World";
+    if (/^(the\s+)?(world|earth|everyone|humanity|globe|planet)$/i.test(place)) place = "World";
+    return place.slice(0, 120);
+  }
+
+  // ------------------------------------------------------------------ the score
+  const scoreState = { place: "World", run: null, previous: null, card: null, loaded: false, open: {}, polling: 0, weightsOpen: false };
+  const WEIGHT_STEPS = [{ v: 3, label: "Most" }, { v: 2, label: "A lot" }, { v: 1, label: "Some" }, { v: 0, label: "Leave out" }];
+  function weights() {
+    try { return JSON.parse(store("local", "humanity-weights") || "{}") || {}; } catch (e) { return {}; }
+  }
+  function weightOf(cat) { const w = weights()[cat.key]; return typeof w === "number" ? w : 3; }
+  function customWeights() { return Object.values(weights()).some((w) => w !== 3); }
+  function overallOf(categories) {
+    let total = 0, sum = 0;
+    for (const c of categories) {
+      const w = weightOf(c);
+      if (c.score === null || c.score === undefined || !w) continue;
+      total += w; sum += w * c.score;
+    }
+    return total ? Math.round(sum / total * 10) / 10 : null;
+  }
+  function band(score) { return score >= 66 ? "" : score >= 40 ? "mid" : "low"; }
+  function shortDate(t) { return new Date(t * 1000).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }); }
+
+  document.querySelectorAll("#placeseg button").forEach((b) => b.addEventListener("click", () => loadScore(b.dataset.place)));
+  $("placeform").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const p = $("otherplace").value.trim();
+    if (p) loadScore(p);
+  });
+  setupMic($("placemic"), $("otherplace"), (text) => loadScore(scoreQuestion(text) || text.replace(/[?.!]+$/, "")));
+  setupMic($("askmic"), $("q"), () => $("askform").requestSubmit());
+
+  // "Marin County" or "marin" means the Marin County button's place, so its history stays in one line.
+  function canonicalPlace(place) {
+    const p = String(place || "").trim().replace(/[?.!]+$/, "");
+    if (!p) return "World";
+    for (const b of document.querySelectorAll("#placeseg button")) {
+      const full = b.dataset.place.toLowerCase(), label = b.textContent.toLowerCase(), want = p.toLowerCase();
+      if (want === full || want === label || (want.length >= 4 && label.startsWith(want))) return b.dataset.place;
+    }
+    return p;
+  }
+
+  async function loadScore(place) {
+    place = canonicalPlace(place);
+    scoreState.place = place;
+    scoreState.loaded = true;
+    scoreState.polling++;
+    store("local", "humanity-score-place", place);
+    document.querySelectorAll("#placeseg button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.place.toLowerCase() === place.toLowerCase())));
+    if (!["world", "marin county, california"].includes(place.toLowerCase())) $("otherplace").value = place;
+    const box = $("score");
+    box.replaceChildren(el("p", { class: "lead" }, "Loading…"));
+    try {
+      if (!scoreState.card) scoreState.card = (await api("/api/humanity/score/card")).categories;
+      const [latest, history] = await Promise.all([
+        api("/api/humanity/score/latest?place=" + encodeURIComponent(place)),
+        api("/api/humanity/score/history?place=" + encodeURIComponent(place)),
+      ]);
+      if (scoreState.place !== place) return;
+      scoreState.run = latest.run;
+      scoreState.history = history.runs || [];
+      renderScore();
+      if (scoreState.run && !scoreState.run.complete) pollRun(scoreState.run.id);
+      else maybeReview();
+    } catch (err) {
+      box.replaceChildren(el("div", { class: "notice" }, err.message));
+    }
+  }
+
+  async function startRun() {
+    const place = scoreState.place;
+    try {
+      const res = await api("/api/humanity/score/run", { place });
+      const run = (await api("/api/humanity/score/run/" + res.run_id)).run;
+      if (scoreState.place !== place) return;
+      scoreState.run = run;
+      scoreState.history = [{ id: run.id, created_at: run.created_at, overall: null }].concat(scoreState.history || []);
+      renderScore();
+      pollRun(run.id);
+    } catch (err) { pageNotice(err.message); }
+  }
+
+  async function pollRun(id) {
+    const ticket = ++scoreState.polling;
+    while (ticket === scoreState.polling) {
+      await sleep(3000);
+      if (ticket !== scoreState.polling) return;
+      let run;
+      try { run = (await api("/api/humanity/score/run/" + id)).run; }
+      catch (err) { pageNotice(err.message); return; }
+      if (ticket !== scoreState.polling) return;
+      scoreState.run = run;
+      renderScore();
+      if (run.complete) {
+        const h = scoreState.history || [];
+        if (h.length && h[0].id === run.id) h[0].overall = run.score.overall;
+        renderScore();
+        maybeReview();
+        return;
+      }
+    }
+  }
+
+  async function maybeReview() {
+    const run = scoreState.run;
+    if (!run || !run.complete || run.review || !panelAvailable || !run.score.measured || scoreState.reviewing === run.id) return;
+    scoreState.reviewing = run.id;
+    try {
+      const job = await api("/api/humanity/score/review", { run_id: run.id });
+      await waitForJob(job.job_id);
+      const fresh = (await api("/api/humanity/score/run/" + run.id)).run;
+      if (scoreState.run && scoreState.run.id === run.id) { scoreState.run = fresh; renderScore(); }
+    } catch (err) {
+      if (scoreState.run && scoreState.run.id === run.id) { scoreState.reviewError = err.message; renderScore(); }
+    }
+  }
+
+  function ratingBadge(review, key) {
+    if (!review) return null;
+    const votes = (review.panel || []).filter((p) => p.ok).map((p) => ({ name: p.name, r: (p.ratings || {})[key] })).filter((v) => v.r);
+    if (!votes.length) return null;
+    const sound = votes.filter((v) => v.r.rating === "sound").length;
+    const wrong = votes.filter((v) => v.r.rating === "wrong").length;
+    const cls = sound === votes.length ? "good" : wrong > votes.length / 2 ? "bad" : "mixed";
+    const frag = document.createDocumentFragment();
+    frag.append(el("span", { class: "rev " + cls }, `${sound} of ${votes.length} AIs find this sound`));
+    const notes = votes.filter((v) => v.r.rating !== "sound").map((v) =>
+      `${v.name} rates it ${v.r.rating}: ${v.r.note}${v.r.better_value ? " (suggests " + v.r.better_value + ")" : ""}`);
+    if (notes.length) frag.append(el("ul", { class: "revnotes" }, notes.map((n) => el("li", {}, n))));
+    return frag;
+  }
+
+  function renderScore() {
+    const box = $("score");
+    const run = scoreState.run;
+    const place = scoreState.place;
+    const placeName = place === "World" ? "the world" : place;
+    if (!run) {
+      box.replaceChildren(el("div", { class: "empty", style: "text-align:left" },
+        el("p", { style: "margin:0 0 12px;color:var(--ink)" }, `No score has been worked out for ${placeName} yet.`),
+        el("button", { class: "btn green", type: "button", onclick: startRun }, "Work out the score"),
+        el("p", { style: "margin:12px 0 0;font-size:14px" }, "The swarm looks up 26 measures across 12 categories. It takes a few minutes and roughly $1 to $2 in AI fees.")));
+      return;
+    }
+    const cats = run.score.categories;
+    const overall = overallOf(cats);
+    const prev = (scoreState.history || []).find((h) => h.id !== run.id && h.overall !== null && h.created_at < run.created_at);
+    const nodes = [];
+
+    // hero
+    const doneCount = scoreState.card.length - run.pending.length;
+    const hero = el("div", { class: "hero" },
+      el("div", { class: "bignum", "aria-label": overall === null ? "No score yet" : `${overall} out of 100` },
+        overall === null ? "…" : overall.toFixed(1).replace(/\.0$/, ""), el("small", {}, "/ 100")),
+      el("div", {},
+        el("div", { class: "track", role: "img", "aria-label": "Score on a scale from 0 to 100" },
+          overall === null ? null : el("i", { style: `left:${overall}%` })),
+        el("div", { class: "track-ends" }, el("span", {}, "0: the worst seen in modern times"), el("span", {}, "100: an ideal world")),
+        el("p", { class: "herometa" },
+          `${place === "World" ? "The world" : place}, worked out ${shortDate(run.created_at)} from ${run.score.measured} of ${run.score.of} measures.`,
+          customWeights() ? " Using your own weights." : " All 12 categories count equally.",
+          prev && overall !== null && !customWeights()
+            ? el("span", {}, " ", el("span", { class: "delta " + (overall >= prev.overall ? "up" : "down") },
+                `${overall >= prev.overall ? "+" : "−"}${Math.abs(overall - prev.overall).toFixed(1)}`), ` since ${shortDate(prev.created_at)}.`)
+            : null)));
+    nodes.push(hero);
+
+    if (!run.complete) {
+      nodes.push(el("div", { role: "status" },
+        el("p", { style: "margin:14px 0 0" }, `Researching: ${doneCount} of ${scoreState.card.length} categories done. The score fills in as they arrive.`),
+        el("div", { class: "progress" }, el("i", { style: `width:${doneCount / scoreState.card.length * 100}%` }))));
+    }
+
+    // actions
+    const reviewLine = run.review
+      ? "Values checked separately by " + ((run.review.panel || []).filter((p) => p.ok).map((p) => p.name).join(", ") || "no other AI") + "."
+      : !run.complete ? "" : scoreState.reviewError ? "The other AIs could not check the values: " + scoreState.reviewError
+      : panelAvailable ? "Other AIs are checking each value…" : "No other AI is connected, so the values have not been cross-checked.";
+    nodes.push(el("div", { class: "scoreactions" },
+      el("button", { class: "btn", type: "button", disabled: !run.complete, onclick: startRun }, "Refresh with the latest data"),
+      el("button", { class: "btn quiet", type: "button", onclick: () => { scoreState.weightsOpen = !scoreState.weightsOpen; renderScore(); } },
+        scoreState.weightsOpen ? "Done changing what counts" : "Change what counts"),
+      reviewLine ? el("span", { class: "paneline", style: "align-self:center" }, reviewLine) : null));
+
+    if (scoreState.weightsOpen) {
+      nodes.push(el("div", { class: "weights" },
+        el("p", { style: "margin:0 0 8px;color:var(--muted);font-size:15px" }, "How much should each category count? These choices stay in this browser."),
+        ...scoreState.card.map((c) => el("div", { class: "row" }, el("span", {}, c.name),
+          el("div", { class: "seg", role: "group", "aria-label": c.name },
+            WEIGHT_STEPS.map((s) => el("button", { type: "button", "aria-pressed": String(weightOf(c) === s.v), onclick: () => {
+              const w = weights(); w[c.key] = s.v; store("local", "humanity-weights", JSON.stringify(w)); renderScore();
+            } }, s.label))))),
+        el("button", { class: "btn quiet", type: "button", style: "margin-top:10px", onclick: () => { store("local", "humanity-weights", "{}"); renderScore(); } },
+          "Go back to equal weights")));
+    }
+
+    // categories
+    nodes.push(el("div", { class: "cats" }, cats.map((c) => {
+      const waiting = run.pending.includes(c.key);
+      const open = !!scoreState.open[c.key];
+      const w = weightOf(c);
+      const head = el("button", { type: "button", "aria-expanded": String(open), onclick: () => { scoreState.open[c.key] = !open; renderScore(); } },
+        el("span", { class: "name" }, c.name, w !== 3 ? el("span", { style: "font-weight:400;color:var(--muted);font-size:13px" }, w ? `  counts ×${w}` : "  left out") : null),
+        el("span", { class: "bar" }, c.score === null ? null : el("i", { class: band(c.score), style: `width:${c.score}%` })),
+        waiting ? el("span", { class: "num wait" }, "looking…")
+          : c.score === null ? el("span", { class: "num wait" }, "no data")
+          : el("span", { class: "num" }, Math.round(c.score)));
+      const card = el("div", { class: "cat" }, head);
+      if (open && !waiting) {
+        const detail = el("div", { class: "detail" });
+        if (c.status === "failed") detail.append(el("p", { style: "color:var(--red)" }, c.error));
+        detail.append(el("div", { class: "scroll" }, el("table", { class: "mtable" },
+          el("thead", {}, el("tr", {}, el("th", {}, "Measure"), el("th", {}, "Latest value"), el("th", {}, "Scores 0 at / 100 at"), el("th", { style: "text-align:right" }, "Score"))),
+          el("tbody", {}, c.measures.map((m) => el("tr", {},
+            el("td", {}, m.name, el("div", { class: "sub" }, m.why), el("div", {}, ratingBadge(run.review, m.key))),
+            el("td", {}, m.value === null || m.value === undefined ? el("span", { class: "sub" }, "Not found")
+              : el("span", {}, el("b", {}, fmt(m.value)), " ", m.unit,
+                el("div", { class: "sub" }, [m.where, m.year].filter(Boolean).join(", ") + (m.level && m.level !== "world" && m.level !== "county" && m.level !== "city" && place !== "World" ? ` (${m.level} figure)` : "")),
+                m.note ? el("div", { class: "sub" }, m.note) : null,
+                el("div", {}, srcLink(m.source)))),
+            el("td", { class: "sub" }, `${fmt(m.worst)} / ${fmt(m.ideal)} ${m.unit}`),
+            el("td", { class: "n" }, m.score === null ? "–" : String(Math.round(m.score)))))))));
+        card.append(detail);
+      }
+      return card;
+    })));
+
+    if (run.complete) nodes.push(el("p", { class: "costline" }, `This run's research cost roughly $${(run.cost || 0).toFixed(2)} in Claude fees. The other AIs' fees appear on their own bills.`));
+
+    // history
+    const older = (scoreState.history || []).filter((h) => h.id !== run.id);
+    if (older.length) {
+      nodes.push(el("div", { class: "history" }, el("h3", {}, "Earlier scores for " + placeName),
+        el("div", { class: "entries" }, older.map((h) => el("div", { class: "entry" },
+          el("span", { class: "d" }, shortDate(h.created_at)),
+          el("span", { class: "t" }, h.overall === null ? "incomplete" : h.overall.toFixed(1) + " out of 100 (equal weights)"),
+          el("button", { class: "x", type: "button", "aria-label": "Delete this earlier score", onclick: async (ev) => {
+            ev.currentTarget.disabled = true;
+            try { await api("/api/humanity/score/delete", { run_id: h.id }); scoreState.history = older.filter((o) => o.id !== h.id); renderScore(); }
+            catch (err) { pageNotice(err.message); }
+          } }, "Delete"))))));
+    }
+    box.replaceChildren(...nodes);
+  }
+
   // ------------------------------------------------------------------ start
   (async function start() {
     $("place").value = store("local", "humanity-place") || "";
+    scoreState.place = store("local", "humanity-score-place") || "World";
     try {
       const res = await fetch("/api/humanity/health", { headers: { "X-App-Passcode": passcode } });
       const h = await res.json();
       panelAvailable = (h.panel || []).length > 0;
       if (!h.passcode_set) {
-        $("askerror").textContent = "No passcode has been set for the Humanity Index, so it is locked. In Render > Environment, add HUMANITY_PASSCODE, then redeploy.";
-        $("askerror").classList.remove("hidden");
+        pageNotice("No passcode has been set for the Humanity Index, so it is locked. In Render > Environment, add HUMANITY_PASSCODE, then redeploy.");
+        return;
       } else if (!h.ai_ready) {
-        $("askerror").textContent = "The server has no AI key. Check ANTHROPIC_API_KEY in Render.";
-        $("askerror").classList.remove("hidden");
+        pageNotice("The server has no AI key. Check ANTHROPIC_API_KEY in Render.");
       } else if (!h.passcode_ok) {
         await askPasscode("This page is private. Enter the passcode once for this browser session.");
       }
     } catch (e) {
-      $("askerror").textContent = "The page could not reach the server.";
-      $("askerror").classList.remove("hidden");
+      pageNotice("The page could not reach the server.");
+      return;
     }
+    loadScore(scoreState.place);
   })();
 })();
 </script>

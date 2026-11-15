@@ -2,7 +2,7 @@
 The Humanity Index — Engine
 File: humanity_engine.py
 Created: November 15, 2026
-Last Updated: November 15, 2026 — Initial implementation
+Last Updated: November 15, 2026 (afternoon) — Job kinds for the Humanity Index score
 
 PURPOSE:
     The working parts of the Humanity Index (Jim's concept doc, November 14-15,
@@ -78,6 +78,17 @@ SETTINGS (Render > Environment; all optional except the Swarm's existing key):
                                fact-checker (see factcheck_panel.py)
 
 CHANGELOG:
+- November 15, 2026 (afternoon): THE SCORE (Jim: "there should be a humanity index score")
+  * Two new job kinds for humanity_score.py: 'score_category' (research one
+    category's measures for one place) and 'score_review' (the other AIs check
+    every value of a run). finish_job stores their results through
+    humanity_score.store_category / store_review in the same transaction.
+  * The panel call is now one function, run_panel(), used by both the answer
+    review and the score review. Same behaviour as before for answers.
+  * submit_job(start_helper=False) lets a score run queue its 12 jobs and
+    start the helper once. Existing callers are unchanged.
+  * run_job reports a ValueError (a job naming something that no longer
+    exists) as a plain failure.
 - November 15, 2026: INITIAL IMPLEMENTATION
   * New module. Nothing else in the Swarm imports it except routes/humanity.py
     and humanity_runner.py. Rule 1 (do no harm) preserved.
@@ -140,10 +151,10 @@ MAX_EFFECTS = 6
 MAX_COMPARISONS = 4
 EVERYONE = 8_200_000_000            # world population, used only as a ceiling on "everyone who could"
 
-JOB_KINDS = ("answer", "review")
-JOB_PRIORITY = {"review": 0, "answer": 1}
-JOB_BUDGET_SECONDS = {"answer": 300, "review": 60}           # AI time allowed per job
-JOB_HARD_LIMIT_SECONDS = {"answer": 480, "review": 150}      # then the web side fails it
+JOB_KINDS = ("answer", "review", "score_category", "score_review")
+JOB_PRIORITY = {"review": 0, "score_review": 0, "answer": 1, "score_category": 1}
+JOB_BUDGET_SECONDS = {"answer": 300, "review": 60, "score_category": 180, "score_review": 60}   # AI time per job
+JOB_HARD_LIMIT_SECONDS = {"answer": 480, "review": 150, "score_category": 300, "score_review": 150}  # then failed
 MAX_ATTEMPTS = 2
 QUEUE_GIVE_UP_SECONDS = 120
 JOB_KEEP_SECONDS = 2 * 24 * 3600
@@ -553,18 +564,14 @@ def _ask_member(member, system, user_text, wanted_ids):
     return entry
 
 
-def review_figures(payload):
-    """Job 'review': every available panel member rates every figure of one stored answer."""
+def run_panel(system, user_text, wanted_ids):
+    """Ask every available panel member at once; each rates the numbered items on its own."""
     import factcheck_panel as fp
-    result = payload.get("result") or {}
-    items = _panel_items(result)
-    wanted = {item_id for item_id, _t, _s in items}
     members = fp.panel_members()
-    if not members or not wanted:
-        return {"panel": [], "asked": 0, "answered": 0, "items": sorted(wanted), "usage": _no_cost()}
-    system, user_text = panel_system(), _panel_user_text(result)
+    if not members or not wanted_ids:
+        return {"panel": [], "asked": 0, "answered": 0, "usage": _no_cost()}
     pool = ThreadPoolExecutor(max_workers=len(members), thread_name_prefix="HumanityPanel")
-    futures = {pool.submit(_ask_member, m, system, user_text, wanted): m for m in members}
+    futures = {pool.submit(_ask_member, m, system, user_text, wanted_ids): m for m in members}
     done, _late = wait(futures, timeout=PANEL_BUDGET_SECONDS)
     pool.shutdown(wait=False)
     panel = []
@@ -577,8 +584,16 @@ def review_figures(payload):
     usage = _no_cost()
     usage["input_tokens"] = sum(row.get("input_tokens", 0) or 0 for row in panel)
     usage["output_tokens"] = sum(row.get("output_tokens", 0) or 0 for row in panel)
-    return {"panel": panel, "asked": len(panel), "answered": sum(1 for row in panel if row["ok"]),
-            "items": [item_id for item_id, _t, _s in items], "usage": usage}
+    return {"panel": panel, "asked": len(panel), "answered": sum(1 for row in panel if row["ok"]), "usage": usage}
+
+
+def review_figures(payload):
+    """Job 'review': every available panel member rates every figure of one stored answer."""
+    result = payload.get("result") or {}
+    items = _panel_items(result)
+    out = run_panel(panel_system(), _panel_user_text(result), {item_id for item_id, _t, _s in items})
+    out["items"] = [item_id for item_id, _t, _s in items]
+    return out
 
 
 def _no_cost():
@@ -599,7 +614,15 @@ def panel_names():
 # RUNNING ONE JOB (called only by the helper process)
 # ============================================================================
 
-_JOB_FUNCTIONS = {"answer": research_answer, "review": review_figures}
+def _score_job(name):
+    def run(payload):
+        import humanity_score
+        return getattr(humanity_score, name)(payload)
+    return run
+
+
+_JOB_FUNCTIONS = {"answer": research_answer, "review": review_figures,
+                  "score_category": _score_job("research_category"), "score_review": _score_job("review_run")}
 
 
 def run_job(kind, payload):
@@ -610,6 +633,8 @@ def run_job(kind, payload):
         return False, None, str(exc), 503
     except _NoAnswer as exc:
         return False, None, str(exc), 502
+    except ValueError as exc:            # a job that names something that no longer exists
+        return False, None, str(exc), 400
     except anthropic.APIError as exc:
         logger.warning("Humanity AI service error (%s): %s", kind, exc)
         return False, None, fc.friendly_ai_error(exc).replace("FACTCHECK_*_MODEL", "HUMANITY_MODEL"), 502
@@ -714,8 +739,8 @@ def _utc_midnight():
     return now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
 
 
-def submit_job(kind, payload):
-    """Add a job to the queue and make sure the helper is running. Returns the job id."""
+def submit_job(kind, payload, start_helper=True):
+    """Add a job to the queue and (unless told not to) make sure the helper is running. Returns the job id."""
     if kind not in JOB_KINDS:
         raise ValueError("Unknown kind of job.")
     if not ai_ready():
@@ -737,7 +762,8 @@ def submit_job(kind, payload):
             "VALUES (%s, %s, %s, 'queued', %s, 0, %s)",
             (job_id, kind, JOB_PRIORITY[kind], json.dumps(payload), now),
         )
-    ensure_runner()
+    if start_helper:
+        ensure_runner()
     return job_id
 
 
@@ -915,6 +941,12 @@ def finish_job(job_id, kind, payload, ok, result=None, error="", http_status=200
         elif kind == "review" and payload.get("answer_id"):
             cur.execute("UPDATE humanity_library SET review = %s WHERE id = %s",
                         (json.dumps(result), payload["answer_id"]))
+        elif kind == "score_category" and payload.get("run_id"):
+            import humanity_score
+            humanity_score.store_category(cur, payload, result)
+        elif kind == "score_review" and payload.get("run_id"):
+            import humanity_score
+            humanity_score.store_review(cur, payload, result)
 
 
 _spawn_lock = threading.Lock()

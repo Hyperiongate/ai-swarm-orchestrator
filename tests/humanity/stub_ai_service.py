@@ -2,7 +2,7 @@
 The Humanity Index — stand-in for the AI services (TESTS ONLY)
 File: tests/humanity/stub_ai_service.py
 Created: November 15, 2026
-Last Updated: November 15, 2026 — Initial version
+Last Updated: November 15, 2026 (afternoon) — also answers score research
 
 PURPOSE:
     A tiny local web service that answers like the Anthropic Messages API and
@@ -21,6 +21,13 @@ PURPOSE:
         doubt       Gemini rates E1 doubtful (with a better value), GPT rates F1 wrong
         garble      DeepSeek answers with text that is not the asked-for JSON
         geminidown  Gemini answers 402 (out of credit)
+
+    Score research (the record_measures tool) answers with scripted values
+    (SCORE_VALUES below; they are NOT real data). Keywords in the place:
+        Nodataville    nothing is found for any measure
+        Brokenville    the Science category never records an answer
+        Fakelinkton    every value cites a page the search never returned
+    In score reviews, 'Doubtburg' makes GPT rate life expectancy wrong.
 
     Usage:  python tests/humanity/stub_ai_service.py [port]
     GET /_stats returns the call counts and the last request bodies.
@@ -50,6 +57,21 @@ SEARCH_BLOCKS = [
          "title": "Walking and health", "encrypted_content": "def", "page_age": None},
     ]},
 ]
+
+
+SCORE_VALUES = {
+    "life_expectancy": 73.3, "child_mortality": 37, "hunger": 8.2, "extreme_poverty": 10.5, "safe_water": 74,
+    "life_satisfaction": 5.6, "freedom_choices": 80, "personal_freedom": 6.8, "liberal_democracy": 0.25,
+    "modern_slavery": 6.4, "gini": 62, "top10_share": 52, "warming": 1.5, "wildlife": 27, "air": 31,
+    "emissions": 6.6, "schooling": 8.7, "neet": 20, "rd_spending": 2.6, "researchers": 1400,
+    "conflict_deaths": 2.5, "homicide": 5.8, "corruption": 43, "helped_stranger": 61, "donated": 35,
+    "volunteered": 23,
+}
+
+
+def _section(text, tag):
+    match = re.search(rf"<{tag}>\n?(.*?)\n?</{tag}>", text, re.S)
+    return match.group(1).strip() if match else ""
 
 
 def _question(text):
@@ -129,6 +151,8 @@ def messages():
     text = first if isinstance(first, str) else " ".join(p.get("text", "") for p in first if isinstance(p, dict))
     question = _question(text)
     model = body.get("model", "stub")
+    if "record_measures" in [t.get("name") for t in body.get("tools", [])]:
+        return _measures(text, turns, model)
     if "autherror" in question:
         return jsonify({"type": "error", "error": {"type": "authentication_error",
                                                    "message": "invalid x-api-key"}}), 401
@@ -144,13 +168,33 @@ def messages():
                               "input": answer}], "tool_use", 1 if prior else 0, model)
 
 
+def _measures(text, turns, model):
+    place = _section(text, "place")
+    category = _section(text, "category")
+    keys = re.findall(r"- key: (\w+)", text)
+    if "Brokenville" in place and category == "Science and discovery":
+        return _message([{"type": "text", "text": "I could not find it."}], "end_turn", 0, model)
+    values = []
+    for key in keys:
+        if "Nodataville" in place:
+            values.append({"key": key, "found": False})
+            continue
+        url = "https://never-searched.example.com/x" if "Fakelinkton" in place else "https://stats.example.gov/transport"
+        values.append({"key": key, "found": True, "value": SCORE_VALUES.get(key, 50), "year": "2024",
+                       "level": "world" if place == "World" else "county", "where": place,
+                       "note": "Scripted test value.", "source_url": url})
+    prior = [] if len(turns) > 1 else SEARCH_BLOCKS
+    return _message(prior + [{"type": "tool_use", "id": "toolu_stub", "name": "record_measures",
+                              "input": {"values": values}}], "tool_use", 1 if prior else 0, model)
+
+
 # ---------------------------------------------------------------------------
 # the review panel's services
 # ---------------------------------------------------------------------------
 
 def _ratings(who, text):
     ids = re.findall(r"^([A-Z][A-Z0-9]*)\. ", text, re.M)
-    question = _question(text)
+    question = _question(text) or _section(text, "place")
     out = []
     for item_id in ids:
         rating, better = "sound", ""
@@ -158,6 +202,8 @@ def _ratings(who, text):
             rating, better = "doubtful", "0.6 kg"
         if "doubt" in question and who == "gpt" and item_id == "F1":
             rating, better = "wrong", "30%"
+        if "Doubtburg" in question and who == "gpt" and item_id == "M1":
+            rating, better = "wrong", "71"
         out.append({"id": item_id, "rating": rating, "note": f"Scripted {who} note.", "better_value": better})
     return question, {"ratings": out}
 

@@ -2,7 +2,7 @@
 The Humanity Index — server tests
 File: tests/humanity/test_humanity_server.py
 Created: November 15, 2026
-Last Updated: November 15, 2026 — Initial version
+Last Updated: November 15, 2026 (afternoon) — tests for the score
 
 PURPOSE:
     End-to-end tests of routes/humanity.py, humanity_engine.py and
@@ -29,6 +29,7 @@ import requests
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, HERE)
 
 if not os.environ.get("DATABASE_URL"):
     pytest.skip("Set DATABASE_URL to a throwaway PostgreSQL database to run these tests.",
@@ -50,6 +51,8 @@ os.environ["NO_PROXY"] = os.environ["no_proxy"] = "127.0.0.1,localhost"
 from flask import Flask  # noqa: E402
 
 import humanity_engine as engine  # noqa: E402
+import humanity_score  # noqa: E402
+from stub_ai_service import SCORE_VALUES  # noqa: E402
 from db_engine import get_db_connection  # noqa: E402
 from routes.humanity import humanity_bp  # noqa: E402
 
@@ -122,6 +125,9 @@ def web(monkeypatch):
         cur = conn.cursor()
         for table in ("humanity_jobs", "humanity_library", "humanity_ledger"):
             cur.execute(f"DELETE FROM {table}")
+        humanity_score.ensure_tables()
+        cur.execute("DELETE FROM humanity_score_values")
+        cur.execute("DELETE FROM humanity_score_runs")
     monkeypatch.setenv("HUMANITY_PASSCODE", PASS)
     monkeypatch.delenv("FACTCHECK_PASSCODE", raising=False)
     spawned = []
@@ -430,5 +436,156 @@ def test_interrupted_job_is_requeued_then_failed():
                     "('e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2', 'answer', 1, 'running', '{}', 2, %s)",
                     (time.time(), time.time()))
     assert engine.requeue_interrupted_jobs() == (1, 1)
+
+# ---------------------------------------------------------------------------
+# the score
+# ---------------------------------------------------------------------------
+
+def score_of(web, place):
+    response = web.post("/api/humanity/score/run", json={"place": place}, headers=H)
+    assert response.status_code == 202, response.get_data(as_text=True)
+    run_id = response.get_json()["run_id"]
+    work_all()
+    run = web.get(f"/api/humanity/score/run/{run_id}", headers=H).get_json()["run"]
+    return run_id, run
+
+
+def expected_overall(values):
+    """The scoring rule written out independently of humanity_score.py."""
+    cats = []
+    for cat in humanity_score.SCORECARD:
+        scores = []
+        for m in cat["measures"]:
+            v = values[m["key"]]
+            s = (v - m["worst"]) / (m["ideal"] - m["worst"]) * 100
+            scores.append(min(100, max(0, s)))
+        cats.append(sum(scores) / len(scores))
+    return sum(cats) / len(cats)
+
+
+def test_scorecard_is_sound():
+    keys = [m["key"] for c in humanity_score.SCORECARD for m in c["measures"]]
+    assert len(humanity_score.SCORECARD) == 12 and len(keys) == len(set(keys)) == 26
+    for c in humanity_score.SCORECARD:
+        for m in c["measures"]:
+            assert m["worst"] != m["ideal"] and m["why"] and m["where"] and m["unit"], m["key"]
+    assert set(keys) == set(SCORE_VALUES)
+
+
+def test_measure_scoring_both_directions():
+    life = humanity_score._CATEGORY["health"]["measures"][0]
+    hunger = humanity_score._CATEGORY["basic_needs"]["measures"][0]
+    assert humanity_score.measure_score(life, 90) == 100 and humanity_score.measure_score(life, 25) == 0
+    assert humanity_score.measure_score(life, 57.5) == 50
+    assert humanity_score.measure_score(life, 120) == 100 and humanity_score.measure_score(life, 10) == 0
+    assert humanity_score.measure_score(hunger, 0) == 100 and humanity_score.measure_score(hunger, 10) == 75
+    assert humanity_score.measure_score(hunger, None) is None
+
+
+def test_world_score_end_to_end(web):
+    run_id, run = score_of(web, "World")
+    assert run["complete"] and run["pending"] == [] and run["place"] == "World"
+    score = run["score"]
+    assert score["measured"] == 26 and score["of"] == 26
+    assert abs(score["overall"] - round(expected_overall(SCORE_VALUES), 1)) <= 0.15
+    health = score["categories"][0]
+    assert health["key"] == "health" and health["weight"] == 3
+    life = health["measures"][0]
+    assert life["value"] == 73.3 and life["score"] == 74.3 and life["worst"] == 25 and life["ideal"] == 90
+    assert life["source"]["url"] == "https://stats.example.gov/transport" and life["level"] == "world"
+    assert run["cost"] > 0
+    latest = web.get("/api/humanity/score/latest?place=world", headers=H).get_json()["run"]
+    assert latest["id"] == run_id and "values" not in latest
+
+
+def test_one_failed_category_does_not_sink_the_score(web):
+    _id, run = score_of(web, "Brokenville")
+    cats = {c["key"]: c for c in run["score"]["categories"]}
+    assert cats["science"]["status"] == "failed" and cats["science"]["score"] is None
+    assert "usable form" in cats["science"]["error"]
+    assert run["score"]["overall"] is not None and run["score"]["measured"] == 24
+
+
+def test_nothing_found_means_no_score_not_a_made_up_one(web):
+    _id, run = score_of(web, "Nodataville")
+    assert run["score"]["overall"] is None and run["score"]["measured"] == 0
+
+
+def test_values_citing_unsearched_pages_keep_no_link(web):
+    _id, run = score_of(web, "Fakelinkton")
+    assert all(m["source"] is None for c in run["score"]["categories"] for m in c["measures"])
+
+
+def test_marin_county_and_history(web):
+    first, run = score_of(web, "Marin County, California")
+    assert run["score"]["categories"][0]["measures"][0]["level"] == "county"
+    time.sleep(0.01)
+    second, _ = score_of(web, "marin county,  california")
+    history = web.get("/api/humanity/score/history?place=Marin County, California", headers=H).get_json()["runs"]
+    assert [h["id"] for h in history] == [second, first] and history[0]["overall"] is not None
+    places = web.get("/api/humanity/score/places", headers=H).get_json()["places"]
+    assert places[0]["place"].lower().startswith("marin")
+    assert web.post("/api/humanity/score/delete", json={"run_id": first}, headers=H).get_json()["deleted"]
+    assert len(web.get("/api/humanity/score/history?place=Marin County, California",
+                       headers=H).get_json()["runs"]) == 1
+
+
+def test_score_progress_while_running(web):
+    response = web.post("/api/humanity/score/run", json={"place": "World"}, headers=H)
+    run_id = response.get_json()["run_id"]
+    assert web.spawned == [1], "the helper is started once, not 12 times"
+    run = web.get(f"/api/humanity/score/run/{run_id}", headers=H).get_json()["run"]
+    assert not run["complete"] and len(run["pending"]) == 12
+    assert web.post("/api/humanity/score/review", json={"run_id": run_id}, headers=H).status_code == 409
+    jobs = engine.claim_jobs(3)
+    for job in jobs:
+        ok, result, error, status_ = engine.run_job(job["kind"], job["payload"])
+        engine.finish_job(job["id"], job["kind"], job["payload"], ok, result=result, error=error, http_status=status_)
+    run = web.get(f"/api/humanity/score/run/{run_id}", headers=H).get_json()["run"]
+    assert len(run["pending"]) == 9 and run["score"]["overall"] is not None
+
+
+def test_panel_checks_every_value_of_a_run(web):
+    run_id, _ = score_of(web, "Doubtburg")
+    response = web.post("/api/humanity/score/review", json={"run_id": run_id}, headers=H)
+    assert response.status_code == 202
+    work_all()
+    run = web.get(f"/api/humanity/score/run/{run_id}", headers=H).get_json()["run"]
+    review = run["review"]
+    assert review["answered"] == 3 and len(review["items"]) == 26
+    gpt = {m["name"]: m for m in review["panel"]}["GPT"]
+    assert gpt["ratings"]["life_expectancy"]["rating"] == "wrong"
+    assert gpt["ratings"]["life_expectancy"]["better_value"] == "71"
+    assert gpt["ratings"]["corruption"]["rating"] == "sound"
+
+
+def test_score_routes_need_the_passcode_and_good_input(web):
+    bad = {"X-App-Passcode": "nope"}
+    assert web.post("/api/humanity/score/run", json={"place": "World"}, headers=bad).status_code == 401
+    assert web.get("/api/humanity/score/latest", headers=bad).status_code == 401
+    assert web.get("/api/humanity/score/card", headers=bad).status_code == 401
+    assert web.get("/api/humanity/score/run/xyz", headers=H).status_code == 404
+    assert web.get("/api/humanity/score/run/" + "f" * 32, headers=H).status_code == 404
+    assert web.post("/api/humanity/score/review", json={"run_id": "f" * 32}, headers=H).status_code == 404
+    assert web.get("/api/humanity/score/latest?place=Nowhere", headers=H).get_json()["run"] is None
+    card = web.get("/api/humanity/score/card", headers=H).get_json()
+    assert len(card["categories"]) == 12 and all(c["weight"] == 3 for c in card["categories"])
+
+
+def test_score_with_the_real_helper(monkeypatch):
+    engine.ensure_tables()
+    kill_helper()
+    monkeypatch.setenv("HUMANITY_PASSCODE", PASS)
+    client = flask_app.test_client()
+    run_id = client.post("/api/humanity/score/run", json={"place": "World"}, headers=H).get_json()["run_id"]
+    deadline = time.time() + 60
+    run = {}
+    while time.time() < deadline:
+        run = client.get(f"/api/humanity/score/run/{run_id}", headers=H).get_json()["run"]
+        if run["complete"]:
+            break
+        time.sleep(0.5)
+    assert run["complete"] and run["score"]["measured"] == 26, run.get("pending")
+    kill_helper()
 
 # I did no harm and this file is not truncated
