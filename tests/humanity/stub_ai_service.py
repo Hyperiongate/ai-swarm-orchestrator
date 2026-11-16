@@ -2,7 +2,7 @@
 The Humanity Index — stand-in for the AI services (TESTS ONLY)
 File: tests/humanity/stub_ai_service.py
 Created: November 15, 2026
-Last Updated: November 15, 2026 (afternoon) — also answers score research
+Last Updated: November 16, 2026 — also answers 'your own decision' (Me)
 
 PURPOSE:
     A tiny local web service that answers like the Anthropic Messages API and
@@ -28,6 +28,10 @@ PURPOSE:
         Brokenville    the Science category never records an answer
         Fakelinkton    every value cites a page the search never returned
     In score reviews, 'Doubtburg' makes GPT rate life expectancy wrong.
+
+    Your own decision (the record_decision tool): "cycle" gives two good
+    changes, one fact, and two changes the engine must drop (an unknown
+    question and an unknown option); "nothing" gives no changes at all.
 
     Usage:  python tests/humanity/stub_ai_service.py [port]
     GET /_stats returns the call counts and the last request bodies.
@@ -153,6 +157,8 @@ def messages():
     model = body.get("model", "stub")
     if "record_measures" in [t.get("name") for t in body.get("tools", [])]:
         return _measures(text, turns, model)
+    if "record_decision" in [t.get("name") for t in body.get("tools", [])]:
+        return _decision(text, turns, model)
     if "autherror" in question:
         return jsonify({"type": "error", "error": {"type": "authentication_error",
                                                    "message": "invalid x-api-key"}}), 401
@@ -166,6 +172,25 @@ def messages():
     prior = [] if len(turns) > 1 else SEARCH_BLOCKS
     return _message(prior + [{"type": "tool_use", "id": "toolu_stub", "name": "record_humanity_answer",
                               "input": answer}], "tool_use", 1 if prior else 0, model)
+
+
+def _decision(text, turns, model):
+    said = _section(text, "decision").lower()
+    if "nothing" in said:
+        answer = {"label": "Nothing much", "summary": "This decision does not move any answers.", "changes": [],
+                  "ramp_years": 0.1, "facts": []}
+    else:
+        answer = {"label": "Cycle to work twice a week", "summary": "Scripted: less driving, more exercise.",
+                  "changes": [{"question": "car", "to": "50_150", "only_if_better": True, "why": "Fewer car miles."},
+                              {"question": "exercise", "to": "150_299", "only_if_better": True, "why": "About 3 hours of cycling."},
+                              {"question": "nonsense", "to": "x"}, {"question": "sleep", "to": "bogus"}],
+                  "ramp_years": 0.5,
+                  "facts": [{"label": "fuel not bought", "kind": "dollars", "per_year": 520, "unit": "dollars",
+                             "basis": "Scripted basis.", "source_url": "https://stats.example.gov/transport"},
+                            {"label": "bad", "kind": "dollars", "per_year": "lots"}]}
+    prior = [] if len(turns) > 1 else SEARCH_BLOCKS
+    return _message(prior + [{"type": "tool_use", "id": "toolu_stub", "name": "record_decision", "input": answer}],
+                    "tool_use", 1 if prior else 0, model)
 
 
 def _measures(text, turns, model):

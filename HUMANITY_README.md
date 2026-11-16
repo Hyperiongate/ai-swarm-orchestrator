@@ -2,6 +2,49 @@
 
 Added 15 November 2026, from Jim's concept doc "The Humanity Index — Concept".
 
+## Me: the personal Humanity Index (added 16 November 2026)
+
+The **Me** tab (now the first tab) is Jim's voice design of 15-16 November 2026.
+
+- **The interview.** One question for each of eight areas of life, 1 to 10:
+  body and health, mind and mood, money and security, relationships and love,
+  work and purpose, community and giving, living the life you want, and your
+  footprint on the planet. Each has a **Fine tune** button with the questions
+  research says matter most (exercise, smoking, drinking, weight, sleep,
+  long-term conditions, stress, gambling, savings, debt, retirement, income,
+  partner, friends, loneliness, purpose, work, learning, education,
+  volunteering, giving, driving, diet...). Next to each is the finding and the
+  study it comes from. The areas themselves come from the OECD Better Life
+  Index, Gallup's five elements of wellbeing and the Harvard Study of Adult
+  Development.
+- **The score for each area** blends your own 1-10 rating with the research-
+  based answers: the more fine-tune questions you answer, the more the research
+  counts, up to 70%. The overall is the average of the areas.
+- **Make a decision**: twelve ready-made ones (walk 30 minutes a day, stop
+  smoking, drink less, save $200 a month, give 5%, call a friend weekly,
+  volunteer, sleep 7-8 hours, drive half as much, eat less meat, learn, stop
+  gambling), or **type or say your own**. AI turns your words into changes to
+  the same questions (it is shown the questions, never your answers), so your
+  own decision is worked out exactly like a ready-made one.
+- **The dumbbell chart**: one line per area, a grey dot for you today and a
+  green (or red) dot for after, with a plain fact on the line ("+2 months of
+  expected life", "$2,150 not spent", "4 tonnes of CO2 avoided").
+- **Two sliders**: for how long (a week to 30 years; each decision has a stated
+  time for its effect to build up) and how many people (you to 8.2 billion).
+  With more than one person, a panel shows the totals and the effect on the
+  world's Humanity Index, moving only the world measures the decision clearly
+  reaches (life expectancy, emissions, people who volunteer or give).
+- **Click any line** to see exactly how it is worked out: each answer, its
+  score, the research behind it, and what the decision changes.
+- **Private.** The answers are kept on the Swarm's database behind the
+  passcode, every save is kept (to show change over time later), and "Delete
+  my answers" (pressed twice) removes every copy. They are never sent to an AI.
+- Not yet built: choosing a place (Marin County) instead of "me", with the
+  answers filled in from local averages. Next on the list.
+
+The questions, scores and research are all in `humanity_me.py`; the arithmetic is
+in the page, so the chart moves as the sliders move.
+
 ## The score (added the afternoon of 15 November 2026)
 
 The **Score** tab (the first tab) gives one number from 0 to 100 for how we are
@@ -88,9 +131,9 @@ search the web again.
 3. Open `https://<the Swarm address>/humanity`. Start with one sentence and look
    for `[Humanity] Research helper started` in the Render log.
 
-It uses the Swarm's existing `ANTHROPIC_API_KEY`. Its six database tables
+It uses the Swarm's existing `ANTHROPIC_API_KEY`. Its seven database tables
 (`humanity_jobs`, `humanity_runner`, `humanity_library`, `humanity_ledger`,
-`humanity_score_runs`, `humanity_score_values`) create themselves on first use. No change to `requirements.txt`,
+`humanity_score_runs`, `humanity_score_values`, `humanity_me`) create themselves on first use. No change to `requirements.txt`,
 `gunicorn.conf.py` or the migrations.
 
 ## Cost
@@ -107,6 +150,7 @@ jobs applies (`HUMANITY_DAILY_JOB_LIMIT`).
 | `templates/humanity.html` | The page. |
 | `routes/humanity.py` | The page route, the passcode, and the small API. |
 | `humanity_engine.py` | The instructions to the AI, the fixed answer shape, the panel review, the queue, library and ledger. |
+| `humanity_me.py` | Me: the eight areas, their questions and scores, the research behind each, the ready-made decisions, your own decision (AI), and storing your answers. |
 | `humanity_score.py` | The scorecard (12 categories, 26 measures and their end points), the research for each category, the scoring, and the saved runs. |
 | `humanity_runner.py` | The separate helper process that does the AI work. |
 | `tests/humanity/` | The dry-run tests. Not used by the running app. |
@@ -128,23 +172,30 @@ If those files are edited later, run the Humanity Index tests too.
 | `HUMANITY_DAILY_JOB_LIMIT` | `200` | Safety cap on AI jobs per day (one score run uses 13) |
 | `HUMANITY_SCORE_MODEL` | `claude-sonnet-5-5` | Model that looks up the score's measures |
 | `HUMANITY_SCORE_MAX_SEARCHES` | `4` | Web searches per category |
+| `HUMANITY_ME_MODEL` | `claude-sonnet-5-5` | Model that works out your own decision |
 
 ## What has and has not been tested
 
-Tested 15 November 2026 (and again that afternoon with the score and voice), all passing:
+Tested 15 November 2026, again that afternoon with the score and voice, and again
+16 November with Me, all passing:
 
-- 34 server tests against PostgreSQL 16 (11 of them for the score: the scoring
+- 39 server tests against PostgreSQL 16 (5 of them for Me: the catalog's
+  consistency, privacy and every save kept, bad answers refused, your own
+  decision checked against the catalog and never shown your answers; 11 for the score: the scoring
   rule checked independently, both directions of a measure, a failed category,
   nothing found, invented links, history, the real helper process, the AI check) with this repo's `requirements.txt`,
   including the real helper process, the passcode on every route, links that
   the search never returned being dropped, junk numbers being cleaned, panel
   disagreement and panel failures.
-- 40 page checks in a real Chromium browser, including the score, the weights,
-  history, places and voice (with a simulated microphone), served by gunicorn with this repo's
+- 59 page checks in a real Chromium browser, including Me (the interview, fine
+  tune, the BMI helper, the score checked against the rule written out
+  separately, decisions, both sliders, the working, your own decision, the
+  ripple to the world score, deleting), the score, the weights, history, places
+  and voice (with a simulated microphone), served by gunicorn with this repo's
   `gunicorn.conf.py`, including the dial arithmetic, the ratings, the ledger, the
   library, phone width and dark mode.
 - The Swarm's own tests (Admin Gate, fact-checker, database, AI connections) all
-  still pass, and the whole `app.py` starts with the same 348 routes plus the 19
+  still pass, and the whole `app.py` starts with the same 348 routes plus the 24
   new ones.
 
 **Not yet tested:** real answers from the real AI models (their quality, speed and

@@ -2,7 +2,7 @@
 The Humanity Index — Engine
 File: humanity_engine.py
 Created: November 15, 2026
-Last Updated: November 15, 2026 (afternoon) — Job kinds for the Humanity Index score
+Last Updated: November 16, 2026 — Job kind for the personal index (me_decision)
 
 PURPOSE:
     The working parts of the Humanity Index (Jim's concept doc, November 14-15,
@@ -78,6 +78,10 @@ SETTINGS (Render > Environment; all optional except the Swarm's existing key):
                                fact-checker (see factcheck_panel.py)
 
 CHANGELOG:
+- November 16, 2026: THE PERSONAL INDEX ("Me")
+  * New job kind 'me_decision' (humanity_me.research_decision): turns a typed
+    or spoken decision into changes to the personal answers. Its result is
+    read from the job; nothing extra is stored. Other job kinds unchanged.
 - November 15, 2026 (afternoon): THE SCORE (Jim: "there should be a humanity index score")
   * Two new job kinds for humanity_score.py: 'score_category' (research one
     category's measures for one place) and 'score_review' (the other AIs check
@@ -151,10 +155,12 @@ MAX_EFFECTS = 6
 MAX_COMPARISONS = 4
 EVERYONE = 8_200_000_000            # world population, used only as a ceiling on "everyone who could"
 
-JOB_KINDS = ("answer", "review", "score_category", "score_review")
-JOB_PRIORITY = {"review": 0, "score_review": 0, "answer": 1, "score_category": 1}
-JOB_BUDGET_SECONDS = {"answer": 300, "review": 60, "score_category": 180, "score_review": 60}   # AI time per job
-JOB_HARD_LIMIT_SECONDS = {"answer": 480, "review": 150, "score_category": 300, "score_review": 150}  # then failed
+JOB_KINDS = ("answer", "review", "score_category", "score_review", "me_decision")
+JOB_PRIORITY = {"review": 0, "score_review": 0, "me_decision": 0, "answer": 1, "score_category": 1}
+JOB_BUDGET_SECONDS = {"answer": 300, "review": 60, "score_category": 180, "score_review": 60,
+                      "me_decision": 150}   # AI time per job
+JOB_HARD_LIMIT_SECONDS = {"answer": 480, "review": 150, "score_category": 300, "score_review": 150,
+                          "me_decision": 240}  # then failed
 MAX_ATTEMPTS = 2
 QUEUE_GIVE_UP_SECONDS = 120
 JOB_KEEP_SECONDS = 2 * 24 * 3600
@@ -621,8 +627,14 @@ def _score_job(name):
     return run
 
 
+def _me_job(payload):
+    import humanity_me
+    return humanity_me.research_decision(payload)
+
+
 _JOB_FUNCTIONS = {"answer": research_answer, "review": review_figures,
-                  "score_category": _score_job("research_category"), "score_review": _score_job("review_run")}
+                  "score_category": _score_job("research_category"), "score_review": _score_job("review_run"),
+                  "me_decision": _me_job}
 
 
 def run_job(kind, payload):

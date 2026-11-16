@@ -5,6 +5,22 @@
   File: templates/humanity.html   (served at /humanity by routes/humanity.py)
 
   CHANGE NOTES
+  2026-11-16  The personal Humanity Index ("Me"), from Jim's voice design of
+              November 15-16, 2026 (concept doc, "Next version").
+              - New first tab, Me. An interview: one 1-to-10 question for each
+                of eight areas of life, each with a Fine tune button for the
+                questions research says matter most (with the finding and the
+                source next to each). Saved on the server behind the passcode;
+                "Delete my answers" removes every copy.
+              - Make a decision (ready-made, or type or say your own, which AI
+                turns into answer changes). A dumbbell chart shows every area on
+                one line each: grey dot today, green (or red) dot after, with a
+                plain fact on the line ("+3 years of expected life").
+              - Two sliders: for how long (a week to 30 years) and how many
+                people (you to everyone). With more than one person, the ripple
+                shows the totals and the effect on the world's score.
+              - Click any line to see exactly how it is worked out.
+              - The world score tab is unchanged apart from its tab name.
   2026-11-15  (afternoon) The Score and voice (asked for by Jim after trying the
               first version: "there should be a humanity index score", "I'd like
               to be able to speak my question").
@@ -95,6 +111,10 @@ nav.tabs button {
   border: 0; background: transparent; padding: 7px 16px; border-radius: 999px; cursor: pointer; color: var(--muted);
 }
 nav.tabs button[aria-selected="true"] { background: var(--ink); color: var(--sky); }
+@media (max-width: 600px) {          /* five tabs: let them wrap on a phone instead of pushing the page sideways */
+  nav.tabs { flex-wrap: wrap; border-radius: 18px; width: 100%; }
+  nav.tabs button { padding: 7px 11px; flex: 1 1 auto; }
+}
 
 /* ---------- ask ---------- */
 .ask { padding: 36px 0 10px; }
@@ -284,6 +304,54 @@ table.ytab { width: 100%; border-collapse: collapse; background: var(--panel); b
 .history { margin-top: 26px; }
 .history h3 { font-family: var(--display); margin: 0 0 8px; }
 
+/* ---------- me ---------- */
+.icard { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px; margin-bottom: 12px; }
+.icard h3 { font-family: var(--display); font-size: 20px; margin: 0 0 4px; }
+.irow { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.irow input[type=text], .irow input[type=number], .frow input[type=text], .frow select { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--sky); max-width: 100%; }
+.irow > input[type=text] { flex: 1 1 260px; min-width: 0; }
+.sub { font-size: 13px; color: var(--muted); }
+.ten { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 4px; max-width: 520px; }
+.ten button { border: 1px solid var(--line); background: var(--sky); border-radius: 8px; padding: 9px 0; cursor: pointer; font-variant-numeric: tabular-nums; }
+.ten button[aria-pressed="true"] { background: var(--green); border-color: var(--green); color: var(--on-green); font-weight: 700; }
+.fine { display: grid; gap: 14px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.frow { display: grid; gap: 4px; }
+.frow > label { font-weight: 700; font-size: 15px; }
+.frow select { justify-self: start; }
+.decide { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px; }
+.decide h3 { font-family: var(--display); margin: 0 0 6px; }
+.decide .examples { margin-top: 4px; }
+.examples button.on { background: var(--amber); border: 1px solid var(--amber); color: #2b1a00; font-weight: 700; }
+.sliders { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 24px; margin: 18px 0 8px; }
+@media (max-width: 700px) { .sliders { grid-template-columns: 1fr; } }
+.sliders label { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: center; font-size: 15px; color: var(--muted); }
+.sliders input { grid-column: 1 / -1; width: 100%; accent-color: var(--amber); }
+.sliders b { color: var(--ink); justify-self: end; }
+.dumbbell { display: grid; gap: 2px; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 10px 12px; }
+.dbrow { display: grid; grid-template-columns: minmax(120px, 200px) minmax(0, 1fr) minmax(90px, 210px); gap: 12px; align-items: center;
+  background: none; border: 0; border-radius: 10px; padding: 9px 6px; cursor: pointer; text-align: left; width: 100%; }
+.dbrow:hover, .dbrow.open { background: var(--sky); }
+.dbrow.big { border-bottom: 1px solid var(--line); border-radius: 10px 10px 0 0; padding-bottom: 12px; margin-bottom: 4px; }
+.dbrow.big .dblabel { font-family: var(--display); font-size: 19px; }
+.dblabel { font-weight: 700; }
+.dbtrack { position: relative; height: 22px; }
+.dbtrack::before { content: ""; position: absolute; left: 0; right: 0; top: 10px; height: 2px; background: var(--line); }
+.dbtrack i { position: absolute; display: block; }
+.dbtrack > .sub { position: relative; background: var(--panel); padding-right: 8px; line-height: 22px; }
+.dbrow:hover .dbtrack > .sub, .dbrow.open .dbtrack > .sub { background: var(--sky); }
+.dbbar { top: 8px; height: 6px; border-radius: 3px; transition: left .25s, width .25s; }
+.dbbar.up { background: var(--green-soft); } .dbbar.down { background: var(--red-soft); }
+.dbdot { top: 3px; width: 16px; height: 16px; margin-left: -8px; border-radius: 50%; transition: left .25s; }
+.dbdot.before { background: var(--panel); border: 3px solid var(--muted); }
+.dbdot.after.up { background: var(--green); } .dbdot.after.down { background: var(--red); }
+.dbval { text-align: right; font-variant-numeric: tabular-nums; font-weight: 700; }
+.dbfact { display: block; font-weight: 400; font-size: 13px; color: var(--green); }
+.dbfact.down { color: var(--red); }
+@media (max-width: 600px) { .dbrow { grid-template-columns: 1fr auto; } .dbtrack { grid-column: 1 / -1; grid-row: 2; } }
+.ripple, .explain { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px; margin-top: 12px; }
+.ripple { border-left: 0; background: var(--amber-soft); border-color: var(--amber-soft); }
+.ripple h3, .explain h3 { font-family: var(--display); margin: 0 0 6px; }
+
 /* ---------- passcode ---------- */
 dialog { border: 1px solid var(--line); border-radius: 16px; padding: 24px; background: var(--panel); color: var(--ink); max-width: 380px; width: calc(100% - 32px); }
 dialog::backdrop { background: rgba(10, 25, 40, .45); }
@@ -298,7 +366,8 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
   <div class="wrap">
     <div class="brand">The Humanity <span>Index</span></div>
     <nav class="tabs" role="tablist" aria-label="Sections">
-      <button role="tab" data-view="score" aria-selected="true">Score</button>
+      <button role="tab" data-view="me" aria-selected="true">Me</button>
+      <button role="tab" data-view="score" aria-selected="false">World score</button>
       <button role="tab" data-view="ask" aria-selected="false">Ask</button>
       <button role="tab" data-view="ledger" aria-selected="false">My ledger</button>
       <button role="tab" data-view="library" aria-selected="false">Asked before</button>
@@ -309,7 +378,12 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
 <main>
   <div class="wrap"><div id="pagenotice" class="notice hidden" role="alert"></div></div>
 
-  <section id="view-score" class="wrap" aria-labelledby="score-h">
+  <section id="view-me" class="wrap" aria-labelledby="me-h">
+    <div class="scorehead"><h1 id="me-h">Let's talk about you.</h1></div>
+    <div id="me"></div>
+  </section>
+
+  <section id="view-score" class="wrap hidden" aria-labelledby="score-h">
     <div class="scorehead">
       <h1 id="score-h">How are we doing as people?</h1>
       <div class="placebar">
@@ -483,7 +557,8 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
   // ------------------------------------------------------------------ tabs
   function show(view) {
     document.querySelectorAll("nav.tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.view === view)));
-    ["score", "ask", "ledger", "library"].forEach((v) => $("view-" + v).classList.toggle("hidden", v !== view));
+    ["me", "score", "ask", "ledger", "library"].forEach((v) => $("view-" + v).classList.toggle("hidden", v !== view));
+    if (view === "me" && !me.loaded) loadMe();
     if (view === "score" && !scoreState.loaded) loadScore(scoreState.place);
     if (view === "ledger") loadLedger();
     if (view === "library") loadLibrary();
@@ -1147,6 +1222,476 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
     box.replaceChildren(...nodes);
   }
 
+
+  // ------------------------------------------------------------------ me: the personal index
+  // All the arithmetic for "Me" is here, so the chart moves as the sliders move.
+  // The questions, scores and evidence come from humanity_me.py (/api/humanity/me/catalog).
+  const me = { cat: null, saved: null, draft: null, decision: null, custom: [], t: 1, peopleStop: 0,
+               open: null, editing: false, world: null, card: null, loaded: false, busy: false };
+  const PEOPLE_STOPS = [1, 10, 1000, 100000, 10000000, 1000000000, 8200000000];
+  const WORLD_POP = 8200000000;
+  const INCOME_MID = { lt35: 25000, "35_75": 55000, "75_150": 112000, "150_300": 225000, "300": 400000 };
+  const CUSHION_MONTHS = { "6": 7, "3_6": 4.5, "1_3": 2, lt1: 0.5 };
+
+  function q(key) { for (const a of me.cat.areas) for (const x of a.questions) if (x.key === key) return x; return null; }
+  function opt(key, v) {
+    if (key === "smoking" && v === "quit_now") return { v, label: "Quit now", score: 80, life: null };
+    const x = q(key); return x ? x.options.find((o) => o.v === v) || null : null;
+  }
+  function ev(id) { return me.cat.evidence[id] || me.cat.evidence.estimate; }
+  function quitRegain(age) {
+    for (const r of me.cat.quit_regain) if ((age || 50) < r.under) return r;
+    return me.cat.quit_regain[me.cat.quit_regain.length - 1];
+  }
+  // Years of life, relative to the healthiest answers, from the questions research gives a number for.
+  function lifeYears(fine, age, before) {
+    let total = 0; const parts = [];
+    for (const key of ["exercise", "smoking", "drinks", "bmi"]) {
+      const v = fine[key]; if (!v) continue;
+      let o = opt(key, v), life = o ? o.life : 0;
+      if (key === "smoking" && v === "quit_now") {
+        const was = opt("smoking", before && before.smoking) || { life: -10 };
+        const r = quitRegain(age);
+        life = Math.min(0, was.life + r.years * Math.abs(was.life) / 10);
+      }
+      if (typeof life === "number") { total += life; parts.push({ key, life }); }
+    }
+    return { total, parts };
+  }
+  function areaScore(area, ans) {
+    const rating = ans.ratings[area.key];
+    const lines = [];
+    let sum = 0, n = 0;
+    for (const x of area.questions) {
+      const v = ans.fine[x.key]; if (!v) continue;
+      const o = opt(x.key, v); if (!o) continue;
+      sum += o.score; n++; lines.push({ q: x, o });
+    }
+    const self = rating ? rating * 10 : null;
+    const evidence = n ? sum / n : null;
+    const w = n ? Math.min(me.cat.max_evidence_weight, me.cat.max_evidence_weight * n / area.questions.length) : 0;
+    let score = null;
+    if (self !== null && evidence !== null) score = (1 - w) * self + w * evidence;
+    else if (self !== null) score = self;
+    else if (evidence !== null) score = evidence;
+    return { score, self, evidence, w: self === null ? 1 : w, n, of: area.questions.length, lines };
+  }
+  function overallOfMe(scores) {
+    const v = scores.filter((s) => s.score !== null);
+    return v.length ? v.reduce((a, s) => a + s.score, 0) / v.length : null;
+  }
+  // The answers after a decision, at full effect. Savings are worked out by time instead.
+  function applyDecision(ans, d, t) {
+    const out = { ratings: { ...ans.ratings }, fine: { ...ans.fine } };
+    const changed = [];
+    for (const c of d.changes || []) {
+      const before = ans.fine[c.q];
+      let to = c.to;
+      if (to === "_half") {                           // one band lower than now
+        const opts = q(c.q).options; const i = opts.findIndex((o) => o.v === before);
+        to = i > 0 ? opts[i - 1].v : before;
+      }
+      if (c.q === "smoking" && to === "quit_now" && !["some_days", "daily", "pack"].includes(before)) continue;
+      if (!opt(c.q, to)) continue;
+      const ob = opt(c.q, before), oa = opt(c.q, to);
+      if (c.only_if_better && ob && ob.score >= oa.score) continue;
+      if (before === to) continue;
+      out.fine[c.q] = to; changed.push({ q: c.q, from: before, to, why: c.why || "" });
+    }
+    if (d.saving) {                                    // a growing balance moves the cushion question
+      const r = me.cat.assumptions.savings_growth / 12, m = Math.round(t * 12);
+      const balance = d.saving * (Math.pow(1 + r, m) - 1) / r;
+      const months = (CUSHION_MONTHS[ans.fine.cushion] || 0.5) + balance / me.cat.assumptions.monthly_spending;
+      const band = months >= 6 ? "6" : months >= 3 ? "3_6" : months >= 1 ? "1_3" : "lt1";
+      if (band !== (ans.fine.cushion || "lt1") && (!ans.fine.cushion || opt("cushion", band).score > opt("cushion", ans.fine.cushion).score)) {
+        out.fine.cushion = band; changed.push({ q: "cushion", from: ans.fine.cushion, to: band, saving: true });
+      }
+    }
+    return { after: out, changed };
+  }
+  function ramp(t, years) { return 1 - Math.exp(-t / Math.max(0.01, years || 0.5)); }
+
+  // Before and after, at time t, for one person. Also the plain facts.
+  function computeMe(d, t) {
+    const ans = me.saved.answers;
+    const before = me.cat.areas.map((a) => ({ area: a, ...areaScore(a, ans) }));
+    if (!d) return { before, after: before, facts: [], changed: [], r: 0 };
+    const { after: full, changed } = applyDecision(ans, d, t);
+    const r = ramp(t, d.ramp);
+    const fullScores = me.cat.areas.map((a) => areaScore(a, full));
+    const after = before.map((b, i) => {
+      const f = fullScores[i];
+      if (b.score === null || f.score === null) return { ...b, score: f.score ?? b.score };
+      const savingArea = b.area.key === "money" && d.saving;
+      const k = savingArea ? 1 : r;                   // the savings balance is already worked out for time t
+      return { ...f, area: b.area, score: b.score + (f.score - b.score) * k };
+    });
+    const facts = [];
+    const lyB = lifeYears(ans.fine, ans.age), lyA = lifeYears(full.fine, ans.age, ans.fine);
+    const ly = (lyA.total - lyB.total) * r;
+    if (Math.abs(ly) >= 0.01) facts.push({ kind: "life", area: "body", per: ly, text: (ly > 0 ? "+" : "") + fmtYears(ly) + " of expected life" });
+    let dollars = 0, co2 = 0, hours = 0, given = 0;
+    for (const c of changed) {
+      const ob = opt(c.q, c.from) || {}, oa = opt(c.q, c.to) || {};
+      if (ob.cost || oa.cost) dollars += ((ob.cost || 0) - (oa.cost || 0)) * t;
+      if (ob.co2 !== undefined || oa.co2 !== undefined) co2 += ((ob.co2 || 0) - (oa.co2 || 0)) * t;
+      if (ob.hours !== undefined || oa.hours !== undefined) hours += ((oa.hours || 0) - (ob.hours || 0)) * t;
+      if (ob.give_pct !== undefined || oa.give_pct !== undefined) given += ((oa.give_pct || 0) - (ob.give_pct || 0)) / 100 * (INCOME_MID[ans.fine.income] || 75000) * t;
+    }
+    if (d.saving) {
+      const rr = me.cat.assumptions.savings_growth / 12, m = Math.round(t * 12);
+      facts.push({ kind: "saved", area: "money", per: d.saving * (Math.pow(1 + rr, m) - 1) / rr, text: "" });
+    }
+    for (const f of d.facts || []) {
+      const v = f.per_year * t;
+      if (f.kind === "dollars") dollars += v; else if (f.kind === "co2_kg") co2 += v; else if (f.kind === "hours") hours += v;
+      else facts.push({ kind: "other", per: v, text: fmt(v) + " " + (f.unit || "") + " " + f.label, source: f.source });
+    }
+    if (dollars > 0.5) facts.push({ kind: "dollars", area: "money", per: dollars });
+    if (given > 0.5) facts.push({ kind: "given", area: "community", per: given });
+    if (Math.abs(co2) >= 1) facts.push({ kind: "co2", area: "planet", per: co2 });
+    if (hours >= 0.5) facts.push({ kind: "hours", area: "community", per: hours });
+    for (const f of facts) {
+      if (f.kind === "saved") f.text = "$" + fmt(f.per) + " saved";
+      if (f.kind === "dollars") f.text = "$" + fmt(f.per) + " not spent";
+      if (f.kind === "given") f.text = "$" + fmt(f.per) + " given to others";
+      if (f.kind === "co2") f.text = fmt(f.per / 1000) + " tonnes of CO2 avoided";
+      if (f.kind === "hours") f.text = fmt(f.per) + " hours given";
+    }
+    return { before, after, facts, changed, r, ly, co2, hours, given, dollars };
+  }
+  function fmtYears(y) {
+    const a = Math.abs(y);
+    if (a < 1 / 12) return Math.max(1, Math.round(a * 365)) + " days";
+    if (a < 1) return Math.round(a * 12) + " months";
+    return (Math.round(a * 10) / 10) + " years";
+  }
+  function fmtTime(t) {
+    if (t < 1 / 12) return Math.round(t * 52) + (Math.round(t * 52) === 1 ? " week" : " weeks");
+    if (t < 1) return Math.round(t * 12) + (Math.round(t * 12) === 1 ? " month" : " months");
+    return (t < 10 ? Math.round(t * 10) / 10 : Math.round(t)) + (t === 1 ? " year" : " years");
+  }
+  function timeFromSlider(v) { return Math.pow(10, Math.log10(1 / 52) + v / 100 * (Math.log10(30) - Math.log10(1 / 52))); }
+  function sliderFromTime(t) { return Math.round((Math.log10(t) - Math.log10(1 / 52)) / (Math.log10(30) - Math.log10(1 / 52)) * 100); }
+  function peopleLabel(n) { return n === 1 ? "Just you" : n >= WORLD_POP ? "Everyone (8.2 billion)" : fmt(n) + " people"; }
+
+  // ---------------- loading
+  async function loadMe() {
+    me.loaded = true;
+    const box = $("me");
+    box.replaceChildren(el("p", { class: "lead" }, "Loading…"));
+    try {
+      const [cat, saved] = await Promise.all([api("/api/humanity/me/catalog"), api("/api/humanity/me")]);
+      me.cat = cat; me.saved = saved.me;
+      me.editing = !me.saved;
+      me.draft = JSON.parse(JSON.stringify(me.saved ? me.saved.answers : { name: "", age: null, goal: "", ratings: {}, fine: {} }));
+      renderMe();
+      loadWorldForRipple();
+    } catch (err) { box.replaceChildren(el("div", { class: "notice" }, err.message)); }
+  }
+  async function loadWorldForRipple() {
+    try {
+      const [card, latest] = await Promise.all([api("/api/humanity/score/card"), api("/api/humanity/score/latest?place=World")]);
+      me.card = card.categories;
+      me.world = latest.run && latest.run.complete ? latest.run : null;
+      if (!me.editing) renderMe();
+    } catch (e) { /* the ripple simply shows without the world score */ }
+  }
+
+  function renderMe() {
+    const box = $("me");
+    $("me-h").textContent = me.editing
+      ? (me.saved ? "Your answers" : "Let's talk about you.")
+      : (me.saved.answers.name ? `${me.saved.answers.name}, here's your Humanity Index.` : "Here's your Humanity Index.");
+    box.replaceChildren(me.editing ? renderInterview() : renderMeResults());
+  }
+
+  // ---------------- the interview
+  function renderInterview() {
+    const d = me.draft;
+    const wrap = el("div", {});
+    wrap.append(el("p", { class: "lead" },
+      "One question for each part of life. Answer just those for a quick picture, or press Fine tune on any of them for the questions research says matter most. Skip anything you like."));
+    const about = el("div", { class: "icard" },
+      el("h3", {}, "About you"),
+      el("div", { class: "irow" },
+        el("label", {}, "First name ", el("input", { id: "me-name", type: "text", maxlength: 40, value: d.name || "", oninput: (e) => { d.name = e.target.value; } })),
+        el("label", {}, "Age ", el("input", { id: "me-age", type: "number", min: 10, max: 120, value: d.age || "", style: "width:90px", oninput: (e) => { d.age = e.target.value ? Number(e.target.value) : null; } }))),
+      el("p", { class: "sub" }, "Age is only used for things that depend on it, like the years regained by quitting smoking."));
+    wrap.append(about);
+    for (const a of me.cat.areas) wrap.append(renderAreaQuestions(a));
+    const err = el("p", { class: "toast", style: "color:var(--red)", role: "alert" });
+    const save = el("button", { class: "btn green", type: "button", onclick: async () => {
+      save.disabled = true; err.textContent = "";
+      try {
+        const res = await api("/api/humanity/me", d);
+        me.saved = { ...res.me, saves: ((me.saved && me.saved.saves) || 0) + 1 };
+        me.editing = false; me.decision = null; renderMe();
+        window.scrollTo({ top: 0 });
+        loadWorldForRipple();
+      } catch (e) { err.textContent = e.message; save.disabled = false; }
+    } }, "Show my Humanity Index");
+    const actions = el("div", { class: "did", style: "border-top:0" }, save, err);
+    if (me.saved) actions.append(el("button", { class: "btn quiet", type: "button", onclick: () => { me.editing = false; me.draft = JSON.parse(JSON.stringify(me.saved.answers)); renderMe(); } }, "Cancel"));
+    wrap.append(actions,
+      el("p", { class: "sub" }, "Your answers are kept on the Swarm's own database, behind the passcode, and are never shared or sent to an AI. Each save is kept, so you can see change over time."));
+    return wrap;
+  }
+  function renderAreaQuestions(a) {
+    const d = me.draft;
+    const card = el("div", { class: "icard" });
+    const open = !!me.openFine && me.openFine[a.key];
+    const answered = a.questions.filter((x) => d.fine[x.key]).length;
+    card.append(el("h3", {}, a.name), el("p", { style: "margin:0 0 8px" }, a.ask, el("span", { class: "sub" }, "  1 is the worst, 10 the best")));
+    const seg = el("div", { class: "ten", role: "group", "aria-label": a.ask });
+    for (let i = 1; i <= 10; i++) {
+      seg.append(el("button", { type: "button", "aria-pressed": String(d.ratings[a.key] === i), onclick: () => {
+        if (d.ratings[a.key] === i) delete d.ratings[a.key]; else d.ratings[a.key] = i;
+        card.replaceWith(renderAreaQuestions(a));
+      } }, String(i)));
+    }
+    card.append(seg);
+    const fineBtn = el("button", { class: "btn quiet", type: "button", "aria-expanded": String(open), style: "margin-top:10px", onclick: () => {
+      me.openFine = me.openFine || {}; me.openFine[a.key] = !open; card.replaceWith(renderAreaQuestions(a));
+    } }, open ? "Close fine tune" : `Fine tune${answered ? ` (${answered} of ${a.questions.length} answered)` : ""}`);
+    card.append(fineBtn);
+    if (open) {
+      const list = el("div", { class: "fine" });
+      for (const x of a.questions) {
+        const e = ev(x.evidence);
+        const sel = el("select", { "aria-label": x.text, onchange: (evn) => { if (evn.target.value) d.fine[x.key] = evn.target.value; else delete d.fine[x.key]; } },
+          el("option", { value: "" }, "Skip"), x.options.map((o) => el("option", { value: o.v, selected: d.fine[x.key] === o.v }, o.label)));
+        const row = el("div", { class: "frow" }, el("label", {}, x.text), sel,
+          el("div", { class: "sub" }, "Why it matters: " + e.finding + " ",
+            e.url ? el("a", { href: e.url, target: "_blank", rel: "noopener noreferrer" }, e.title) : el("span", {}, "(" + e.title + ")")));
+        if (x.kind === "bmi") row.append(bmiHelper(sel, x));
+        list.append(row);
+      }
+      if (a.key === "life") {
+        list.append(el("div", { class: "frow" }, el("label", {}, "What are you aiming for? (optional)"),
+          el("input", { type: "text", maxlength: 300, value: d.goal || "", oninput: (e) => { d.goal = e.target.value; } })));
+      }
+      card.append(list);
+    }
+    return card;
+  }
+  function bmiHelper(sel, x) {
+    const ft = el("input", { type: "number", min: 3, max: 8, placeholder: "ft", style: "width:64px", "aria-label": "Height, feet" });
+    const inch = el("input", { type: "number", min: 0, max: 11, placeholder: "in", style: "width:64px", "aria-label": "Height, inches" });
+    const lb = el("input", { type: "number", min: 60, max: 700, placeholder: "lb", style: "width:80px", "aria-label": "Weight, pounds" });
+    const out = el("span", { class: "sub" });
+    const calc = () => {
+      const h = (Number(ft.value) || 0) * 12 + (Number(inch.value) || 0), w = Number(lb.value) || 0;
+      if (h < 36 || w < 60) { out.textContent = ""; return; }
+      const bmi = 703 * w / (h * h);
+      const band = bmi < 18.5 ? "under" : bmi < 25 ? "healthy" : bmi < 30 ? "over" : bmi < 35 ? "obese1" : bmi < 40 ? "obese2" : "obese3";
+      sel.value = band; me.draft.fine[x.key] = band;
+      out.textContent = `BMI ${bmi.toFixed(1)}. Only the band is kept.`;
+    };
+    [ft, inch, lb].forEach((i) => i.addEventListener("input", calc));
+    return el("div", { class: "irow", style: "margin-top:4px" }, el("span", { class: "sub" }, "Or work it out:"), ft, inch, lb, out);
+  }
+
+  // ---------------- the results: decision, sliders, dumbbell chart
+  function renderMeResults() {
+    const wrap = el("div", {});
+    const decisions = me.cat.decisions.concat(me.custom);
+    const chips = el("div", { class: "examples", role: "group", "aria-label": "Decisions" },
+      decisions.map((d) => el("button", { type: "button", class: me.decision === d ? "on" : "", "aria-pressed": String(me.decision === d),
+        onclick: () => { me.decision = me.decision === d ? null : d; renderMe(); } }, d.label)));
+    const own = el("input", { id: "me-own", type: "text", maxlength: 300, placeholder: "Or type or say your own: cycle to work twice a week" });
+    const ownMic = el("button", { class: "mic", type: "button", "aria-label": "Say your decision" });
+    ownMic.innerHTML = $("askmic").innerHTML;
+    const ownMsg = el("span", { class: "sub", role: "status" });
+    const ownGo = el("button", { class: "btn quiet", type: "button" }, "Work it out");
+    const runOwn = async () => {
+      const text = own.value.trim(); if (text.length < 3) { own.focus(); return; }
+      ownGo.disabled = true; ownMsg.textContent = "Working out what it changes… (about a minute)";
+      try {
+        const job = await api("/api/humanity/me/decision", { text });
+        const d = await waitForJob(job.job_id);
+        if (!d.changes.length && !d.facts.length) { ownMsg.textContent = d.summary || "That decision doesn't move any of your answers."; ownGo.disabled = false; return; }
+        me.custom.push(d); me.decision = d; renderMe();
+      } catch (e) { ownMsg.textContent = e.message; ownGo.disabled = false; }
+    };
+    ownGo.addEventListener("click", runOwn);
+    own.addEventListener("keydown", (e) => { if (e.key === "Enter") runOwn(); });
+    setupMic(ownMic, own, runOwn);
+    wrap.append(el("div", { class: "decide" }, el("h3", {}, "Make a decision"), chips,
+      el("div", { class: "irow", style: "margin-top:10px" }, own, ownMic, ownGo), ownMsg));
+
+    const tIn = el("input", { type: "range", min: 0, max: 100, step: 1, value: sliderFromTime(me.t), "aria-label": "For how long" });
+    const pIn = el("input", { type: "range", min: 0, max: PEOPLE_STOPS.length - 1, step: 1, value: me.peopleStop, "aria-label": "How many people" });
+    const tOut = el("b", {}), pOut = el("b", {});
+    const sliders = el("div", { class: "sliders" },
+      el("label", {}, "For how long", tIn, tOut), el("label", {}, "How many people", pIn, pOut));
+    const chart = el("div", { class: "dumbbell", "aria-live": "polite" });
+    const ripple = el("div", {});
+    const explain = el("div", {});
+    wrap.append(sliders, chart, ripple, explain);
+
+    const draw = (ev) => {
+      if (ev && ev.target === tIn) me.t = timeFromSlider(Number(tIn.value));   // keep an exact time until the slider is moved
+      me.peopleStop = Number(pIn.value);
+      tOut.textContent = fmtTime(me.t); pOut.textContent = peopleLabel(PEOPLE_STOPS[me.peopleStop]);
+      const res = computeMe(me.decision, me.t);
+      drawDumbbell(chart, res);
+      drawRipple(ripple, res, PEOPLE_STOPS[me.peopleStop]);
+      drawExplain(explain, res);
+    };
+    tIn.addEventListener("input", draw); pIn.addEventListener("input", draw);
+    me.redraw = draw;
+    draw();
+
+    wrap.append(el("div", { class: "did" },
+      el("button", { class: "btn quiet", type: "button", onclick: () => { me.editing = true; renderMe(); } }, "Change my answers"),
+      el("span", { class: "sub" }, `Saved ${new Date(me.saved.saved_at * 1000).toLocaleDateString()}${me.saved.saves > 1 ? `, ${me.saved.saves} saves so far` : ""}.`),
+      el("button", { class: "x", type: "button", onclick: async () => {
+        if (!confirmDelete()) return;
+        try { await api("/api/humanity/me/delete", {}); me.saved = null; me.editing = true; me.draft = { name: "", age: null, goal: "", ratings: {}, fine: {} }; renderMe(); }
+        catch (e) { pageNotice(e.message); }
+      } }, "Delete my answers")));
+    return wrap;
+  }
+  let deleteArmed = 0;
+  function confirmDelete() {          // press twice within 4 seconds; no browser pop-up
+    const now = Date.now();
+    if (now - deleteArmed < 4000) { deleteArmed = 0; return true; }
+    deleteArmed = now; pageNotice("Press “Delete my answers” again to delete every saved copy of your answers."); return false;
+  }
+
+  function drawDumbbell(box, res) {
+    const ob = overallOfMe(res.before), oa = overallOfMe(res.after);
+    const rows = [];
+    const row = (label, b, a, fact, key, big) => {
+      const has = b !== null && b !== undefined;
+      const up = has && a - b > 0.05, down = has && a - b < -0.05;
+      const lo = has ? Math.min(a, b) : 0, hi = has ? Math.max(a, b) : 0;
+      const r = el("button", { type: "button", class: "dbrow" + (big ? " big" : "") + (me.open === key ? " open" : ""), "aria-expanded": String(me.open === key),
+        onclick: () => { me.open = me.open === key ? null : key; me.redraw(); } },
+        el("span", { class: "dblabel" }, label),
+        el("span", { class: "dbtrack" }, has ? [
+          el("i", { class: "dbbar " + (down ? "down" : "up"), style: `left:${lo}%;width:${hi - lo}%` }),
+          el("i", { class: "dbdot before", style: `left:${b}%` }),
+          (up || down) ? el("i", { class: "dbdot after " + (down ? "down" : "up"), style: `left:${a}%` }) : null] : el("span", { class: "sub" }, "not answered")),
+        el("span", { class: "dbval" }, has ? (up || down
+          ? (Math.round(b) === Math.round(a) ? `${b.toFixed(1)} → ${a.toFixed(1)}` : `${Math.round(b)} → ${Math.round(a)}`)
+          : String(Math.round(b))) : "–",
+          fact ? el("span", { class: "dbfact" + (down ? " down" : "") }, fact) : null));
+      rows.push(r);
+    };
+    row("Your Humanity Index", ob, oa, null, "overall", true);
+    res.before.forEach((b, i) => {
+      const facts = res.facts.filter((f) => f.area === b.area.key).map((f) => f.text).join(", ");
+      row(b.area.name, b.score, res.after[i].score, facts, b.area.key, false);
+    });
+    const legend = el("p", { class: "sub", style: "margin:6px 0 0" },
+      me.decision ? `Grey dot: you today. ${oa >= ob ? "Green" : "Red"} dot: you after ${fmtTime(me.t)} of “${me.decision.label.toLowerCase()}”. Click any line to see how it's worked out.`
+                  : "Each dot is you today, from 0 to 100. Pick a decision above to see where it moves you. Click any line to see how it's worked out.");
+    box.replaceChildren(...rows, legend);
+  }
+
+  function drawRipple(box, res, n) {
+    if (!me.decision || n === 1) { box.replaceChildren(); return; }
+    const facts = [];
+    if (res.ly && Math.abs(res.ly) >= 0.01) facts.push(`${fmt(res.ly * n)} years of life`);
+    const saved = res.facts.find((f) => f.kind === "saved"); if (saved) facts.push("$" + fmt(saved.per * n) + " saved");
+    if (res.dollars > 0.5) facts.push("$" + fmt(res.dollars * n) + " not spent");
+    if (res.given > 0.5) facts.push("$" + fmt(res.given * n) + " given to others");
+    if (Math.abs(res.co2) >= 1) facts.push(fmt(res.co2 * n / 1000) + " tonnes of CO2 avoided");
+    if (res.hours >= 0.5) facts.push(fmt(res.hours * n) + " hours given");
+    const card = el("div", { class: "ripple" }, el("h3", {}, `If ${peopleLabel(n).toLowerCase()} like you did this for ${fmtTime(me.t)}`),
+      el("p", { style: "margin:0 0 8px" }, facts.length ? facts.join(". ") + "." : "The change is in how people feel, which doesn't add up into a single number."));
+    // The world score: only measures this decision clearly reaches are moved, by plain arithmetic.
+    if (me.world && me.card) {
+      const share = Math.min(1, n / WORLD_POP);
+      const moved = {};
+      if (res.ly) moved.life_expectancy = { add: res.ly * share, why: "years of life gained, spread over everyone" };
+      if (res.co2) moved.emissions = { add: -(res.co2 / Math.max(me.t, 1e-6)) / 1000 * share, why: "tonnes of CO2 a year avoided, per person in the world" };
+      const ch = res.changed;
+      if (ch.some((c) => c.q === "volunteer" && (c.from === "0" || !c.from))) moved.volunteered = { add: 100 * share * res.r, why: "people who volunteer" };
+      if (ch.some((c) => c.q === "give" && (c.from === "0" || !c.from))) moved.donated = { add: 100 * share * res.r, why: "people who give" };
+      const cats = me.world.score.categories;
+      const before = [], after = [];
+      const lines = [];
+      for (const c of cats) {
+        let sum = 0, cnt = 0, sumA = 0;
+        for (const m of c.measures) {
+          if (m.score === null || m.value === null) continue;
+          const card = me.card.find((x) => x.key === c.key).measures.find((x) => x.key === m.key);
+          let v = m.value; if (moved[m.key]) { v += moved[m.key].add; lines.push(`${m.name}: ${fmt(m.value)} → ${fmt(v)} ${m.unit} (${moved[m.key].why})`); }
+          const s = Math.max(0, Math.min(100, (v - card.worst) / (card.ideal - card.worst) * 100));
+          sum += m.score; sumA += s; cnt++;
+        }
+        if (cnt) { before.push(sum / cnt); after.push(sumA / cnt); }
+      }
+      const wb = before.reduce((a, b) => a + b, 0) / before.length, wa = after.reduce((a, b) => a + b, 0) / after.length;
+      const diff = wa - wb;
+      card.append(el("p", { style: "margin:0" }, "The world's Humanity Index: ", el("b", {}, wb.toFixed(2)), " → ",
+        el("b", { style: `color:${diff > 0 ? "var(--green)" : "var(--ink)"}` }, wa.toFixed(2)),
+        Math.abs(diff) > 0 ? ` (${diff > 0 ? "+" : "−"}${Number(Math.abs(diff).toPrecision(2))})` : ""),
+        lines.length ? el("ul", { class: "revnotes" }, lines.map((l) => el("li", {}, l)))
+                     : el("p", { class: "sub" }, "This decision doesn't reach any of the 26 measures behind the world score directly."));
+    } else {
+      card.append(el("p", { class: "sub" }, "Work out the world score on the World score tab to see this decision's effect on it."));
+    }
+    card.append(el("p", { class: "sub" }, "Simple multiples of one person's change. In real life, effects at scale are messier."));
+    box.replaceChildren(card);
+  }
+
+  function drawExplain(box, res) {
+    if (!me.open) { box.replaceChildren(); return; }
+    const panel = el("div", { class: "explain" });
+    const ans = me.saved.answers;
+    if (me.open === "overall") {
+      panel.append(el("h3", {}, "How your Humanity Index is worked out"),
+        el("p", {}, "It is the average of your eight areas of life, all counting equally. The areas come from the research on what makes a good life: ",
+          ...["oecd", "gallup", "harvard"].map((k, i) => el("span", {}, i ? ", " : "", el("a", { href: ev(k).url, target: "_blank", rel: "noopener noreferrer" }, ev(k).title))), "."),
+        el("ul", { class: "causes" }, res.before.map((b, i) => el("li", {}, `${b.area.name}: ${b.score === null ? "not answered" : Math.round(b.score)}` +
+          (me.decision && res.after[i].score !== null && Math.abs(res.after[i].score - b.score) > 0.05 ? ` → ${Math.round(res.after[i].score)}` : "")))));
+    } else {
+      const i = res.before.findIndex((b) => b.area.key === me.open);
+      const b = res.before[i], a = res.after[i];
+      panel.append(el("h3", {}, b.area.name));
+      if (b.score === null) { panel.append(el("p", {}, "Not answered yet. Press “Change my answers” to add it.")); box.replaceChildren(panel); return; }
+      const parts = [];
+      if (b.self !== null) parts.push(el("li", {}, `Your own rating: ${ans.ratings[b.area.key]} out of 10, which counts as ${b.self}.`));
+      for (const l of b.lines) {
+        const e = ev(l.q.evidence);
+        parts.push(el("li", {}, `${l.q.text}: “${l.o.label}” scores ${l.o.score}.`,
+          el("div", { class: "sub" }, e.finding + " ", e.url ? el("a", { href: e.url, target: "_blank", rel: "noopener noreferrer" }, e.title) : el("span", {}, "(" + e.title + ")"))));
+      }
+      panel.append(el("ul", { class: "causes" }, parts));
+      const w = Math.round(b.w * 100);
+      panel.append(el("p", {}, b.self !== null && b.evidence !== null
+        ? `You answered ${b.n} of ${b.of} fine-tune questions, so the research-based answers count ${w}% and your own rating ${100 - w}%: ${Math.round(b.score)}. The more you fine-tune, the more the research counts (up to 70%).`
+        : b.self !== null ? `Only your own rating so far: ${Math.round(b.score)}. Press “Change my answers” and Fine tune to ground it in research.`
+        : `Only fine-tune answers so far: their average is ${Math.round(b.score)}.`));
+      if (b.area.key === "body") {
+        const ly = lifeYears(ans.fine, ans.age);
+        if (ly.parts.length) panel.append(el("p", { class: "sub" }, `Years of life compared with the healthiest answers, from the studies above: ${ly.parts.map((p) => `${q(p.key).text.split(" (")[0].toLowerCase()} ${p.life > 0 ? "+" : ""}${p.life}`).join(", ")}.`));
+      }
+      const ch = res.changed.filter((c) => b.area.questions.some((x) => x.key === c.q));
+      if (me.decision && ch.length) {
+        panel.append(el("h3", { style: "margin-top:14px" }, "With “" + me.decision.label + "”"),
+          el("ul", { class: "causes" }, ch.map((c) => {
+            const ob = opt(c.q, c.from), oa = opt(c.q, c.to);
+            return el("li", {}, `${q(c.q).text}: ${ob ? `“${ob.label}” (${ob.score})` : "not answered"} → “${oa.label}” (${oa.score})` + (c.why ? `. ${c.why}` : "") +
+              (c.q === "smoking" && c.to === "quit_now" ? `. Quitting at ${ans.age || "about 50"} regains about ${quitRegain(ans.age).years} years (Jha 2013)${quitRegain(ans.age).estimate ? "; the study stops at 54, so past that this is our cautious estimate" : ""}.` : "") +
+              (c.saving ? `. $${me.decision.saving} a month at 4% a year adds up to enough to move your savings cushion, at an assumed $${fmt(me.cat.assumptions.monthly_spending)} of spending a month.` : ""));
+          })),
+          el("p", {}, `Most of the change builds up over about ${fmtTime(me.decision.ramp)}; after ${fmtTime(me.t)}, ${Math.round(res.r * 100)}% of it has arrived: ${Math.round(b.score)} → ${Math.round(a.score)}.`));
+      } else if (me.decision) {
+        panel.append(el("p", { class: "sub" }, "This decision doesn't change any of your answers in this area."));
+      }
+      if (me.decision && me.decision.custom) {
+        panel.append(el("p", { class: "sub" }, `“${me.decision.label}” was worked out by AI from your words: ${me.decision.summary}`),
+          ...(me.decision.facts || []).map((f) => el("p", { class: "sub" }, `${f.label}: ${fmt(f.per_year)} ${f.unit} a year. ${f.basis} `, srcLink(f.source))));
+      }
+    }
+    box.replaceChildren(panel);
+  }
+
   // ------------------------------------------------------------------ start
   (async function start() {
     $("place").value = store("local", "humanity-place") || "";
@@ -1167,7 +1712,7 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
       pageNotice("The page could not reach the server.");
       return;
     }
-    loadScore(scoreState.place);
+    loadMe();
   })();
 })();
 </script>

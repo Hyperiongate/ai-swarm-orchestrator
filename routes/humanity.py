@@ -2,7 +2,7 @@
 The Humanity Index — Flask Routes
 File: routes/humanity.py
 Created: November 15, 2026
-Last Updated: November 15, 2026 (afternoon) — The score routes
+Last Updated: November 16, 2026 — The personal index (Me) routes
 
 PURPOSE:
     Flask blueprint for the Humanity Index page and its small API. Every
@@ -33,6 +33,11 @@ ENDPOINTS:
     GET   /api/humanity/score/places        places scored so far
     POST  /api/humanity/score/review        queue: other AIs check a run's values {run_id}
     POST  /api/humanity/score/delete        {run_id}
+    GET   /api/humanity/me/catalog          areas, questions, evidence, decisions
+    GET   /api/humanity/me                  your latest saved answers (or null)
+    POST  /api/humanity/me                  save your answers (each save is kept)
+    POST  /api/humanity/me/delete           delete all your saved answers
+    POST  /api/humanity/me/decision         queue: turn your own decision into answer changes {text}
 
 PASSCODE (Jim's choice, November 15, 2026: "just you, with passcode"):
     Every /api/humanity/* route except /health needs the passcode in the
@@ -43,6 +48,10 @@ PASSCODE (Jim's choice, November 15, 2026: "just you, with passcode"):
     Gate (swarm_security.py) lists this blueprint as having its own login.
 
 CHANGELOG:
+- November 16, 2026: THE PERSONAL INDEX ("Me")
+  * Five /api/humanity/me* routes (listed above), same passcode rule. The
+    answers are personal (health, money), so they are only ever sent back to
+    a browser that has the passcode. No existing route changed.
 - November 15, 2026 (afternoon): THE SCORE
   * Eight /api/humanity/score/* routes (listed above), same passcode rule.
     No existing route changed.
@@ -475,5 +484,81 @@ def humanity_score_delete():
         return _not_ready()
     except Exception as e:
         return _db_error('deleting a score run', e)
+
+# ============================================================================
+# ME (the personal index)
+# ============================================================================
+
+def _me():
+    import humanity_me
+    return humanity_me
+
+
+@humanity_bp.route('/api/humanity/me/catalog', methods=['GET'])
+@needs_passcode
+def humanity_me_catalog():
+    try:
+        return jsonify(_me().catalog())
+    except ImportError:
+        return _not_ready()
+
+
+@humanity_bp.route('/api/humanity/me', methods=['GET'])
+@needs_passcode
+def humanity_me_get():
+    try:
+        return jsonify({'me': _me().latest_answers()})
+    except ImportError:
+        return _not_ready()
+    except Exception as e:
+        return _db_error('reading your answers', e)
+
+
+@humanity_bp.route('/api/humanity/me', methods=['POST'])
+@needs_passcode
+def humanity_me_save():
+    try:
+        me = _me()
+    except ImportError:
+        return _not_ready()
+    try:
+        answers = me.clean_answers(_body())
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    try:
+        return jsonify({'me': me.save_answers(answers)}), 201
+    except Exception as e:
+        return _db_error('saving your answers', e)
+
+
+@humanity_bp.route('/api/humanity/me/delete', methods=['POST'])
+@needs_passcode
+def humanity_me_delete():
+    try:
+        return jsonify({'deleted': _me().delete_answers()})
+    except ImportError:
+        return _not_ready()
+    except Exception as e:
+        return _db_error('deleting your answers', e)
+
+
+@humanity_bp.route('/api/humanity/me/decision', methods=['POST'])
+@needs_passcode
+def humanity_me_decision():
+    try:
+        eng, me = _engine(), _me()
+    except ImportError:
+        return _not_ready()
+    try:
+        payload = me.clean_decision_text(_body())
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    try:
+        job_id = eng.submit_job('me_decision', payload)
+    except eng.NotReady as e:
+        return jsonify({'error': str(e)}), 503
+    except Exception as e:
+        return _db_error('queueing your decision', e)
+    return jsonify({'job_id': job_id}), 202
 
 # I did no harm and this file is not truncated

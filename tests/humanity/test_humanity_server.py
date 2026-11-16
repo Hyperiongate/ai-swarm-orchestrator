@@ -2,7 +2,7 @@
 The Humanity Index — server tests
 File: tests/humanity/test_humanity_server.py
 Created: November 15, 2026
-Last Updated: November 15, 2026 (afternoon) — tests for the score
+Last Updated: November 16, 2026 — tests for the personal index (Me)
 
 PURPOSE:
     End-to-end tests of routes/humanity.py, humanity_engine.py and
@@ -51,6 +51,7 @@ os.environ["NO_PROXY"] = os.environ["no_proxy"] = "127.0.0.1,localhost"
 from flask import Flask  # noqa: E402
 
 import humanity_engine as engine  # noqa: E402
+import humanity_me  # noqa: E402
 import humanity_score  # noqa: E402
 from stub_ai_service import SCORE_VALUES  # noqa: E402
 from db_engine import get_db_connection  # noqa: E402
@@ -128,6 +129,8 @@ def web(monkeypatch):
         humanity_score.ensure_tables()
         cur.execute("DELETE FROM humanity_score_values")
         cur.execute("DELETE FROM humanity_score_runs")
+        humanity_me.ensure_tables()
+        cur.execute("DELETE FROM humanity_me")
     monkeypatch.setenv("HUMANITY_PASSCODE", PASS)
     monkeypatch.delenv("FACTCHECK_PASSCODE", raising=False)
     spawned = []
@@ -587,5 +590,88 @@ def test_score_with_the_real_helper(monkeypatch):
         time.sleep(0.5)
     assert run["complete"] and run["score"]["measured"] == 26, run.get("pending")
     kill_helper()
+
+# ---------------------------------------------------------------------------
+# me: the personal index
+# ---------------------------------------------------------------------------
+
+JIM_LIKE = {"name": "Test", "age": 68, "goal": "Stay well",
+            "ratings": {"body": 9, "money": 7, "people": 8},
+            "fine": {"exercise": "300_449", "conditions": "one_ok", "smoking": "never", "income": "150_300"}}
+
+
+def test_catalog_is_consistent():
+    cat = humanity_me.catalog()
+    assert len(cat["areas"]) == 8
+    keys = [q["key"] for a in cat["areas"] for q in a["questions"]]
+    assert len(keys) == len(set(keys))
+    for a in cat["areas"]:
+        assert a["why"] in cat["evidence"] and a["ask"].endswith("?")
+        for q in a["questions"]:
+            assert q["evidence"] in cat["evidence"], q["key"]
+            values = [o["v"] for o in q["options"]]
+            assert len(values) == len(set(values)) >= 2, q["key"]
+            assert all(0 <= o["score"] <= 100 for o in q["options"]), q["key"]
+    by_key = {q["key"]: q for a in cat["areas"] for q in a["questions"]}
+    for d in cat["decisions"]:
+        assert d["ramp"] > 0 and d["changes"], d["key"]
+        for c in d["changes"]:
+            assert c["q"] in by_key, d["key"]
+            assert c["to"] in [o["v"] for o in by_key[c["q"]]["options"]] + ["quit_now", "_half"], d["key"]
+    for e in cat["evidence"].values():
+        assert e["finding"] and (e["url"].startswith("https://") or e["title"] == "Our estimate")
+
+
+def test_me_is_private_and_saves_every_copy(web):
+    assert web.get("/api/humanity/me", headers={"X-App-Passcode": "nope"}).status_code == 401
+    assert web.post("/api/humanity/me", json=JIM_LIKE, headers={"X-App-Passcode": "nope"}).status_code == 401
+    assert web.get("/api/humanity/me", headers=H).get_json()["me"] is None
+    first = web.post("/api/humanity/me", json=JIM_LIKE, headers=H)
+    assert first.status_code == 201
+    saved = first.get_json()["me"]["answers"]
+    assert saved["age"] == 68 and saved["ratings"] == {"body": 9, "money": 7, "people": 8}
+    assert saved["fine"]["exercise"] == "300_449"
+    changed = dict(JIM_LIKE, ratings={"body": 8})
+    web.post("/api/humanity/me", json=changed, headers=H)
+    latest = web.get("/api/humanity/me", headers=H).get_json()["me"]
+    assert latest["answers"]["ratings"] == {"body": 8} and latest["saves"] == 2
+    assert web.post("/api/humanity/me/delete", json={}, headers=H).get_json()["deleted"] == 2
+    assert web.get("/api/humanity/me", headers=H).get_json()["me"] is None
+
+
+def test_me_refuses_bad_answers(web):
+    bad = [{"ratings": {"body": 11}}, {"ratings": {"body": "x"}}, {"fine": {"exercise": "lots"}},
+           {"age": 5, "ratings": {"body": 5}}, {"age": "old", "ratings": {"body": 5}}, {}, {"ratings": {}}]
+    for body in bad:
+        assert web.post("/api/humanity/me", json=body, headers=H).status_code == 400, body
+    ok = web.post("/api/humanity/me", json={"ratings": {"body": 5, "unknown_area": 3},
+                                            "fine": {"made_up": "x", "sleep": "7_8"}, "name": "x" * 90}, headers=H)
+    answers = ok.get_json()["me"]["answers"]
+    assert answers["ratings"] == {"body": 5} and answers["fine"] == {"sleep": "7_8"} and len(answers["name"]) == 40
+
+
+def test_your_own_decision_is_checked_against_the_catalog(web):
+    response = web.post("/api/humanity/me/decision", json={"text": "I want to cycle to work twice a week"}, headers=H)
+    assert response.status_code == 202
+    job_id = response.get_json()["job_id"]
+    work_all()
+    d = status(web, job_id)["result"]
+    assert d["custom"] and d["label"] == "Cycle to work twice a week" and d["ramp"] == 0.5
+    assert [(c["q"], c["to"]) for c in d["changes"]] == [("car", "50_150"), ("exercise", "150_299")]
+    assert len(d["facts"]) == 1 and d["facts"][0]["kind"] == "dollars" and d["facts"][0]["per_year"] == 520
+    assert d["facts"][0]["source"]["url"] == "https://stats.example.gov/transport"
+    # the AI is never shown anyone's answers
+    web.post("/api/humanity/me", json=JIM_LIKE, headers=H)
+    web.post("/api/humanity/me/decision", json={"text": "nothing at all"}, headers=H)
+    work_all()
+    body = stub_stats()["last"][-1]
+    assert body["messages"][0]["content"] == "<decision>\nnothing at all\n</decision>"
+    assert "Stay well" not in body["system"] and "Test" not in body["system"]
+
+
+def test_your_own_decision_input(web):
+    for body in ({"text": ""}, {"text": "x" * 301}, {}):
+        assert web.post("/api/humanity/me/decision", json=body, headers=H).status_code == 400
+    assert web.post("/api/humanity/me/decision", json={"text": "walk"}, headers={"X-App-Passcode": "no"}).status_code == 401
 
 # I did no harm and this file is not truncated
