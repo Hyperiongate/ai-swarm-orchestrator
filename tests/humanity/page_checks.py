@@ -2,7 +2,7 @@
 The Humanity Index — page tests in a real browser
 File: tests/humanity/page_checks.py
 Created: November 15, 2026
-Last Updated: November 16, 2026 — the Me tab (personal index)
+Last Updated: November 16, 2026 (afternoon) — you and the crowd on each line, expected age, fine tune
 
 PURPOSE:
     Serves the page with gunicorn under the Swarm's own gunicorn.conf.py, with
@@ -23,6 +23,7 @@ PURPOSE:
 AUTHOR: Jim @ Shiftwork Solutions LLC (managed by Claude)
 """
 
+import math
 import os
 import subprocess
 import sys
@@ -331,6 +332,37 @@ def run_browser():
         browser.close()
 
 
+def _remaining(age, sex=None):
+    import humanity_me
+    t = humanity_me.LIFE_TABLE
+    def col(k):
+        ys = t[k]
+        for i in range(len(t["ages"]) - 1):
+            if age <= t["ages"][i + 1]:
+                return ys[i] + (ys[i + 1] - ys[i]) * (age - t["ages"][i]) / (t["ages"][i + 1] - t["ages"][i])
+        return ys[-1]
+    return col(sex) if sex else (col("male") + col("female")) / 2
+
+
+def expected_age(fine, age, sex=None):
+    """The expected-age rule written out independently of the page."""
+    import humanity_me
+    cat = humanity_me.catalog()
+    scale = min(1, _remaining(age) / _remaining(40)) if age > 40 else 1
+    habits = 0
+    for key in ("exercise", "smoking", "drinks", "bmi"):
+        if key in fine:
+            life = next(o["life"] for a in cat["areas"] for q in a["questions"] if q["key"] == key
+                        for o in q["options"] if o["v"] == fine[key])
+            habits += (life - humanity_me.TYPICAL_LIFE[key]["years"]) * scale
+    return age + _remaining(age, sex) + habits
+
+
+def drink_gain(age):
+    """Full gain from 8-14 drinks a week (-0.5 years) down to 1-7 (0), scaled for age."""
+    return 0.5 * min(1, _remaining(age) / _remaining(40))
+
+
 def expected_me(fine, ratings):
     """The personal scoring rule written out independently of the page."""
     import humanity_me
@@ -393,13 +425,25 @@ def me_checks(page):
     money = page.inner_text(".dbrow:has-text('Money and security')")
     check("drinking less moves Body and health", "→" in body, body)
     check("and shows money not spent in a year ($2,150), on the money line", "$2,150 not spent" in money, money)
-    check("and expected life gained so far (2 months after a year)", "2 months of expected life" in body, body)
-    page.eval_on_selector(".sliders input[aria-label='For how long']",
-                          "e => { e.value = 100; e.dispatchEvent(new Event('input')); }")
-    body = page.inner_text(".dbrow >> nth=1")
+    check("and expected life gained so far", "of expected life" in body, body)
+
+    # expected age: the life table for 68 (men and women averaged) plus habits versus typical, scaled for age
+    before_age, gain = expected_age(fine, 68), drink_gain(68)
+    age_text = page.inner_text(".agebig")
+    want_age = f"{before_age:.1f} → {before_age + gain * (1 - math.exp(-1 / 2)):.1f}"
+    check(f"expected age after a year of drinking less: {want_age}", age_text.replace("\n", "") == want_age, age_text)
+    page.fill(".sliders input.years", "30")
+    age_text = page.inner_text(".agebig")
     money = page.inner_text(".dbrow:has-text('Money and security')")
-    check("after 30 years: 6 months of life, $64,500 not spent",
-          "6 months of expected life" in body and "$64,500" in money, body + money)
+    want_age = f"{before_age:.1f} → {before_age + gain * (1 - math.exp(-30 / 2)):.1f}"
+    check(f"typing 30 years: expected age {want_age} and $64,500 not spent",
+          age_text.replace("\n", "") == want_age and "$64,500" in money, age_text + money)
+    page.click(".agebtn")
+    working = page.inner_text(".explain")
+    check("clicking the expected age shows the working: life table, habits versus typical, scaling",
+          "Social Security" in working and "typical" in working and "scaled" in working
+          and f"{before_age:.1f}" in working, working[:500])
+    page.click(".agebtn")
     page.click(".dbrow >> nth=1")
     explain = page.inner_text(".explain")
     check("clicking the line shows the working, the change and the research",
@@ -408,6 +452,36 @@ def me_checks(page):
     page.click(".dbrow >> nth=1")
     page.click(".examples button:has-text('Walk 30 minutes a day')")
     check("walking moves nothing for someone already this active", page.locator(".dbdot.after").count() == 0)
+
+    # Jim's case: 10 million people save $200 a month for 21 years
+    page.click(".examples button:has-text('Save $200 a month')")
+    page.fill(".sliders input.years", "21")
+    page.eval_on_selector(".sliders input[aria-label='How many people']",
+                          "e => { e.value = 4; e.dispatchEvent(new Event('input')); }")
+    months, rate = 252, 0.04 / 12
+    one = 200 * ((1 + rate) ** months - 1) / rate
+    money = page.inner_text(".dbrow:has-text('Money and security')")
+    you = f"You: ${one:,.0f} saved ($50,400 put in, ${one - 50400:,.0f} growth at 4% a year)"
+    crowd = f"10 million people: ${one * 1e7 / 1e9:.0f} billion saved"
+    check(f"savings line shows you and the crowd: {you} / {crowd}", you in money and crowd in money, money)
+    page.eval_on_selector(".sliders input[aria-label='How many people']",
+                          "e => { e.value = 0; e.dispatchEvent(new Event('input')); }")
+    page.fill(".sliders input.years", "1")
+
+    # fine-tuning after setup: from the top, and straight to one area from its line
+    check("a Fine tune button sits at the top", page.locator("button:has-text('Fine tune my answers')").count() == 1)
+    check("each line says how well grounded it is",
+          "your own rating only" in page.inner_text(".dbrow:has-text('Money and security')")
+          and "fine-tuned 3 of 6" in page.inner_text(".dbrow:has-text('Body and health')"))
+    page.click(".dbrow:has-text('Mind and mood')")
+    page.click(".explain button:has-text('Fine tune mind and mood')")
+    page.wait_for_selector(".icard[data-area='mind'] .fine", timeout=8000)
+    check("Fine tune on a line opens that area's questions", page.locator(".icard .fine").count() == 1)
+    page.select_option(".icard[data-area='mind'] select[aria-label^='How often you feel stressed']", "rarely")
+    page.click("button:has-text('Show my Humanity Index')")
+    page.wait_for_selector(".dumbbell", timeout=8000)
+    check("after saving, the new answer counts (Mind and mood now 92)",
+          "92" in page.inner_text(".dbrow:has-text('Mind and mood')"), page.inner_text(".dbrow:has-text('Mind and mood')"))
 
     # the ripple: 10 million people, and the world score
     page.click(".examples button:has-text('Volunteer 4 hours a month')")

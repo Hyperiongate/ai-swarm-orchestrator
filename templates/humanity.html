@@ -5,6 +5,20 @@
   File: templates/humanity.html   (served at /humanity by routes/humanity.py)
 
   CHANGE NOTES
+  2026-11-16  (afternoon) Three fixes from Jim's first use of Me:
+              - Each line now shows YOU and THE CROWD. With the people slider at
+                10 million, "Save $200 a month" for 21 years read "$77,409 saved"
+                (one person, with growth) while Jim expected $504 billion (10
+                million people, no growth). The line now says "You: $77,409 saved
+                ($50,400 put in, $27,009 growth at 4% a year). 10 million people:
+                $774 billion."
+              - Expected age: the Social Security life table for your age and sex,
+                plus or minus how your habits compare with a typical American's
+                (CDC figures), before and after a decision. Click it for the working.
+              - Fine tune is easy to reach after setup: a "Fine tune my answers"
+                button at the top, each line says how well grounded it is, and
+                each area's working has a "Fine tune this area" button that opens
+                straight to its questions.
   2026-11-16  The personal Humanity Index ("Me"), from Jim's voice design of
               November 15-16, 2026 (concept doc, "Next version").
               - New first tab, Me. An interview: one 1-to-10 question for each
@@ -327,6 +341,9 @@ table.ytab { width: 100%; border-collapse: collapse; background: var(--panel); b
 .sliders label { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: center; font-size: 15px; color: var(--muted); }
 .sliders input { grid-column: 1 / -1; width: 100%; accent-color: var(--amber); }
 .sliders b { color: var(--ink); justify-self: end; }
+.sliders .yrs { justify-self: end; display: inline-flex; gap: 6px; align-items: center; color: var(--muted); }
+.sliders .yrs b { margin-right: 6px; }
+.sliders input.years { grid-column: auto; width: 72px; padding: 4px 6px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
 .dumbbell { display: grid; gap: 2px; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 10px 12px; }
 .dbrow { display: grid; grid-template-columns: minmax(120px, 200px) minmax(0, 1fr) minmax(90px, 210px); gap: 12px; align-items: center;
   background: none; border: 0; border-radius: 10px; padding: 9px 6px; cursor: pointer; text-align: left; width: 100%; }
@@ -351,6 +368,13 @@ table.ytab { width: 100%; border-collapse: collapse; background: var(--panel); b
 .ripple, .explain { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px; margin-top: 12px; }
 .ripple { border-left: 0; background: var(--amber-soft); border-color: var(--amber-soft); }
 .ripple h3, .explain h3 { font-family: var(--display); margin: 0 0 6px; }
+
+.dbnote { display: block; font-weight: 400; font-size: 12px; color: var(--muted); }
+.agebox { margin: 6px 0 10px; }
+.agebtn { display: grid; gap: 2px; width: 100%; text-align: left; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 12px 18px; cursor: pointer; }
+.agebtn:hover, .agebtn.open { background: var(--sky); }
+.agebig { font-family: var(--display); font-weight: 780; font-size: 34px; letter-spacing: -0.02em; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.agebig .up { color: var(--green); } .agebig .down { color: var(--red); }
 
 /* ---------- passcode ---------- */
 dialog { border: 1px solid var(--line); border-radius: 16px; padding: 24px; background: var(--panel); color: var(--ink); max-width: 380px; width: calc(100% - 32px); }
@@ -1243,20 +1267,48 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
     for (const r of me.cat.quit_regain) if ((age || 50) < r.under) return r;
     return me.cat.quit_regain[me.cat.quit_regain.length - 1];
   }
-  // Years of life, relative to the healthiest answers, from the questions research gives a number for.
-  function lifeYears(fine, age, before) {
-    let total = 0; const parts = [];
-    for (const key of ["exercise", "smoking", "drinks", "bmi"]) {
-      const v = fine[key]; if (!v) continue;
-      let o = opt(key, v), life = o ? o.life : 0;
-      if (key === "smoking" && v === "quit_now") {
-        const was = opt("smoking", before && before.smoking) || { life: -10 };
-        const r = quitRegain(age);
-        life = Math.min(0, was.life + r.years * Math.abs(was.life) / 10);
+  // Remaining years from the Social Security life table, interpolated between its ages.
+  function remainingYears(age, sex) {
+    const t = me.cat.life_table, a = Math.max(t.ages[0], Math.min(age, t.ages[t.ages.length - 1]));
+    const col = (k) => {
+      const ys = t[k];
+      for (let i = 0; i < t.ages.length - 1; i++) {
+        if (a <= t.ages[i + 1]) return ys[i] + (ys[i + 1] - ys[i]) * (a - t.ages[i]) / (t.ages[i + 1] - t.ages[i]);
       }
-      if (typeof life === "number") { total += life; parts.push({ key, life }); }
+      return ys[ys.length - 1];
+    };
+    return sex === "male" || sex === "female" ? col(sex) : (col("male") + col("female")) / 2;
+  }
+  // The studies measured habits around age 40; with fewer years left, a habit adds or costs fewer years.
+  function habitScale(age) {
+    if (!age || age <= me.cat.reference_age) return 1;
+    return Math.min(1, remainingYears(age) / remainingYears(me.cat.reference_age));
+  }
+  // How your habits compare with a typical American's, in years of life (already scaled for age).
+  function habitYears(fine, age, before) {
+    const scale = habitScale(age), parts = [];
+    let total = 0;
+    for (const key of ["exercise", "smoking", "drinks", "bmi"]) {
+      const v = fine[key]; if (!v) continue;                  // unanswered counts as typical
+      const typical = me.cat.typical_life[key].years;
+      let years;
+      if (key === "smoking" && v === "quit_now") {
+        // quitting: your smoking difference before, plus the years Jha 2013 says quitting at your age regains
+        const was = opt("smoking", before && before.smoking) || { life: -10 };
+        years = (was.life - typical) * scale + quitRegain(age).years * Math.abs(was.life) / 10;
+      } else {
+        const o = opt(key, v); if (!o || typeof o.life !== "number") continue;
+        years = (o.life - typical) * scale;
+      }
+      total += years; parts.push({ key, years, life: v === "quit_now" ? null : opt(key, v).life, typical });
     }
-    return { total, parts };
+    return { total, parts, scale };
+  }
+  function expectedAge(ans, fine) {
+    const h = habitYears(fine, ans.age, ans.fine);
+    if (!ans.age) return { age: null, habits: h };
+    const base = ans.age + remainingYears(ans.age, ans.sex);
+    return { age: base + h.total, base, habits: h };
   }
   function areaScore(area, ans) {
     const rating = ans.ratings[area.key];
@@ -1315,7 +1367,7 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
   function computeMe(d, t) {
     const ans = me.saved.answers;
     const before = me.cat.areas.map((a) => ({ area: a, ...areaScore(a, ans) }));
-    if (!d) return { before, after: before, facts: [], changed: [], r: 0 };
+    if (!d) { const ageB = expectedAge(ans, ans.fine); return { before, after: before, facts: [], changed: [], r: 0, ly: 0, ageB, ageA: ageB }; }
     const { after: full, changed } = applyDecision(ans, d, t);
     const r = ramp(t, d.ramp);
     const fullScores = me.cat.areas.map((a) => areaScore(a, full));
@@ -1327,9 +1379,9 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
       return { ...f, area: b.area, score: b.score + (f.score - b.score) * k };
     });
     const facts = [];
-    const lyB = lifeYears(ans.fine, ans.age), lyA = lifeYears(full.fine, ans.age, ans.fine);
-    const ly = (lyA.total - lyB.total) * r;
-    if (Math.abs(ly) >= 0.01) facts.push({ kind: "life", area: "body", per: ly, text: (ly > 0 ? "+" : "") + fmtYears(ly) + " of expected life" });
+    const ageB = expectedAge(ans, ans.fine), ageA = expectedAge(ans, full.fine);
+    const ly = (ageA.habits.total - ageB.habits.total) * r;
+    if (Math.abs(ly) >= 0.01) facts.push({ kind: "life", area: "body", per: ly });
     let dollars = 0, co2 = 0, hours = 0, given = 0;
     for (const c of changed) {
       const ob = opt(c.q, c.from) || {}, oa = opt(c.q, c.to) || {};
@@ -1339,26 +1391,33 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
       if (ob.give_pct !== undefined || oa.give_pct !== undefined) given += ((oa.give_pct || 0) - (ob.give_pct || 0)) / 100 * (INCOME_MID[ans.fine.income] || 75000) * t;
     }
     if (d.saving) {
-      const rr = me.cat.assumptions.savings_growth / 12, m = Math.round(t * 12);
-      facts.push({ kind: "saved", area: "money", per: d.saving * (Math.pow(1 + rr, m) - 1) / rr, text: "" });
+      const g = me.cat.assumptions.savings_growth, rr = g / 12, m = Math.round(t * 12);
+      const total = d.saving * (Math.pow(1 + rr, m) - 1) / rr;
+      facts.push({ kind: "saved", area: "money", per: total, putIn: d.saving * m, growth: g });
     }
     for (const f of d.facts || []) {
       const v = f.per_year * t;
       if (f.kind === "dollars") dollars += v; else if (f.kind === "co2_kg") co2 += v; else if (f.kind === "hours") hours += v;
-      else facts.push({ kind: "other", per: v, text: fmt(v) + " " + (f.unit || "") + " " + f.label, source: f.source });
+      else facts.push({ kind: "other", per: v, unit: f.unit || "", label: f.label, source: f.source });
     }
     if (dollars > 0.5) facts.push({ kind: "dollars", area: "money", per: dollars });
     if (given > 0.5) facts.push({ kind: "given", area: "community", per: given });
     if (Math.abs(co2) >= 1) facts.push({ kind: "co2", area: "planet", per: co2 });
     if (hours >= 0.5) facts.push({ kind: "hours", area: "community", per: hours });
-    for (const f of facts) {
-      if (f.kind === "saved") f.text = "$" + fmt(f.per) + " saved";
-      if (f.kind === "dollars") f.text = "$" + fmt(f.per) + " not spent";
-      if (f.kind === "given") f.text = "$" + fmt(f.per) + " given to others";
-      if (f.kind === "co2") f.text = fmt(f.per / 1000) + " tonnes of CO2 avoided";
-      if (f.kind === "hours") f.text = fmt(f.per) + " hours given";
+    return { before, after, facts, changed, r, ly, co2, hours, given, dollars, ageB, ageA };
+  }
+  // One fact, for one person (n = 1) or for n people. The same arithmetic, just multiplied.
+  function factText(f, n) {
+    const v = f.per * n, you = n === 1;
+    switch (f.kind) {
+      case "life": return you ? `${v > 0 ? "+" : ""}${fmtYears(v)} of expected life` : `${fmt(v)} years of life`;
+      case "saved": return "$" + fmt(v) + " saved" + (you ? ` ($${fmt(f.putIn)} put in, $${fmt(f.per - f.putIn)} growth at ${Math.round(f.growth * 100)}% a year)` : "");
+      case "dollars": return "$" + fmt(v) + " not spent";
+      case "given": return "$" + fmt(v) + " given to others";
+      case "co2": return fmt(v / 1000) + " tonnes of CO2 avoided";
+      case "hours": return fmt(v) + " hours given";
+      default: return fmt(v) + " " + f.unit + " " + f.label;
     }
-    return { before, after, facts, changed, r, ly, co2, hours, given, dollars };
   }
   function fmtYears(y) {
     const a = Math.abs(y);
@@ -1384,7 +1443,7 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
       const [cat, saved] = await Promise.all([api("/api/humanity/me/catalog"), api("/api/humanity/me")]);
       me.cat = cat; me.saved = saved.me;
       me.editing = !me.saved;
-      me.draft = JSON.parse(JSON.stringify(me.saved ? me.saved.answers : { name: "", age: null, goal: "", ratings: {}, fine: {} }));
+      me.draft = JSON.parse(JSON.stringify(me.saved ? me.saved.answers : { name: "", age: null, sex: null, goal: "", ratings: {}, fine: {} }));
       renderMe();
       loadWorldForRipple();
     } catch (err) { box.replaceChildren(el("div", { class: "notice" }, err.message)); }
@@ -1416,8 +1475,11 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
       el("h3", {}, "About you"),
       el("div", { class: "irow" },
         el("label", {}, "First name ", el("input", { id: "me-name", type: "text", maxlength: 40, value: d.name || "", oninput: (e) => { d.name = e.target.value; } })),
-        el("label", {}, "Age ", el("input", { id: "me-age", type: "number", min: 10, max: 120, value: d.age || "", style: "width:90px", oninput: (e) => { d.age = e.target.value ? Number(e.target.value) : null; } }))),
-      el("p", { class: "sub" }, "Age is only used for things that depend on it, like the years regained by quitting smoking."));
+        el("label", {}, "Age ", el("input", { id: "me-age", type: "number", min: 10, max: 120, value: d.age || "", style: "width:90px", oninput: (e) => { d.age = e.target.value ? Number(e.target.value) : null; } })),
+        el("label", {}, "Sex ", el("select", { id: "me-sex", onchange: (e) => { d.sex = e.target.value || null; } },
+          el("option", { value: "" }, "Prefer not to say"), el("option", { value: "male", selected: d.sex === "male" }, "Male"),
+          el("option", { value: "female", selected: d.sex === "female" }, "Female")))),
+      el("p", { class: "sub" }, "Age and sex are used only for your expected age (from the official life table) and for things that depend on age, like the years regained by quitting smoking."));
     wrap.append(about);
     for (const a of me.cat.areas) wrap.append(renderAreaQuestions(a));
     const err = el("p", { class: "toast", style: "color:var(--red)", role: "alert" });
@@ -1439,7 +1501,7 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
   }
   function renderAreaQuestions(a) {
     const d = me.draft;
-    const card = el("div", { class: "icard" });
+    const card = el("div", { class: "icard", "data-area": a.key });
     const open = !!me.openFine && me.openFine[a.key];
     const answered = a.questions.filter((x) => d.fine[x.key]).length;
     card.append(el("h3", {}, a.name), el("p", { style: "margin:0 0 8px" }, a.ask, el("span", { class: "sub" }, "  1 is the worst, 10 the best")));
@@ -1495,6 +1557,9 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
   // ---------------- the results: decision, sliders, dumbbell chart
   function renderMeResults() {
     const wrap = el("div", {});
+    wrap.append(el("div", { class: "irow", style: "margin:-6px 0 14px" },
+      el("button", { class: "btn quiet", type: "button", onclick: () => fineTune(null) }, "Fine tune my answers"),
+      el("span", { class: "sub" }, "Or click any line below, then \u201cFine tune\u201d for just that area.")));
     const decisions = me.cat.decisions.concat(me.custom);
     const chips = el("div", { class: "examples", role: "group", "aria-label": "Decisions" },
       decisions.map((d) => el("button", { type: "button", class: me.decision === d ? "on" : "", "aria-pressed": String(me.decision === d),
@@ -1523,28 +1588,38 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
     const tIn = el("input", { type: "range", min: 0, max: 100, step: 1, value: sliderFromTime(me.t), "aria-label": "For how long" });
     const pIn = el("input", { type: "range", min: 0, max: PEOPLE_STOPS.length - 1, step: 1, value: me.peopleStop, "aria-label": "How many people" });
     const tOut = el("b", {}), pOut = el("b", {});
+    // Type an exact number of years, or drag the slider; the two stay in step.
+    const tYears = el("input", { type: "number", min: 0.02, max: 30, step: "any", class: "years", "aria-label": "Years" });
     const sliders = el("div", { class: "sliders" },
-      el("label", {}, "For how long", tIn, tOut), el("label", {}, "How many people", pIn, pOut));
+      el("label", {}, "For how long", el("span", { class: "yrs" }, tOut, tYears, "years"), tIn), el("label", {}, "How many people", pOut, pIn));
+    const ageBox = el("div", { class: "agebox", "aria-live": "polite" });
     const chart = el("div", { class: "dumbbell", "aria-live": "polite" });
     const ripple = el("div", {});
     const explain = el("div", {});
-    wrap.append(sliders, chart, ripple, explain);
+    wrap.append(sliders, ageBox, chart, ripple, explain);
 
     const draw = (ev) => {
       if (ev && ev.target === tIn) me.t = timeFromSlider(Number(tIn.value));   // keep an exact time until the slider is moved
+      if (ev && ev.target === tYears) {
+        const y = Number(tYears.value);
+        if (!(y >= 0.02 && y <= 30)) return;                 // ignore half-typed or out-of-range numbers
+        me.t = y; tIn.value = sliderFromTime(y);
+      }
+      if (!ev || ev.target !== tYears) tYears.value = String(Math.round(me.t * 100) / 100);
       me.peopleStop = Number(pIn.value);
       tOut.textContent = fmtTime(me.t); pOut.textContent = peopleLabel(PEOPLE_STOPS[me.peopleStop]);
       const res = computeMe(me.decision, me.t);
-      drawDumbbell(chart, res);
+      drawAge(ageBox, res);
+      drawDumbbell(chart, res, PEOPLE_STOPS[me.peopleStop]);
       drawRipple(ripple, res, PEOPLE_STOPS[me.peopleStop]);
       drawExplain(explain, res);
     };
-    tIn.addEventListener("input", draw); pIn.addEventListener("input", draw);
+    tIn.addEventListener("input", draw); pIn.addEventListener("input", draw); tYears.addEventListener("input", draw);
     me.redraw = draw;
     draw();
 
     wrap.append(el("div", { class: "did" },
-      el("button", { class: "btn quiet", type: "button", onclick: () => { me.editing = true; renderMe(); } }, "Change my answers"),
+      el("button", { class: "btn quiet", type: "button", onclick: () => fineTune(null) }, "Change or fine-tune my answers"),
       el("span", { class: "sub" }, `Saved ${new Date(me.saved.saved_at * 1000).toLocaleDateString()}${me.saved.saves > 1 ? `, ${me.saved.saves} saves so far` : ""}.`),
       el("button", { class: "x", type: "button", onclick: async () => {
         if (!confirmDelete()) return;
@@ -1553,6 +1628,14 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
       } }, "Delete my answers")));
     return wrap;
   }
+  function fineTune(areaKey) {
+    me.editing = true;
+    me.draft = JSON.parse(JSON.stringify(me.saved.answers));
+    me.openFine = {}; if (areaKey) me.openFine[areaKey] = true;
+    renderMe();
+    const card = areaKey && [...document.querySelectorAll("#me .icard")].find((c) => c.dataset.area === areaKey);
+    (card || $("me")).scrollIntoView({ behavior: "smooth", block: "start" });
+  }
   let deleteArmed = 0;
   function confirmDelete() {          // press twice within 4 seconds; no browser pop-up
     const now = Date.now();
@@ -1560,16 +1643,16 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
     deleteArmed = now; pageNotice("Press “Delete my answers” again to delete every saved copy of your answers."); return false;
   }
 
-  function drawDumbbell(box, res) {
+  function drawDumbbell(box, res, n) {
     const ob = overallOfMe(res.before), oa = overallOfMe(res.after);
     const rows = [];
-    const row = (label, b, a, fact, key, big) => {
+    const row = (label, b, a, fact, key, big, note) => {
       const has = b !== null && b !== undefined;
       const up = has && a - b > 0.05, down = has && a - b < -0.05;
       const lo = has ? Math.min(a, b) : 0, hi = has ? Math.max(a, b) : 0;
       const r = el("button", { type: "button", class: "dbrow" + (big ? " big" : "") + (me.open === key ? " open" : ""), "aria-expanded": String(me.open === key),
         onclick: () => { me.open = me.open === key ? null : key; me.redraw(); } },
-        el("span", { class: "dblabel" }, label),
+        el("span", { class: "dblabel" }, label, note ? el("span", { class: "dbnote" }, note) : null),
         el("span", { class: "dbtrack" }, has ? [
           el("i", { class: "dbbar " + (down ? "down" : "up"), style: `left:${lo}%;width:${hi - lo}%` }),
           el("i", { class: "dbdot before", style: `left:${b}%` }),
@@ -1582,8 +1665,15 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
     };
     row("Your Humanity Index", ob, oa, null, "overall", true);
     res.before.forEach((b, i) => {
-      const facts = res.facts.filter((f) => f.area === b.area.key).map((f) => f.text).join(", ");
-      row(b.area.name, b.score, res.after[i].score, facts, b.area.key, false);
+      const mine = res.facts.filter((f) => f.area === b.area.key);
+      let fact = null;
+      if (mine.length) {
+        fact = n === 1 ? mine.map((f) => factText(f, 1)).join(", ")
+          : el("span", {}, "You: " + mine.map((f) => factText(f, 1)).join(", ") + ".", el("br", {}),
+                           `${peopleLabel(n)}: ` + mine.map((f) => factText(f, n)).join(", ") + ".");
+      }
+      const note = b.score === null ? null : b.n === 0 ? "your own rating only" : b.n < b.of ? `fine-tuned ${b.n} of ${b.of}` : "fully fine-tuned";
+      row(b.area.name, b.score, res.after[i].score, fact, b.area.key, false, note);
     });
     const legend = el("p", { class: "sub", style: "margin:6px 0 0" },
       me.decision ? `Grey dot: you today. ${oa >= ob ? "Green" : "Red"} dot: you after ${fmtTime(me.t)} of “${me.decision.label.toLowerCase()}”. Click any line to see how it's worked out.`
@@ -1591,15 +1681,26 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
     box.replaceChildren(...rows, legend);
   }
 
+  function drawAge(box, res) {
+    const ans = me.saved.answers;
+    if (!res.ageB.age) {
+      box.replaceChildren(el("p", { class: "sub", style: "margin:0" }, "Add your age (Fine tune my answers, then About you) to see the age you can expect to reach."));
+      return;
+    }
+    const b = res.ageB.age, a = b + (res.ly || 0);
+    const moved = Math.abs(a - b) >= 0.05;
+    box.replaceChildren(el("button", { type: "button", class: "agebtn" + (me.open === "age" ? " open" : ""), "aria-expanded": String(me.open === "age"),
+      onclick: () => { me.open = me.open === "age" ? null : "age"; me.redraw(); } },
+      el("span", { class: "sub" }, "Expected age"),
+      el("span", { class: "agebig" }, b.toFixed(1), moved ? el("span", { class: a > b ? "up" : "down" }, ` → ${a.toFixed(1)}`) : null),
+      el("span", { class: "sub" }, `US average for ${ans.age}-year-old ${ans.sex === "male" ? "men" : ans.sex === "female" ? "women" : "people"}: ${res.ageB.base.toFixed(1)}. Your habits: ${res.ageB.habits.total >= 0 ? "+" : "−"}${Math.abs(res.ageB.habits.total).toFixed(1)} years. How is this worked out?`)));
+  }
+
   function drawRipple(box, res, n) {
     if (!me.decision || n === 1) { box.replaceChildren(); return; }
-    const facts = [];
-    if (res.ly && Math.abs(res.ly) >= 0.01) facts.push(`${fmt(res.ly * n)} years of life`);
-    const saved = res.facts.find((f) => f.kind === "saved"); if (saved) facts.push("$" + fmt(saved.per * n) + " saved");
-    if (res.dollars > 0.5) facts.push("$" + fmt(res.dollars * n) + " not spent");
-    if (res.given > 0.5) facts.push("$" + fmt(res.given * n) + " given to others");
-    if (Math.abs(res.co2) >= 1) facts.push(fmt(res.co2 * n / 1000) + " tonnes of CO2 avoided");
-    if (res.hours >= 0.5) facts.push(fmt(res.hours * n) + " hours given");
+    const facts = res.facts.map((f) => factText(f, n));
+    const saved = res.facts.find((f) => f.kind === "saved");
+    if (saved) facts.push(`(each person puts in $${fmt(saved.putIn)}; the rest is growth at an assumed ${Math.round(saved.growth * 100)}% a year)`);
     const card = el("div", { class: "ripple" }, el("h3", {}, `If ${peopleLabel(n).toLowerCase()} like you did this for ${fmtTime(me.t)}`),
       el("p", { style: "margin:0 0 8px" }, facts.length ? facts.join(". ") + "." : "The change is in how people feel, which doesn't add up into a single number."));
     // The world score: only measures this decision clearly reaches are moved, by plain arithmetic.
@@ -1643,6 +1744,29 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
     if (!me.open) { box.replaceChildren(); return; }
     const panel = el("div", { class: "explain" });
     const ans = me.saved.answers;
+    if (me.open === "age") {
+      const e = res.ageB, h = e.habits;
+      const names = { exercise: "Exercise", smoking: "Smoking", drinks: "Drinking", bmi: "Weight" };
+      panel.append(el("h3", {}, "How your expected age is worked out"),
+        el("p", {}, `1. The Social Security life table says the average ${ans.age}-year-old ${ans.sex === "male" ? "man" : ans.sex === "female" ? "woman" : "person (men and women averaged; add your sex for a closer figure)"} lives about ${remainingYears(ans.age, ans.sex).toFixed(1)} more years: to ${e.base.toFixed(1)}. `,
+          el("a", { href: ev("ssa").url, target: "_blank", rel: "noopener noreferrer" }, ev("ssa").title)),
+        el("p", {}, "2. That average already includes typical American habits. So only the difference between your habits and typical ones is added or taken away:"),
+        el("ul", { class: "causes" }, ["exercise", "smoking", "drinks", "bmi"].map((k) => {
+          const part = h.parts.find((p) => p.key === k), t = me.cat.typical_life[k];
+          const te = ev(t.evidence);
+          return el("li", {}, part ? `${names[k]}: ${part.years >= 0 ? "+" : "−"}${Math.abs(part.years).toFixed(2)} years` : `${names[k]}: not answered, counted as typical (0)`,
+            el("div", { class: "sub" }, `Typical: ${t.how}. `, te.url ? el("a", { href: te.url, target: "_blank", rel: "noopener noreferrer" }, te.title) : el("span", {}, "(" + te.title + ")")));
+        })),
+        el("p", {}, h.scale < 1
+          ? `3. The studies measured these habits around age ${me.cat.reference_age}. With fewer years ahead, a habit adds or costs fewer of them, so the differences are scaled by your remaining years compared with a ${me.cat.reference_age}-year-old's: ×${h.scale.toFixed(2)} (already applied above).`
+          : "3. At your age the study figures apply in full."),
+        el("p", {}, `Expected age: ${e.base.toFixed(1)} ${h.total >= 0 ? "+" : "−"} ${Math.abs(h.total).toFixed(1)} = ${e.age.toFixed(1)}.` +
+          (me.decision && Math.abs(res.ly) >= 0.05 ? ` With \u201c${me.decision.label}\u201d after ${fmtTime(me.t)}: ${(e.age + res.ly).toFixed(1)}.` : "")),
+        el("p", { class: "sub" }, "Not counted: long-term conditions, family history, sleep and anything else without a solid number in years. An average, not a forecast for one person; your doctor knows you better."),
+        el("button", { class: "btn green", type: "button", onclick: () => fineTune("body") }, "Fine tune body and health"));
+      box.replaceChildren(panel);
+      return;
+    }
     if (me.open === "overall") {
       panel.append(el("h3", {}, "How your Humanity Index is worked out"),
         el("p", {}, "It is the average of your eight areas of life, all counting equally. The areas come from the research on what makes a good life: ",
@@ -1653,7 +1777,11 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
       const i = res.before.findIndex((b) => b.area.key === me.open);
       const b = res.before[i], a = res.after[i];
       panel.append(el("h3", {}, b.area.name));
-      if (b.score === null) { panel.append(el("p", {}, "Not answered yet. Press “Change my answers” to add it.")); box.replaceChildren(panel); return; }
+      if (b.score === null) {
+        panel.append(el("p", {}, "Not answered yet."),
+          el("button", { class: "btn green", type: "button", onclick: () => fineTune(b.area.key) }, `Fine tune ${b.area.name.toLowerCase()}`));
+        box.replaceChildren(panel); return;
+      }
       const parts = [];
       if (b.self !== null) parts.push(el("li", {}, `Your own rating: ${ans.ratings[b.area.key]} out of 10, which counts as ${b.self}.`));
       for (const l of b.lines) {
@@ -1667,10 +1795,8 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
         ? `You answered ${b.n} of ${b.of} fine-tune questions, so the research-based answers count ${w}% and your own rating ${100 - w}%: ${Math.round(b.score)}. The more you fine-tune, the more the research counts (up to 70%).`
         : b.self !== null ? `Only your own rating so far: ${Math.round(b.score)}. Press “Change my answers” and Fine tune to ground it in research.`
         : `Only fine-tune answers so far: their average is ${Math.round(b.score)}.`));
-      if (b.area.key === "body") {
-        const ly = lifeYears(ans.fine, ans.age);
-        if (ly.parts.length) panel.append(el("p", { class: "sub" }, `Years of life compared with the healthiest answers, from the studies above: ${ly.parts.map((p) => `${q(p.key).text.split(" (")[0].toLowerCase()} ${p.life > 0 ? "+" : ""}${p.life}`).join(", ")}.`));
-      }
+      panel.append(el("button", { class: "btn green", type: "button", onclick: () => fineTune(b.area.key) },
+        b.n < b.of ? `Fine tune ${b.area.name.toLowerCase()}` : `Change ${b.area.name.toLowerCase()} answers`));
       const ch = res.changed.filter((c) => b.area.questions.some((x) => x.key === c.q));
       if (me.decision && ch.length) {
         panel.append(el("h3", { style: "margin-top:14px" }, "With “" + me.decision.label + "”"),

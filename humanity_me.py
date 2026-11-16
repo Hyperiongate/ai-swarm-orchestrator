@@ -2,7 +2,7 @@
 The Humanity Index — Me (the personal Humanity Index)
 File: humanity_me.py
 Created: November 16, 2026
-Last Updated: November 16, 2026 — Initial implementation
+Last Updated: November 16, 2026 (afternoon) — Expected age; sex for the life table
 
 PURPOSE:
     Jim's design (voice conversation, November 15-16, 2026; written up in the
@@ -45,6 +45,15 @@ HOW AN AREA IS SCORED (also explained on the page):
                        world score)
 
 CHANGELOG:
+- November 16, 2026 (afternoon): EXPECTED AGE (Jim: "I'd like to have a predicted age")
+  * LIFE_TABLE: Social Security's 2023 period life table (remaining years by
+    age, men and women). TYPICAL_LIFE: how a typical American's exercise,
+    smoking and weight compare with the healthiest answers, from CDC figures.
+    The page works out: expected age = age + the table's remaining years for
+    that age and sex + (your habits - typical habits), with the study figures
+    (measured around age 40) scaled down by remaining years at older ages.
+  * New optional answer "sex", used only for the life table.
+  * Four new evidence entries (ssa, cdc_smoking, cdc_weight, cdc_activity).
 - November 16, 2026: INITIAL IMPLEMENTATION. New file; used by routes/humanity.py
   and (for 'me_decision' jobs) humanity_engine.py. No existing file changed by it.
   Rule 1 (do no harm) preserved.
@@ -122,6 +131,18 @@ EVIDENCE = {
     "diet": {"title": "Scarborough and others, Nature Food, 2023",
              "finding": "Daily diet emissions (kg CO2e): vegan 2.5, vegetarian 4.2, fish but no meat 4.7, low meat 5.4, medium meat 7.0, high meat 10.2.",
              "url": "https://www.nature.com/articles/s43016-023-00795-w.pdf"},
+    "ssa": {"title": "Social Security Administration, period life table 2023",
+            "finding": "Average remaining years of life at each age: for example, at 65, about 18.1 more years for men and 20.7 for women.",
+            "url": "https://www.ssa.gov/oact/STATS/table4c6.html"},
+    "cdc_smoking": {"title": "CDC, Adult smoking, 2022",
+                    "finding": "11.6% of US adults smoked cigarettes in 2022.",
+                    "url": "https://www.cdc.gov/mmwr/volumes/73/wr/mm7329a1.htm"},
+    "cdc_weight": {"title": "CDC National Center for Health Statistics, 2021-2023",
+                   "finding": "Of US adults, 31.7% were overweight (BMI 25-30), 40.3% had obesity (BMI 30 or more) and 9.7% severe obesity (BMI 40 or more).",
+                   "url": "https://www.cdc.gov/nchs/data/hestat/hestat111.pdf"},
+    "cdc_activity": {"title": "CDC, physical activity",
+                     "finding": "47.2% of US adults met the aerobic activity guidelines (150 minutes a week) in 2024; 26.2% were inactive.",
+                     "url": "https://www.cdc.gov/Nchs/Fastats/Exercise.Htm"},
     "estimate": {"title": "Our estimate",
                  "finding": "No single study gives this number. It is a cautious judgement, marked as an estimate so it can be argued with and replaced.",
                  "url": ""},
@@ -320,9 +341,38 @@ QUIT_REGAIN = [{"under": 35, "years": 10}, {"under": 45, "years": 9}, {"under": 
                {"under": 200, "years": 3, "estimate": True}]
 
 
+# Social Security period life table, 2023 (2026 Trustees Report): average remaining
+# years of life at exact ages. The page interpolates between these ages.
+LIFE_TABLE = {
+    "ages":   [20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110],
+    "male":   [56.69, 52.06, 47.50, 43.02, 38.59, 34.21, 29.90, 25.73, 21.79, 18.12, 14.66, 11.42, 8.50,
+               6.04, 4.11, 2.77, 2.04, 1.54, 1.13],
+    "female": [61.74, 56.90, 52.08, 47.34, 42.64, 38.01, 33.45, 29.01, 24.73, 20.66, 16.76, 13.10, 9.82,
+               7.02, 4.80, 3.23, 2.23, 1.59, 1.13],
+    "evidence": "ssa",
+}
+
+# How a typical US adult's habits compare with the healthiest answers, in years of
+# life (the same "life" values as the answer options), weighted by how common each
+# habit is. The life table already reflects these typical habits, so the page only
+# adds the DIFFERENCE between your answers and these. Unanswered questions count as typical.
+TYPICAL_LIFE = {
+    "exercise": {"years": round(0.262 * -3.4 + 0.266 * -1.25 + 0.472 * 0, 2), "evidence": "cdc_activity",
+                 "how": "26.2% inactive (-3.4 years), 47.2% meeting the guidelines (0), the rest in between (about -1.25)"},
+    "smoking": {"years": round(0.116 * -10, 2), "evidence": "cdc_smoking",
+                "how": "11.6% smoke (-10 years); former smokers are counted as typical, since the figure for them isn't published here"},
+    "bmi": {"years": round(0.317 * -0.5 + (0.403 - 0.097) * -4 + 0.097 * -9, 2), "evidence": "cdc_weight",
+            "how": "31.7% overweight (-0.5), 30.6% BMI 30-40 (about -4), 9.7% BMI 40 or more (-9)"},
+    "drinks": {"years": 0, "evidence": "estimate",
+               "how": "most adults drink 7 or fewer a week, so typical is counted as no loss"},
+}
+REFERENCE_AGE = 40     # the studies' figures were measured around midlife
+
+
 def catalog():
     """Everything the page needs: evidence, areas, decisions, rules."""
     return {"evidence": EVIDENCE, "areas": AREAS, "decisions": DECISIONS, "quit_regain": QUIT_REGAIN,
+            "life_table": LIFE_TABLE, "typical_life": TYPICAL_LIFE, "reference_age": REFERENCE_AGE,
             "max_evidence_weight": MAX_EVIDENCE_WEIGHT,
             "assumptions": {"savings_growth": 0.04, "monthly_spending": 5000, "price_per_pack": 10,
                             "price_per_drink": 6}}
@@ -342,7 +392,12 @@ def clean_answers(data):
         raise ValueError("The answers were not understood.")
     out = {"name": " ".join(str(data.get("name") or "").split())[:MAX_NAME],
            "goal": " ".join(str(data.get("goal") or "").split())[:MAX_GOAL],
-           "age": None, "ratings": {}, "fine": {}}
+           "age": None, "sex": None, "ratings": {}, "fine": {}}
+    sex = str(data.get("sex") or "").strip().lower()
+    if sex:
+        if sex not in ("male", "female"):
+            raise ValueError("Sex must be male or female, or left blank.")
+        out["sex"] = sex
     age = data.get("age")
     if age not in (None, ""):
         try:

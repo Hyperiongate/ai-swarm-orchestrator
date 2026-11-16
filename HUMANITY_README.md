@@ -39,6 +39,20 @@ The **Me** tab (now the first tab) is Jim's voice design of 15-16 November 2026.
 - **Private.** The answers are kept on the Swarm's database behind the
   passcode, every save is kept (to show change over time later), and "Delete
   my answers" (pressed twice) removes every copy. They are never sent to an AI.
+- **You and the crowd on every line** (16 November, afternoon): with the people
+  slider above one, each line shows your figure and the total for everyone,
+  e.g. "You: $78,788 saved ($50,400 put in, $28,388 growth at 4% a year).
+  10 million people: $788 billion saved." The time can be typed exactly
+  (21 years) as well as dragged.
+- **Expected age**: the Social Security period life table (2023) for your age
+  and sex, plus or minus how your exercise, smoking, drinking and weight
+  compare with a typical American's (CDC figures). The study figures were
+  measured around age 40, so at older ages they are scaled down by remaining
+  years. Before and after a decision; click it for every step. Conditions,
+  family history and sleep are not counted.
+- **Fine tune after setup**: "Fine tune my answers" at the top; each line says
+  how well grounded it is; each area's working has a "Fine tune" button that
+  opens straight to its questions.
 - Not yet built: choosing a place (Marin County) instead of "me", with the
   answers filled in from local averages. Next on the list.
 
@@ -179,7 +193,7 @@ If those files are edited later, run the Humanity Index tests too.
 Tested 15 November 2026, again that afternoon with the score and voice, and again
 16 November with Me, all passing:
 
-- 39 server tests against PostgreSQL 16 (5 of them for Me: the catalog's
+- 40 server tests against PostgreSQL 16 (6 of them for Me, including the life table: the catalog's
   consistency, privacy and every save kept, bad answers refused, your own
   decision checked against the catalog and never shown your answers; 11 for the score: the scoring
   rule checked independently, both directions of a measure, a failed category,
@@ -187,7 +201,9 @@ Tested 15 November 2026, again that afternoon with the score and voice, and agai
   including the real helper process, the passcode on every route, links that
   the search never returned being dropped, junk numbers being cleaned, panel
   disagreement and panel failures.
-- 59 page checks in a real Chromium browser, including Me (the interview, fine
+- 66 page checks in a real Chromium browser, including Me (expected age and its
+  working checked against the rule written out separately, 10 million people
+  saving $200 a month for 21 years, fine tune after setup, the interview, fine
   tune, the BMI helper, the score checked against the rule written out
   separately, decisions, both sliders, the working, your own decision, the
   ripple to the world score, deleting), the score, the weights, history, places

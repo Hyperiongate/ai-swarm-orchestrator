@@ -2,7 +2,7 @@
 The Humanity Index — server tests
 File: tests/humanity/test_humanity_server.py
 Created: November 15, 2026
-Last Updated: November 16, 2026 — tests for the personal index (Me)
+Last Updated: November 16, 2026 (afternoon) — expected age: life table and sex
 
 PURPOSE:
     End-to-end tests of routes/humanity.py, humanity_engine.py and
@@ -641,13 +641,26 @@ def test_me_is_private_and_saves_every_copy(web):
 
 def test_me_refuses_bad_answers(web):
     bad = [{"ratings": {"body": 11}}, {"ratings": {"body": "x"}}, {"fine": {"exercise": "lots"}},
-           {"age": 5, "ratings": {"body": 5}}, {"age": "old", "ratings": {"body": 5}}, {}, {"ratings": {}}]
+           {"age": 5, "ratings": {"body": 5}}, {"age": "old", "ratings": {"body": 5}}, {}, {"ratings": {}},
+           {"sex": "other", "ratings": {"body": 5}}]
     for body in bad:
         assert web.post("/api/humanity/me", json=body, headers=H).status_code == 400, body
     ok = web.post("/api/humanity/me", json={"ratings": {"body": 5, "unknown_area": 3},
                                             "fine": {"made_up": "x", "sleep": "7_8"}, "name": "x" * 90}, headers=H)
     answers = ok.get_json()["me"]["answers"]
     assert answers["ratings"] == {"body": 5} and answers["fine"] == {"sleep": "7_8"} and len(answers["name"]) == 40
+
+
+def test_life_table_and_typical_habits():
+    t = humanity_me.LIFE_TABLE
+    assert len(t["ages"]) == len(t["male"]) == len(t["female"])
+    for k in ("male", "female"):
+        assert all(a > b for a, b in zip(t[k], t[k][1:])), k          # fewer years left at every older age
+    assert t["female"][9] > t["male"][9]                                # at 65, women can expect more years
+    for key, typ in humanity_me.TYPICAL_LIFE.items():
+        assert typ["evidence"] in humanity_me.EVIDENCE and typ["years"] <= 0, key
+    saved = humanity_me.clean_answers({"sex": "Male", "ratings": {"body": 5}})
+    assert saved["sex"] == "male"
 
 
 def test_your_own_decision_is_checked_against_the_catalog(web):
