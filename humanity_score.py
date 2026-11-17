@@ -2,7 +2,7 @@
 The Humanity Index — the Score
 File: humanity_score.py
 Created: November 15, 2026
-Last Updated: November 15, 2026 — Initial implementation
+Last Updated: November 16, 2026 — Population as an information-only measure
 
 PURPOSE:
     One number from 0 to 100 for where we are as people, for the world or for
@@ -45,6 +45,11 @@ DATABASE TABLES (lazy-created; no migration):
                             PRIMARY KEY (run_id, category)
 
 CHANGELOG:
+- November 16, 2026: POPULATION (for the people slider and the world built from countries)
+  * New measure "population" in Basic needs, marked "info": researched and
+    shown like the others but never scored or counted ("of" stays 26).
+    score_run, review_items and scorecard_public skip info measures in
+    scores and counts; measures now carry an "info" flag. Nothing else changed.
 - November 15, 2026: INITIAL IMPLEMENTATION
   * New module, used by humanity_engine.py (job kinds), routes/humanity.py
     and humanity_runner.py. No existing Swarm file is changed by it.
@@ -99,6 +104,10 @@ SCORECARD = [
          "why": "0 is roughly the world average in 1950; 100 is no child dying young."},
     ]},
     {"key": "basic_needs", "name": "Basic needs", "measures": [
+        {"key": "population", "name": "Population (for information; not scored)", "unit": "people",
+         "worst": 0, "ideal": 0, "info": True,
+         "where": "national statistics office or census; for US places the US Census Bureau's latest estimate",
+         "why": "Used to weigh this place against others and to size the people slider. It does not count toward the score."},
         {"key": "hunger", "name": "People who do not get enough food", "unit": "% of people",
          "worst": 40, "ideal": 0,
          "where": "FAO State of Food Security and Nutrition (prevalence of undernourishment); for US places USDA or Feeding America food insecurity",
@@ -226,7 +235,8 @@ LEVELS = ("world", "country", "state", "county", "city", "other")
 def scorecard_public():
     """The scorecard as the page shows it (no source hints needed there, but harmless)."""
     return [{"key": c["key"], "name": c["name"], "weight": DEFAULT_WEIGHT,
-             "measures": [{k: m[k] for k in ("key", "name", "unit", "worst", "ideal", "why")} for m in c["measures"]]}
+             "measures": [dict({k: m[k] for k in ("key", "name", "unit", "worst", "ideal", "why")}, info=bool(m.get("info")))
+                          for m in c["measures"]]}
             for c in SCORECARD]
 
 
@@ -271,14 +281,15 @@ def score_run(values_by_category, weights=None):
         scores = []
         for m in cat["measures"]:
             v = found.get(m["key"]) or {}
-            score = measure_score(m, v.get("value"))
+            score = None if m.get("info") else measure_score(m, v.get("value"))
             if score is not None:
                 scores.append(score)
                 measured += 1
             measures.append({"key": m["key"], "name": m["name"], "unit": m["unit"], "worst": m["worst"],
                              "ideal": m["ideal"], "why": m["why"], "value": v.get("value"),
                              "year": v.get("year", ""), "level": v.get("level", ""), "where": v.get("where", ""),
-                             "note": v.get("note", ""), "source": v.get("source"), "score": score})
+                             "note": v.get("note", ""), "source": v.get("source"), "score": score,
+                             "info": bool(m.get("info"))})
         cat_score = round(sum(scores) / len(scores), 1) if scores else None
         weight = float(weights.get(cat["key"], DEFAULT_WEIGHT))
         if cat_score is not None and weight > 0:
@@ -289,7 +300,7 @@ def score_run(values_by_category, weights=None):
                            "error": result.get("error", "")})
     overall = round(weighted / total_weight, 1) if total_weight else None
     return {"overall": overall, "categories": categories, "measured": measured,
-            "of": sum(len(c["measures"]) for c in SCORECARD)}
+            "of": sum(1 for c in SCORECARD for m in c["measures"] if not m.get("info"))}
 
 
 # ============================================================================
@@ -426,7 +437,7 @@ def review_items(place, values_by_category):
         found = {v["key"]: v for v in (values_by_category.get(cat["key"]) or {}).get("values", [])}
         for m in cat["measures"]:
             v = found.get(m["key"])
-            if not v or v.get("value") is None:
+            if not v or v.get("value") is None or m.get("info"):
                 continue
             item_id = f"M{len(items) + 1}"
             text = (f"{m['name']} for {v.get('where') or place}: {v['value']:g} {m['unit']}"

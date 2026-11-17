@@ -2,7 +2,7 @@
 The Humanity Index — Me (the personal Humanity Index)
 File: humanity_me.py
 Created: November 16, 2026
-Last Updated: November 16, 2026 (afternoon) — Expected age; sex for the life table
+Last Updated: November 16, 2026 (evening) — Typed changes can save monthly, quit smoking now, drive less
 
 PURPOSE:
     Jim's design (voice conversation, November 15-16, 2026; written up in the
@@ -45,6 +45,12 @@ HOW AN AREA IS SCORED (also explained on the page):
                        world score)
 
 CHANGELOG:
+- November 16, 2026 (evening): TYPED CHANGES DO EVERYTHING THE READY-MADE ONES DID
+  * Jim dropped the twelve ready-made decisions from the page in favour of one
+    "type or say a change" box. So a typed change can now also carry
+    saving_per_month (compounded by the page, as "Save $200 a month" was),
+    smoking -> "quit_now" (years regained by age, Jha 2013) and car -> "_half"
+    (one band less driving). DECISIONS stays in the catalog as examples.
 - November 16, 2026 (afternoon): EXPECTED AGE (Jim: "I'd like to have a predicted age")
   * LIFE_TABLE: Social Security's 2023 period life table (remaining years by
     age, men and women). TYPICAL_LIFE: how a typical American's exercise,
@@ -506,7 +512,11 @@ def decision_system():
         "tool that shows people the effect of their choices on their own quality of life. Below are the "
         "questions and the allowed answer options. You do NOT know the person's current answers.\n\n"
         + "\n".join(lines) + "\n\n"
+        "Two special values are also allowed: question smoking may be set to quit_now (the person stops "
+        "smoking today), and question car may be set to _half (drive one band less than now).\n\n"
         "RULES:\n"
+        "- saving_per_month: if the decision is to put money aside regularly, the dollars a month (the tool "
+        "grows it over time itself); otherwise leave it out.\n"
         "- changes: the answers this decision would move, each to ONE allowed option value. Set only_if_better to "
         "true when the decision should not make an already better answer worse. Use only questions the decision "
         "really affects. If it affects none, return no changes and say so in summary.\n"
@@ -533,6 +543,7 @@ DECISION_TOOL = {
                                "only_if_better": {"type": "boolean"},
                                "why": {"type": "string", "description": "One short sentence."}}}},
             "ramp_years": {"type": "number"},
+            "saving_per_month": {"type": "number", "description": "Dollars a month put aside, if any."},
             "facts": {"type": "array", "maxItems": 3, "items": {
                 "type": "object", "required": ["label", "kind", "per_year"],
                 "properties": {"label": {"type": "string"}, "kind": {"type": "string", "enum": list(FACT_KINDS)},
@@ -563,7 +574,8 @@ def tidy_decision(answer, found, usage, text):
             continue
         q = _QUESTIONS.get(str(row.get("question") or "").strip())
         to = str(row.get("to") or "").strip()
-        if q is None or q["key"] in seen or to not in [o["v"] for o in q["options"]]:
+        specials = {"smoking": ["quit_now"], "car": ["_half"]}.get(q["key"], []) if q else []
+        if q is None or q["key"] in seen or to not in [o["v"] for o in q["options"]] + specials:
             continue          # anything not in the catalog is dropped, never guessed at
         seen.add(q["key"])
         changes.append({"q": q["key"], "to": to, "only_if_better": bool(row.get("only_if_better", True)),
@@ -589,7 +601,15 @@ def tidy_decision(answer, found, usage, text):
                       "per_year": per_year, "unit": fc._clip(row.get("unit"), 30),
                       "basis": fc._clip(row.get("basis"), 300),
                       "source": {"url": real, "title": found.get(real, "")} if real else None})
-    return {"key": "custom", "custom": True, "text": text,
+    saving = None
+    try:
+        saving = float(answer.get("saving_per_month")) if answer.get("saving_per_month") not in (None, "") else None
+    except (TypeError, ValueError):
+        saving = None
+    if saving is not None and not (0 < saving <= 100000):
+        saving = None
+    out_saving = {"saving": round(saving, 2)} if saving else {}
+    return {"key": "custom", "custom": True, "text": text, **out_saving,
             "label": fc._clip(answer.get("label"), 60) or text[:60],
             "summary": fc._clip(answer.get("summary"), 400), "ramp": round(ramp, 2),
             "changes": changes, "facts": facts, "usage": usage}

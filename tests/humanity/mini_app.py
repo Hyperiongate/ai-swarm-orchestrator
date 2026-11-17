@@ -2,7 +2,7 @@
 The Humanity Index — smallest possible host app (TESTS ONLY)
 File: tests/humanity/mini_app.py
 Created: November 15, 2026
-Last Updated: November 15, 2026 — Initial version
+Last Updated: November 16, 2026 — serves the Swarm's static folder (the world map)
 
 PURPOSE:
     A Flask app holding ONLY the Humanity Index blueprint, so the page tests
@@ -24,7 +24,8 @@ from flask import Flask, jsonify  # noqa: E402
 
 from routes.humanity import humanity_bp  # noqa: E402
 
-app = Flask(__name__)
+# The Swarm's own static folder, so the page can load the world map file (static/humanity/).
+app = Flask(__name__, static_folder=os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'static'))
 app.register_blueprint(humanity_bp)
 
 

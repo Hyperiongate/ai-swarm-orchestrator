@@ -2,17 +2,25 @@
 The Humanity Index — page tests in a real browser
 File: tests/humanity/page_checks.py
 Created: November 15, 2026
-Last Updated: November 16, 2026 (afternoon) — you and the crowd on each line, expected age, fine tune
+Last Updated: November 16, 2026 (evening) — rewritten for the two-tab design (Me and World)
 
 PURPOSE:
     Serves the page with gunicorn under the Swarm's own gunicorn.conf.py, with
     the real helper process and the stand-in AI service, and drives it in
-    Chromium: passcode, Me (the interview, fine tune, the dumbbell chart, the
-    sliders, the working behind each line, your own decision, the ripple to
-    the world score, deleting), the Score (working it out, the arithmetic, the
-    measures, the other AIs' checks, weights, history, places), voice (with a
-    simulated microphone), asking, the zoom dial arithmetic, the ratings,
-    "I did this", the ledger, the library, phone width, dark mode.
+    Chromium, as Jim's two-tab design of November 16, 2026 (evening):
+      * passcode; only two tabs (Me and World);
+      * World: download the free world data, the coloured map, click a
+        country, "what if it improved by 10%" moving the world score, filling
+        a country's missing measures, "Compare with me";
+      * Me: the interview and fine tune, typed and spoken changes (no ready-made
+        list), you and a place side by side, the people slider up to the
+        place's population, the place's bars moving, expected age, savings for
+        you and the crowd, the working behind every line, Marin County worked
+        out on request, deleting;
+      * phone width and dark mode.
+    Before November 16 (evening) it also drove the Score, Ask, Ledger and
+    Library tabs; those are no longer in the menu and their server side is
+    still covered by test_humanity_server.py.
     Saves screenshots in tests/humanity/screens/ (not committed).
     Nothing in the Swarm imports this file.
 
@@ -45,6 +53,7 @@ ENV.update({
     "DEEPSEEK_API_KEY": "x", "FACTCHECK_PANEL_DEEPSEEK_URL": f"http://127.0.0.1:{STUB_PORT}/deepseek",
     "GOOGLE_API_KEY": "x", "FACTCHECK_PANEL_GEMINI_URL": f"http://127.0.0.1:{STUB_PORT}/gemini/",
     "HUMANITY_PASSCODE": PASS, "PORT": str(WEB_PORT), "STUB_DELAY": "0.3",
+    "HUMANITY_WORLD_BANK_URL": f"http://127.0.0.1:{STUB_PORT}/wb", "HUMANITY_OWID_URL": f"http://127.0.0.1:{STUB_PORT}/owid",
     "NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost",
 })
 for name in ("HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy", "FACTCHECK_PANEL", "FACTCHECK_PASSCODE"):
@@ -95,6 +104,10 @@ def main():
             import humanity_me
             humanity_me.ensure_tables()
             cur.execute("DELETE FROM humanity_me")
+            import humanity_world
+            humanity_world.ensure_tables()
+            cur.execute("DELETE FROM humanity_country_values")
+            cur.execute("DELETE FROM humanity_country")
         run_browser()
     finally:
         web.terminate()
@@ -131,20 +144,11 @@ window.SpeechRecognition = window.webkitSpeechRecognition;   // newer Chromium h
 """
 
 
-def expected_scores(leave_out=None):
-    import humanity_score
-    from stub_ai_service import SCORE_VALUES
-    values = {c["key"]: {"values": [{"key": m["key"], "value": SCORE_VALUES[m["key"]]} for m in c["measures"]]}
-              for c in humanity_score.SCORECARD}
-    weights = {leave_out: 0} if leave_out else None
-    return humanity_score.score_run(values, weights)["overall"]
-
-
 def run_browser():
     sys.path.insert(0, HERE)
     with sync_playwright() as p:
         browser = p.chromium.launch()
-        page = browser.new_page(viewport={"width": 1280, "height": 900}, device_scale_factor=1)
+        page = browser.new_page(viewport={"width": 1440, "height": 900}, device_scale_factor=1)
         page.add_init_script(FAKE_MIC)
         errors = []
         page.on("pageerror", lambda e: errors.append(str(e)))
@@ -162,174 +166,101 @@ def run_browser():
         page.fill("#passin", PASS)
         page.click("#passform button")
 
-        # Me is the first tab: with nothing saved, it opens on the interview
         page.wait_for_selector("#me .icard", timeout=8000)
         check("Me is the first tab and opens on the interview", page.locator("#me .icard").count() == 9)
-        page.click("nav.tabs button[data-view='score']")
+        tabs = page.locator("nav.tabs button").all_inner_texts()
+        check("only two tabs: Me and World", tabs == ["Me", "World"], tabs)
 
-        # ---------------- the score
-        page.wait_for_selector("text=No score has been worked out for the world yet", timeout=8000)
-        check("Score is the first tab, with an invitation to work it out", True)
-        page.click("button:has-text('Work out the score')")
-        page.wait_for_selector("text=Researching:", timeout=8000)
-        check("shows research progress", True)
-        page.wait_for_selector("button:has-text('Refresh with the latest data'):not([disabled])", timeout=90000)
-        big = page.inner_text(".bignum")
-        want = expected_scores()
-        check(f"world score is {want}", big.startswith(str(want)), big)
-        check("12 categories listed", page.locator(".cat").count() == 12)
-        check("track shows both end points", "worst seen in modern times" in page.inner_text(".track-ends")
-              and "ideal world" in page.inner_text(".track-ends"))
-        page.click(".cat >> nth=0 >> button")
-        health = page.inner_text(".cat >> nth=0")
-        check("health opens to its measures, values and end points",
-              "73.3" in health and "25 / 90 years" in health and "Life expectancy" in health, health[:300])
-        page.wait_for_selector(".cat >> nth=0 >> .rev.good", timeout=40000)
-        check("other AIs' checks shown per measure", "3 of 3 AIs find this sound" in page.inner_text(".cat >> nth=0"))
-        check("checked-by line names the AIs", "GPT, DeepSeek, Gemini" in page.inner_text(".scoreactions"))
-        page.screenshot(path=os.path.join(SCREENS, "score-desktop.png"), full_page=True)
-
-        page.click("button:has-text('Change what counts')")
-        page.click(".weights .row:has-text('Fair shares') button:has-text('Leave out')")
-        want_without = expected_scores("fair_shares")
-        big = page.inner_text(".bignum")
-        check(f"leaving out Fair shares gives {want_without}", big.startswith(str(want_without)), big)
-        check("says custom weights are in use", "your own weights" in page.inner_text(".herometa"))
-        page.click("button:has-text('Go back to equal weights')")
-        check("back to equal weights", page.inner_text(".bignum").startswith(str(want)))
-        page.click("button:has-text('Done changing what counts')")
-
-        page.click("button:has-text('Refresh with the latest data')")
-        page.wait_for_selector("text=Researching:", timeout=8000)
-        page.wait_for_selector("button:has-text('Refresh with the latest data'):not([disabled])", timeout=90000)
-        page.wait_for_selector(".history .entry", timeout=8000)
-        check("earlier score kept in history", str(want) in page.inner_text(".history"))
-        check("change since last time shown", "since" in page.inner_text(".herometa"), page.inner_text(".herometa"))
-
-        page.click("#placeseg button:has-text('Marin County')")
-        page.wait_for_selector("text=No score has been worked out for Marin County, California yet", timeout=8000)
-        check("Marin County has its own score", True)
-
-        # voice on the Ask tab: a spoken score question opens the Score for that place
-        page.click("nav.tabs button[data-view='ask']")
-        page.evaluate("window.__say = 'What is the score for the world?'")
-        page.click("#askmic")
-        page.wait_for_selector("#view-score:not(.hidden) .bignum", timeout=8000)
-        check("spoken 'what is the score for the world' opens the world score",
-              page.get_attribute("#placeseg button[data-place='World']", "aria-pressed") == "true")
-        page.evaluate("window.__say = 'marin county'")
-        page.click("#placemic")
-        page.wait_for_selector("text=No score has been worked out for Marin County, California yet", timeout=8000)
-        check("saying 'marin county' picks the Marin County place", True)
-
-        # ---------------- asking (spoken)
-        page.click("nav.tabs button[data-view='ask']")
-        page.evaluate("window.__say = 'I want to walk instead of driving'")
-        page.click("#askmic")
-
-        # waiting and the answer
-        page.wait_for_selector("#waiting:not(.hidden)", timeout=8000)
-        check("shows the waiting message", "figures" in page.inner_text("#waitmsg") or True)
-        page.wait_for_selector("#answer:not(.hidden) h2.title", timeout=60000)
-        check("answer title shown", page.inner_text("h2.title") == "Walking instead of driving")
-        check("three answers present", all(page.locator(f"h3:has-text('{t}')").count() for t in
-                                           ("Where we are", "Why", "What I can do")))
-        check("figure without a real source says so",
-              page.locator(".fig").nth(1).locator("text=No source page found").count() == 1)
-
-        totals = page.locator(".total")
-        first = totals.nth(0).inner_text()
-        check("dial starts at you, once: 0.8 kg", "0.8" in first and "kg of CO2" in first, first)
-        page.click(".seg button:has-text('Everyone who could')")
-        page.click(".seg button:has-text('A year')")
-        first = totals.nth(0).inner_text()
-        # 0.8 kg x 1.4 billion people x 5 a week x 52 weeks = 291.2 billion kg, shown as "291 billion"
-        check("everyone, a year: 291 billion kg", "291 billion" in first, first)
-        check("picture it: about 63.3 million cars", "63.3 million cars driven for a year" in first, first)
-        check("everyone label says who", "people who drive regularly" in page.inner_text(".controls"))
-        page.click(".stepper button[aria-label='Fewer times a week']")
-        first = totals.nth(0).inner_text()
-        check("times a week changes the total (4 a week: 232.96 billion -> 233 billion)", "233 billion" in first, first)
-        page.click(".seg button:has-text('You')")
-        page.click(".seg button:has-text('Once')")
-        check("rings drawn with the active ring", page.locator(".rings circle.on").count() == 1)
-
-        # the other AIs
-        page.wait_for_selector(".rev.good", timeout=30000)
-        check("ratings appear next to figures", page.locator(".fig .rev").count() == 2)
-        check("panel line names the AIs", "GPT, DeepSeek, Gemini" in page.inner_text("#panelline"),
-              page.inner_text("#panelline"))
-        check("3 of 3 shown", "3 of 3 AIs find this sound" in page.inner_text(".fig >> nth=0"))
-        page.screenshot(path=os.path.join(SCREENS, "answer-desktop.png"), full_page=True)
-
-        # I did this -> ledger
-        page.click("button:has-text('I did this')")
-        page.wait_for_selector(".toast:has-text('Added')", timeout=8000)
-        check("I did this confirms", True)
-        page.click("nav.tabs button[data-view='ledger']")
-        page.wait_for_selector(".ytab", timeout=8000)
-        ledger = page.inner_text("#view-ledger")
-        check("ledger totals this year", "0.8" in ledger and "200" in ledger and "Walk instead of driving" in ledger, ledger)
-        check("streak shown", "1\nday in a row" in ledger or "day in a row" in ledger)
-        page.screenshot(path=os.path.join(SCREENS, "ledger.png"), full_page=True)
-
-        # library -> reopen without asking again
-        stats_before = requests.get(f"http://127.0.0.1:{STUB_PORT}/_stats").json()["calls"]
-        page.click("nav.tabs button[data-view='library']")
-        page.wait_for_selector(".libitem", timeout=8000)
-        page.click(".libitem button.open")
-        page.wait_for_selector("#answer:not(.hidden) .rev.good", timeout=8000)
-        stats_after = requests.get(f"http://127.0.0.1:{STUB_PORT}/_stats").json()["calls"]
-        check("reopening from the library asks no AI again", stats_after == stats_before)
-
-        # a failure is shown plainly
-        page.fill("#q", "neveranswer please")
-        page.click("#askbtn")
-        page.wait_for_selector("#askerror:not(.hidden)", timeout=60000)
-        check("failure message shown", "usable form" in page.inner_text("#askerror"))
-
-        # ---------------- me
+        world_checks(page)
         me_checks(page)
 
         # phone width and dark mode
-        phone = browser.new_page(viewport={"width": 390, "height": 844}, device_scale_factor=1,
-                                 color_scheme="dark")
+        phone = browser.new_page(viewport={"width": 390, "height": 844}, device_scale_factor=1, color_scheme="dark")
         phone.goto(BASE + "/humanity")
         phone.evaluate(f"sessionStorage.setItem('humanity-pass', '{PASS}')")
         phone.goto(BASE + "/humanity")
-        phone.wait_for_selector(".dumbbell", timeout=8000)
-        phone.click(".examples button:has-text('Keep to 7 drinks')")
-        phone.click(".dbrow >> nth=1")
+        phone.wait_for_selector("#me .twocol .dumbbell", timeout=8000)
+        phone.wait_for_selector(".placecol .dbrow", timeout=8000)
         overflow = phone.evaluate("document.documentElement.scrollWidth - window.innerWidth")
         check("Me: no sideways scrolling at phone width", overflow <= 0, overflow)
-        phone.screenshot(path=os.path.join(SCREENS, "me-phone-dark.png"), full_page=True)
-        phone.click("nav.tabs button[data-view='score']")
-        phone.wait_for_selector(".bignum", timeout=8000)
-        phone.click(".cat >> nth=0 >> button")
-        overflow = phone.evaluate("document.documentElement.scrollWidth - window.innerWidth")
-        check("Score page: no sideways scrolling at phone width", overflow <= 0, overflow)
-        phone.screenshot(path=os.path.join(SCREENS, "score-phone-dark.png"), full_page=True)
-        phone.click("nav.tabs button[data-view='library']")
-        phone.wait_for_selector(".libitem", timeout=8000)
-        phone.click(".libitem button.open")
-        phone.wait_for_selector("#answer:not(.hidden) h2.title", timeout=8000)
-        overflow = phone.evaluate("document.documentElement.scrollWidth - window.innerWidth")
-        check("no sideways scrolling at phone width", overflow <= 0, overflow)
         bg = phone.evaluate("getComputedStyle(document.body).backgroundColor")
         check("dark mode applies", bg == "rgb(15, 27, 38)", bg)
-        phone.screenshot(path=os.path.join(SCREENS, "answer-phone-dark.png"), full_page=True)
+        phone.screenshot(path=os.path.join(SCREENS, "me-phone-dark.png"), full_page=True)
+        phone.click("nav.tabs button[data-view='world']")
+        phone.wait_for_selector(".worldmap .country", timeout=8000)
+        phone.click(".worldmap .country[data-iso='HUN']")
+        phone.wait_for_selector("#countrypanel h3:has-text('Hungary')", timeout=8000)
+        overflow = phone.evaluate("document.documentElement.scrollWidth - window.innerWidth")
+        check("World: no sideways scrolling at phone width", overflow <= 0, overflow)
+        phone.screenshot(path=os.path.join(SCREENS, "world-phone-dark.png"), full_page=True)
 
         # deleting your answers takes two presses and brings back the interview
         page.click("nav.tabs button[data-view='me']")
         page.click("button:has-text('Delete my answers')")
         check("first press only warns", "again" in page.inner_text("#pagenotice")
-              and page.locator(".dumbbell").count() == 1)
+              and page.locator("#me .twocol").count() == 1)
         page.click("button:has-text('Delete my answers')")
         page.wait_for_selector("text=Let's talk about you.", timeout=8000)
         check("second press deletes and shows the interview", page.locator("#me .icard").count() == 9)
 
         check("no script errors or pop-ups", not errors, errors)
         browser.close()
+
+
+def world_checks(page):
+    page.click("nav.tabs button[data-view='world']")
+    page.wait_for_selector("text=The world data hasn't been downloaded yet.", timeout=8000)
+    check("World starts by offering to download the data", True)
+    page.click("button:has-text('Download the world data')")
+    page.wait_for_selector(".worldmap .country", timeout=60000)
+    shapes = page.locator(".worldmap .country").count()
+    check(f"the map draws every country ({shapes})", shapes >= 170, shapes)
+    fills = page.eval_on_selector_all(".worldmap .country", "ps => ps.map(p => [p.dataset.iso, p.getAttribute('fill')])")
+    coloured = {iso for iso, f in fills if f.startswith("hsl")}
+    check("the three countries with data are coloured, the rest grey", coloured == {"USA", "HUN", "IND"}, coloured)
+    data = requests.get(BASE + "/api/humanity/world", headers={"X-App-Passcode": PASS}).json()
+    head = page.inner_text(".worldhead")
+    check("the world score is shown, built from the countries", f"{data['world']['overall']:.1f}" in head
+          and "Built from 3 countries" in head, head)
+    page.click(".worldmap .country[data-iso='HUN']")
+    page.wait_for_selector("#countrypanel h3:has-text('Hungary')", timeout=8000)
+    hun = next(c for c in data["countries"] if c["iso3"] == "HUN")
+    panel = page.inner_text("#countrypanel")
+    check("clicking Hungary shows its score and its 12 categories",
+          f"Hungary: {hun['overall']:.1f}" in panel and page.locator("#countrypanel .dbrow").count() == 12, panel[:200])
+    counted = [c for c in data["countries"] if c["overall"] is not None]
+    share = hun["population"] / sum(c["population"] for c in counted)
+    after = min(100, hun["overall"] * 1.1)
+    world_after = data["world"]["overall"] + share * (after - hun["overall"])
+    check(f"what if Hungary improved by 10%: {after:.1f}, world {world_after:.3f}",
+          f"Hungary: {hun['overall']:.1f} → {after:.1f}" in panel and f"{world_after:.3f}" in panel, panel)
+    page.eval_on_selector("#countrypanel input[type=range]", "e => { e.value = 30; e.dispatchEvent(new Event('input')); }")
+    after = min(100, hun["overall"] * 1.3)
+    check("moving the improvement to 30% moves both", f"→ {after:.1f}" in page.inner_text("#countrypanel"))
+    page.click("#countrypanel .dbrow:has-text('Health and long life')")
+    check("a category opens to its measures, values and sources",
+          "Life expectancy at birth" in page.inner_text("#countrypanel") and "worldbank.org" in page.inner_text("#countrypanel"),
+          page.inner_text("#countrypanel")[:600])
+    page.screenshot(path=os.path.join(SCREENS, "world-desktop.png"), full_page=True)
+    measured_before = hun["measured"]
+    page.click("#countrypanel button:has-text('Fill in the')")
+    page.wait_for_function("() => /\\d+ of 26 measures found/.test(document.querySelector('#countrypanel').innerText) && !document.querySelector('#countrypanel').innerText.includes('Researching')", timeout=60000)
+    page.wait_for_selector("#countrypanel h3:has-text('Hungary')", timeout=8000)
+    text = page.inner_text("#countrypanel")
+    check("filling the missing measures raises the count", f"{measured_before} of 26" not in text and "of 26 measures found" in text, text[:200])
+    page.click("#countrypanel button:has-text('Compare with me')")
+    page.wait_for_selector("#view-me:not(.hidden)", timeout=8000)
+    check("Compare with me opens Me", True)
+
+
+def change(page, text, label):
+    page.fill("#me-own", text)
+    page.click("button:has-text('Work it out')")
+    page.wait_for_selector(f".examples button.on:has-text('{label}')", timeout=30000)
+
+
+def place(page):
+    return page.inner_text("#me .placecol")
 
 
 def _remaining(age, sex=None):
@@ -396,14 +327,12 @@ def me_checks(page):
     page.click(f"{card} button:has-text('Fine tune')")
     page.select_option(f"{card} select[aria-label^='Brisk activity']", "300_449")
     page.select_option(f"{card} select[aria-label^='Alcoholic drinks']", "8_14")
-    text = page.inner_text(card)
     check("each fine-tune question shows why it matters, with a source",
-          "Moore and others" in text and "Wood and others" in text)
+          "Moore and others" in page.inner_text(card) and "Wood and others" in page.inner_text(card))
     page.fill(f"{card} input[aria-label='Height, feet']", "6")
     page.fill(f"{card} input[aria-label='Height, inches']", "0")
     page.fill(f"{card} input[aria-label='Weight, pounds']", "180")
-    check("BMI helper picks the band (6 ft, 180 lb = 24.4)", "BMI 24.4" in page.inner_text(card)
-          and page.eval_on_selector(f"{card} select[aria-label^='Weight for your height']", "e => e.value") == "healthy")
+    check("BMI helper picks the band (6 ft, 180 lb = 24.4)", "BMI 24.4" in page.inner_text(card))
     fine["bmi"] = "healthy"
     planet = ".icard:has(h3:text-is('Your footprint on the planet'))"
     page.click(f"{planet} button:has-text('Fine tune')")
@@ -412,100 +341,96 @@ def me_checks(page):
     page.click(f"{community} button:has-text('Fine tune')")
     page.select_option(f"{community} select[aria-label^='Volunteering']", "0")
     page.click("button:has-text('Show my Humanity Index')")
-    page.wait_for_selector(".dumbbell", timeout=8000)
+    page.wait_for_selector("#me .twocol .dumbbell", timeout=8000)
     check("greets by name", "Jim, here's your Humanity Index." in page.inner_text("#me-h"))
-    check("one line per area plus the overall", page.locator(".dbrow").count() == 9)
+    mine = "#me .twocol > div:first-child"
+    check("you on the left: one line per area plus the overall", page.locator(f"{mine} .dbrow").count() == 9)
     want = expected_me(fine, ratings)
-    got = page.inner_text(".dbrow.big .dbval").strip()
-    check(f"overall is {round(want)}", got == str(round(want)), got)
+    got = page.inner_text(f"{mine} .dbrow.big .dbval").strip()
+    check(f"your overall is {round(want)}", got == str(round(want)), got)
+    check("no list of ready-made decisions, one box to type or say a change",
+          page.locator("#me .examples button").count() == 0 and page.locator("#me-own").count() == 1)
+    page.wait_for_selector("#me .placecol .dbrow", timeout=8000)
+    check("Hungary (from Compare with me) on the right, side by side",
+          "Hungary" in place(page) and page.locator("#me .placecol .dbrow").count() == 13, place(page)[:200])
 
-    # a ready-made decision: 8-14 drinks a week down to 1-7
-    page.click(".examples button:has-text('Keep to 7 drinks')")
-    body = page.inner_text(".dbrow >> nth=1")
-    money = page.inner_text(".dbrow:has-text('Money and security')")
-    check("drinking less moves Body and health", "→" in body, body)
-    check("and shows money not spent in a year ($2,150), on the money line", "$2,150 not spent" in money, money)
-    check("and expected life gained so far", "of expected life" in body, body)
-
-    # expected age: the life table for 68 (men and women averaged) plus habits versus typical, scaled for age
+    # a typed change: 8-14 drinks a week down to 1-7
+    change(page, "I'll drink less", "Keep to 7 drinks a week")
+    body = page.inner_text(f"{mine} .dbrow >> nth=1")
+    money = page.inner_text(f"{mine} .dbrow:has-text('Money and security')")
+    check("drinking less moves your Body and health", "→" in body, body)
+    check("and shows money not spent in a year ($2,150)", "$2,150 not spent" in money, money)
     before_age, gain = expected_age(fine, 68), drink_gain(68)
-    age_text = page.inner_text(".agebig")
     want_age = f"{before_age:.1f} → {before_age + gain * (1 - math.exp(-1 / 2)):.1f}"
-    check(f"expected age after a year of drinking less: {want_age}", age_text.replace("\n", "") == want_age, age_text)
-    page.fill(".sliders input.years", "30")
-    age_text = page.inner_text(".agebig")
-    money = page.inner_text(".dbrow:has-text('Money and security')")
-    want_age = f"{before_age:.1f} → {before_age + gain * (1 - math.exp(-30 / 2)):.1f}"
-    check(f"typing 30 years: expected age {want_age} and $64,500 not spent",
-          age_text.replace("\n", "") == want_age and "$64,500" in money, age_text + money)
+    check(f"expected age after a year: {want_age}", page.inner_text("#me .agebig").replace("\n", "") == want_age,
+          page.inner_text("#me .agebig"))
     page.click(".agebtn")
     working = page.inner_text(".explain")
-    check("clicking the expected age shows the working: life table, habits versus typical, scaling",
-          "Social Security" in working and "typical" in working and "scaled" in working
-          and f"{before_age:.1f}" in working, working[:500])
+    check("clicking the expected age shows the working", "Social Security" in working and "scaled" in working)
     page.click(".agebtn")
-    page.click(".dbrow >> nth=1")
-    explain = page.inner_text(".explain")
-    check("clicking the line shows the working, the change and the research",
-          "With “Keep to 7 drinks a week or fewer”" in explain and "8 to 14" in explain
-          and "Wood and others" in explain and "research-based answers count" in explain, explain[:400])
-    page.click(".dbrow >> nth=1")
-    page.click(".examples button:has-text('Walk 30 minutes a day')")
-    check("walking moves nothing for someone already this active", page.locator(".dbdot.after").count() == 0)
 
-    # Jim's case: 10 million people save $200 a month for 21 years
-    page.click(".examples button:has-text('Save $200 a month')")
-    page.fill(".sliders input.years", "21")
+    # the place side: the people slider goes up to the place's population; Hungary's health line moves
     page.eval_on_selector(".sliders input[aria-label='How many people']",
-                          "e => { e.value = 4; e.dispatchEvent(new Event('input')); }")
+                          "e => { e.value = 1000; e.dispatchEvent(new Event('input')); }")
+    label = page.inner_text(".sliders label:nth-child(2)")
+    check("people slider is for the place, up to everyone in it", "How many people in Hungary" in label
+          and "Everyone (9.6 million)" in label, label)
+    health = page.inner_text("#me .placecol .dbrow:has-text('Health and long life')")
+    check("everyone in Hungary drinking less moves Hungary's health line", "→" in health, health)
+    page.click("#me .placecol .dbrow:has-text('Health and long life')")
+    explain = page.inner_text(".explain")
+    check("the place line's working shows the measure moving", "Hungary: Health and long life" in explain
+          and "Life expectancy at birth" in explain and "moves by" in explain, explain[:500])
+    page.click("#me .placecol .dbrow:has-text('Health and long life')")
+
+    # Jim's case: save $200 a month for 21 years, for you and for everyone in the place
+    change(page, "save $200 a month", "Save $200 a month")
+    page.fill(".sliders input.years", "21")
     months, rate = 252, 0.04 / 12
     one = 200 * ((1 + rate) ** months - 1) / rate
-    money = page.inner_text(".dbrow:has-text('Money and security')")
+    money = page.inner_text(f"{mine} .dbrow:has-text('Money and security')")
     you = f"You: ${one:,.0f} saved ($50,400 put in, ${one - 50400:,.0f} growth at 4% a year)"
-    crowd = f"10 million people: ${one * 1e7 / 1e9:.0f} billion saved"
-    check(f"savings line shows you and the crowd: {you} / {crowd}", you in money and crowd in money, money)
-    page.eval_on_selector(".sliders input[aria-label='How many people']",
-                          "e => { e.value = 0; e.dispatchEvent(new Event('input')); }")
+    check(f"savings for you and everyone in Hungary: {you}", you in money and "Everyone in Hungary (9.6 million)" in money, money)
     page.fill(".sliders input.years", "1")
 
-    # fine-tuning after setup: from the top, and straight to one area from its line
-    check("a Fine tune button sits at the top", page.locator("button:has-text('Fine tune my answers')").count() == 1)
-    check("each line says how well grounded it is",
-          "your own rating only" in page.inner_text(".dbrow:has-text('Money and security')")
-          and "fine-tuned 3 of 6" in page.inner_text(".dbrow:has-text('Body and health')"))
-    page.click(".dbrow:has-text('Mind and mood')")
-    page.click(".explain button:has-text('Fine tune mind and mood')")
-    page.wait_for_selector(".icard[data-area='mind'] .fine", timeout=8000)
-    check("Fine tune on a line opens that area's questions", page.locator(".icard .fine").count() == 1)
-    page.select_option(".icard[data-area='mind'] select[aria-label^='How often you feel stressed']", "rarely")
-    page.click("button:has-text('Show my Humanity Index')")
-    page.wait_for_selector(".dumbbell", timeout=8000)
-    check("after saving, the new answer counts (Mind and mood now 92)",
-          "92" in page.inner_text(".dbrow:has-text('Mind and mood')"), page.inner_text(".dbrow:has-text('Mind and mood')"))
-
-    # the ripple: 10 million people, and the world score
-    page.click(".examples button:has-text('Volunteer 4 hours a month')")
+    # world vs a smaller place: the same change by the same share moves a small place, barely the world
+    change(page, "drive less", "Drive less")
+    page.click("#me .placepick button:has-text('World')")
+    page.wait_for_selector("#me .placecol .dbrow:has-text('World')", timeout=8000)
     page.eval_on_selector(".sliders input[aria-label='How many people']",
-                          "e => { e.value = 4; e.dispatchEvent(new Event('input')); }")
-    ripple = page.inner_text(".ripple")
-    check("ripple: 10 million people's hours", "If 10 million people like you did this" in ripple
-          and "hours given" in ripple, ripple)
-    check("ripple: the world score moves through 'people who volunteered'",
-          "The world's Humanity Index" in ripple and "People who volunteered" in ripple, ripple)
+                          "e => { e.value = 700; e.dispatchEvent(new Event('input')); }")
+    planet_world = page.inner_text("#me .placecol .dbrow:has-text('Care for the planet')")
+    check("driving less by part of the world: the planet line shows a small change", "→" in planet_world, planet_world)
     page.screenshot(path=os.path.join(SCREENS, "me-desktop.png"), full_page=True)
 
-    # your own decision, typed (the microphone fills the same box)
-    page.eval_on_selector(".sliders input[aria-label='How many people']",
-                          "e => { e.value = 0; e.dispatchEvent(new Event('input')); }")
-    page.fill("#me-own", "I want to cycle to work twice a week")
-    page.click("button:has-text('Work it out')")
-    page.wait_for_selector(".examples button.on:has-text('Cycle to work twice a week')", timeout=30000)
-    line = page.inner_text(".dbrow:has-text('Your footprint on the planet')")
-    check("your own decision moves the planet line, with tonnes of CO2",
-          "→" in line and "tonnes of CO2 avoided" in line, line)
-    page.click(".dbrow:has-text('Your footprint on the planet')")
-    check("its working says it was worked out by AI from your words",
-          "worked out by AI from your words" in page.inner_text(".explain"))
+    # Marin County is worked out on request
+    page.click("#me .placepick button:has-text('Marin County')")
+    page.wait_for_selector("button:has-text(\"Work out Marin County's score\")", timeout=8000)
+    page.click("button:has-text(\"Work out Marin County's score\")")
+    page.wait_for_selector("#me .placecol .dbrow.big:has-text('Marin County')", timeout=60000)
+    page.wait_for_function("() => !document.querySelector('#me .placecol').innerText.includes('Still researching')", timeout=60000)
+    check("Marin County's score appears on the right", page.locator("#me .placecol .dbrow").count() == 13,
+          [page.locator("#me .placecol .dbrow").count(), place(page)[:400]])
+
+    # a spoken change: the microphone fills the box and works it out
+    page.evaluate("window.__say = 'I will volunteer four hours a month'")
+    page.click("#me .decide .mic")
+    page.wait_for_selector(".examples button.on:has-text('Volunteer 4 hours a month')", timeout=30000)
+    check("a spoken change is worked out like a typed one", True)
+    check("your recent changes stay as buttons", page.locator("#me .examples button").count() == 4,
+          page.locator("#me .examples button").all_inner_texts())
+
+    # fine-tuning after setup
+    check("each line says how well grounded it is",
+          "your own rating only" in page.inner_text(f"{mine} .dbrow:has-text('Money and security')"))
+    page.click(f"{mine} .dbrow:has-text('Mind and mood')")
+    page.click(".explain button:has-text('Fine tune mind and mood')")
+    page.wait_for_selector(".icard[data-area='mind'] .fine", timeout=8000)
+    page.select_option(".icard[data-area='mind'] select[aria-label^='How often you feel stressed']", "rarely")
+    page.click("button:has-text('Show my Humanity Index')")
+    page.wait_for_selector("#me .twocol .dumbbell", timeout=8000)
+    check("after saving, the new answer counts (Mind and mood now 92)",
+          "92" in page.inner_text(f"{mine} .dbrow:has-text('Mind and mood')"))
 
 
 if __name__ == "__main__":

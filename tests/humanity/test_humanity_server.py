@@ -2,7 +2,7 @@
 The Humanity Index — server tests
 File: tests/humanity/test_humanity_server.py
 Created: November 15, 2026
-Last Updated: November 16, 2026 (afternoon) — expected age: life table and sex
+Last Updated: November 16, 2026 (evening) — the world built from its countries
 
 PURPOSE:
     End-to-end tests of routes/humanity.py, humanity_engine.py and
@@ -42,6 +42,8 @@ os.environ.update({
     "OPENAI_API_KEY": "test-key-not-real", "OPENAI_BASE_URL": f"http://127.0.0.1:{STUB_PORT}/gpt",
     "DEEPSEEK_API_KEY": "test-key-not-real", "FACTCHECK_PANEL_DEEPSEEK_URL": f"http://127.0.0.1:{STUB_PORT}/deepseek",
     "GOOGLE_API_KEY": "test-key-not-real", "FACTCHECK_PANEL_GEMINI_URL": f"http://127.0.0.1:{STUB_PORT}/gemini/",
+    "HUMANITY_WORLD_BANK_URL": f"http://127.0.0.1:{STUB_PORT}/wb",
+    "HUMANITY_OWID_URL": f"http://127.0.0.1:{STUB_PORT}/owid",
 })
 for _name in ("FACTCHECK_PANEL", "HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy",
               "HUMANITY_PASSCODE", "FACTCHECK_PASSCODE"):
@@ -53,6 +55,7 @@ from flask import Flask  # noqa: E402
 import humanity_engine as engine  # noqa: E402
 import humanity_me  # noqa: E402
 import humanity_score  # noqa: E402
+import humanity_world  # noqa: E402
 from stub_ai_service import SCORE_VALUES  # noqa: E402
 from db_engine import get_db_connection  # noqa: E402
 from routes.humanity import humanity_bp  # noqa: E402
@@ -131,6 +134,9 @@ def web(monkeypatch):
         cur.execute("DELETE FROM humanity_score_runs")
         humanity_me.ensure_tables()
         cur.execute("DELETE FROM humanity_me")
+        humanity_world.ensure_tables()
+        cur.execute("DELETE FROM humanity_country_values")
+        cur.execute("DELETE FROM humanity_country")
     monkeypatch.setenv("HUMANITY_PASSCODE", PASS)
     monkeypatch.delenv("FACTCHECK_PASSCODE", raising=False)
     spawned = []
@@ -459,6 +465,8 @@ def expected_overall(values):
     for cat in humanity_score.SCORECARD:
         scores = []
         for m in cat["measures"]:
+            if m.get("info"):
+                continue                     # population is shown, never scored
             v = values[m["key"]]
             s = (v - m["worst"]) / (m["ideal"] - m["worst"]) * 100
             scores.append(min(100, max(0, s)))
@@ -468,16 +476,17 @@ def expected_overall(values):
 
 def test_scorecard_is_sound():
     keys = [m["key"] for c in humanity_score.SCORECARD for m in c["measures"]]
-    assert len(humanity_score.SCORECARD) == 12 and len(keys) == len(set(keys)) == 26
+    scored = [m["key"] for c in humanity_score.SCORECARD for m in c["measures"] if not m.get("info")]
+    assert len(humanity_score.SCORECARD) == 12 and len(keys) == len(set(keys)) == 27 and len(scored) == 26
     for c in humanity_score.SCORECARD:
         for m in c["measures"]:
-            assert m["worst"] != m["ideal"] and m["why"] and m["where"] and m["unit"], m["key"]
+            assert (m["worst"] != m["ideal"] or m.get("info")) and m["why"] and m["where"] and m["unit"], m["key"]
     assert set(keys) == set(SCORE_VALUES)
 
 
 def test_measure_scoring_both_directions():
     life = humanity_score._CATEGORY["health"]["measures"][0]
-    hunger = humanity_score._CATEGORY["basic_needs"]["measures"][0]
+    hunger = next(m for m in humanity_score._CATEGORY["basic_needs"]["measures"] if m["key"] == "hunger")
     assert humanity_score.measure_score(life, 90) == 100 and humanity_score.measure_score(life, 25) == 0
     assert humanity_score.measure_score(life, 57.5) == 50
     assert humanity_score.measure_score(life, 120) == 100 and humanity_score.measure_score(life, 10) == 0
@@ -686,5 +695,97 @@ def test_your_own_decision_input(web):
     for body in ({"text": ""}, {"text": "x" * 301}, {}):
         assert web.post("/api/humanity/me/decision", json=body, headers=H).status_code == 400
     assert web.post("/api/humanity/me/decision", json={"text": "walk"}, headers={"X-App-Passcode": "no"}).status_code == 401
+
+# ---------------------------------------------------------------------------
+# the world, built from its countries
+# ---------------------------------------------------------------------------
+
+def refreshed(web):
+    response = web.post("/api/humanity/world/refresh", json={}, headers=H)
+    assert response.status_code == 202
+    job_id = response.get_json()["job_id"]
+    work_all()
+    job = status(web, job_id)
+    assert job["status"] == "done", job
+    return job["result"]
+
+
+def test_world_refresh_downloads_every_country(web):
+    report = refreshed(web)
+    assert report["countries"] == 3                                  # aggregates (WLD) are left out
+    assert report["measures"]["life_expectancy"] == {"countries": 3, "source": "World Bank", "error": None}
+    assert report["measures"]["corruption"]["source"] == "Our World in Data"
+    assert report["measures"]["air"]["countries"] == 0 and "HTTPError" in report["measures"]["air"]["error"]
+    assert report["usage"]["cost"] == 0
+    data = web.get("/api/humanity/world", headers=H).get_json()
+    by = {c["iso3"]: c for c in data["countries"]}
+    assert set(by) == {"USA", "HUN", "IND"}
+    assert by["HUN"]["population"] == 9.6e6 and by["HUN"]["measured"] == 17 and by["HUN"]["of"] == 26
+    # the newest value is kept, older and pre-2005 values are not
+    hun = web.get("/api/humanity/world/country/HUN", headers=H).get_json()
+    life = next(m for c in hun["score"]["categories"] for m in c["measures"] if m["key"] == "life_expectancy")
+    corr = next(m for c in hun["score"]["categories"] for m in c["measures"] if m["key"] == "corruption")
+    assert life["value"] == 76.5 and life["year"] == "2023" and life["source"]["title"] == "World Bank"
+    assert corr["value"] == 41 and corr["year"] == "2022"
+    assert set(hun["missing"]["freedom"]) == {"freedom_choices", "personal_freedom"}
+    assert "air" in hun["missing"]["planet"] and "population" not in str(hun["missing"])
+
+
+def test_world_is_built_from_countries_by_population(web):
+    refreshed(web)
+    data = web.get("/api/humanity/world", headers=H).get_json()
+    cs = [c for c in data["countries"] if c["overall"] is not None]
+    expect = sum(c["overall"] * c["population"] for c in cs) / sum(c["population"] for c in cs)
+    assert abs(data["world"]["overall"] - expect) < 0.01 and data["world"]["countries_counted"] == 3
+    # India's 1.43 billion people pull the world much harder than Hungary's 9.6 million
+    by = {c["iso3"]: c for c in cs}
+    assert abs(data["world"]["overall"] - by["IND"]["overall"]) < abs(data["world"]["overall"] - by["HUN"]["overall"])
+
+
+def test_global_measures_come_from_the_world_run(web):
+    refreshed(web)
+    hun = web.get("/api/humanity/world/country/HUN", headers=H).get_json()
+    warming = next(m for c in hun["score"]["categories"] for m in c["measures"] if m["key"] == "warming")
+    assert warming["value"] is None
+    score_of(web, "World")
+    hun = web.get("/api/humanity/world/country/HUN", headers=H).get_json()
+    warming = next(m for c in hun["score"]["categories"] for m in c["measures"] if m["key"] == "warming")
+    assert warming["value"] == 1.5 and warming["note"] == "Same for every country."
+
+
+def test_filling_a_countrys_gaps_with_ai(web):
+    refreshed(web)
+    response = web.post("/api/humanity/world/country/HUN/fill", json={}, headers=H)
+    assert response.status_code == 202
+    jobs = response.get_json()["jobs"]
+    assert set(jobs) == {"freedom", "oppression", "planet", "kindness"}
+    work_all()
+    hun = web.get("/api/humanity/world/country/HUN", headers=H).get_json()
+    assert "freedom" not in hun["missing"] and "kindness" not in hun["missing"]
+    fc = next(m for c in hun["score"]["categories"] for m in c["measures"] if m["key"] == "freedom_choices")
+    assert fc["value"] == 80 and fc["source"]["title"].startswith("AI research")
+    # values that were already there are never overwritten by AI
+    life = next(m for c in hun["score"]["categories"] for m in c["measures"] if m["key"] == "life_expectancy")
+    assert life["value"] == 76.5
+
+
+def test_world_routes_need_the_passcode_and_good_input(web):
+    bad = {"X-App-Passcode": "no"}
+    assert web.get("/api/humanity/world", headers=bad).status_code == 401
+    assert web.post("/api/humanity/world/refresh", json={}, headers=bad).status_code == 401
+    assert web.get("/api/humanity/world/country/HUN", headers=bad).status_code == 401
+    assert web.get("/api/humanity/world/country/H1", headers=H).status_code == 404
+    assert web.get("/api/humanity/world/country/ZZZ", headers=H).status_code == 404
+    assert web.post("/api/humanity/world/country/ZZZ/fill", json={}, headers=H).status_code == 404
+    empty = web.get("/api/humanity/world", headers=H).get_json()
+    assert empty["countries"] == [] and empty["world"]["overall"] is None
+
+
+def test_population_is_researched_but_never_scored(web):
+    _id, run = score_of(web, "World")
+    assert run["score"]["of"] == 26 and run["score"]["measured"] == 26
+    basic = next(c for c in run["score"]["categories"] if c["key"] == "basic_needs")
+    pop = next(m for m in basic["measures"] if m["key"] == "population")
+    assert pop["value"] == 8200000000 and pop["score"] is None and pop["info"]
 
 # I did no harm and this file is not truncated

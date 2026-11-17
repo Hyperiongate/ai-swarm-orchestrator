@@ -2,7 +2,7 @@
 The Humanity Index — Engine
 File: humanity_engine.py
 Created: November 15, 2026
-Last Updated: November 16, 2026 — Job kind for the personal index (me_decision)
+Last Updated: November 16, 2026 (evening) — Job kinds for the world map (world_refresh, country_gap)
 
 PURPOSE:
     The working parts of the Humanity Index (Jim's concept doc, November 14-15,
@@ -78,6 +78,11 @@ SETTINGS (Render > Environment; all optional except the Swarm's existing key):
                                fact-checker (see factcheck_panel.py)
 
 CHANGELOG:
+- November 16, 2026 (evening): THE WORLD MAP
+  * New job kinds 'world_refresh' (humanity_world.refresh: download the free
+    bulk datasets for every country; no AI, no cost) and 'country_gap'
+    (humanity_world.fill_gap: AI research of one category for one country,
+    keeping only the values that were missing). Both store their own results.
 - November 16, 2026: THE PERSONAL INDEX ("Me")
   * New job kind 'me_decision' (humanity_me.research_decision): turns a typed
     or spoken decision into changes to the personal answers. Its result is
@@ -155,12 +160,13 @@ MAX_EFFECTS = 6
 MAX_COMPARISONS = 4
 EVERYONE = 8_200_000_000            # world population, used only as a ceiling on "everyone who could"
 
-JOB_KINDS = ("answer", "review", "score_category", "score_review", "me_decision")
-JOB_PRIORITY = {"review": 0, "score_review": 0, "me_decision": 0, "answer": 1, "score_category": 1}
+JOB_KINDS = ("answer", "review", "score_category", "score_review", "me_decision", "world_refresh", "country_gap")
+JOB_PRIORITY = {"review": 0, "score_review": 0, "me_decision": 0, "answer": 1, "score_category": 1,
+                "country_gap": 1, "world_refresh": 2}
 JOB_BUDGET_SECONDS = {"answer": 300, "review": 60, "score_category": 180, "score_review": 60,
-                      "me_decision": 150}   # AI time per job
+                      "me_decision": 150, "world_refresh": 300, "country_gap": 180}   # time per job
 JOB_HARD_LIMIT_SECONDS = {"answer": 480, "review": 150, "score_category": 300, "score_review": 150,
-                          "me_decision": 240}  # then failed
+                          "me_decision": 240, "world_refresh": 600, "country_gap": 300}  # then failed
 MAX_ATTEMPTS = 2
 QUEUE_GIVE_UP_SECONDS = 120
 JOB_KEEP_SECONDS = 2 * 24 * 3600
@@ -632,9 +638,16 @@ def _me_job(payload):
     return humanity_me.research_decision(payload)
 
 
+def _world_job(name):
+    def run(payload):
+        import humanity_world
+        return getattr(humanity_world, name)(payload)
+    return run
+
+
 _JOB_FUNCTIONS = {"answer": research_answer, "review": review_figures,
                   "score_category": _score_job("research_category"), "score_review": _score_job("review_run"),
-                  "me_decision": _me_job}
+                  "me_decision": _me_job, "world_refresh": _world_job("refresh"), "country_gap": _world_job("fill_gap")}
 
 
 def run_job(kind, payload):

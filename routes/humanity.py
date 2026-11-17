@@ -2,7 +2,7 @@
 The Humanity Index — Flask Routes
 File: routes/humanity.py
 Created: November 15, 2026
-Last Updated: November 16, 2026 — The personal index (Me) routes
+Last Updated: November 16, 2026 (evening) — The world map routes
 
 PURPOSE:
     Flask blueprint for the Humanity Index page and its small API. Every
@@ -38,6 +38,10 @@ ENDPOINTS:
     POST  /api/humanity/me                  save your answers (each save is kept)
     POST  /api/humanity/me/delete           delete all your saved answers
     POST  /api/humanity/me/decision         queue: turn your own decision into answer changes {text}
+    GET   /api/humanity/world               every country's score and the world built from them
+    POST  /api/humanity/world/refresh       queue: download the free bulk data for every country
+    GET   /api/humanity/world/country/<iso3>  one country in full (measures, sources, what's missing)
+    POST  /api/humanity/world/country/<iso3>/fill  queue: AI fills that country's missing measures
 
 PASSCODE (Jim's choice, November 15, 2026: "just you, with passcode"):
     Every /api/humanity/* route except /health needs the passcode in the
@@ -48,6 +52,8 @@ PASSCODE (Jim's choice, November 15, 2026: "just you, with passcode"):
     Gate (swarm_security.py) lists this blueprint as having its own login.
 
 CHANGELOG:
+- November 16, 2026 (evening): THE WORLD MAP
+  * Four /api/humanity/world* routes (listed above), same passcode rule.
 - November 16, 2026: THE PERSONAL INDEX ("Me")
   * Five /api/humanity/me* routes (listed above), same passcode rule. The
     answers are personal (health, money), so they are only ever sent back to
@@ -560,5 +566,81 @@ def humanity_me_decision():
     except Exception as e:
         return _db_error('queueing your decision', e)
     return jsonify({'job_id': job_id}), 202
+
+# ============================================================================
+# THE WORLD (map)
+# ============================================================================
+
+_ISO3 = re.compile(r'^[A-Za-z]{3}$')
+
+
+def _world():
+    import humanity_world
+    return humanity_world
+
+
+@humanity_bp.route('/api/humanity/world', methods=['GET'])
+@needs_passcode
+def humanity_world_summary():
+    try:
+        return jsonify(_world().summary())
+    except ImportError:
+        return _not_ready()
+    except Exception as e:
+        return _db_error('reading the world data', e)
+
+
+@humanity_bp.route('/api/humanity/world/refresh', methods=['POST'])
+@needs_passcode
+def humanity_world_refresh():
+    try:
+        eng = _engine()
+    except ImportError:
+        return _not_ready()
+    try:
+        job_id = eng.submit_job('world_refresh', {})
+    except eng.NotReady as e:
+        return jsonify({'error': str(e)}), 503
+    except Exception as e:
+        return _db_error('queueing the world refresh', e)
+    return jsonify({'job_id': job_id}), 202
+
+
+@humanity_bp.route('/api/humanity/world/country/<iso3>', methods=['GET'])
+@needs_passcode
+def humanity_world_country(iso3):
+    if not _ISO3.match(iso3):
+        return jsonify({'error': 'Not found.'}), 404
+    try:
+        detail = _world().country(iso3)
+    except ImportError:
+        return _not_ready()
+    except Exception as e:
+        return _db_error('reading a country', e)
+    if detail is None:
+        return jsonify({'error': 'That country is not in the world data yet. Refresh the world data.'}), 404
+    return jsonify(detail)
+
+
+@humanity_bp.route('/api/humanity/world/country/<iso3>/fill', methods=['POST'])
+@needs_passcode
+def humanity_world_fill(iso3):
+    if not _ISO3.match(iso3):
+        return jsonify({'error': 'Not found.'}), 404
+    try:
+        eng, world = _engine(), _world()
+    except ImportError:
+        return _not_ready()
+    if not eng.ai_ready():
+        return jsonify({'error': 'The server has no AI key. Check ANTHROPIC_API_KEY in Render.'}), 503
+    try:
+        jobs = world.start_fill(iso3)
+    except LookupError as e:
+        return jsonify({'error': str(e)}), 404
+    except eng.NotReady as e:
+        return jsonify({'error': str(e)}), 503
+    except Exception as e:
+        return _db_error('queueing the missing measures', e)
+    return jsonify({'jobs': jobs}), 202
 
 # I did no harm and this file is not truncated

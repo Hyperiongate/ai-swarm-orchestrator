@@ -2,6 +2,46 @@
 
 Added 15 November 2026, from Jim's concept doc "The Humanity Index — Concept".
 
+## The two-tab design (16 November 2026, evening)
+
+After using it, Jim chose a simpler page: **two tabs, Me and World**. Ask, My
+ledger, Asked before and the old World score page are no longer in the menu;
+their code, routes and saved data are untouched.
+
+**Me** is now one wide screen:
+- one box to **type or say a change** (the twelve ready-made suggestions are
+  gone; your recent changes stay as buttons). A typed change can do everything
+  the ready-made ones did: save every month (with growth), quit smoking (years
+  regained by age), drive less;
+- **you on the left, a place on the right**: the World, the United States,
+  Marin County, or any country or place you type. The same change and sliders
+  move both. "How many people in Marin County" goes up to Marin's population,
+  so a change visibly moves a small place and barely moves the world;
+- click any line on either side for the working.
+
+**World** is a map coloured by each country's score:
+- built from **free official data** downloaded for every country at once
+  (`humanity_world.py`): 13 measures from the World Bank, 6 from Our World in
+  Data, warming and wildlife from the World score run. "Download the world
+  data" is free and takes about a minute;
+- the **world score is built from the countries**, weighted by population;
+- **click a country**: its score, its 12 categories (click one for its measures,
+  values, years and sources), **"What if it improved by 10%?"** with the effect
+  on the world, **"Fill in the missing measures"** (AI researches only what
+  isn't published in bulk: freedom, modern slavery, kindness; roughly $0.50),
+  and **"Compare with me"**;
+- **"Pulling the world down most"**: countries ranked by how much they lower the
+  world score (their gap below it times their share of the world's people).
+
+The map file (`static/humanity/world.topo.json`, from the MIT-licensed datamaps
+package) is served by the Swarm itself.
+
+**First time on Render:** open World and press "Download the world data". The
+Swarm on Render reaches the World Bank and Our World in Data directly; the test
+environment could not, so it was tested against a stand-in that answers in their
+formats. If a source has changed its format, that one measure shows as "not
+available this time" and the rest still load.
+
 ## Me: the personal Humanity Index (added 16 November 2026)
 
 The **Me** tab (now the first tab) is Jim's voice design of 15-16 November 2026.
@@ -145,9 +185,10 @@ search the web again.
 3. Open `https://<the Swarm address>/humanity`. Start with one sentence and look
    for `[Humanity] Research helper started` in the Render log.
 
-It uses the Swarm's existing `ANTHROPIC_API_KEY`. Its seven database tables
+It uses the Swarm's existing `ANTHROPIC_API_KEY`. Its nine database tables
 (`humanity_jobs`, `humanity_runner`, `humanity_library`, `humanity_ledger`,
-`humanity_score_runs`, `humanity_score_values`, `humanity_me`) create themselves on first use. No change to `requirements.txt`,
+`humanity_score_runs`, `humanity_score_values`, `humanity_me`, `humanity_country`,
+`humanity_country_values`) create themselves on first use. No change to `requirements.txt`,
 `gunicorn.conf.py` or the migrations.
 
 ## Cost
@@ -165,6 +206,8 @@ jobs applies (`HUMANITY_DAILY_JOB_LIMIT`).
 | `routes/humanity.py` | The page route, the passcode, and the small API. |
 | `humanity_engine.py` | The instructions to the AI, the fixed answer shape, the panel review, the queue, library and ledger. |
 | `humanity_me.py` | Me: the eight areas, their questions and scores, the research behind each, the ready-made decisions, your own decision (AI), and storing your answers. |
+| `humanity_world.py` | The world: downloading the free data for every country, country scores, the world built from them, AI filling a country's gaps. |
+| `static/humanity/` | The world map file and its licence. |
 | `humanity_score.py` | The scorecard (12 categories, 26 measures and their end points), the research for each category, the scoring, and the saved runs. |
 | `humanity_runner.py` | The separate helper process that does the AI work. |
 | `tests/humanity/` | The dry-run tests. Not used by the running app. |
@@ -187,6 +230,8 @@ If those files are edited later, run the Humanity Index tests too.
 | `HUMANITY_SCORE_MODEL` | `claude-sonnet-5-5` | Model that looks up the score's measures |
 | `HUMANITY_SCORE_MAX_SEARCHES` | `4` | Web searches per category |
 | `HUMANITY_ME_MODEL` | `claude-sonnet-5-5` | Model that works out your own decision |
+| `HUMANITY_WORLD_BANK_URL` | `https://api.worldbank.org` | Where the World Bank data comes from |
+| `HUMANITY_OWID_URL` | `https://ourworldindata.org` | Where the Our World in Data charts come from |
 
 ## What has and has not been tested
 

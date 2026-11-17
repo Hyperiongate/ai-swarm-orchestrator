@@ -5,6 +5,23 @@
   File: templates/humanity.html   (served at /humanity by routes/humanity.py)
 
   CHANGE NOTES
+  2026-11-16  (evening) Jim's review of the whole interface:
+              - Two tabs only: Me and World. Ask, My ledger, Asked before and the
+                old World score page are no longer in the menu (their code and
+                data are untouched, so nothing is lost).
+              - Me: one box to type or say a change (the twelve ready-made
+                suggestions are gone; your recent changes stay as buttons). You
+                on the left, a place on the right (World, United States, Marin
+                County, or any country or place), side by side on the full width.
+                The same change and the same sliders move both: "How many people
+                in Marin County" goes up to Marin's population, so driving less
+                visibly moves Marin and barely moves the world.
+              - World: a map coloured by score, built from free official data for
+                every country (humanity_world.py). Click a country for its score,
+                its 12 categories and their measures, "What if it improved by
+                10%?" (and what that does to the world), "Fill in the missing
+                measures" (AI), and "Compare with me".
+              - The world map file is served by the Swarm (static/humanity/).
   2026-11-16  (afternoon) Three fixes from Jim's first use of Me:
               - Each line now shows YOU and THE CROWD. With the people slider at
                 10 million, "Save $200 a month" for 21 years read "$77,409 saved"
@@ -114,6 +131,7 @@ a { color: var(--focus); }
 button, input, select, textarea { font: inherit; color: inherit; }
 :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
 .wrap { max-width: 1060px; margin: 0 auto; padding: 0 20px; }
+.wrap.wide { max-width: 1400px; }
 
 /* ---------- header ---------- */
 header.top { padding: 22px 0 8px; }
@@ -376,6 +394,24 @@ table.ytab { width: 100%; border-collapse: collapse; background: var(--panel); b
 .agebig { font-family: var(--display); font-weight: 780; font-size: 34px; letter-spacing: -0.02em; line-height: 1.1; font-variant-numeric: tabular-nums; }
 .agebig .up { color: var(--green); } .agebig .down { color: var(--red); }
 
+.twocol { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; align-items: start; margin-top: 8px; }
+@media (max-width: 900px) { .twocol { grid-template-columns: minmax(0, 1fr); } }
+.colh { font-family: var(--display); font-size: 22px; margin: 4px 0 8px; }
+.twocol .dbrow { grid-template-columns: minmax(110px, 170px) minmax(0, 1fr) minmax(70px, 160px); }
+@media (max-width: 600px) { .twocol .dbrow { grid-template-columns: 1fr auto; } }
+.placepick { display: grid; gap: 8px; margin: 4px 0 10px; }
+.placepick .irow input { flex: 1 1 180px; min-width: 0; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); }
+.decide .irow > input[type=text] { font-size: 18px; padding: 12px 14px; }
+.worldhead { display: flex; flex-wrap: wrap; gap: 14px 30px; justify-content: space-between; align-items: end; margin-bottom: 12px; }
+.mapwrap { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 10px; margin-bottom: 14px; }
+.worldmap { width: 100%; height: auto; display: block; }
+.worldmap .country { stroke: var(--panel); stroke-width: 0.5; cursor: pointer; }
+.worldmap .country:hover { stroke: var(--ink); stroke-width: 1; }
+.worldmap .country.sel { stroke: var(--ink); stroke-width: 2; }
+.legend { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; padding: 6px 4px 0; }
+.legendbar { display: inline-block; width: 160px; height: 10px; border-radius: 5px;
+  background: linear-gradient(90deg, hsl(0 55% 50%), hsl(65 55% 50%), hsl(130 55% 50%)); }
+
 /* ---------- passcode ---------- */
 dialog { border: 1px solid var(--line); border-radius: 16px; padding: 24px; background: var(--panel); color: var(--ink); max-width: 380px; width: calc(100% - 32px); }
 dialog::backdrop { background: rgba(10, 25, 40, .45); }
@@ -387,14 +423,11 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
 </head>
 <body>
 <header class="top">
-  <div class="wrap">
+  <div class="wrap wide">
     <div class="brand">The Humanity <span>Index</span></div>
     <nav class="tabs" role="tablist" aria-label="Sections">
       <button role="tab" data-view="me" aria-selected="true">Me</button>
-      <button role="tab" data-view="score" aria-selected="false">World score</button>
-      <button role="tab" data-view="ask" aria-selected="false">Ask</button>
-      <button role="tab" data-view="ledger" aria-selected="false">My ledger</button>
-      <button role="tab" data-view="library" aria-selected="false">Asked before</button>
+      <button role="tab" data-view="world" aria-selected="false">World</button>
     </nav>
   </div>
 </header>
@@ -402,7 +435,12 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
 <main>
   <div class="wrap"><div id="pagenotice" class="notice hidden" role="alert"></div></div>
 
-  <section id="view-me" class="wrap" aria-labelledby="me-h">
+  <section id="view-world" class="wrap wide hidden" aria-labelledby="world-h">
+    <div class="scorehead"><h1 id="world-h">The world, country by country</h1></div>
+    <div id="world"></div>
+  </section>
+
+  <section id="view-me" class="wrap wide" aria-labelledby="me-h">
     <div class="scorehead"><h1 id="me-h">Let's talk about you.</h1></div>
     <div id="me"></div>
   </section>
@@ -469,7 +507,7 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
   </section>
 </main>
 
-<footer class="wrap">Figures come from live web searches and are checked by other AIs. The score uses fixed measures with stated end points; each category shows them. Big totals on Ask are simple multiples of one cited figure; real life at scale is messier, and each answer says how.</footer>
+<footer class="wrap wide">Country figures come from the World Bank and Our World in Data; other places and missing measures are researched with live web searches and checked by other AIs. Every score uses fixed measures with stated end points, shown when you click a line. Effects of a change on many people are simple multiples of one person's change; real life at scale is messier.</footer>
 
 <dialog id="passdlg">
   <form method="dialog" id="passform">
@@ -581,8 +619,9 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
   // ------------------------------------------------------------------ tabs
   function show(view) {
     document.querySelectorAll("nav.tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.view === view)));
-    ["me", "score", "ask", "ledger", "library"].forEach((v) => $("view-" + v).classList.toggle("hidden", v !== view));
+    ["me", "world", "score", "ask", "ledger", "library"].forEach((v) => $("view-" + v).classList.toggle("hidden", v !== view));
     if (view === "me" && !me.loaded) loadMe();
+    if (view === "world" && !world.loaded) loadWorld();
     if (view === "score" && !scoreState.loaded) loadScore(scoreState.place);
     if (view === "ledger") loadLedger();
     if (view === "library") loadLibrary();
@@ -1445,18 +1484,8 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
       me.editing = !me.saved;
       me.draft = JSON.parse(JSON.stringify(me.saved ? me.saved.answers : { name: "", age: null, sex: null, goal: "", ratings: {}, fine: {} }));
       renderMe();
-      loadWorldForRipple();
     } catch (err) { box.replaceChildren(el("div", { class: "notice" }, err.message)); }
   }
-  async function loadWorldForRipple() {
-    try {
-      const [card, latest] = await Promise.all([api("/api/humanity/score/card"), api("/api/humanity/score/latest?place=World")]);
-      me.card = card.categories;
-      me.world = latest.run && latest.run.complete ? latest.run : null;
-      if (!me.editing) renderMe();
-    } catch (e) { /* the ripple simply shows without the world score */ }
-  }
-
   function renderMe() {
     const box = $("me");
     $("me-h").textContent = me.editing
@@ -1490,7 +1519,6 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
         me.saved = { ...res.me, saves: ((me.saved && me.saved.saves) || 0) + 1 };
         me.editing = false; me.decision = null; renderMe();
         window.scrollTo({ top: 0 });
-        loadWorldForRipple();
       } catch (e) { err.textContent = e.message; save.disabled = false; }
     } }, "Show my Humanity Index");
     const actions = el("div", { class: "did", style: "border-top:0" }, save, err);
@@ -1554,49 +1582,82 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
     return el("div", { class: "irow", style: "margin-top:4px" }, el("span", { class: "sub" }, "Or work it out:"), ft, inch, lb, out);
   }
 
-  // ---------------- the results: decision, sliders, dumbbell chart
+  // ---------------- the results: you and a place, side by side
+  // One change (typed or spoken), two sliders, and two charts that move together:
+  // you on the left, the place you pick on the right (the world, a country, or a place like Marin County).
+  const QUICK_PLACES = [
+    { kind: "world", key: "World", name: "World" },
+    { kind: "country", key: "USA", name: "United States" },
+    { kind: "run", key: "Marin County, California", name: "Marin County" },
+  ];
+  function loadChanges() {
+    try { return JSON.parse(localStorage.getItem("humanity-changes") || "[]").filter((d) => d && d.label && Array.isArray(d.changes)); }
+    catch (e) { return []; }
+  }
+  function saveChanges() {
+    try { localStorage.setItem("humanity-changes", JSON.stringify(me.custom.slice(-8))); } catch (e) { /* this browser keeps none */ }
+  }
+  function peopleFromSlider(frac, pop) { return Math.max(1, Math.round(Math.pow(10, frac * Math.log10(Math.max(pop || 1e6, 1))))); }
+  function placeLabel() { return !me.place || me.place.kind === "world" ? "the world" : me.place.name; }
+  // "9.6 million people", or "Everyone in Hungary (9.6 million)" when the slider is at the top.
+  function crowdLabel(n) {
+    const p = me.placeData;
+    if (p && p.population && n >= p.population * 0.995) return `Everyone in ${p.name === "World" ? "the world" : p.name} (${fmt(p.population)})`;
+    return fmt(n) + " people";
+  }
+
   function renderMeResults() {
+    if (!me.customLoaded) { me.custom = loadChanges(); me.customLoaded = true; }
     const wrap = el("div", {});
     wrap.append(el("div", { class: "irow", style: "margin:-6px 0 14px" },
       el("button", { class: "btn quiet", type: "button", onclick: () => fineTune(null) }, "Fine tune my answers"),
-      el("span", { class: "sub" }, "Or click any line below, then \u201cFine tune\u201d for just that area.")));
-    const decisions = me.cat.decisions.concat(me.custom);
-    const chips = el("div", { class: "examples", role: "group", "aria-label": "Decisions" },
-      decisions.map((d) => el("button", { type: "button", class: me.decision === d ? "on" : "", "aria-pressed": String(me.decision === d),
-        onclick: () => { me.decision = me.decision === d ? null : d; renderMe(); } }, d.label)));
-    const own = el("input", { id: "me-own", type: "text", maxlength: 300, placeholder: "Or type or say your own: cycle to work twice a week" });
-    const ownMic = el("button", { class: "mic", type: "button", "aria-label": "Say your decision" });
+      el("span", { class: "sub" }, "Or click any line on your chart, then “Fine tune” for just that area.")));
+
+    // the one way to make a change: type or say it
+    const own = el("input", { id: "me-own", type: "text", maxlength: 300, placeholder: "What change are you thinking about? For example: cycle to work twice a week" });
+    const ownMic = el("button", { class: "mic", type: "button", "aria-label": "Say your change" });
     ownMic.innerHTML = $("askmic").innerHTML;
     const ownMsg = el("span", { class: "sub", role: "status" });
-    const ownGo = el("button", { class: "btn quiet", type: "button" }, "Work it out");
+    const ownGo = el("button", { class: "btn green", type: "button" }, "Work it out");
     const runOwn = async () => {
       const text = own.value.trim(); if (text.length < 3) { own.focus(); return; }
       ownGo.disabled = true; ownMsg.textContent = "Working out what it changes… (about a minute)";
       try {
         const job = await api("/api/humanity/me/decision", { text });
         const d = await waitForJob(job.job_id);
-        if (!d.changes.length && !d.facts.length) { ownMsg.textContent = d.summary || "That decision doesn't move any of your answers."; ownGo.disabled = false; return; }
-        me.custom.push(d); me.decision = d; renderMe();
+        if (!d.changes.length && !d.facts.length) { ownMsg.textContent = d.summary || "That change doesn't move any of your answers."; ownGo.disabled = false; return; }
+        me.custom = me.custom.filter((x) => x.label !== d.label).concat([d]); saveChanges();
+        me.decision = d; renderMe();
       } catch (e) { ownMsg.textContent = e.message; ownGo.disabled = false; }
     };
     ownGo.addEventListener("click", runOwn);
     own.addEventListener("keydown", (e) => { if (e.key === "Enter") runOwn(); });
     setupMic(ownMic, own, runOwn);
-    wrap.append(el("div", { class: "decide" }, el("h3", {}, "Make a decision"), chips,
-      el("div", { class: "irow", style: "margin-top:10px" }, own, ownMic, ownGo), ownMsg));
+    const recent = me.custom.length ? el("div", { class: "examples", role: "group", "aria-label": "Your recent changes", style: "margin-top:10px" },
+      el("span", { class: "sub", style: "align-self:center" }, "Your recent changes:"),
+      me.custom.slice().reverse().map((d) => el("button", { type: "button", class: me.decision && me.decision.label === d.label ? "on" : "",
+        "aria-pressed": String(!!me.decision && me.decision.label === d.label),
+        onclick: () => { me.decision = me.decision && me.decision.label === d.label ? null : d; renderMe(); } }, d.label))) : null;
+    wrap.append(el("div", { class: "decide" }, el("div", { class: "irow" }, own, ownMic, ownGo), ownMsg, recent));
 
+    // the two sliders
     const tIn = el("input", { type: "range", min: 0, max: 100, step: 1, value: sliderFromTime(me.t), "aria-label": "For how long" });
-    const pIn = el("input", { type: "range", min: 0, max: PEOPLE_STOPS.length - 1, step: 1, value: me.peopleStop, "aria-label": "How many people" });
-    const tOut = el("b", {}), pOut = el("b", {});
-    // Type an exact number of years, or drag the slider; the two stay in step.
+    const pIn = el("input", { type: "range", min: 0, max: 1000, step: 1, value: Math.round((me.peopleFrac || 0) * 1000), "aria-label": "How many people" });
+    const tOut = el("b", {}), pOut = el("b", {}), pName = el("span", {});
     const tYears = el("input", { type: "number", min: 0.02, max: 30, step: "any", class: "years", "aria-label": "Years" });
-    const sliders = el("div", { class: "sliders" },
-      el("label", {}, "For how long", el("span", { class: "yrs" }, tOut, tYears, "years"), tIn), el("label", {}, "How many people", pOut, pIn));
+    wrap.append(el("div", { class: "sliders" },
+      el("label", {}, "For how long", el("span", { class: "yrs" }, tOut, tYears, "years"), tIn),
+      el("label", {}, el("span", {}, "How many people in ", pName), pOut, pIn)));
+
+    // you | the place
     const ageBox = el("div", { class: "agebox", "aria-live": "polite" });
     const chart = el("div", { class: "dumbbell", "aria-live": "polite" });
-    const ripple = el("div", {});
+    const placeBox = el("div", { class: "placecol" });
+    wrap.append(el("div", { class: "twocol" },
+      el("div", {}, el("h2", { class: "colh" }, "You"), ageBox, chart),
+      el("div", {}, placeBox)));
     const explain = el("div", {});
-    wrap.append(sliders, ageBox, chart, ripple, explain);
+    wrap.append(explain);
 
     const draw = (ev) => {
       if (ev && ev.target === tIn) me.t = timeFromSlider(Number(tIn.value));   // keep an exact time until the slider is moved
@@ -1606,17 +1667,22 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
         me.t = y; tIn.value = sliderFromTime(y);
       }
       if (!ev || ev.target !== tYears) tYears.value = String(Math.round(me.t * 100) / 100);
-      me.peopleStop = Number(pIn.value);
-      tOut.textContent = fmtTime(me.t); pOut.textContent = peopleLabel(PEOPLE_STOPS[me.peopleStop]);
+      me.peopleFrac = Number(pIn.value) / 1000;
+      const pop = me.placeData && me.placeData.population;
+      const n = peopleFromSlider(me.peopleFrac, pop);
+      tOut.textContent = fmtTime(me.t);
+      pName.textContent = placeLabel();
+      pOut.textContent = n === 1 ? "Just you" : (pop && n >= pop * 0.995 ? `Everyone (${fmt(pop)})` : fmt(n) + " people");
       const res = computeMe(me.decision, me.t);
       drawAge(ageBox, res);
-      drawDumbbell(chart, res, PEOPLE_STOPS[me.peopleStop]);
-      drawRipple(ripple, res, PEOPLE_STOPS[me.peopleStop]);
-      drawExplain(explain, res);
+      drawDumbbell(chart, res, n);
+      drawPlace(placeBox, res, n);
+      drawExplain(explain, res, n);
     };
     tIn.addEventListener("input", draw); pIn.addEventListener("input", draw); tYears.addEventListener("input", draw);
     me.redraw = draw;
     draw();
+    if (!me.placeData || me.placeData.key !== (me.place || QUICK_PLACES[0]).key) loadPlace(me.place || restorePlace());
 
     wrap.append(el("div", { class: "did" },
       el("button", { class: "btn quiet", type: "button", onclick: () => fineTune(null) }, "Change or fine-tune my answers"),
@@ -1628,6 +1694,174 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
       } }, "Delete my answers")));
     return wrap;
   }
+
+  // ---------------- the place on the right
+  function restorePlace() {
+    try { const p = JSON.parse(localStorage.getItem("humanity-place-v2") || "null"); if (p && p.kind && p.key) return p; } catch (e) { /* none */ }
+    return QUICK_PLACES[0];
+  }
+  async function loadPlace(place) {
+    me.place = place;
+    try { localStorage.setItem("humanity-place-v2", JSON.stringify(place)); } catch (e) { /* none */ }
+    const same = me.placeData && me.placeData.key === place.key && !me.placeData.loading;
+    if (!same) {                                   // a quiet refresh of the same place keeps its figures on screen
+      me.placeData = { key: place.key, name: place.name, loading: true };
+      if (me.redraw) me.redraw();
+    }
+    const ticket = (me.placeTicket = (me.placeTicket || 0) + 1);
+    try {
+      if (!me.card) me.card = (await api("/api/humanity/score/card")).categories;
+      let data;
+      if (place.kind === "world") {
+        const w = await worldData();
+        if (!w.countries.length) data = { key: place.key, name: "World", empty: "The world data hasn't been downloaded yet. Open the World tab and press “Download the world data” (free, about a minute)." };
+        else data = placeFromWorld(w);
+      } else if (place.kind === "country") {
+        const c = await api("/api/humanity/world/country/" + place.key).catch((e) => ({ error: e.message }));
+        data = c.error ? { key: place.key, name: place.name, empty: c.error } : placeFromScore(place.key, c.name, c.score, c.population);
+      } else {
+        const latest = (await api("/api/humanity/score/latest?place=" + encodeURIComponent(place.key))).run;
+        if (!latest) data = { key: place.key, name: place.name, needsRun: true };
+        else {
+          const pop = (latest.score.categories.find((c) => c.key === "basic_needs").measures.find((m) => m.key === "population") || {}).value;
+          data = placeFromScore(place.key, place.name, latest.score, pop || null);
+          if (!latest.complete) { data.pending = latest.pending.length; setTimeout(() => { if (me.place && me.place.key === place.key) loadPlace(place); }, 4000); }
+        }
+      }
+      if (ticket !== me.placeTicket) return;
+      me.placeData = data;
+    } catch (e) {
+      if (ticket !== me.placeTicket) return;
+      me.placeData = { key: place.key, name: place.name, empty: e.message };
+    }
+    if (me.redraw && !me.editing) me.redraw();
+  }
+  function placeFromScore(key, name, score, population) {
+    return { key, name, population, overall: score.overall, measured: score.measured, of: score.of,
+             categories: score.categories.map((c) => ({ key: c.key, name: c.name, score: c.score,
+               measures: c.measures.filter((m) => !m.info).map((m) => ({ ...m })) })) };
+  }
+  function placeFromWorld(w) {
+    // the world: category scores are the population-weighted averages of the countries;
+    // for showing a change, each measure uses the world's average value of it
+    const cats = me.card.map((c) => ({ key: c.key, name: c.name, score: w.world.categories[c.key],
+      measures: c.measures.filter((m) => !m.info).map((m) => {
+        const v = w.world.measures ? w.world.measures[m.key] : undefined;
+        return { ...m, value: v === undefined ? null : v, score: v === undefined ? null : measureScore(m, v), where: "World (average of countries, by population)" };
+      }) }));
+    return { key: "World", name: "World", population: w.world.population, overall: w.world.overall, categories: cats,
+             countries: w.world.countries_counted };
+  }
+  function measureScore(m, v) { return Math.max(0, Math.min(100, (v - m.worst) / (m.ideal - m.worst) * 100)); }
+
+  // How one change by n people moves the place: only measures the change clearly reaches are moved.
+  function placeAfter(p, res, n) {
+    const share = p.population ? Math.min(1, n / p.population) : 0;
+    const moved = {};
+    if (me.decision && share > 0) {
+      if (res.ly) moved.life_expectancy = { add: res.ly * share, why: "years of life gained, spread over everyone" };
+      if (res.co2) moved.emissions = { add: -(res.co2 / Math.max(me.t, 1e-6)) / 1000 * share, why: "tonnes of greenhouse gas a year, per person" };
+      const ch = res.changed;
+      if (ch.some((c) => c.q === "volunteer" && (c.from === "0" || !c.from))) moved.volunteered = { add: 100 * share * res.r, why: "share of people who volunteer" };
+      if (ch.some((c) => c.q === "give" && (c.from === "0" || !c.from))) moved.donated = { add: 100 * share * res.r, why: "share of people who give" };
+      if (ch.some((c) => c.q === "helped" && c.to === "yes")) moved.helped_stranger = { add: 100 * share * res.r, why: "share of people who help a stranger" };
+    }
+    const lines = [];
+    let catDeltaSum = 0, catCount = 0;
+    const cats = p.categories.map((c) => {
+      const scored = c.measures.filter((m) => m.score !== null && m.score !== undefined && m.value !== null && m.value !== undefined);
+      let delta = 0;
+      const changed = [];
+      for (const m of scored) {
+        if (!moved[m.key]) continue;
+        const v = m.value + moved[m.key].add;
+        const s = measureScore(m, v);
+        delta += s - m.score;
+        changed.push({ m, from: m.value, to: v, why: moved[m.key].why });
+        const dv = v - m.value;
+        lines.push(`${m.name}: ${fmt(m.value)} → ${fmt(v)} ${m.unit} (${dv > 0 ? "+" : "−"}${Number(Math.abs(dv).toPrecision(2))})`);
+      }
+      const after = c.score === null || c.score === undefined ? null : c.score + (scored.length ? delta / scored.length : 0);
+      if (c.score !== null && c.score !== undefined) { catDeltaSum += after - c.score; catCount++; }
+      return { ...c, after, changed };
+    });
+    const overallAfter = p.overall === null || p.overall === undefined ? null : p.overall + (catCount ? catDeltaSum / catCount : 0);
+    return { cats, overallAfter, lines, share, reaches: Object.keys(moved) };
+  }
+
+  function dbRow({ label, b, a, fact, key, big, note, onClick, open }) {
+    const has = b !== null && b !== undefined;
+    const d = has ? a - b : 0;
+    const up = d > 0.0005, down = d < -0.0005;
+    const visible = Math.abs(d) > 0.05;
+    const lo = has ? Math.min(a, b) : 0, hi = has ? Math.max(a, b) : 0;
+    const fmtScore = (x) => (Math.abs(d) >= 0.5 ? String(Math.round(x)) : Math.abs(d) >= 0.05 ? x.toFixed(1) : x.toFixed(2));
+    const isOpen = onClick ? !!open : me.open === key;
+    return el("button", { type: "button", class: "dbrow" + (big ? " big" : "") + (isOpen ? " open" : ""), "aria-expanded": String(isOpen),
+      onclick: () => { if (onClick) { onClick(); return; } me.open = me.open === key ? null : key; me.redraw(); } },
+      el("span", { class: "dblabel" }, label, note ? el("span", { class: "dbnote" }, note) : null),
+      el("span", { class: "dbtrack" }, has ? [
+        visible ? el("i", { class: "dbbar " + (down ? "down" : "up"), style: `left:${lo}%;width:${hi - lo}%` }) : null,
+        el("i", { class: "dbdot before", style: `left:${b}%` }),
+        (up || down) ? el("i", { class: "dbdot after " + (down ? "down" : "up"), style: `left:${a}%` }) : null] : el("span", { class: "sub" }, "no data")),
+      el("span", { class: "dbval" }, has ? (up || down
+        ? `${fmtScore(b)} → ${fmtScore(a)}` + (Math.abs(d) < 0.05 ? ` (${d > 0 ? "+" : "−"}${Number(Math.abs(d).toPrecision(2))})` : "")
+        : String(Math.round(b))) : "–",
+        fact ? el("span", { class: "dbfact" + (down ? " down" : "") }, fact) : null));
+  }
+
+  function drawPlace(box, res, n) {
+    const p = me.placeData;
+    const pick = el("div", { class: "placepick" },
+      el("div", { class: "seg", role: "group", "aria-label": "Place" },
+        QUICK_PLACES.map((qp) => el("button", { type: "button", "aria-pressed": String(!!me.place && me.place.key === qp.key), onclick: () => loadPlace(qp) }, qp.name))),
+      placeSearch());
+    if (!p || p.loading) { box.replaceChildren(pick, el("p", { class: "lead" }, "Loading " + (p ? p.name : "") + "…")); return; }
+    if (p.empty) { box.replaceChildren(pick, el("h2", { class: "colh" }, p.name), el("div", { class: "empty", style: "text-align:left" }, p.empty)); return; }
+    if (p.needsRun) {
+      const go = el("button", { class: "btn green", type: "button", onclick: async () => {
+        go.disabled = true;
+        try { await api("/api/humanity/score/run", { place: p.key }); loadPlace(me.place); }
+        catch (e) { pageNotice(e.message); go.disabled = false; }
+      } }, `Work out ${p.name}'s score`);
+      box.replaceChildren(pick, el("h2", { class: "colh" }, p.name), el("div", { class: "empty", style: "text-align:left" },
+        el("p", { style: "margin:0 0 10px;color:var(--ink)" }, `${p.name} has no score yet.`), go,
+        el("p", { style: "margin:10px 0 0;font-size:14px" }, "The swarm looks up its 26 measures. It takes a few minutes and costs roughly $1 to $2 in AI fees.")));
+      return;
+    }
+    const after = placeAfter(p, res, n);
+    const rows = [dbRow({ label: p.name, b: p.overall, a: after.overallAfter ?? p.overall, key: "place:overall", big: true,
+      note: p.countries ? `built from ${p.countries} countries, weighted by population` : p.population ? `${fmt(p.population)} people` : "population not known" })];
+    for (const c of after.cats) rows.push(dbRow({ label: c.name, b: c.score, a: c.after ?? c.score, key: "place:" + c.key }));
+    const foot = [];
+    if (p.pending) foot.push(el("p", { class: "sub" }, `Still researching ${p.pending} of 12 categories…`));
+    if (me.decision && n > 1) {
+      foot.push(el("p", { class: "sub", style: "margin:6px 0 0" }, after.lines.length
+        ? `If ${fmt(n)} people in ${p.name === "World" ? "the world" : p.name} did this for ${fmtTime(me.t)} (${(after.share * 100).toPrecision(2)}% of its people): ${after.lines.join("; ")}.`
+        : `“${me.decision.label}” changes how people feel and live, but none of the measures behind ${p.name}'s score directly.`));
+    } else if (me.decision) {
+      foot.push(el("p", { class: "sub", style: "margin:6px 0 0" }, `Slide “How many people” to see what happens when more people in ${p.name} do this.`));
+    }
+    if (!p.population) foot.push(el("p", { class: "sub" }, "This place's population isn't known, so the people slider is capped at a million. Refreshing its score adds it."));
+    box.replaceChildren(pick, el("div", { class: "dumbbell" }, ...rows, ...foot));
+  }
+  function placeSearch() {
+    const input = el("input", { type: "text", list: "place-list", maxlength: 120, placeholder: "Another country or place", "aria-label": "Another country or place" });
+    const go = () => {
+      const text = input.value.trim(); if (!text) return;
+      const w = me.worldCache;
+      const c = w && w.countries.find((x) => x.name.toLowerCase() === text.toLowerCase() || x.iso3 === text.toUpperCase());
+      loadPlace(c ? { kind: "country", key: c.iso3, name: c.name } : { kind: "run", key: text, name: text });
+    };
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+    const list = el("datalist", { id: "place-list" }, (me.worldCache ? me.worldCache.countries : []).map((c) => el("option", { value: c.name })));
+    return el("div", { class: "irow" }, input, list, el("button", { class: "btn quiet", type: "button", onclick: go }, "Show"));
+  }
+  async function worldData(force) {
+    if (!me.worldCache || force) me.worldCache = await api("/api/humanity/world");
+    return me.worldCache;
+  }
+
   function fineTune(areaKey) {
     me.editing = true;
     me.draft = JSON.parse(JSON.stringify(me.saved.answers));
@@ -1670,7 +1904,7 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
       if (mine.length) {
         fact = n === 1 ? mine.map((f) => factText(f, 1)).join(", ")
           : el("span", {}, "You: " + mine.map((f) => factText(f, 1)).join(", ") + ".", el("br", {}),
-                           `${peopleLabel(n)}: ` + mine.map((f) => factText(f, n)).join(", ") + ".");
+                           `${crowdLabel(n)}: ` + mine.map((f) => factText(f, n)).join(", ") + ".");
       }
       const note = b.score === null ? null : b.n === 0 ? "your own rating only" : b.n < b.of ? `fine-tuned ${b.n} of ${b.of}` : "fully fine-tuned";
       row(b.area.name, b.score, res.after[i].score, fact, b.area.key, false, note);
@@ -1696,53 +1930,44 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
       el("span", { class: "sub" }, `US average for ${ans.age}-year-old ${ans.sex === "male" ? "men" : ans.sex === "female" ? "women" : "people"}: ${res.ageB.base.toFixed(1)}. Your habits: ${res.ageB.habits.total >= 0 ? "+" : "−"}${Math.abs(res.ageB.habits.total).toFixed(1)} years. How is this worked out?`)));
   }
 
-  function drawRipple(box, res, n) {
-    if (!me.decision || n === 1) { box.replaceChildren(); return; }
-    const facts = res.facts.map((f) => factText(f, n));
-    const saved = res.facts.find((f) => f.kind === "saved");
-    if (saved) facts.push(`(each person puts in $${fmt(saved.putIn)}; the rest is growth at an assumed ${Math.round(saved.growth * 100)}% a year)`);
-    const card = el("div", { class: "ripple" }, el("h3", {}, `If ${peopleLabel(n).toLowerCase()} like you did this for ${fmtTime(me.t)}`),
-      el("p", { style: "margin:0 0 8px" }, facts.length ? facts.join(". ") + "." : "The change is in how people feel, which doesn't add up into a single number."));
-    // The world score: only measures this decision clearly reaches are moved, by plain arithmetic.
-    if (me.world && me.card) {
-      const share = Math.min(1, n / WORLD_POP);
-      const moved = {};
-      if (res.ly) moved.life_expectancy = { add: res.ly * share, why: "years of life gained, spread over everyone" };
-      if (res.co2) moved.emissions = { add: -(res.co2 / Math.max(me.t, 1e-6)) / 1000 * share, why: "tonnes of CO2 a year avoided, per person in the world" };
-      const ch = res.changed;
-      if (ch.some((c) => c.q === "volunteer" && (c.from === "0" || !c.from))) moved.volunteered = { add: 100 * share * res.r, why: "people who volunteer" };
-      if (ch.some((c) => c.q === "give" && (c.from === "0" || !c.from))) moved.donated = { add: 100 * share * res.r, why: "people who give" };
-      const cats = me.world.score.categories;
-      const before = [], after = [];
-      const lines = [];
-      for (const c of cats) {
-        let sum = 0, cnt = 0, sumA = 0;
-        for (const m of c.measures) {
-          if (m.score === null || m.value === null) continue;
-          const card = me.card.find((x) => x.key === c.key).measures.find((x) => x.key === m.key);
-          let v = m.value; if (moved[m.key]) { v += moved[m.key].add; lines.push(`${m.name}: ${fmt(m.value)} → ${fmt(v)} ${m.unit} (${moved[m.key].why})`); }
-          const s = Math.max(0, Math.min(100, (v - card.worst) / (card.ideal - card.worst) * 100));
-          sum += m.score; sumA += s; cnt++;
-        }
-        if (cnt) { before.push(sum / cnt); after.push(sumA / cnt); }
-      }
-      const wb = before.reduce((a, b) => a + b, 0) / before.length, wa = after.reduce((a, b) => a + b, 0) / after.length;
-      const diff = wa - wb;
-      card.append(el("p", { style: "margin:0" }, "The world's Humanity Index: ", el("b", {}, wb.toFixed(2)), " → ",
-        el("b", { style: `color:${diff > 0 ? "var(--green)" : "var(--ink)"}` }, wa.toFixed(2)),
-        Math.abs(diff) > 0 ? ` (${diff > 0 ? "+" : "−"}${Number(Math.abs(diff).toPrecision(2))})` : ""),
-        lines.length ? el("ul", { class: "revnotes" }, lines.map((l) => el("li", {}, l)))
-                     : el("p", { class: "sub" }, "This decision doesn't reach any of the 26 measures behind the world score directly."));
-    } else {
-      card.append(el("p", { class: "sub" }, "Work out the world score on the World score tab to see this decision's effect on it."));
-    }
-    card.append(el("p", { class: "sub" }, "Simple multiples of one person's change. In real life, effects at scale are messier."));
-    box.replaceChildren(card);
-  }
-
-  function drawExplain(box, res) {
+  function drawExplain(box, res, n) {
     if (!me.open) { box.replaceChildren(); return; }
     const panel = el("div", { class: "explain" });
+    if (me.open && me.open.startsWith("place:")) {
+      const p = me.placeData;
+      if (!p || !p.categories) { box.replaceChildren(); return; }
+      const after = placeAfter(p, res, n);
+      const key = me.open.slice(6);
+      if (key === "overall") {
+        panel.append(el("h3", {}, `How ${p.name}'s Humanity Index is worked out`),
+          el("p", {}, p.countries
+            ? `It is built from ${p.countries} countries: each country's score (the average of its 12 categories) weighted by how many people live there. So big countries move it most. Open the World tab to see every country on the map.`
+            : "It is the average of the 12 categories. Each category is the average of its measures, and each measure is scored between a stated worst value (0) and an ideal (100). Categories with no data are left out."),
+          el("ul", { class: "causes" }, after.cats.map((c) => el("li", {}, `${c.name}: ${c.score === null || c.score === undefined ? "no data, left out" : c.score.toFixed(1)}` +
+            (c.after !== null && c.after !== undefined && Math.abs(c.after - c.score) > 0.0005 ? ` → ${c.after.toFixed(3)}` : "")))));
+      } else {
+        const c = after.cats.find((x) => x.key === key);
+        panel.append(el("h3", {}, `${p.name}: ${c.name}`));
+        panel.append(el("div", { class: "scroll" }, el("table", { class: "mtable" },
+          el("thead", {}, el("tr", {}, el("th", {}, "Measure"), el("th", {}, "Value"), el("th", {}, "Scores 0 at / 100 at"), el("th", { style: "text-align:right" }, "Score"))),
+          el("tbody", {}, c.measures.map((m) => {
+            const ch = c.changed.find((x) => x.m.key === m.key);
+            return el("tr", {},
+              el("td", {}, m.name, el("div", { class: "sub" }, m.why)),
+              el("td", {}, m.value === null || m.value === undefined ? el("span", { class: "sub" }, "Not found")
+                : el("span", {}, el("b", {}, fmt(m.value)), ch ? el("b", { style: "color:var(--green)" }, ` → ${fmt(ch.to)}`) : null, " ", m.unit,
+                    el("div", { class: "sub" }, [m.where, m.year].filter(Boolean).join(", ")), el("div", {}, srcLink(m.source)))),
+              el("td", { class: "sub" }, `${fmt(m.worst)} / ${fmt(m.ideal)} ${m.unit}`),
+              el("td", { class: "n" }, m.score === null || m.score === undefined ? "–" : String(Math.round(m.score))));
+          })))));
+        if (c.changed.length) panel.append(el("p", { class: "sub" }, `With ${fmt(n)} people doing “${me.decision.label}” for ${fmtTime(me.t)}: ` +
+          c.changed.map((x) => `${x.m.name} moves by ${fmt(Math.abs(x.to - x.from))} ${x.m.unit} (${x.why}), taking the category from ${c.score.toFixed(2)} to ${c.after.toFixed(2)}`).join("; ") + "."));
+        if (p.countries) panel.append(el("p", { class: "sub" }, "For the world, each value shown is the average of the countries' values, weighted by population; the category score is the population-weighted average of the countries' category scores."));
+      }
+      box.replaceChildren(panel);
+      return;
+    }
+
     const ans = me.saved.answers;
     if (me.open === "age") {
       const e = res.ageB, h = e.habits;
@@ -1816,6 +2041,191 @@ footer { color: var(--muted); font-size: 13px; padding: 20px 0 40px; }
       }
     }
     box.replaceChildren(panel);
+  }
+
+  // ------------------------------------------------------------------ the world tab: map, country, what-if
+  const world = { loaded: false, data: null, shapes: null, sel: null, detail: null, improve: 10 };
+  function scoreColor(s) {
+    if (s === null || s === undefined) return "var(--line)";
+    const hue = Math.max(0, Math.min(130, (s - 30) / 50 * 130));   // 30 or less: red; 80 or more: green
+    return `hsl(${Math.round(hue)} 55% 50%)`;
+  }
+  // The map file is TopoJSON (shared borders stored once). Turn it into rings of [longitude, latitude].
+  function decodeTopo(topo) {
+    const [sx, sy] = topo.transform.scale, [tx, ty] = topo.transform.translate;
+    const arcs = topo.arcs.map((arc) => { let x = 0, y = 0; return arc.map(([dx, dy]) => { x += dx; y += dy; return [x * sx + tx, y * sy + ty]; }); });
+    const ring = (ids) => {
+      const pts = [];
+      ids.forEach((i, k) => {
+        const a = i < 0 ? arcs[~i].slice().reverse() : arcs[i];
+        a.forEach((pt, j) => { if (k > 0 && j === 0) return; pts.push(pt); });
+      });
+      return pts;
+    };
+    const objects = topo.objects[Object.keys(topo.objects)[0]].geometries;
+    return objects.map((g) => ({ id: String(g.id), name: (g.properties && g.properties.name) || String(g.id),
+      polys: g.type === "Polygon" ? [g.arcs.map(ring)] : g.type === "MultiPolygon" ? g.arcs.map((p) => p.map(ring)) : [] }));
+  }
+  const MAP_W = 1000, MAP_TOP = 84, MAP_BOTTOM = -57, MAP_H = Math.round(MAP_W * (MAP_TOP - MAP_BOTTOM) / 360);
+  function shapePath(shape) {
+    let d = "";
+    for (const poly of shape.polys) for (const r of poly) {
+      let lastX = null;
+      r.forEach(([lon, lat], i) => {
+        const x = (lon + 180) / 360 * MAP_W, y = (MAP_TOP - lat) / (MAP_TOP - MAP_BOTTOM) * MAP_H;
+        const jump = lastX !== null && Math.abs(x - lastX) > MAP_W / 2;      // crossing the date line: start afresh
+        d += (i === 0 || jump ? "M" : "L") + x.toFixed(1) + "," + y.toFixed(1);
+        lastX = x;
+      });
+      d += "Z";
+    }
+    return d;
+  }
+  async function loadWorld(force) {
+    world.loaded = true;
+    const box = $("world");
+    if (!world.data || force) box.replaceChildren(el("p", { class: "lead" }, "Loading the world…"));
+    try {
+      const [data, topo] = await Promise.all([worldData(force), world.shapes ? null : fetch("/static/humanity/world.topo.json").then((r) => { if (!r.ok) throw new Error("The world map file could not be loaded."); return r.json(); })]);
+      if (topo) world.shapes = decodeTopo(topo).filter((s) => s.id !== "ATA");
+      world.data = data;
+      if (!me.card) me.card = (await api("/api/humanity/score/card")).categories;
+      renderWorld();
+    } catch (err) { box.replaceChildren(el("div", { class: "notice" }, err.message)); }
+  }
+  async function refreshWorldData(btn, msg) {
+    btn.disabled = true; msg.textContent = "Downloading the latest figures for every country… (about a minute)";
+    try {
+      const job = await api("/api/humanity/world/refresh", {});
+      const r = await waitForJob(job.job_id);
+      const failed = Object.entries(r.measures).filter(([, v]) => v.error).map(([k]) => k);
+      msg.textContent = `Done: ${r.countries} countries.` + (failed.length ? ` Not available this time: ${failed.join(", ")}.` : "");
+      await loadWorld(true);
+      if (me.place && me.place.kind !== "run") loadPlace(me.place);
+    } catch (e) { msg.textContent = e.message; btn.disabled = false; }
+  }
+  function renderWorld() {
+    const box = $("world");
+    const d = world.data;
+    const msg = el("span", { class: "sub", role: "status" });
+    const refreshBtn = el("button", { class: "btn quiet", type: "button" }, d.countries.length ? "Refresh the world data" : "Download the world data");
+    refreshBtn.addEventListener("click", () => refreshWorldData(refreshBtn, msg));
+    if (!d.countries.length) {
+      box.replaceChildren(el("div", { class: "empty", style: "text-align:left" },
+        el("p", { style: "margin:0 0 10px;color:var(--ink)" }, "The world data hasn't been downloaded yet."),
+        el("p", { style: "margin:0 0 12px" }, "Most of the 26 measures are published for every country by the World Bank and Our World in Data. Downloading them is free and takes about a minute."),
+        refreshBtn, " ", msg));
+      return;
+    }
+    const byIso = Object.fromEntries(d.countries.map((c) => [c.iso3, c]));
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", `0 0 ${MAP_W} ${MAP_H}`);
+    svg.setAttribute("class", "worldmap");
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", "World map coloured by Humanity Index score. Click a country.");
+    for (const s of world.shapes) {
+      const c = byIso[s.id];
+      const path = document.createElementNS(ns, "path");
+      path.setAttribute("d", shapePath(s));
+      path.setAttribute("fill", scoreColor(c ? c.overall : null));
+      path.setAttribute("data-iso", s.id);
+      path.setAttribute("class", "country" + (world.sel === s.id ? " sel" : ""));
+      const t = document.createElementNS(ns, "title");
+      t.textContent = c ? `${c.name}: ${c.overall === null ? "no data" : c.overall.toFixed(1)} (${c.measured} of ${c.of} measures)` : `${s.name}: no data`;
+      path.append(t);
+      path.addEventListener("click", () => selectCountry(s.id, c ? c.name : s.name));
+      svg.append(path);
+    }
+    const legend = el("div", { class: "legend" }, el("span", {}, "0"), el("i", { class: "legendbar" }), el("span", {}, "100"),
+      el("span", { class: "sub" }, " Grey: no data. Hover for a country's score; click it for the details."));
+    // How much each country lowers the world score: its gap below the world, times its share of people.
+    const counted = d.countries.filter((c) => c.overall !== null && c.population);
+    const people = counted.reduce((a, c) => a + c.population, 0);
+    const ranked = counted.map((c) => ({ ...c, pull: (c.overall - d.world.overall) * c.population / people }))
+      .filter((c) => c.pull < 0).sort((a, b) => a.pull - b.pull);
+    const head = el("div", { class: "worldhead" },
+      el("div", {}, el("span", { class: "sub" }, "The world's Humanity Index"),
+        el("div", { class: "agebig" }, d.world.overall === null ? "–" : d.world.overall.toFixed(1)),
+        el("span", { class: "sub" }, `Built from ${d.world.countries_counted} countries, each weighted by its population. Data from ${new Date(d.updated_at * 1000).toLocaleDateString()}.`)),
+      el("div", { class: "irow" }, refreshBtn, msg));
+    const side = el("div", { id: "countrypanel" });
+    box.replaceChildren(head, el("div", { class: "mapwrap" }, svg, legend),
+      el("div", { class: "twocol" }, side, el("div", { class: "icard" }, el("h3", {}, "Pulling the world down most"),
+        el("ul", { class: "causes" }, ranked.slice(0, 8).map((c) => el("li", {}, el("a", { href: "#", onclick: (e) => { e.preventDefault(); selectCountry(c.iso3, c.name); } }, c.name),
+          ` scores ${c.overall.toFixed(1)}; with ${fmt(c.population)} people it lowers the world by ${Math.abs(c.pull).toFixed(2)} points`))),
+        el("p", { class: "sub" }, "A country lowers the world score by how far it sits below the world, times its share of the world's people. Big, low-scoring countries matter most."))));
+    drawCountry();
+  }
+  async function selectCountry(iso3, name) {
+    world.sel = iso3; world.detail = { loading: true, name };
+    document.querySelectorAll(".worldmap .country").forEach((p) => p.classList.toggle("sel", p.dataset.iso === iso3));
+    drawCountry();
+    try { world.detail = await api("/api/humanity/world/country/" + iso3); }
+    catch (e) { world.detail = { error: e.message, name }; }
+    drawCountry();
+  }
+  function drawCountry() {
+    const box = $("countrypanel"); if (!box) return;
+    const c = world.detail;
+    if (!c) { box.replaceChildren(el("div", { class: "icard" }, el("h3", {}, "Click any country"), el("p", { class: "sub" }, "See its score, what pulls it down, and what happens to the world if it improves."))); return; }
+    if (c.loading) { box.replaceChildren(el("div", { class: "icard" }, el("p", {}, "Loading " + c.name + "…"))); return; }
+    if (c.error) { box.replaceChildren(el("div", { class: "icard" }, el("h3", {}, c.name), el("p", {}, c.error))); return; }
+    const d = world.data;
+    const counted = d.countries.filter((x) => x.overall !== null && x.population);
+    const total = counted.reduce((a, x) => a + x.population, 0);
+    const me0 = c.score.overall;
+    const card = el("div", { class: "icard" });
+    const improveIn = el("input", { type: "range", min: 0, max: 50, step: 1, value: world.improve, "aria-label": "Improve by percent", style: "width:100%;accent-color:var(--amber)" });
+    const whatIf = el("div", {});
+    const drawWhatIf = () => {
+      world.improve = Number(improveIn.value);
+      if (me0 === null || !c.population || !total) { whatIf.replaceChildren(el("p", { class: "sub" }, "Not enough data for this country to work out its effect on the world.")); return; }
+      const after = Math.min(100, me0 * (1 + world.improve / 100));
+      const share = c.population / total;
+      const wAfter = d.world.overall + share * (after - me0);
+      whatIf.replaceChildren(
+        el("p", { style: "margin:6px 0 0" }, `${c.name}: ${me0.toFixed(1)} → `, el("b", { style: "color:var(--green)" }, after.toFixed(1)),
+          `. The world: ${d.world.overall.toFixed(2)} → `, el("b", { style: "color:var(--green)" }, wAfter.toFixed(3)),
+          ` (+${Number((wAfter - d.world.overall).toPrecision(2))}).`),
+        el("p", { class: "sub" }, `${c.name} is home to ${(share * 100).toPrecision(2)}% of the people counted, so its change moves the world by that share of it.`));
+    };
+    improveIn.addEventListener("input", drawWhatIf);
+    const missingCount = Object.values(c.missing).reduce((a, v) => a + v.length, 0);
+    const fillMsg = el("span", { class: "sub", role: "status" });
+    const fill = el("button", { class: "btn quiet", type: "button" }, `Fill in the ${missingCount} missing measures (AI, roughly $0.50)`);
+    fill.addEventListener("click", async () => {
+      fill.disabled = true; fillMsg.textContent = "Researching the missing measures… (about a minute)";
+      try {
+        const r = await api(`/api/humanity/world/country/${c.iso3}/fill`, {});
+        await Promise.all(Object.values(r.jobs).map((id) => waitForJob(id).catch(() => null)));
+        await worldData(true); world.data = me.worldCache;
+        await selectCountry(c.iso3, c.name); renderWorld();
+      } catch (e) { fillMsg.textContent = e.message; fill.disabled = false; }
+    });
+    const rows = c.score.categories.map((cat) => dbRow({ label: cat.name, b: cat.score, a: cat.score, key: "country:" + cat.key,
+      open: world.openCat === cat.key, onClick: () => { world.openCat = world.openCat === cat.key ? null : cat.key; drawCountry(); } }));
+    const openCat = world.openCat && c.score.categories.find((x) => x.key === world.openCat);
+    const openAt = openCat ? c.score.categories.indexOf(openCat) + 1 : 0;
+    if (openCat) rows.splice(openAt, 0, el("div", { class: "scroll", style: "padding:4px 6px 10px" }, el("table", { class: "mtable" },
+      el("tbody", {}, openCat.measures.filter((m) => !m.info).map((m) => el("tr", {},
+        el("td", {}, m.name),
+        el("td", {}, m.value === null || m.value === undefined ? el("span", { class: "sub" }, "Not found")
+          : el("span", {}, el("b", {}, fmt(m.value)), " ", m.unit, el("div", { class: "sub" }, m.year || ""), el("div", {}, srcLink(m.source)))),
+        el("td", { class: "n" }, m.score === null || m.score === undefined ? "–" : String(Math.round(m.score)))))))));
+    card.append(el("h3", {}, `${c.name}: ${me0 === null ? "no score" : me0.toFixed(1)}`),
+      el("p", { class: "sub", style: "margin:0 0 8px" }, `${fmt(c.population || 0)} people. ${c.score.measured} of ${c.score.of} measures found.`),
+      el("div", { class: "dumbbell" }, rows),
+      el("h3", { style: "margin-top:14px" }, `What if ${c.name} improved by `, el("span", {}, ""), "?"),
+      el("label", { class: "sub" }, "Improve its score by (percent)", improveIn), whatIf,
+      el("div", { class: "irow", style: "margin-top:10px" },
+        el("button", { class: "btn green", type: "button", onclick: () => { loadPlace({ kind: "country", key: c.iso3, name: c.name }); show("me"); } }, "Compare with me"),
+        missingCount ? fill : null, fillMsg));
+    const h = card.querySelectorAll("h3")[1].querySelector("span");
+    improveIn.addEventListener("input", () => { h.textContent = world.improve + "%"; });
+    h.textContent = world.improve + "%";
+    box.replaceChildren(card);
+    drawWhatIf();
   }
 
   // ------------------------------------------------------------------ start

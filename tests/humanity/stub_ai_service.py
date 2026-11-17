@@ -2,7 +2,7 @@
 The Humanity Index — stand-in for the AI services (TESTS ONLY)
 File: tests/humanity/stub_ai_service.py
 Created: November 15, 2026
-Last Updated: November 16, 2026 — also answers 'your own decision' (Me)
+Last Updated: November 16, 2026 (evening) — also stands in for the World Bank and Our World in Data
 
 PURPOSE:
     A tiny local web service that answers like the Anthropic Messages API and
@@ -29,9 +29,18 @@ PURPOSE:
         Fakelinkton    every value cites a page the search never returned
     In score reviews, 'Doubtburg' makes GPT rate life expectancy wrong.
 
-    Your own decision (the record_decision tool): "cycle" gives two good
+    Your own decision (the record_decision tool): "drink", "save", "volunteer",
+    "walk", "smoking", "drive less" give the matching simple change (with
+    saving_per_month 200 for "save"); "cycle" gives two good
     changes, one fact, and two changes the engine must drop (an unknown
     question and an unknown option); "nothing" gives no changes at all.
+
+    The world data (humanity_world.py) is fetched from here too:
+        /wb/v2/country, /wb/v2/country/all/indicator/<code>   World Bank style JSON
+        /owid/grapher/<slug>.csv                              Our World in Data style CSV
+    Three countries (USA, HUN, IND) plus aggregates that must be ignored
+    (WLD, OWID_WRL). Air pollution (EN.ATM.PM25.MC.M3) always fails with 500.
+    The numbers are WORLD_VALUES below: made up, not real data.
 
     Usage:  python tests/humanity/stub_ai_service.py [port]
     GET /_stats returns the call counts and the last request bodies.
@@ -69,8 +78,22 @@ SCORE_VALUES = {
     "modern_slavery": 6.4, "gini": 62, "top10_share": 52, "warming": 1.5, "wildlife": 27, "air": 31,
     "emissions": 6.6, "schooling": 8.7, "neet": 20, "rd_spending": 2.6, "researchers": 1400,
     "conflict_deaths": 2.5, "homicide": 5.8, "corruption": 43, "helped_stranger": 61, "donated": 35,
-    "volunteered": 23,
+    "volunteered": 23, "population": 8200000000,
 }
+
+# made-up country values for the world-data stand-in: (USA, HUN, IND)
+WORLD_VALUES = {
+    "SP.POP.TOTL": (335e6, 9.6e6, 1430e6), "SP.DYN.LE00.IN": (78.4, 76.5, 72.0), "SH.DYN.MORT": (6.3, 4.0, 29.0),
+    "SN.ITK.DEFC.ZS": (2.5, 2.5, 13.0), "SI.POV.DDAY": (1.2, 0.5, 23.0), "SH.H2O.SMDW.ZS": (97.0, 90.0, 60.0),
+    "SI.POV.GINI": (41.3, 29.6, 32.8), "SI.DST.10TH.10": (30.0, 22.5, 25.0), "EN.ATM.PM25.MC.M3": (7.0, 15.0, 55.0),
+    "SL.UEM.NEET.ZS": (11.0, 11.0, 23.0), "GB.XPD.RSDV.GD.ZS": (3.4, 1.4, 0.65), "SP.POP.SCIE.RD.P6": (4800, 3200, 260),
+    "VC.IHR.PSRC.P5": (5.8, 0.8, 2.8),
+    "happiness-cantril-ladder": (6.7, 6.0, 4.0), "liberal-democracy-index": (0.75, 0.37, 0.28),
+    "ti-corruption-perception-index": (65, 41, 39), "per-capita-ghg-emissions": (17.0, 6.5, 2.9),
+    "mean-years-of-schooling-long-run": (13.6, 12.2, 6.6), "death-rate-in-armed-conflicts": (0.0, 0.0, 0.1),
+}
+WORLD_ISO = ("USA", "HUN", "IND")
+WORLD_NAMES = {"USA": "United States", "HUN": "Hungary", "IND": "India"}
 
 
 def _section(text, tag):
@@ -176,6 +199,21 @@ def messages():
 
 def _decision(text, turns, model):
     said = _section(text, "decision").lower()
+    simple = {
+        "drink": ("Keep to 7 drinks a week", [{"question": "drinks", "to": "1_7", "only_if_better": True}], 2, None),
+        "save": ("Save $200 a month", [{"question": "balance", "to": "under", "only_if_better": True}], 1, 200),
+        "volunteer": ("Volunteer 4 hours a month", [{"question": "volunteer", "to": "1_4", "only_if_better": True}], 0.3, None),
+        "walk": ("Walk 30 minutes a day", [{"question": "exercise", "to": "150_299", "only_if_better": True}], 0.5, None),
+        "smoking": ("Stop smoking", [{"question": "smoking", "to": "quit_now", "only_if_better": False}], 5, None),
+        "drive less": ("Drive less", [{"question": "car", "to": "_half", "only_if_better": True}], 0.05, None),
+    }
+    for word, (label, changes, ramp, saving) in simple.items():
+        if word in said:
+            answer = {"label": label, "summary": "Scripted.", "changes": changes, "ramp_years": ramp, "facts": []}
+            if saving:
+                answer["saving_per_month"] = saving
+            return _message([{"type": "tool_use", "id": "toolu_stub", "name": "record_decision", "input": answer}],
+                            "tool_use", 0, model)
     if "nothing" in said:
         answer = {"label": "Nothing much", "summary": "This decision does not move any answers.", "changes": [],
                   "ramp_years": 0.1, "facts": []}
@@ -211,6 +249,50 @@ def _measures(text, turns, model):
     prior = [] if len(turns) > 1 else SEARCH_BLOCKS
     return _message(prior + [{"type": "tool_use", "id": "toolu_stub", "name": "record_measures",
                               "input": {"values": values}}], "tool_use", 1 if prior else 0, model)
+
+
+# ---------------------------------------------------------------------------
+# the world-data sources
+# ---------------------------------------------------------------------------
+
+@app.get("/wb/v2/country")
+def wb_country_list():
+    rows = [{"id": iso, "name": WORLD_NAMES[iso], "region": {"id": "XXX", "value": "Somewhere"}} for iso in WORLD_ISO]
+    rows.append({"id": "WLD", "name": "World", "region": {"id": "NA", "value": "Aggregates"}})
+    return jsonify([{"page": 1, "pages": 1, "per_page": 400, "total": len(rows)}, rows])
+
+
+@app.get("/wb/v2/country/all/indicator/<code>")
+def wb_indicator(code):
+    STATS["world_calls"] = STATS.get("world_calls", 0) + 1
+    if code == "EN.ATM.PM25.MC.M3":
+        return jsonify({"error": "scripted failure"}), 500
+    values = WORLD_VALUES.get(code)
+    if values is None:
+        return jsonify([{"message": [{"key": "Invalid value"}]}])
+    rows = [{"indicator": {"id": code, "value": code}, "country": {"id": iso[:2], "value": WORLD_NAMES[iso]},
+             "countryiso3code": iso, "date": "2023", "value": v, "unit": "", "obs_status": "", "decimal": 1}
+            for iso, v in zip(WORLD_ISO, values)]
+    rows.append({"indicator": {"id": code}, "country": {"id": "1W", "value": "World"}, "countryiso3code": "WLD",
+                 "date": "2023", "value": 999, "unit": "", "obs_status": "", "decimal": 1})
+    rows.append({"indicator": {"id": code}, "country": {"id": "HU", "value": "Hungary"}, "countryiso3code": "HUN",
+                 "date": "2001", "value": 1, "unit": "", "obs_status": "", "decimal": 1})       # too old: ignored
+    return jsonify([{"page": 1, "pages": 1, "per_page": 20000, "total": len(rows)}, rows])
+
+
+@app.get("/owid/grapher/<slug>.csv")
+def owid_csv(slug):
+    STATS["world_calls"] = STATS.get("world_calls", 0) + 1
+    values = WORLD_VALUES.get(slug)
+    if values is None:
+        return "not found", 404
+    lines = ["Entity,Code,Year,some_indicator_column,annotation"]
+    for iso, v in zip(WORLD_ISO, values):
+        lines.append(f"{WORLD_NAMES[iso]},{iso},2015,{v * 0.9},")
+        lines.append(f"{WORLD_NAMES[iso]},{iso},2022,{v},note")
+    lines.append("World,OWID_WRL,2022,555,")
+    lines.append("Africa,,2022,444,")
+    return "\n".join(lines) + "\n", 200, {"Content-Type": "text/csv"}
 
 
 # ---------------------------------------------------------------------------
